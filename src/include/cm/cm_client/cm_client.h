@@ -1,0 +1,105 @@
+/*
+ * Copyright (c) 2021 Huawei Technologies Co.,Ltd.
+ *
+ * CM is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * cm_client.h
+ *
+ *
+ * IDENTIFICATION
+ *    include/cm/cm_client/cm_client.h
+ *
+ * -------------------------------------------------------------------------
+ */
+#ifndef CM_CLIENT_H
+#define CM_CLIENT_H
+
+#include <queue>
+#include <sys/un.h>
+#include "cm/cm_msg.h"
+#include "cm/cm_misc_base.h"
+#include "cm_client_api.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define CM_CLIENT_MSG_VER 1
+
+#define NO_STAT_CHANGED 0
+#define STAT_CHANGED    1
+
+#define CM_MAX_PATH_LEN 1024
+
+#define CLIENT_TCP_TIMEOUT      (5)
+#define CLIENT_USEC_TO_NSEC     (1000)
+#define CLIENT_INVALID_SOCKET   (-1)
+#define CLIENT_RES_DATA_TIMEOUT (5)
+#define CLIENT_SEND_CHECK_INTERVAL (300 * 1000)
+#define CLIENT_RECV_CHECK_INTERVAL (300 * 1000)
+#define CLIENT_CHECK_CONN_INTERVAL (200 * 1000)
+
+#define HEARTBEAT_SEND_INTERVAL 1
+
+#define SOCK_PATH_LENGTH 128
+
+typedef struct SockAddrSt {
+    struct sockaddr_un addr;
+    socklen_t addrLen;
+} SockAddr;
+
+typedef struct ConnAgentSt {
+    int sock;
+    volatile bool isClosed;
+    uint32 resInstanceId;
+    cm_notify_func_t callback;
+} ConnAgent;
+
+typedef struct SetStateSt {
+    int32 state;
+    uint32 slotId;
+} SetState;
+
+typedef struct SetDataFlagSt {
+    bool isSetSuccess;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+} SetDataFlag;
+
+typedef struct GetDataFlagSt {
+    ResData resData;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+} GetDataFlag;
+
+typedef struct SendMsgQueueSt {
+    std::queue<char*> sendQueue;
+    pthread_mutex_t lock;
+} SendMsgQueue;
+
+status_t PreInit(uint32 instanceId, const char *resName, cm_notify_func_t func);
+status_t CreateConnectAgentThread(void);
+status_t CreateSendMsgThread(void);
+status_t CreateRecvMsgThread(void);
+
+#ifdef __cplusplus
+}
+
+char *GetResName();
+void SendMsgApi(char *msg);
+SetDataFlag &GetSetDataVector();
+GetDataFlag &GetResDataVector();
+OneResStatList &GetClientStatusList();
+
+#endif
+#endif // CM_CLIENT_H

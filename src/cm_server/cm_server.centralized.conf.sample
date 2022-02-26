@@ -1,0 +1,68 @@
+log_dir = 'log'                 	#default is cm_server data dir
+log_file_size = 16MB          	# only support MB
+log_min_messages = WARNING    	# log_min_messages.
+								#Default WARNING.
+								# Valid value: DEBUG5, DEBUG1, WARNING, ERROR, LOG, FATAL
+thread_count = 1000    			# thread count of the cmserver thread pool
+								# range: [2 - 1000]
+instance_heartbeat_timeout = 6		#timeout of cm_server receive instance status and heartbeat in sec
+instance_failover_delay_timeout = 0	#delay seconds before cm_server send FAILOVER command to cm_agent
+cmserver_ha_connect_timeout = 2		#timeout of cm_server connect to the other cm_server in sec
+cmserver_ha_heartbeat_timeout = 6	#timeout of cm_server receive heartbeat from the other cm_server in sec
+cmserver_ha_status_interval = 1		#interval of cm_server send status to the other cm_server in sec
+cmserver_self_vote_timeout = 6		#timeout of cm_server voting to run as Primary  in sec.
+                                        #This parameter works only when cmserver_self_vote_timeout >= cmserver_ha_heartbeat_timeout, otherwise, it will work based on cmserver_ha_heartbeat_timeout. 
+phony_dead_effective_time = 5      #the times for phony dead to effective
+cm_server_arbitrate_delay_base_time_out = 10    #Based time that cm_server needs to arbitrate, cm_server arbitrate delay timeout is decided by base time and incremental time.
+cm_server_arbitrate_delay_incrememtal_time_out = 3      #Incremental time that cm_server needs to arbitrate, cm_server arbitrate delay timeout is decided by base time and incremental time.
+
+alarm_component = '/opt/huawei/snas/bin/snas_cm_cmd'    # Sets the component for alarm function
+alarm_report_interval = 3		# Set the alarm report interval, default is 3 secs
+alarm_report_max_count = 1		# Set the alarm report max count, default is 5 secs
+
+#if a instance heartbeat can not report and over this value, it will be killed
+instance_keep_heartbeat_timeout = 40
+#az will auto switchover when dn fault percent beyond this value
+az_switchover_threshold = 100
+#az check and arbitrate interval
+az_check_and_arbitrate_interval = 2
+#interval between two az connect check
+az_connect_check_interval = 60
+#detect az connect delay time, there are many detection in one check
+az_connect_check_delay_time = 150
+#delay time of cmserver from primary to standby when etcd unhealth
+cmserver_demote_delay_on_etcd_fault = 8
+#instance restart interval because of phony dead
+instance_phony_dead_restart_interval = 21600
+#enable read only if storage over threshold,Valid value: on,off,true,false,yes,no,1,0
+enable_transaction_read_only = on
+#second of check threshold
+datastorage_threshold_check_interval = 10
+#data directory threshold check
+datastorage_threshold_value_check = 85
+#modify from read only to read write for recovery disk usage,12 hours default
+max_datastorage_threshold_check = 43200
+#enable switchover cross AZ
+enable_az_auto_switchover = 1
+#cm kerberos authentication method
+cm_auth_method = trust
+#cm kerberos server keyfile
+cm_krb_server_keyfile ='${GAUSSHOME}/kerberos/{UserName}.keytab'
+#switchover RTO
+switch_rto = 600
+#whether force promote should be commited (0 or 1, 0 is for no and 1 is for yes)
+force_promote = 0
+backup_open = 0
+enable_dcf = off
+ddb_type = 0      # 0 etcd 1 dcc
+enable_ssl = off
+ssl_cert_expire_alert_threshold = 90
+ssl_cert_expire_check_interval = 86400
+delay_arbitrate_timeout = 0   # waiting for the dn whose az is sname az with primary dn will redo done
+# ddb parameter
+ddb_log_level = RUN_ERR|RUN_WAR|DEBUG_ERR|OPER|RUN_INF|PROFILE # ddb log level
+ddb_log_backup_file_count = 10           # Maximum number of log files that can be saved
+ddb_max_log_file_size = 10M              # Maximum number of bytes in a log
+ddb_log_suppress_enable = 1              # Indicates whether to enable the log suppression function. 1: open 0, close
+ddb_election_timeout = 3                 # DCC election timeout interval [1S,600S]
+############### End ###################

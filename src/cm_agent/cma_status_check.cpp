@@ -1285,7 +1285,7 @@ void* DNStatusCheckMain(void * const arg)
 /* kerberos status check */
 uint32 check_kerberos_state(const char* username)
 {
-    /* commad: opt/omm/gaussdb/bin/kinit -k -t $KRB_HOME/kerberos/omm.keytab omm/huawei.huawei.com@HUAWEI.COM */
+    /* commad: $GAUSSHOME/bin/kinit -k -t $KRB_HOME/kerberos/omm.keytab omm/opengauss.org@OPENGAUSS.ORG */
     if (check_one_instance_status("krb5kdc", "krb5kdc", NULL) == PROCESS_RUNNING) {
         char actualCmd[MAX_PATH_LEN] = {0};
         int ret = 0;
@@ -1298,7 +1298,7 @@ uint32 check_kerberos_state(const char* username)
         } else {
             check_input_for_security(kerberosCommandPath);
             ret = snprintf_s(actualCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-                "%s/bin/kinit -k -t %s/kerberos/%s.keytab %s/huawei.huawei.com@HUAWEI.COM", 
+                "%s/bin/kinit -k -t %s/kerberos/%s.keytab %s/opengauss.org@OPENGAUSS.ORG",  
                 kerberosCommandPath, kerberosCommandPath, username, username);
             securec_check_intval(ret, (void)ret);
             check_input_for_security(actualCmd);

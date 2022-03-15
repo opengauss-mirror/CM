@@ -115,6 +115,7 @@ static int GetReplaceCnStatusFromFile()
 void SyncReplaceCnStatusToDdb()
 {
     if (g_SetReplaceCnStatus) {
+        write_runlog(LOG, "current cmserver is primary, sync replace cn status to Ddb.\n");
         int result = GetReplaceCnStatusFromFile();
         if (result != 0) { /* the file or cn status is invalid, do nothing and return */
             g_SetReplaceCnStatus = false;

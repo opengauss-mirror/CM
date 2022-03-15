@@ -60,7 +60,6 @@ status_t GetKVAndLogLevel(const char *key, char *value, uint32 valueLen,
     DDB_RESULT *ddbResult, int32 logLevel = DEBUG1);
 status_t GetKVConAndLog(DdbConn *ddbConn, const char *key, char *value, uint32 valueLen, DdbOption *option);
 bool IsDdbHealth(DDB_CHECK_MOD checkMod);
-uint32 DdbHealCount(void);
 void ClearDdbNodeInfo(const DdbConn *ddbConn);
 status_t InitDdbArbitrate(DrvApiInfo *drvApiInfo);
 status_t CreateCmsInstInfo(void);

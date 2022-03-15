@@ -557,17 +557,19 @@ static bool HaveNotifyEtcd(uint32 primaryNodeId)
     if (g_notifyEtcd == DDB_ROLE_UNKNOWN) {
         return false;
     }
-    (void)pthread_rwlock_wrlock(&g_notifyEtcdLock);
-    g_notifyEtcd = DDB_ROLE_UNKNOWN;
-    (void)pthread_rwlock_unlock(&g_notifyEtcdLock);
-    if (g_notifyEtcd == DDB_ROLE_FOLLOWER && (primaryNodeId == g_arbiCon->curInfo.instd)) {
+    write_runlog(LOG, "g_notifyEtcd is %d, primaryNodeId is %u, curnodeId is %u will notify etcd.\n",
+        g_notifyEtcd, primaryNodeId, g_arbiCon->curInfo.nodeId);
+    if (g_notifyEtcd == DDB_ROLE_FOLLOWER && (primaryNodeId == g_arbiCon->curInfo.nodeId)) {
         write_runlog(LOG, "receive notify msg, it will change to standby, and set key(0) to etcd.\n");
         CmPrimaryToStandbyInit(primaryNodeId);
-    } else if (g_notifyEtcd == DDB_ROLE_LEADER && (primaryNodeId != g_arbiCon->curInfo.instd)) {
+    } else if (g_notifyEtcd == DDB_ROLE_LEADER && (primaryNodeId != g_arbiCon->curInfo.nodeId)) {
         write_runlog(LOG, "receive notify msg, it will change to primary, and set key(%u) to etcd.\n",
             g_arbiCon->curInfo.nodeId);
         Promote2Primary(primaryNodeId, "[HaveNotifyEtcd]");
     }
+    (void)pthread_rwlock_wrlock(&g_notifyEtcdLock);
+    g_notifyEtcd = DDB_ROLE_UNKNOWN;
+    (void)pthread_rwlock_unlock(&g_notifyEtcdLock);
     return true;
 }
 

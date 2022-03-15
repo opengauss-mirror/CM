@@ -233,6 +233,45 @@ void start_cmserver_check(void)
     }
 }
 
+static void CheckProcessNum(const char* cmdLine)
+{
+    char    command[MAXPGPATH] = { 0 };
+    char    line[MAXPGPATH] = { 0 };
+    char    buffer[MAXPGPATH] = { 0 };
+    uint32  processCount = 0;
+ 
+    int ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, "ps ux | grep -v grep | grep \"%s\"", cmdLine);
+    securec_check_intval(ret, (void)ret);
+ 
+    FILE *fp = popen(command, "re");
+    if (fp == NULL) {
+        return;
+    }
+
+    while (!feof(fp)) {
+        if (fgets(line, MAXPGPATH - 1, fp)) {
+            ret = strncat_s(buffer, MAXPGPATH, line, strlen(line));
+            securec_check_errno(ret, (void)ret);
+            processCount++;
+        }
+    }
+    (void)pclose(fp);
+ 
+    if (processCount > 1) {
+        write_runlog(ERROR, "Multiple processes <%s>, buf is\n%s", cmdLine, buffer);
+        ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+            "ps ux | grep -v grep| grep \"%s\"| awk '{print $2}'| xargs kill -9", cmdLine);
+        securec_check_intval(ret, (void)ret);
+        ret = system(command);
+        if (ret != 0) {
+            write_runlog(ERROR, "[CheckProcessNum] Failed to execute the command: command=\"%s\","
+                "errno=%d.\n", command, errno);
+            return;
+        }
+        write_runlog(LOG, "[CheckProcessNum] kill all <%s> process success.\n", cmdLine);
+    }
+}
+
 /*
  * check if fenced UDF is not running and start it.
  */
@@ -267,6 +306,7 @@ void start_fenced_UDF_check(void)
             write_runlog(ERROR, "run system command failed %d! %s, errno=%d.\n", ret, command, errno);
         }
     } else {
+        CheckProcessNum("gaussdb fenced UDF");
         g_fencedUdfStopped = false;
     }
 }
@@ -1605,6 +1645,8 @@ void *agentStartAndStopMain(void *arg)
         }
 #ifdef ENABLE_MULTIPLE_NODES
         if (cm_agent_need_check_libcomm_port) {
+            g_autoRepairCnt = 0;
+            RemoveStopAutoRepairFile();
             write_runlog(LOG, "update libcomm config start.\n");
             if (UpdateLibcommConfig()) {
                 cm_agent_need_check_libcomm_port = false;
@@ -1630,6 +1672,6 @@ void *agentStartAndStopMain(void *arg)
             }
         }
 
-        cm_usleep(AGENT_START_AND_STOP_CYCLE);
+        cm_sleep(1);
     }
 }

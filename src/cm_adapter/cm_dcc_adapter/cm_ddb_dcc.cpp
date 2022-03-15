@@ -44,9 +44,13 @@ static const uint32 PROMOTE_LEADER_TIME = 30000; // ms
 static const uint32 MAX_ERR_LEN = 2048;
 static const char* KEY_NOT_FOUND = "can't find the key";
 
+static const int32 CANNOT_FIND_DCC_LEAD = -1;
+static const int32 CAN_FIND_DCC_LEAD = 0;
+static const int32 LEAD_IS_CURRENT_INSTANCE = 1;
+
 static uint32 g_cmServerNum = 0;
 static ServerSocket *g_dccInfo = NULL;
-static DDB_ROLE g_dbRole = DDB_ROLE_UNKNOWN;
+static DDB_ROLE g_dbRole = DDB_ROLE_FOLLOWER;
 static volatile uint32 g_expectPriority = DCC_AVG_PRIORITY;
 static int32 g_curIdx = -1;
 static uint32 g_timeOut = 0;
@@ -85,12 +89,14 @@ int32 DccNotifyStatus(dcc_role_t roleType)
     if (ddbNotiSta == NULL) {
         return 0;
     }
+    write_runlog(LOG, "[DccNotifyStatus] g_dbRole is %d, roleType is %d.\n", g_dbRole, roleType);
     return ddbNotiSta(g_dbRole);
 }
 
 status_t DrvDccFreeConn(DrvCon_t *session)
 {
     srv_dcc_free_handle(*session);
+    *session = NULL;
     return CM_SUCCESS;
 }
 
@@ -512,6 +518,7 @@ status_t StartDccProcess(const DrvApiInfo *apiInfo)
     (void)srv_dcc_set_param("ENDPOINT_LIST", cfg);
     (void)srv_dcc_set_param("NODE_ID", curIdxStr);
     (void)srv_dcc_set_param("LOG_PATH", dccLogPath);
+    (void)srv_dcc_set_param("LOG_LEVEL", "RUN_ERR|RUN_WAR|DEBUG_ERR|DEBUG_INF|OPER|RUN_INF|PROFILE");
     (void)srv_dcc_register_status_notify(DccNotifyStatus);
     int32 ret = SetSsl2Dcc(&(apiInfo->server_t.sslcfg));
     if (ret != 0) {
@@ -529,12 +536,7 @@ status_t StartDccProcess(const DrvApiInfo *apiInfo)
     return CM_SUCCESS;
 }
 
-static uint32 DrvDccHealthCount()
-{
-    return g_cmServerNum;
-}
-
-static bool IsDrvDccHeal(DDB_CHECK_MOD checkMod)
+static bool IsDrvDccHeal(DDB_CHECK_MOD checkMod, int timeOut)
 {
     return true;
 }
@@ -546,14 +548,17 @@ static void DrvDccFreeNodeInfo(void)
 
 static void DrvNotifyDcc(DDB_ROLE dbRole)
 {
-    if (g_dbRole != dbRole && g_dbRole != DDB_ROLE_UNKNOWN && g_cmServerNum > ONE_PRIMARY_ONE_STANDBY) {
+    const char *str = "[DrvNotifyDcc]";
+    write_runlog(LOG, "%s %d: receive notify msg, it will set prority, dbRole is [%d: %d], g_expectPriority is %u, "
+        "g_cmServerNum is %u.\n", str, __LINE__, dbRole, g_dbRole, g_expectPriority, g_cmServerNum);
+    if (g_dbRole != dbRole && g_cmServerNum > ONE_PRIMARY_ONE_STANDBY) {
         if (dbRole == DDB_ROLE_FOLLOWER) {
             g_expectPriority = DCC_MIN_PRIORITY;
         } else if (dbRole == DDB_ROLE_LEADER) {
             g_expectPriority = DCC_MAX_PRIORITY;
         }
-        write_runlog(LOG, "receive notify msg, it will set prority, dbRole is [%d: %d], g_expectPriority is %u.\n",
-            dbRole, g_dbRole, g_expectPriority);
+        write_runlog(LOG, "%s receive notify msg, it has setted prority, dbRole is [%d: %d], g_expectPriority is %u.\n",
+            str, dbRole, g_dbRole, g_expectPriority);
     }
     return;
 }
@@ -570,9 +575,9 @@ Alarm *DrvDccGetAlarm(int alarmIndex)
 
 static status_t DrvDccLeaderNodeId(NodeIdInfo *idInfo, const char *azName)
 {
-    uint32 instd = (uint32)-1;
+    uint32 instd = 0;
     int32 ret = srv_dcc_query_leader_info(&instd);
-    if (ret != 0 || instd == (uint32)-1) {
+    if (ret != 0) {
         return CM_ERROR;
     }
     for (uint32 i = 0; i < g_cmServerNum; ++i) {
@@ -743,11 +748,26 @@ static status_t InitDccInfo(const DrvApiInfo *apiInfo)
 static int32 SetPriority(uint32 priority)
 {
     int32 ret = srv_dcc_set_election_priority((unsigned long long)priority);
-    write_runlog(LOG, "will set ELECTION_PRIORITY, and value is %u.\n", priority);
+    write_runlog(LOG, "will set ELECTION_PRIORITY, and value is %u, ret is %d.\n", priority, ret);
     if (ret != 0) {
         write_runlog(ERROR, "set PRIORITY failed, error msg is %s.\n", DrvDccLastError());
     }
     return ret;
+}
+
+static int32 CheckDccLeader()
+{
+    uint32 instd = 0;
+    int32 ret = srv_dcc_query_leader_info(&instd);
+    write_runlog(
+        LOG, "get dcc leader (%u), curNode is %u, ret is %d.\n", instd, g_dccInfo[g_curIdx].nodeIdInfo.instd, ret);
+    if (ret != 0) {
+        return CANNOT_FIND_DCC_LEAD;
+    }
+    if (instd == g_dccInfo[g_curIdx].nodeIdInfo.instd) {
+        return LEAD_IS_CURRENT_INSTANCE;
+    }
+    return CAN_FIND_DCC_LEAD;
 }
 
 static bool CheckDccDemote()
@@ -766,11 +786,7 @@ static bool CheckDccDemote()
         }
         return true;
     }
-    uint32 instd = (uint32)-1;
-    ret = srv_dcc_query_leader_info(&instd);
-    write_runlog(LOG, "get dcc leader (%u), curNode is %u, ret is %d.\n",
-        instd, g_dccInfo[g_curIdx].nodeIdInfo.instd, ret);
-    if (ret != 0 || instd == (uint32)-1 || instd == g_dccInfo[g_curIdx].nodeIdInfo.instd) {
+    if (CheckDccLeader() != CAN_FIND_DCC_LEAD) {
         return true;
     }
     write_runlog(LOG, "line %s:%d, will reset g_expectPriority from %u to %u.\n",
@@ -785,6 +801,9 @@ static bool CheckDccPromote()
         return false;
     }
     if (g_dbRole != DDB_ROLE_LEADER) {
+        if (CheckDccLeader() == CANNOT_FIND_DCC_LEAD) {
+            return true;
+        }
         int32 ret = SetPriority(g_expectPriority);
         write_runlog(LOG, "line %s:%d set priority(%u), ret is %d.\n", __FUNCTION__, __LINE__, g_expectPriority, ret);
         ret = srv_dcc_promote_leader(g_dccInfo[g_curIdx].nodeIdInfo.instd, PROMOTE_LEADER_TIME);
@@ -916,7 +935,6 @@ static status_t DccLoadApi(const DrvApiInfo *apiInfo)
     drv->lastError = DrvDccLastError;
 
     drv->isHealth = IsDrvDccHeal;
-    drv->healCount = DrvDccHealthCount;
     drv->freeNodeInfo = DrvDccFreeNodeInfo;
     drv->notifyDdb = DrvNotifyDcc;
     drv->setMinority = DrvDccSetMinority;

@@ -214,7 +214,6 @@ volatile uint32 g_refreshDynamicCfgNum = 0;
 
 bool g_elastic_exist_node = false;
 
-volatile bool cm_server_pending = false;
 /* is true when gtm-free */
 bool g_gtm_free_mode = false;
 
@@ -454,6 +453,8 @@ inline bool isDisableBuildDN(const maintenance_mode &mode)
         isDisable = true;
     } else if (mode == MAINTENANCE_MODE_DILATATION) {
         isDisable = g_multi_az_cluster ? false : true;
+    } else if (mode == MAINTENANCE_NODE_DISASTER_RECOVERY) {
+        isDisable = true;
     }
     return isDisable;
 }

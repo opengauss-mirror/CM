@@ -32,7 +32,6 @@
 #include "cma_instance_management.h"
 #include "cma_process_messages.h"
 #include "cma_status_check.h"
-#include "cma_create_conn_cms.h"
 #include "cma_connect.h"
 #include "cma_instance_check.h"
 #ifdef ENABLE_MULTIPLE_NODES
@@ -130,8 +129,13 @@ static int ReadCpuStatus(int cpu_nr, IoStat *stat, bool getTotalCpuHave)
             }
             fclose(cpufp);
             uint64 tmp = cpu.cpuUser + cpu.cpuNice + cpu.cpuSys;
+            uint64 total = tmp + cpu.cpuIdle;
+            if (total == 0) {
+                write_runlog(ERROR, "abnormal cpu info.\n");
+                return -1;
+            }
 
-            return (int)((PERCENT * tmp) / (tmp + cpu.cpuIdle));
+            return (int)((PERCENT * tmp) / total);
         }
 
         /* for smp, cpu0 is enough for iostat */
@@ -596,6 +600,9 @@ void CheckEtcdCertFile()
 }
 void* ETCDStatusCheckMain(void* arg)
 {
+    thread_name = "ETCD_CHECK";
+    pthread_t threadId = pthread_self();
+    write_runlog(LOG, "etcd status check thread start, threadid %lu.\n", threadId);
     int etcdReportFre = ETCD_NODE_UNHEALTH_FRE;
     char devicename[MAX_DEVICE_DIR] = {0};
     CmGetDisk(g_currentNode->etcdDataPath, devicename, MAX_DEVICE_DIR);
@@ -662,14 +669,19 @@ void* ETCDStatusCheckMain(void* arg)
         do {
             st = DdbInstanceState(&dbCon, g_currentNode->etcdName, &nodeState);
             if (st != CM_SUCCESS) {
-                write_runlog(FATAL, "%s\n", DdbGetLastError(&dbCon));
+                write_runlog(FATAL, "get ddb instance state failed, error is %s\n", DdbGetLastError(&dbCon));
             }
 
             tryTime1++;
             if (st != CM_SUCCESS) {
                 if (nodeState.health == DDB_STATE_HEALTH) {
                     do {
-                        st = DdbInstanceState(&dbCon, g_currentNode->nodeName, &nodeState);
+                        st = DdbInstanceState(&dbCon, g_currentNode->etcdName, &nodeState);
+                        tryTime++;
+                        if (st != CM_SUCCESS) {
+                            write_runlog(FATAL, "ddb instance is health, get state failed, error is %s\n",
+                                DdbGetLastError(&dbCon));
+                        }
                     } while ((st != CM_SUCCESS) && tryTime <= ETCD_CHECK_TIMES);
                 }
             }
@@ -816,7 +828,7 @@ static bool SendDnReportMsgCore(const DnStatus *pkgDnStatus, uint32 datanodeId,
 
     if (pkgDnStatus->barrierMsgType == MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER) {
         ret = cm_client_send_msg(agent_cm_server_connect,
-            'C', (const char *)&pkgDnStatus->barrierMsg, sizeof(agent_to_cm_coordinate_barrier_status_report));
+            'C', (const char *)&pkgDnStatus->barrierMsg, sizeof(AgentToCmBarrierStatusReport));
     }
     if (ret != 0) {
         write_runlog(ERROR, "cm_client_send_msg send DN barrierMsg(%d) fail!\n", pkgDnStatus->barrierMsgType);
@@ -965,30 +977,6 @@ void fenced_UDF_status_check_and_report(void)
         report_msg.nodeid);
 }
 
-// we use cn reportMsg when in single-node cluster
-void initDNBarrierMsg(agent_to_cm_coordinate_barrier_status_report &barrierMsg, int i)
-{
-    barrierMsg.barrierID[0] = '\0';
-    barrierMsg.msg_type = MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER;
-    barrierMsg.node = g_currentNode->node;
-    barrierMsg.instanceId = g_currentNode->datanode[i].datanodeId;
-    barrierMsg.instanceType = INSTANCE_TYPE_DATANODE;
-    barrierMsg.query_barrierId[0] = '\0';
-    barrierMsg.is_barrier_exist = false;
-}
-
-// we use cn reportMsg when in single-node cluster
-void initDNBarrierMsgNew(Agent2CmBarrierStatusReport *barrierMsgNew, int i)
-{
-    errno_t rc = memset_s(barrierMsgNew, sizeof(AgentToCmserverDnSyncList), 0, sizeof(AgentToCmserverDnSyncList));
-    securec_check_errno(rc, (void)rc);
-
-    barrierMsgNew->msg_type = (int)MSG_AGENT_CM_INSTANCE_BARRIER_NEW;
-    barrierMsgNew->node = g_currentNode->node;
-    barrierMsgNew->instanceId = g_currentNode->datanode[i].datanodeId;
-    barrierMsgNew->instanceType = INSTANCE_TYPE_DATANODE;
-}
-
 void InitReportMsg(agent_to_cm_datanode_status_report *reportMsg, int index)
 {
     errno_t rc = 0;
@@ -1014,18 +1002,6 @@ void InitDnLocalPeerMsg(AgentCmDnLocalPeer *lpInfo, int32 index)
 void InitDNStatus(DnStatus *dnStatus, int i)
 {
     InitReportMsg(&dnStatus->reportMsg, i);
-
-    if ((undocumentedVersion == 0 || undocumentedVersion >= g_barrierSlotVersion) &&
-        g_disasterRecoveryType != DISASTER_RECOVERY_STREAMING) {
-        dnStatus->barrierMsgType = MSG_AGENT_CM_INSTANCE_BARRIER_NEW;
-        initDNBarrierMsgNew(&dnStatus->barrierMsgNew, i);
-    } else if (!isUpgradeCluster()) {
-        dnStatus->barrierMsgType = MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER;
-        initDNBarrierMsg(dnStatus->barrierMsg, i);
-    } else {
-        // won't check and report barrier
-        dnStatus->barrierMsgType = MSG_AGENT_CM_BUTT;
-    }
     InitDnLocalPeerMsg(&(dnStatus->lpInfo), i);
 }
 
@@ -1271,7 +1247,11 @@ void* DNStatusCheckMain(void * const arg)
           dnStatus.reportMsg.local_status.buildReason);
 
         (void)pthread_rwlock_wrlock(&(g_dnReportMsg[i].lk_lock));
-        rc = memcpy_s((void *)&(g_dnReportMsg[i].dnStatus), sizeof(DnStatus), (void *)&dnStatus, sizeof(DnStatus));
+        rc = memcpy_s((void *)&(g_dnReportMsg[i].dnStatus.lpInfo), sizeof(AgentCmDnLocalPeer),
+            (void *)&dnStatus.lpInfo, sizeof(AgentCmDnLocalPeer));
+        securec_check_errno(rc, (void)rc);
+        rc = memcpy_s((void *)&(g_dnReportMsg[i].dnStatus.reportMsg), sizeof(agent_to_cm_datanode_status_report),
+            (void *)&dnStatus.reportMsg, sizeof(agent_to_cm_datanode_status_report));
         securec_check_errno(rc, (void)rc);
         (void)pthread_rwlock_unlock(&(g_dnReportMsg[i].lk_lock));
 

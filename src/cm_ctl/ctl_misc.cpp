@@ -344,24 +344,6 @@ int do_check(void)
     return status;
 }
 
-static int CheckBinaryFileStatus(const char* binaryName)
-{
-    char gausshomePath[MAXPGPATH] = {0};
-    char binaryFilePath[MAXPGPATH] = {0};
-    int rc = cmctl_getenv("GAUSSHOME", gausshomePath, sizeof(gausshomePath));
-    if (rc != EOK) {
-        write_runlog(FATAL, "Line: %d.Get GAUSSHOME failed, please check.\n", __LINE__);
-        return -1;
-    }
-    rc = snprintf_s(binaryFilePath, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", gausshomePath, binaryName);
-    securec_check_intval(rc, (void)rc);
-    if (access(binaryFilePath, X_OK) != 0) {
-        write_runlog(DEBUG1, "binary file:%s is damaged.\n", binaryFilePath);
-        return -1;
-    }
-    return 0;
-}
-
 int CheckInstanceStatus(const char* processName, const char* cmdLine)
 {
     DIR* dir = NULL;
@@ -399,11 +381,6 @@ int CheckInstanceStatus(const char* processName, const char* cmdLine)
     rcs = snprintf_s(pid_post_path, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s", cmdLine, "postmaster.pid");
     securec_check_intval(rcs, (void)rcs);
     canonicalize_path(pid_post_path);
-
-    ret = CheckBinaryFileStatus(processName);
-    if (ret != 0) {
-        return PROCESS_BINARY_DAMAGED;
-    }
 
     if (strcmp(processName, "gaussdb") == 0) {
         pid_post = get_instances_pid(pid_post_path);
@@ -1022,6 +999,11 @@ void SendQuery(uint32 instanceId, int instanceType){
     return;
 }
 
+static bool CheckBuildCond(int32 localRole)
+{
+    return (localRole == INSTANCE_ROLE_STANDBY || localRole == INSTANCE_ROLE_CASCADE_STANDBY);
+}
+
 int DoBuild(const CtlOption *ctx)
 {
     int waitTime = BUILD_DN_TIMEOUT;
@@ -1122,7 +1104,7 @@ int DoBuild(const CtlOption *ctx)
                             success = true;
                         }
                     } else if (instStatusPtr->instance_type == INSTANCE_TYPE_DATANODE) {
-                        if ((instStatusPtr->data_node_member.local_status.local_role == INSTANCE_ROLE_STANDBY) &&
+                        if ((CheckBuildCond(instStatusPtr->data_node_member.local_status.local_role)) &&
                             (instStatusPtr->data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL)) {
                             success = true;
                         }
@@ -1135,7 +1117,7 @@ int DoBuild(const CtlOption *ctx)
                             FINISH_CONNECTION();
                         }
 
-                        if (instStatusPtr->data_node_member.local_status.local_role != INSTANCE_ROLE_STANDBY &&
+                        if (!CheckBuildCond(instStatusPtr->data_node_member.local_status.local_role) &&
                             instStatusPtr->data_node_member.local_status.db_state != INSTANCE_HA_STATE_BUILDING) {
                             dnRoleAbnormal++;
                         } else {
@@ -1147,7 +1129,7 @@ int DoBuild(const CtlOption *ctx)
                                 INSTANCE_HA_STATE_MANUAL_STOPPED) {
                                 write_runlog(ERROR, "build failed, instance is stopped.\n");
                             } else {
-                                write_runlog(ERROR, "build failed, instance role is not standby.\n");
+                                write_runlog(ERROR, "build failed, instance role is not standby or cascade standby.\n");
                             }
                             FINISH_CONNECTION();
                         }
@@ -1958,7 +1940,7 @@ static status_t CheckSetCmsPromoteModeParam()
     return CM_SUCCESS;
 }
 
-// cm_ctl set --cmsPromoteMode=[AUTO|PRIMARY_F] -n 1 -I 1
+// cm_ctl set --cmsPromoteMode=[AUTO|PRIMARY_F] -I 1
 static status_t DoSetCmsPromoteMode()
 {
     if (CheckSetCmsPromoteModeParam() != CM_SUCCESS) {
@@ -1992,9 +1974,8 @@ static status_t DoSetCmsPromoteMode()
     return SetCmsPromoteModeCore(&curInst, pMode);
 }
 
-static status_t SendDdbCmdMsgToCms(const char *cmd, const size_t cmdLen)
+static status_t SendDdbCmdMsgToCms(const char *cmd)
 {
-    int ret;
     errno_t rc;
     ExecDdbCmdMsg sendMsg;
 
@@ -2004,11 +1985,10 @@ static status_t SendDdbCmdMsgToCms(const char *cmd, const size_t cmdLen)
     securec_check_errno(rc, (void)rc);
 
     sendMsg.msgType = static_cast<int>(MSG_EXEC_DDB_COMMAND);
-    rc = memcpy_s(sendMsg.cmdLine, DCC_CMD_MAX_LEN, cmd, cmdLen);
+    rc = strcpy_s(sendMsg.cmdLine, DCC_CMD_MAX_LEN, cmd);
     securec_check_errno(rc, (void)rc);
 
-    ret = cm_client_send_msg(CmServer_conn, 'C', reinterpret_cast<char*>(&sendMsg), sizeof(ExecDdbCmdMsg));
-    if (ret != 0) {
+    if (cm_client_send_msg(CmServer_conn, 'C', reinterpret_cast<char*>(&sendMsg), sizeof(ExecDdbCmdMsg)) != 0) {
         FINISH_CONNECTION_WITHOUT_EXIT();;
         write_runlog(ERROR, "ctl send exec dcc cmd msg to cms failed.\n");
         (void)printf(_("exec dcc cmd fail.\n"));
@@ -2021,12 +2001,12 @@ static status_t SendDdbCmdMsgToCms(const char *cmd, const size_t cmdLen)
 static void OutPutCmdResult(const char *option, const ExecDdbCmdAckMsg *ackPtr)
 {
     if (ackPtr->isSuccess) {
-        if (ackPtr->outputLen < DCC_CMD_MAX_PARAMETER_LEN) {
+        if (ackPtr->outputLen < DCC_CMD_MAX_OUTPUT_LEN) {
             write_runlog(LOG, "exec dcc %s command success.\n", option);
             write_runlog(LOG, "%s\n", ackPtr->output);
         } else {
             write_runlog(LOG, "exec dcc %s command failed, error msg's buf is smaller(%d/%d).\n",
-                option, DCC_CMD_MAX_PARAMETER_LEN, ackPtr->outputLen);
+                option, DCC_CMD_MAX_OUTPUT_LEN, ackPtr->outputLen);
             write_runlog(LOG, "part result is:\n %s\n", ackPtr->output);
         }
     } else {
@@ -2073,22 +2053,28 @@ static void GetExecCmdResult(const char *option)
 void DoDccCmd(int argc, char **argv)
 {
     int ret;
-    char cmd[DCC_CMD_MAX_LEN];
     size_t curLen = 0;
-    size_t maxLen = static_cast<size_t>(DCC_CMD_MAX_LEN);
+    char cmd[DCC_CMD_MAX_LEN];
 
     if (argc <= OPTION_POS) {
         write_runlog(ERROR, "exec dcc command without param.\n");
         return;
     }
     for (int i = OPTION_POS; i < argc; ++i) {
-        if (curLen >= DCC_CMD_MAX_LEN) {
-            write_runlog(ERROR, "The cmd size is more than 1k, can't exec the cmd.\n");
+        size_t optionLen = strlen(argv[i]);
+        if (optionLen > CM_PATH_LENGTH) {
+            write_runlog(ERROR, "The option len(%zu) is more than 1k, can't exec the cmd.\n", optionLen);
             return;
         }
-        ret = snprintf_s((cmd + curLen), (maxLen - curLen), (maxLen - curLen - 1), " %s", argv[i]);
+        ++optionLen;
+        if ((curLen + optionLen) >= sizeof(cmd)) {
+            write_runlog(ERROR, "The cmd len is longer than %d, can't exec the cmd.\n", DCC_CMD_MAX_LEN);
+            return;
+        }
+        ret = snprintf_s((cmd + curLen), (sizeof(cmd) - curLen), (sizeof(cmd) - curLen - 1),
+            " %s", argv[i]);
         securec_check_intval(ret, (void)ret);
-        curLen = strlen(cmd);
+        curLen += optionLen;
     }
 
     do_conn_cmserver(false, 0);
@@ -2097,7 +2083,7 @@ void DoDccCmd(int argc, char **argv)
         return;
     }
 
-    if (SendDdbCmdMsgToCms(cmd, strlen(cmd)) != CM_SUCCESS) {
+    if (SendDdbCmdMsgToCms(cmd) != CM_SUCCESS) {
         return;
     }
 

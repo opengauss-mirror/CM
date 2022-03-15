@@ -142,6 +142,8 @@ void ProcessCltSendOper(CM_Connection *con, CltSendDdbOper *ddbOper)
     }
     ddbOper->key[MAX_PATH_LEN - 1] = '\0';
     ddbOper->value[MAX_PATH_LEN - 1] = '\0';
+    ddbOper->reserved[RESERVE_LEN - 1] = '\0';
+    ddbOper->threadName[THREAD_NAME_LEN - 1] = '\0';
     status_t st = CM_SUCCESS;
     DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
     char value[MAX_PATH_LEN] = {0};
@@ -369,6 +371,7 @@ void ProcessBuildMsg(CM_Connection *con, uint32 i, int j)
     buildMsg.wait_seconds = instStatus->command_member[j].time_out;
     buildMsg.term = instStatus->term;
     buildMsg.parallel = instStatus->command_member[j].parallel;
+    buildMsg.role = instInfo->role;
     if (buildMsg.instance_type == INSTANCE_TYPE_DATANODE) {
         if (g_clusterType == V3SingleInstCluster) {
             buildMsg.primaryNodeId = GetPrimaryDnIndex();
@@ -1144,7 +1147,7 @@ void SetAgentDataReportMsg(CM_Connection *con, CM_StringInfo inBuffer)
         if (g_single_node_cluster) {
             datanode_instance_arbitrate_single(con, agent_to_cm_datanode_status_ptr);
         } else if (g_multi_az_cluster) {
-                DatanodeInstanceArbitrate(con, agent_to_cm_datanode_status_ptr);
+            DatanodeInstanceArbitrate(con, agent_to_cm_datanode_status_ptr);
         } else {
             /* datanode instances arbitrate for primary-standby-dummy cluster */
             datanode_instance_arbitrate_for_psd(con, agent_to_cm_datanode_status_ptr);
@@ -1180,7 +1183,7 @@ static void DnBarrierReportRespToCm(cm_to_agent_barrier_info *barrierRespMsg)
     securec_check_errno(rc, (void)rc);
 }
 
-static void SetDatanodeBarrierInfo(const agent_to_cm_coordinate_barrier_status_report* barrierInfo)
+static void SetDatanodeBarrierInfo(const AgentToCmBarrierStatusReport* barrierInfo)
 {
     uint32 node = barrierInfo->node;
     uint32 instanceId = barrierInfo->instanceId;
@@ -1200,59 +1203,35 @@ static void SetDatanodeBarrierInfo(const agent_to_cm_coordinate_barrier_status_r
     securec_check_errno(rc, (void)rc);
     rc = memcpy_s(localRep->query_barrierId, BARRIERLEN, barrierInfo->query_barrierId, BARRIERLEN);
     securec_check_errno(rc, (void)rc);
-    localRep->barrierLSN = barrierInfo->barrierLSN;
-    localRep->archive_LSN = barrierInfo->archive_LSN;
-    localRep->flush_LSN = barrierInfo->flush_LSN;
-    localRep->ckpt_redo_point = barrierInfo->ckpt_redo_point;
     localRep->is_barrier_exist = barrierInfo->is_barrier_exist;
     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
 }
 
-static void ProcessDnBarrierinfo(CM_Connection *con, agent_to_cm_coordinate_barrier_status_report *barrierInfo)
+void ProcessDnBarrierinfo(CM_Connection *con, CM_StringInfo inBuffer)
 {
-    /* record barrier info to the coresponding report status. */
-    SetDatanodeBarrierInfo(barrierInfo);
-    if (backup_open == CLUSTER_STREAMING_STANDBY) {
-        /* response to cm agent. */
-        cm_to_agent_barrier_info barrierRespMsg;
-        DnBarrierReportRespToCm(&barrierRespMsg);
-        barrierRespMsg.msg_type = MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER;
-        barrierRespMsg.instanceId = barrierInfo->instanceId;
-        barrierRespMsg.node = barrierInfo->node;
-        (void)cm_server_send_msg(con, 'S', (char *)(&barrierRespMsg), sizeof(cm_to_agent_barrier_info), DEBUG5);
-    }
-}
-
-void SetDnBarrierInfo(CM_Connection *con, CM_StringInfo inBuffer)
-{
-    agent_to_cm_coordinate_barrier_status_report *DN_barrier_info = NULL;
-    DN_barrier_info = (agent_to_cm_coordinate_barrier_status_report *)CmGetmsgbytes(
-        inBuffer, sizeof(agent_to_cm_coordinate_barrier_status_report));
-    if (DN_barrier_info == NULL) {
+    AgentToCmBarrierStatusReport *barrierInfo = NULL;
+    barrierInfo = (AgentToCmBarrierStatusReport *)CmGetmsgbytes(inBuffer, sizeof(AgentToCmBarrierStatusReport));
+    if (barrierInfo == NULL) {
         write_runlog(ERROR, "MSG_AGENT_CM_DATA_INSTANCE_BARRIER is null. inBuffer->qtype: %d \n", inBuffer->qtype);
         return;
     }
-    DN_barrier_info->barrierID[BARRIERLEN - 1] = '\0';
-    if (DN_barrier_info->instanceType != INSTANCE_TYPE_DATANODE) {
-        write_runlog(ERROR,
-            "Instance type %d not equal INSTANCE_TYPE_DATANODE(%d) ! Maybe the msg_type send by remote "
-            "cm_agent not match with local cm_server."
-            "Check whether the version of cm_agent and cm_server on node %d is the same as localhost. "
-            "msg_type=%d, node=%d, instanceId=%d, instanceType=%d \n",
-            DN_barrier_info->instanceType,
-            INSTANCE_TYPE_DATANODE,
-            DN_barrier_info->node,
-            DN_barrier_info->msg_type,
-            DN_barrier_info->node,
-            DN_barrier_info->instanceId,
-            DN_barrier_info->instanceType);
-        return;
-    }
-    ProcessDnBarrierinfo(con, DN_barrier_info);
+    barrierInfo->global_achive_barrierId[BARRIERLEN - 1] = '\0';
+    barrierInfo->global_barrierId[BARRIERLEN - 1] = '\0';
+    barrierInfo->query_barrierId[BARRIERLEN - 1] = '\0';
+    barrierInfo->barrierID[BARRIERLEN - 1] = '\0';
+    SetDatanodeBarrierInfo(barrierInfo);
+    /* response to cm agent. */
+    cm_to_agent_barrier_info barrierRespMsg;
+    DnBarrierReportRespToCm(&barrierRespMsg);
+    barrierRespMsg.msg_type = MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER;
+    barrierRespMsg.instanceId = barrierInfo->instanceId;
+    barrierRespMsg.node = barrierInfo->node;
+    (void)cm_server_send_msg(con, 'S', (char *)(&barrierRespMsg), sizeof(cm_to_agent_barrier_info), DEBUG5);
+
     return;
 }
 
-static status_t CheckDdbType(const char *switchDdb)
+static status_t CheckDdbType(DDB_TYPE toDdbType)
 {
     bool isEtcdToDcc = false;
     bool isDccToEtcd = false;
@@ -1261,13 +1240,13 @@ static status_t CheckDdbType(const char *switchDdb)
         write_runlog(LOG, "[switch] ddb type is unknown.\n");
         return CM_ERROR;
     }
-    isEtcdToDcc = (g_dbType == DB_ETCD) && (GetStringToDdb(switchDdb) == DB_DCC);
-    isDccToEtcd = (g_dbType == DB_DCC) && (GetStringToDdb(switchDdb) == DB_ETCD);
+    isEtcdToDcc = (g_dbType == DB_ETCD) && (toDdbType == DB_DCC);
+    isDccToEtcd = (g_dbType == DB_DCC) && (toDdbType == DB_ETCD);
     if (isEtcdToDcc || isDccToEtcd) {
-        write_runlog(LOG, "[switch] can do switch ddb to %s\n", switchDdb);
+        write_runlog(LOG, "[switch] can do switch ddb to %d.\n", (int)toDdbType);
         return CM_SUCCESS;
     }
-    write_runlog(ERROR, "[switch] current ddb is %s, can't switch to %s.\n", GetDdbToString(g_dbType), switchDdb);
+    write_runlog(ERROR, "[switch] current ddb is %s, can't switch to %d.\n", GetDdbToString(g_dbType), (int)toDdbType);
 
     return CM_ERROR;
 }
@@ -1424,8 +1403,15 @@ static status_t SetCmsConfParam(const DDB_TYPE ddb)
 static void ProcessEnterMaintainMode(const CtlToCmsSwitch *switchMsg, CmsToCtlSwitchAck *ackMsg)
 {
     errno_t rc;
-
-    if (CheckDdbType(switchMsg->ddbType) != CM_SUCCESS) {
+    DDB_TYPE toDdbType = GetStringToDdb(switchMsg->ddbType);
+    if (toDdbType == DB_ETCD && g_etcd_num == 0) {
+        ackMsg->isSuccess = false;
+        rc = strcpy_s(ackMsg->errMsg, CM_PATH_LENGTH,
+            "can't switch to ETCD, cause no etcd is configured in the cluster.");
+        securec_check_errno(rc, (void)rc);
+        return;
+    }
+    if (CheckDdbType(toDdbType) != CM_SUCCESS) {
         ackMsg->isSuccess = false;
         rc = snprintf_s(ackMsg->errMsg, CM_PATH_LENGTH, CM_PATH_LENGTH - 1,
             "current ddb is %s, can't switch to %s, you can switch to DCC or ETCD.",

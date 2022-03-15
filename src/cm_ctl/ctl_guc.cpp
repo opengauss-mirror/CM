@@ -32,17 +32,16 @@
 #include "ctl_common.h"
 #include <termios.h>
 
-const int MAX_PARAM_VALUE_LEN = 2048;
-const int CONF_COMMAND_LEN = 16;
-const int NODE_TYPE_LEN = 32;
-const int MAX_STR_LEN = 1024;
-const int LOGFILE_MAX_SIZE = 2047;
-
+static const int MAX_PARAM_VALUE_LEN = 2048;
+static const int CONF_COMMAND_LEN = 16;
+static const int NODE_TYPE_LEN = 32;
 static const int KEY_LEN = 16;
-
 static char g_pidFile[CM_PATH_LENGTH];
 static char g_tmpFile[CM_PATH_LENGTH];
 static char g_confFile[CM_PATH_LENGTH];
+
+extern char g_appPath[MAXPGPATH];
+extern char mpp_env_separate_file[MAXPGPATH];
 
 static inline void SkipSpace(char *&ptr)
 {
@@ -304,7 +303,7 @@ static void GetRemoteGucCommand(const CtlOption *ctx, char *cmd, size_t cmdLen)
     ret = snprintf_s(nodeIdStr, sizeof(nodeIdStr), sizeof(nodeIdStr) - 1, "%u", ctx->comm.nodeId);
     securec_check_intval(ret, (void)ret);
 
-    ret = snprintf_s(cmd, cmdLen, cmdLen - 1, "cm_ctl %s --param %s -n %s ",
+    ret = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s/bin/%s %s --param %s -n %s ", g_appPath, CM_CTL_BIN_NAME,
         GetCtlCommandType(ctx->guc.gucCommand), GetInstanceType(ctx->guc.nodeType), nodeIdStr);
     securec_check_intval(ret, (void)ret);
     curLen = (size_t)ret;
@@ -352,7 +351,7 @@ static void PrintOneParameterAndValue(char *line)
 
 static void PrintValueAndParameter(char **lines)
 {
-    (void)printf(_("\nconf of node(%u):\n"), g_currentNode->node);
+    (void)printf(_("\n[conf of node(%u)]\n"), g_currentNode->node);
     for (int i = 0; lines[i] != NULL; ++i) {
         if (IsLineCommented(lines[i]) || (strcmp(lines[i], "\n") == 0)) {
             continue;
@@ -723,25 +722,54 @@ static uint32 GetNodeIndex(uint32 nodeId)
     return 0;
 }
 
-static status_t ListRemoteConf(const staticNodeConfig *node, const char *cmd)
+static status_t ListRemoteConf(const char *actualCmd, uint32 nodeId)
 {
-    int ret;
     char buf[MAX_PATH_LEN] = {0};
-    char actualCmd[MAX_PATH_LEN] = {0};
-
-    ret = snprintf_s(actualCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1, "ssh -q %s -C \"%s\"", node->sshChannel[0], cmd);
-    securec_check_intval(ret, (void)ret);
     FILE *fp = popen(actualCmd, "r");
+
     if (fp == NULL) {
-        write_runlog(DEBUG1, "execute cmd(%s) failed \n", actualCmd);
+        write_runlog(DEBUG1, "execute cmd(%s) failed.\n", actualCmd);
+        return CM_ERROR;
+    }
+    if (fgets(buf, sizeof(buf), fp) != NULL) {
+        (void)printf(_("%s"), buf);
+    } else {
+        write_runlog(LOG, "execute cmd (%s) failed, or conf of node(%u) is empty.\n", actualCmd, nodeId);
         return CM_ERROR;
     }
     while (fgets(buf, sizeof(buf), fp) != NULL) {
-        (void)printf("%s", buf);
+        (void)printf(_("%s"), buf);
     }
     (void)pclose(fp);
 
     return CM_SUCCESS;
+}
+
+static status_t ListRemoteConfMain(staticNodeConfig *node, const char *cmd)
+{
+    int ret;
+    char actualCmd[MAX_PATH_LEN] = {0};
+
+    for (uint32 i = 0; i < node->sshCount; ++i) {
+        // need skip pssh content, use sed to skip first line and last line
+        if (mpp_env_separate_file[0] == '\0') {
+            ret = snprintf_s(actualCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+                "pssh %s -H %s \"%s\" | sed '1d;$d'",
+                PSSH_TIMEOUT_OPTION, node->sshChannel[i], cmd);
+            securec_check_intval(ret, (void)ret);
+        } else {
+            ret = snprintf_s(actualCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+                "pssh %s -H %s \"source %s;%s \" | sed '1d;$d'",
+                PSSH_TIMEOUT_OPTION, node->sshChannel[i], mpp_env_separate_file, cmd);
+            securec_check_intval(ret, (void)ret);
+        }
+        if (ListRemoteConf(actualCmd, node->node) == CM_SUCCESS) {
+            write_runlog(DEBUG1, "execute remote cmd(%s) success.\n", actualCmd);
+            return CM_SUCCESS;
+        }
+    }
+
+    return CM_ERROR;
 }
 
 static status_t ProcessInRemoteInstance(const CtlOption *ctx)
@@ -758,7 +786,7 @@ static status_t ProcessInRemoteInstance(const CtlOption *ctx)
 
     GetRemoteGucCommand(ctx, remoteCmd, sizeof(remoteCmd));
     if (ctx->guc.gucCommand == LIST_CONF_COMMAND) {
-        return ListRemoteConf(&g_node[GetNodeIndex(ctx->comm.nodeId)], remoteCmd);
+        return ListRemoteConfMain(&g_node[GetNodeIndex(ctx->comm.nodeId)], remoteCmd);
     }
 
     if (ssh_exec(&g_node[GetNodeIndex(ctx->comm.nodeId)], remoteCmd) != 0) {

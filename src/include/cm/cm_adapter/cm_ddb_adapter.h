@@ -215,8 +215,8 @@ typedef status_t (*DrvSaveAllKV)(const DrvCon_t session, const DrvText *key, Drv
 typedef status_t (*DrvNodeState)(DrvCon_t session, char *memberName, DdbNodeState *nodeState);
 typedef const char *(*DrvLastError)(void);
 typedef int32 (*DdbNotifyStatusFunc)(DDB_ROLE ddbRole);
-typedef uint32 (*DrvDDbHealCount)(void);
-typedef bool (*IsDrvDdbHealth)(DDB_CHECK_MOD checkMod);
+typedef uint32 (*DrvDDbHealCount)(int timeOut);
+typedef bool (*IsDrvDdbHealth)(DDB_CHECK_MOD checkMod, int timeOut);
 typedef void (*DrvDdbFreeNodeInfo)(void);
 typedef void (*DrvDdbNotify)(DDB_ROLE dbRole);
 typedef void (*DrvDdbSetMinority)(bool isMinority);
@@ -287,7 +287,7 @@ int32 DdbRegisterStatusNotify(DdbNotifyStatusFunc ddbNotify);
 DdbNotifyStatusFunc GetDdbStatusFunc(void);
 
 void DdbFreeNodeInfo(const DdbConn *ddbConn);
-bool DdbIsValid(const DdbConn *ddbConn, DDB_CHECK_MOD checkMod);
+bool DdbIsValid(const DdbConn *ddbConn, DDB_CHECK_MOD checkMod, int timeOut = 2000);
 void DdbNotify(const DdbConn *ddbConn, DDB_ROLE dbRole);
 void DdbSetMinority(const DdbConn *ddbConn, bool isMinority);
 Alarm *DdbGetAlarm(const DdbConn *ddbConn, int index);

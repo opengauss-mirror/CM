@@ -56,6 +56,7 @@ status_t CreateEtcdThread(const DrvApiInfo *apiInfo);
 void DrvNotifyEtcd(DDB_ROLE dbRole);
 void DrvEtcdSetMinority(bool isMinority);
 status_t DrvEtcdNodeState(DrvCon_t session, char *memberName, DdbNodeState *nodeState);
+status_t DrvEtcdNodeHealth(DrvCon_t session, char *memberName, DdbNodeState *nodeState);
 status_t DrvEtcdRestConn(DrvCon_t sess, int32 timeOut);
 status_t InitEtcdServerSocket(EtcdServerSocket **etcdServerList, const DrvApiInfo *apiInfo);
 Alarm *DrvEtcdGetAlarm(int alarmIndex);

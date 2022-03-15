@@ -43,7 +43,6 @@
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_gtm.h"
 #include "cma_coordinator.h"
-#include "cma_coordinator_utils.h"
 #include "cma_cn_gtm_work_threads_mgr.h"
 #include "cma_status_check.h"
 #include "cma_instance_check.h"
@@ -67,7 +66,7 @@ bool g_poolerPingEnd = false;
 bool *g_coordinatorsDrop;
 datanode_failover *g_datanodesFailover = NULL;
 gtm_failover *g_gtmsFailover = NULL;
-uint64 g_obsDropCnXlog = 0;
+
 uint32 *g_droppedCoordinatorId = NULL;
 coordinator_status *g_cnStatus = NULL;
 uint32 g_cancelCoordinatorId = 0;
@@ -76,7 +75,6 @@ pthread_rwlock_t g_datanodesFailoverLock;
 pthread_rwlock_t g_gtmsFailoverLock;
 pthread_rwlock_t g_cnDropLock;
 pthread_rwlock_t g_coordinatorsCancelLock;
-pthread_rwlock_t g_coordinatorsDropCnObsXlogLock;
 
 bool g_poolerPingEndRequest = false;
 
@@ -208,8 +206,6 @@ void reload_cmagent_parameters(int arg)
 void SetFlagToUpdatePortForCnDn(int arg)
 {
     cm_agent_need_check_libcomm_port = true;
-    g_autoRepairCnt = 0;
-    RemoveStopAutoRepairFile();
 }
 #endif
 void GetCmdlineOpt(int argc, char *argv[])
@@ -582,7 +578,6 @@ int read_config_file_check(void)
         (void)pthread_rwlock_init(&g_cnDropLock, NULL);
         (void)pthread_rwlock_init(&g_coordinatorsCancelLock, NULL);
         (void)pthread_rwlock_init(&g_gtmsFailoverLock, NULL);
-        (void)pthread_rwlock_init(&g_coordinatorsDropCnObsXlogLock, NULL);
     } else if (status == OUT_OF_MEMORY) {
         fprintf(stderr, "read staticNodeConfig failed! out of memory\n");
         return -1;
@@ -977,10 +972,9 @@ void switch_system_call_log(const char *file_name)
         rcs = snprintf_s(historyLogName, MAXPGPATH, MAXPGPATH - 1, "%s/%s", sys_log_path, logFileBuff);
         securec_check_intval(rcs, );
 
-        /* copy current to history and clean current file. */
-        rcs = snprintf_s(command,
-            MAXPGPATH, MAXPGPATH - 1, "sed -i%s '1, $ d' \"%s\"; mv \"%s%s\" \"%s\"",
-            currentTime, system_call_log, system_call_log, currentTime, historyLogName);
+        /* copy current to history and clean current file. (sed -c -i not supported on some systems) */
+        rcs = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+            "cp %s %s;> %s", system_call_log, historyLogName, system_call_log);
         securec_check_intval(rcs, );
 
         rcs = system(command);
@@ -1625,6 +1619,7 @@ int main(int argc, char** argv)
         CreateCNStatusCheckThread();
         /* start ccn status checker */
         CreateCCNStatusCheckThread();
+        CreateCNBackupStatusCheckThread();
     }
 #endif
     InitNeedInfoRes();
@@ -1653,6 +1648,7 @@ int main(int argc, char** argv)
             CreateDNConnectionStatusCheckThread(ind);
             CreateDNCheckSyncListThread(ind);
 #ifdef ENABLE_MULTIPLE_NODES
+            CreateDNBackupStatusCheckThread(ind);
             CreateDNStorageScalingAlarmThread(ind);
 #endif
         }

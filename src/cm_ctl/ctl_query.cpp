@@ -63,7 +63,7 @@ extern int g_waitSeconds;
 extern uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM];
 extern bool g_commandRelationship;
 extern char g_cmData[CM_PATH_LENGTH];
-extern const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM];
+extern const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM + 1];
 extern uint32 g_commandOperationNodeId;
 extern char* g_logFile;
 extern CM_Conn* CmServer_conn;
@@ -78,36 +78,11 @@ extern bool g_datanodesBalance;
 extern cm_to_ctl_central_node_status g_centralNode;
 extern FILE* g_logFilePtr;
 
-
-static void PrintGlobalBarrierInfoNew(const cm2CtlGlobalBarrierNew *globalBarrierInfo)
-{
-    fprintf(g_logFilePtr, 
-        "global_recovery_barrierId: %s\n",
-        globalBarrierInfo->globalRecoveryBarrierId);
-    fprintf(g_logFilePtr, 
-        "GlobalBarrierSlotCount: %d\n",
-        globalBarrierInfo->globalStatus.slotCount);
-    for (int32 i = 0; i < globalBarrierInfo->globalStatus.slotCount; i++) {
-        const GlobalBarrierItem *curBarrier = &globalBarrierInfo->globalStatus.globalBarriers[i];
-        fprintf(g_logFilePtr,
-            "GlobalSlotName: %s\n",
-            curBarrier->slotname);
-        fprintf(g_logFilePtr,
-            "  GlobalBarrierId: %s\n",
-            curBarrier->globalBarrierId);
-        fprintf(g_logFilePtr, 
-            "  GlobalAchiveBarrierId: %s\n",
-            curBarrier->globalAchiveBarrierId);
-    }
-}
-
 int do_global_barrier_query(void)
 {
     ctl_to_cm_global_barrier_query cm_ctl_cm_query_content;
     GetUpgradeVersionFromCmaConfig();
-    cm_ctl_cm_query_content.msg_type = (undocumentedVersion == 0 || undocumentedVersion >= g_barrierSlotVersion)
-                                        ? MSG_CTL_CM_GLOBAL_BARRIER_QUERY_NEW
-                                        : MSG_CTL_CM_GLOBAL_BARRIER_QUERY;
+    cm_ctl_cm_query_content.msg_type = MSG_CTL_CM_GLOBAL_BARRIER_QUERY;
     cm_to_ctl_cluster_global_barrier_info *global_barrier_info;
     char *receiveMsg = NULL;
     int ret;
@@ -159,45 +134,18 @@ int do_global_barrier_query(void)
             global_barrier_info = (cm_to_ctl_cluster_global_barrier_info*) receiveMsg;
             switch (global_barrier_info->msg_type) {
                 case MSG_CM_CTL_GLOBAL_BARRIER_DATA_BEGIN:
-                    fprintf(g_logFilePtr,
-                        "global_barrierId: %s\n",
-                        global_barrier_info->global_barrierId);
-                    fprintf(g_logFilePtr, 
-                        "global_achive_barrierId: %s\n",
-                        global_barrier_info->global_achive_barrierId);
-                    fprintf(g_logFilePtr, 
-                        "global_recovery_barrierId: %s\n",
+                    fprintf(g_logFilePtr, "Global_target_barrierId: %s\n",
                         global_barrier_info->globalRecoveryBarrierId);
+                    fprintf(g_logFilePtr, "Global_query_barrierId: %s\n",
+                        global_barrier_info->global_barrierId);
                     break;
-                case MSG_CM_CTL_GLOBAL_BARRIER_DATA_BEGIN_NEW: {
-                    cm2CtlGlobalBarrierNew *globalBarrierInfo = (cm2CtlGlobalBarrierNew*) receiveMsg;
-                    PrintGlobalBarrierInfoNew(globalBarrierInfo);
-                    break;
-                }
                 case MSG_CM_CTL_GLOBAL_BARRIER_DATA:
                     cm_to_ctl_instance_barrier_info *instance_barrier_info;
                     instance_barrier_info = (cm_to_ctl_instance_barrier_info *)receiveMsg;
-                    fprintf(g_logFilePtr,
-                        "instanceId: %u\n",
-                        instance_barrier_info->instanceId);
-                    fprintf(g_logFilePtr,
-                        "instance_type: %s\n",
+                    fprintf(g_logFilePtr, "instanceId: %u\n", instance_barrier_info->instanceId);
+                    fprintf(g_logFilePtr, "instance_type: %s\n",
                         type_int_to_string(instance_barrier_info->instance_type));
-                    fprintf(g_logFilePtr,
-                        "ckpt_redo_point: %X/%X\n",
-                        uint32((instance_barrier_info->ckpt_redo_point) >> 32), uint32(instance_barrier_info->ckpt_redo_point));
-                    fprintf(g_logFilePtr,
-                        "barrierID: %s\n",
-                        instance_barrier_info->barrierID);
-                    fprintf(g_logFilePtr,
-                        "barrierLSN: %X/%X\n",
-                        uint32((instance_barrier_info->barrierLSN) >> 32), uint32(instance_barrier_info->barrierLSN));
-                    fprintf(g_logFilePtr,
-                        "archive_LSN: %X/%X\n",
-                        uint32((instance_barrier_info->archive_LSN) >> 32), uint32(instance_barrier_info->archive_LSN));
-                    fprintf(g_logFilePtr,
-                        "flush_LSN: %X/%X\n",
-                        uint32((instance_barrier_info->flush_LSN) >> 32), uint32(instance_barrier_info->flush_LSN));
+                    fprintf(g_logFilePtr, "barrierID: %s\n", instance_barrier_info->barrierID);
                     break;
                 case MSG_CM_CTL_BARRIER_DATA_END:
                     fprintf(g_logFilePtr, "end\n");
@@ -1039,16 +987,14 @@ static const char* query_cm_server_directory(uint32 node_id)
             cm_msg_type_ptr = (cm_msg_type*)receive_msg;
             if (cm_msg_type_ptr->msg_type == MSG_CM_CTL_CMSERVER) {
                 int local_role = 0;
-                bool is_pending = false;
                 cm_to_ctl_cmserver_status_ptr = (cm_to_ctl_cmserver_status*)receive_msg;
                 local_role = cm_to_ctl_cmserver_status_ptr->local_role;
-                is_pending = cm_to_ctl_cmserver_status_ptr->is_pending;
                 CMPQfinish(CmServer_conn1);
                 CmServer_conn1 = NULL;
                 if (hasFindCmSP && local_role == CM_SERVER_PRIMARY) {
                     local_role = CM_SERVER_STANDBY;
                 }
-                return server_role_to_string(local_role, is_pending);
+                return server_role_to_string(local_role);
             }
         }
 
@@ -1106,7 +1052,7 @@ static void GetCnStatus(char *cnStatus, size_t len, const cm_to_ctl_instance_sta
 {
     errno_t rc;
     int status = cmToCtlInstanceStatusPtr->coordinatemember.status;
-    if (undocumentedVersion == 0 || undocumentedVersion >= 92214) {
+    if (undocumentedVersion == 0 || undocumentedVersion >= 92515) {
         int dbState = cmToCtlInstanceStatusPtr->data_node_member.local_status.db_state;
         int buildReason = cmToCtlInstanceStatusPtr->data_node_member.local_status.buildReason;
         if (status == INSTANCE_ROLE_NORMAL && dbState != INSTANCE_HA_STATE_NORMAL) {

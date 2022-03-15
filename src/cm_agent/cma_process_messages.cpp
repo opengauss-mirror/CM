@@ -652,16 +652,13 @@ static void ExecuteBuildDatanodeCommand(bool is_single_node, BuildMode build_mod
     SYSTEMQUOTE "%s build -Z %s %s %s -D %s %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE,
     PG_CTL_NAME, is_single_node ? "single_node" : "datanode",
     build_mode_str, security_mode ? "-o \"--securitymode\"" : "", data_dir,
-    agent_backup_open == CLUSTER_OBS_STANDBY ? "" : termStr,
-    wait_seconds, system_call_log);
+    termStr, wait_seconds, system_call_log);
 #else
     rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
     SYSTEMQUOTE "%s build %s %s -D %s %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE,
     PG_CTL_NAME,
     build_mode_str, security_mode ? "-o \"--securitymode\"" : "", data_dir,
-    agent_backup_open == CLUSTER_OBS_STANDBY ? "" : termStr,
-    wait_seconds,
-    system_call_log);
+    termStr, wait_seconds, system_call_log);
 #endif
     securec_check_intval(rc, (void)rc);
 
@@ -869,7 +866,7 @@ static void ProcessBuildCommand(const char *dataDir, int instanceType, const cm_
 
     write_runlog(LOG, "%s\n", g_cmInstanceManualStartPath);
     if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
-        ProcessCrossClusterBuildCommand(instanceType, dataDir, buildMsg);
+        ProcessStreamingStandbyClusterBuildCommand(instanceType, dataDir, buildMsg);
         return;
     }
     if (FindDatanodeIndex(dnIndex, dataDir) != CM_SUCCESS) {
@@ -1631,7 +1628,6 @@ static void MsgCmCtlCmserver(const CM_Result* msg, char *dataPath, const cm_msg_
         return;
     }
     g_cmServerInstanceStatus = cmToCtlCmserverStatusPtr->local_role;
-    g_cmServerInstancePending = cmToCtlCmserverStatusPtr->is_pending;
 }
 
 static void MsgCmServerRepairCnAck(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
@@ -1697,23 +1693,6 @@ static void MsgCmAgentFinishRedo(const CM_Result* msg, char *dataPath, const cm_
         dataPath, msgTypeFinishRedoPtr->instanceId, msgTypeFinishRedoPtr->is_finish_redo_cmd_sent);
     if (ret != 0) {
         write_runlog(ERROR, "set finish redo to instance %u failed.\n", msgTypeFinishRedoPtr->instanceId);
-    }
-}
-
-static void MsgCmAgentObsDeleteXlog(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
-{
-    if (agent_backup_open == CLUSTER_OBS_STANDBY) {
-        const cm_to_agent_obs_delete_xlog* msgTypeObsDeleteXlog =
-            (const cm_to_agent_obs_delete_xlog *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_obs_delete_xlog));
-        if (msgTypeObsDeleteXlog == NULL) {
-            return;
-        }
-        int ret = ProcessObsDeleteXlogCmd(
-            msgTypeObsDeleteXlog->instanceId, msgTypeObsDeleteXlog->lsn);
-        if (ret != 0) {
-            write_runlog(
-                ERROR, "set obs delete xlog to instance %u failed.\n", msgTypeObsDeleteXlog->instanceId);
-        }
     }
 }
 
@@ -1898,18 +1877,6 @@ static void MsgCmAgentDropCn(const CM_Result* msg, char *dataPath, const cm_msg_
     process_drop_cn_command(msgTypeDropCnPtr, true);
 }
 
-static void MsgCmAgentDropCnObsXlog(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
-{
-    const cm_to_agent_obs_delete_xlog* msgTypeObsDeleteXlog =
-        (const cm_to_agent_obs_delete_xlog *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_obs_delete_xlog));
-    if (msgTypeObsDeleteXlog == NULL) {
-        return;
-    }
-    (void)pthread_rwlock_wrlock(&g_cnDropLock);
-    g_obsDropCnXlog = msgTypeObsDeleteXlog->lsn;
-    (void)pthread_rwlock_unlock(&g_cnDropLock);
-}
-
 static void MsgCmAgentDroppedCn(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     const cm_to_agent_drop_cn *msgTypeDropCnPtr =
@@ -1922,56 +1889,6 @@ static void MsgCmAgentDroppedCn(const CM_Result* msg, char *dataPath, const cm_m
     }
     g_syncDroppedCoordinator = true;
     process_drop_cn_command(msgTypeDropCnPtr, false);
-}
-
-static void MsgCmAgentNotifyCnRecover(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
-{
-    int ret;
-    const Cm2AgentNotifyCnRecoverByObs *notifyCnRecover =
-        (const Cm2AgentNotifyCnRecoverByObs *)CmGetmsgbytesPtr(msg, sizeof(Cm2AgentNotifyCnRecoverByObs));
-    if (notifyCnRecover == NULL) {
-        return;
-    }
-    ret = ProcessNotifyCnRecoverCommand(notifyCnRecover);
-    if (ret != 0) {
-        write_runlog(ERROR, "instance(%u) notify recover failed\n", notifyCnRecover->instanceId);
-    }
-}
-
-static void MsgCmAgentFullBackupCnObs(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
-{
-    int ret;
-    if (agent_backup_open == CLUSTER_PRIMARY) {
-        const Cm2AgentBackupCn2Obs *backupCnMsg =
-            (const Cm2AgentBackupCn2Obs *)CmGetmsgbytesPtr(msg, sizeof(Cm2AgentBackupCn2Obs));
-        if (backupCnMsg == NULL) {
-            return;
-        }
-        ret = ProcessBackupCn2ObsCommand(backupCnMsg);
-        if (ret != 0) {
-            write_runlog(ERROR, "instance(%u) backup to obs failed\n", backupCnMsg->instanceId);
-        }
-    } else {
-        write_runlog(ERROR, "MSG_CM_AGENT_FULL_BACKUP_CN_OBS only support in not backup cluster.\n");
-    }
-}
-
-static void MsgCmAgentRefreshObsDelText(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
-{
-    int ret;
-    if (agent_backup_open == CLUSTER_PRIMARY) {
-        const Cm2AgentRefreshObsDelText *refreshDelTextMsg =
-            (const Cm2AgentRefreshObsDelText *)CmGetmsgbytesPtr(msg, sizeof(Cm2AgentRefreshObsDelText));
-        if (refreshDelTextMsg == NULL) {
-            return;
-        }
-        ret = ProcessRefreshDelText2ObsCommand(refreshDelTextMsg);
-        if (ret != 0) {
-            write_runlog(ERROR, "instance(%u) refresh del text to obs failed\n", refreshDelTextMsg->instanceId);
-        }
-    } else {
-        write_runlog(ERROR, "MSG_CM_AGENT_REFRESH_OBS_DEL_TEXT only support in not backup cluster.\n");
-    }
 }
 
 static void MsgCmAgentCnInstanceBarrier(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
@@ -2019,7 +1936,7 @@ void CmServerCmdProcessorInit(void)
     g_cmsCmdProcessor[MSG_CM_AGENT_LOCK_CHOSEN_PRIMARY]         = MsgCmAgentLockChosenPrimary;
     g_cmsCmdProcessor[MSG_CM_AGENT_UNLOCK]                      = MsgCmAgentUnlock;
     g_cmsCmdProcessor[MSG_CM_AGENT_FINISH_REDO]                 = MsgCmAgentFinishRedo;
-    g_cmsCmdProcessor[MSG_CM_AGENT_OBS_DELETE_XLOG]             = MsgCmAgentObsDeleteXlog;
+    g_cmsCmdProcessor[MSG_CM_AGENT_OBS_DELETE_XLOG]             = NULL;
     g_cmsCmdProcessor[MSG_CM_AGENT_DN_SYNC_LIST]                = MsgCmAgentDnSyncList;
     g_cmsCmdProcessor[MSG_CM_AGENT_RES_STATUS_CHANGED]          = MsgCmAgentResStatusChanged;
     g_cmsCmdProcessor[MSG_CM_AGENT_RES_STATUS_LIST]             = MsgCmAgentResStatusList;
@@ -2032,11 +1949,11 @@ void CmServerCmdProcessorInit(void)
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN]                   = MsgCmAgentNotifyCn;
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN_CENTRAL_NODE]      = MsgCmAgentNotifyCnCentralNode;
     g_cmsCmdProcessor[MSG_CM_AGENT_DROP_CN]                     = MsgCmAgentDropCn;
-    g_cmsCmdProcessor[MSG_CM_AGENT_DROP_CN_OBS_XLOG]            = MsgCmAgentDropCnObsXlog;
+    g_cmsCmdProcessor[MSG_CM_AGENT_DROP_CN_OBS_XLOG]            = NULL;
     g_cmsCmdProcessor[MSG_CM_AGENT_DROPPED_CN]                  = MsgCmAgentDroppedCn;
-    g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN_RECOVER]           = MsgCmAgentNotifyCnRecover;
-    g_cmsCmdProcessor[MSG_CM_AGENT_FULL_BACKUP_CN_OBS]          = MsgCmAgentFullBackupCnObs;
-    g_cmsCmdProcessor[MSG_CM_AGENT_REFRESH_OBS_DEL_TEXT]        = MsgCmAgentRefreshObsDelText;
+    g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN_RECOVER]           = NULL;
+    g_cmsCmdProcessor[MSG_CM_AGENT_FULL_BACKUP_CN_OBS]          = NULL;
+    g_cmsCmdProcessor[MSG_CM_AGENT_REFRESH_OBS_DEL_TEXT]        = NULL;
     g_cmsCmdProcessor[MSG_CM_AGENT_COORDINATE_INSTANCE_BARRIER] = MsgCmAgentCnInstanceBarrier;
 #endif
 }

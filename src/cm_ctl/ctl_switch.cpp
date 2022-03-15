@@ -168,13 +168,16 @@ static status_t CheckDdbInMaintainFile(int &ddb, uint32 index, const char *gauss
 {
     int ret;
     int ddbInFile;
+    char ip[CM_IP_LENGTH] = {0};
     char buf[CM_PATH_LENGTH] = {0};
     char getDdbCmd[CM_PATH_LENGTH] = {0};
 
+    // need skip pssh content, use sed to skip last line
     ret = snprintf_s(getDdbCmd,
         CM_PATH_LENGTH,
         CM_PATH_LENGTH - 1,
-        "ssh -q %s -C \"cat %s/bin/cms_maintain\" ",
+        "pssh %s -H %s \"cat %s/bin/cms_maintain\" | sed '$d' ",
+        PSSH_TIMEOUT_OPTION,
         g_node[index].sshChannel[0],
         gausshome);
     securec_check_intval(ret, (void)ret);
@@ -186,7 +189,19 @@ static status_t CheckDdbInMaintainFile(int &ddb, uint32 index, const char *gauss
     }
 
     if (fgets(buf, sizeof(buf), fp) != NULL) {
-        ddbInFile = CmAtoi(buf, 0);
+        ret = sscanf_s(buf, "%s %d", ip, CM_IP_LENGTH, &ddbInFile);
+        check_sscanf_s_result(ret, 2);
+        securec_check_intval(ret, (void)ret);
+        if (strncmp(ip, g_node[index].sshChannel[0], strlen(g_node[index].sshChannel[0])) != 0) {
+            write_runlog(DEBUG1, "get ddb type from \"%s\" fail, err ip(%s).\n", g_node[index].sshChannel[0], ip);
+            (void)pclose(fp);
+            return CM_ERROR;
+        }
+        if (ddbInFile < 0 || ddbInFile > 1) {
+            write_runlog(DEBUG1, "get unknown ddb_type(%d).\n", ddbInFile);
+            (void)pclose(fp);
+            return CM_ERROR;
+        }
     } else {
         write_runlog(DEBUG1, "get ddb type from maintain fail.\n");
         (void)pclose(fp);

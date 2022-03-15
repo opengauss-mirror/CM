@@ -320,6 +320,23 @@ status_t DrvEtcdDelKV(const DrvCon_t session, DrvText *key, DrvDelOption *option
     return CM_SUCCESS;
 }
 
+status_t DrvEtcdNodeHealth(DrvCon_t session, char *memberName, DdbNodeState *nodeState)
+{
+    EtcdSession *etcdSession = (EtcdSession *)session;
+    char health[ETCD_STATE_LEN] = {0};
+    int32 res = etcd_cluster_health(*etcdSession, memberName, health, ETCD_STATE_LEN);
+    if (res != (int)ETCD_OK) {
+        nodeState->health = DDB_STATE_DOWN;
+        return CM_ERROR;
+    }
+    if (strcmp(health, "healthy") != 0) {
+        nodeState->health = DDB_STATE_DOWN;
+        return CM_ERROR;
+    }
+    nodeState->health = DDB_STATE_HEALTH;
+    return CM_SUCCESS;
+}
+
 status_t DrvEtcdNodeState(DrvCon_t session, char *memberName, DdbNodeState *nodeState)
 {
     EtcdSession *etcdSession = (EtcdSession *)session;
@@ -350,6 +367,32 @@ status_t DrvEtcdNodeState(DrvCon_t session, char *memberName, DdbNodeState *node
     return CM_SUCCESS;
 }
 
+static status_t GetEtcdNodeHealth(uint32 idx, DdbNodeState *nodeState, int timeOut)
+{
+    int logLevel = (g_modId == MOD_CMCTL) ? DEBUG1 : ERROR;
+    const uint32 serverLen = 2;
+    EtcdServerSocket server[serverLen] = {{0}};
+    server[0].host = g_etcdInfo[idx].host;
+    server[0].port = (unsigned short)g_etcdInfo[idx].port;
+    server[1].host = NULL;
+    EtcdSession sess = 0;
+    if (etcd_open(&sess, server, &g_etcdTlsPath, timeOut) != 0) {
+        write_runlog(logLevel, "open etcd server %s failed: %s.\n", server[0].host, get_last_error());
+        return CM_TIMEDOUT;
+    }
+    status_t st = DrvEtcdNodeHealth((DrvCon_t)(&sess), g_etcdInfo[idx].nodeInfo.nodeName, nodeState);
+    if (etcd_close(sess) != 0) {
+        write_runlog(logLevel, "line %s %d: cannot free conn, error is %s.\n", __FUNCTION__, __LINE__,
+            get_last_error());
+    }
+    if (st == CM_ERROR) {
+        write_runlog(logLevel, "line %s %d: cannot get ddbInstance, error is %s.\n", __FUNCTION__, __LINE__,
+            get_last_error());
+        return CM_ERROR;
+    }
+    return st;
+}
+
 static status_t GetEtcdNodeState(uint32 idx, DdbNodeState *nodeState)
 {
     int logLevel = (g_modId == MOD_CMCTL) ? DEBUG1 : ERROR;
@@ -377,13 +420,13 @@ static status_t GetEtcdNodeState(uint32 idx, DdbNodeState *nodeState)
     return st;
 }
 
-static status_t EtcdNodeIsHealth(uint32 idx)
+static status_t EtcdNodeIsHealth(uint32 idx, int timeOut)
 {
     int logLevel = (g_modId == MOD_CMCTL) ? DEBUG1 : ERROR;
     DdbNodeState nodeState;
     errno_t rc = memset_s(&nodeState, sizeof(DdbNodeState), 0, sizeof(DdbNodeState));
     securec_check_errno(rc, (void)rc);
-    status_t st = GetEtcdNodeState(idx, &nodeState);
+    status_t st = GetEtcdNodeHealth(idx, &nodeState, timeOut);
     if (st != CM_SUCCESS) {
         return st;
     }
@@ -397,7 +440,7 @@ static status_t EtcdNodeIsHealth(uint32 idx)
     return CM_SUCCESS;
 }
 
-static uint32 GetHealthEtcdFromAllEtcd(void)
+static uint32 GetHealthEtcdFromAllEtcd(int timeOut)
 {
     uint32 healthCount = 0;
     uint32 unhealthCount = 0;
@@ -405,7 +448,7 @@ static uint32 GetHealthEtcdFromAllEtcd(void)
     status_t st = CM_SUCCESS;
     uint32 healthEtcdIndex[MAX_ETCD_NODE_NUM] = {0};
     for (uint32 i = 0; i < g_etcdNum; i++) {
-        st = EtcdNodeIsHealth(i);
+        st = EtcdNodeIsHealth(i, timeOut);
         if (st == CM_TIMEDOUT) {
             continue;
         }
@@ -440,7 +483,7 @@ static uint32 GetHealthEtcdFromAllEtcd(void)
     return healthCount;
 }
 
-static uint32 GetHealthEtcdNodeCount(void)
+static uint32 GetHealthEtcdNodeCount(int timeOut)
 {
     uint32 i;
     uint32 healthCount = 0;
@@ -451,7 +494,7 @@ static uint32 GetHealthEtcdNodeCount(void)
             if (etcdIndex >= g_etcdNum) {
                 break;
             }
-            st = EtcdNodeIsHealth(etcdIndex);
+            st = EtcdNodeIsHealth(etcdIndex, timeOut);
             if (st != CM_SUCCESS) {
                 break;
             }
@@ -461,16 +504,16 @@ static uint32 GetHealthEtcdNodeCount(void)
             }
         }
     }
-    return GetHealthEtcdFromAllEtcd();
+    return GetHealthEtcdFromAllEtcd(timeOut);
 }
 
-bool IsEtcdHealth(DDB_CHECK_MOD checkMod)
+bool IsEtcdHealth(DDB_CHECK_MOD checkMod, int timeOut)
 {
     if (g_etcdNum == 0) {
         return true;
     }
     if (checkMod == DDB_HEAL_COUNT) {
-        uint32 healCount = GetHealthEtcdNodeCount();
+        uint32 healCount = GetHealthEtcdNodeCount(timeOut);
         if (healCount <= g_etcdNum / 2) {
             return false;
         }
@@ -484,6 +527,9 @@ bool IsEtcdHealth(DDB_CHECK_MOD checkMod)
 
 static void DrvEtcdFreeInfo(void)
 {
+    if (g_modId != MOD_CMCTL) {
+        return;
+    }
     FREE_AND_RESET(g_etcdInfo);
 }
 
@@ -635,7 +681,6 @@ static status_t EtcdLoadApi(const DrvApiInfo *apiInfo)
     drv->lastError = get_last_error;
 
     drv->isHealth = IsEtcdHealth;
-    drv->healCount = GetHealthEtcdNodeCount;
     drv->freeNodeInfo = DrvEtcdFreeInfo;
     drv->notifyDdb = DrvNotifyEtcd;
     drv->setMinority = DrvEtcdSetMinority;

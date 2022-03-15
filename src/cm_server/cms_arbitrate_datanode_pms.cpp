@@ -94,18 +94,6 @@ static void SendLock1Message(const DnArbCtx *ctx)
     (void)cm_server_send_msg(ctx->con, 'S', (char *)&lock1MsgPtr, sizeof(cm_to_agent_lock1));
 }
 
-static void SendObsDeleteXlogMessage(const DnArbCtx *ctx, uint64 minPriorXlog)
-{
-    cm_to_agent_obs_delete_xlog obsDeleteXlogMsgPtr;
-
-    obsDeleteXlogMsgPtr.msg_type = MSG_CM_AGENT_OBS_DELETE_XLOG;
-    obsDeleteXlogMsgPtr.node = ctx->node;
-    obsDeleteXlogMsgPtr.instanceId = ctx->instId;
-    obsDeleteXlogMsgPtr.lsn = minPriorXlog;
-    WriteKeyEventLog(KEY_EVENT_DELETE_XLOG, ctx->instId, "send delete xlog message to instance(%u)", ctx->instId);
-    (void)cm_server_send_msg(ctx->con, 'S', (char *)(&obsDeleteXlogMsgPtr), sizeof(obsDeleteXlogMsgPtr));
-}
-
 static void SendLock2Messange(const DnArbCtx *ctx, const char *dhost, int dlen, uint32 dport,
     uint32 primaryTerm)
 {
@@ -353,6 +341,7 @@ void DatanodeBuildExec(CM_Connection* con, db_state_role role, maintenance_mode 
     build_msg.wait_seconds = BUILD_TIMER_OUT;
     build_msg.full_build = 0;
     build_msg.term = find_primary_term(role.group_index);
+    build_msg.role = role.local_dynamic_role;
     if (build_msg.term == InvalidTerm && (!backup_open)) {
         write_runlog(DEBUG1, "%s, line %d: No legal primary for building instance %u", str, __LINE__, role.instance_id);
     }
@@ -531,39 +520,6 @@ static void DealDnArbitrateInDcf(const DnArbCtx *ctx)
     (void)CheckSwitchOverDone(ctx);
 }
 
-static void DealDnArbitrateInBackup(const DnArbCtx *ctx)
-{
-    const uint32 deleteObsXlogInterval = 10 * 60;
-    if (ctx->localRep->local_status.local_role == INSTANCE_ROLE_PENDING) {
-        SendNotifyMessage2Cma(ctx, INSTANCE_ROLE_STANDBY);
-        write_runlog(LOG, "line %d: notify local datanode to standby.\n", __LINE__);
-    }
-    int needDeleteObsXlogNum = 0;
-    uint64 minObsDeleteLsn = 0;
-    int32 count = GetInstanceCountsInGroup(ctx->groupIdx);
-    for (int i = 0; i < count; i++) {
-        if (ctx->dnReport[i].ckpt_redo_point > 0) {
-            needDeleteObsXlogNum++;
-            if (minObsDeleteLsn == 0 || ctx->dnReport[i].ckpt_redo_point > minObsDeleteLsn) {
-                minObsDeleteLsn = ctx->dnReport[i].ckpt_redo_point;
-            }
-        }
-    }
-    ctx->repGroup->obs_delete_xlog_time++;
-    if (needDeleteObsXlogNum > HALF_COUNT(count)
-        && ctx->repGroup->obs_delete_xlog_time >= (uint32)(count) * deleteObsXlogInterval) {
-        SendObsDeleteXlogMessage(ctx, minObsDeleteLsn);
-        write_runlog(LOG, "line %d: instance %u send_obs_delete_xlog_message.\n", __LINE__, ctx->instId);
-        ctx->repGroup->obs_delete_xlog_time = 0;
-    }
-    int32 buildReason = ctx->info.buildReason;
-    if (CheckBuildCond(ctx->localRep->local_status.db_state, ctx->groupIdx, ctx->memIdx, buildReason, false)) {
-        db_state_role role;
-        InitStateRole(&role, ctx);
-        DatanodeBuildExec(ctx->con, role, ctx->maintaMode);
-    }
-}
-
 static void DynamicPrimaryInCoreDump(DnArbCtx *ctx)
 {
     bool res = (ctx->localRep->local_status.local_role == INSTANCE_ROLE_PRIMARY &&
@@ -623,7 +579,7 @@ static void PrintLogIfInstanceIsUnheal(const DnArbCtx *ctx)
                       (dyRole == INSTANCE_ROLE_PRIMARY && staticRole != INSTANCE_ROLE_PRIMARY) ||
                       (log_min_messages <= DEBUG1);
     if (isUnhealth) {
-        GroupStatusShow("[InstanceIsUnheal]", ctx->groupIdx, ctx->instId, 0, false);
+        PrintCurAndPeerDnInfo(ctx, "[InstanceIsUnheal]");
     }
 }
 
@@ -941,22 +897,33 @@ static bool DnArbitrateInAsync(DnArbCtx *ctx)
     return false;
 }
 
-static void SendBuildMsg(const DnArbCtx *ctx)
+static bool BuildPreCheck(const DnArbCtx *ctx)
 {
+    if (backup_open == CLUSTER_STREAMING_STANDBY) {
+        return true;
+    }
+
     if ((ctx->info.dyRole != INSTANCE_ROLE_STANDBY && ctx->info.dyRole != INSTANCE_ROLE_CASCADE_STANDBY) ||
         ctx->info.dbState != INSTANCE_HA_STATE_NEED_REPAIR) {
-        return;
+        return false;
     }
 
-    const char *str = "[SendBuildMsg]";
     if (ctx->dyNorPrim.count == 0) {
         if (ctx->dyPrim.count != 0 || log_min_messages <= DEBUG1) {
-            write_runlog(WARNING, "%s, inst(%u): cannot send build msg, because primary[sta: %d, dy: %d, dyNor: %d].\n",
-                str, ctx->instId, ctx->staPrim.count, ctx->dyPrim.count, ctx->dyNorPrim.count);
+            write_runlog(WARNING, "Inst(%u): cannot send build msg, because primary[sta: %d, dy: %d, dyNor: %d].\n",
+                ctx->instId, ctx->staPrim.count, ctx->dyPrim.count, ctx->dyNorPrim.count);
         }
+        return false;
+    }
+    return true;
+}
+
+static void SendBuildMsg(const DnArbCtx *ctx)
+{
+    if (!BuildPreCheck(ctx)) {
         return;
     }
-
+    const char *str = "[SendBuildMsg]";
     int32 buildReason = ctx->info.buildReason;
     if (CheckBuildCond(ctx->info.dbState, ctx->groupIdx, ctx->memIdx, buildReason, false)) {
         GroupStatusShow(str, ctx->groupIdx, ctx->instId, -1, false);
@@ -2073,6 +2040,7 @@ static void ChangeRole2CasCade(const DnArbCtx *ctx, const char *str)
                 str, __LINE__, ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, switchIdx));
             return;
         }
+        SendNotifyMessage2Cma(ctx, ctx->localRole->role);
         SendRestartMsg(ctx, str);
     } else if (ctx->info.dyRole != INSTANCE_ROLE_CASCADE_STANDBY && IsTermLsnValid(ctx->info.term, ctx->info.lsn)) {
         if (ctx->info.dyRole != INSTANCE_ROLE_PENDING) {
@@ -2152,10 +2120,7 @@ static void DnArbitrateInner(DnArbCtx *ctx)
         DealDnArbitrateInDcf(ctx);
         return;
     }
-    if (backup_open == CLUSTER_OBS_STANDBY) {
-        DealDnArbitrateInBackup(ctx);
-        return;
-    }
+
     AddArbitrateTime(ctx);
     status_t resStatus = ArbitrateUnhealDyPrim(ctx);
     if (resStatus != CM_SUCCESS) {

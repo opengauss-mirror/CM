@@ -147,7 +147,6 @@ static void SetReloadDdbConfigFlag(int arg)
 {
     if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
         g_SetReplaceCnStatus = true;
-        write_runlog(LOG, "current cmserver is primary, set flag to change replace cn status.\n");
     }
 }
 
@@ -1346,8 +1345,7 @@ static int cm_server_init_ha_status(void)
 {
     int ret;
     g_HA_status->status = CM_STATUS_STARTING;
-    g_HA_status->local_role = CM_SERVER_INIT;
-    g_HA_status->peer_role = CM_SERVER_INIT;
+    g_HA_status->local_role = CM_SERVER_STANDBY;
     ret = pthread_rwlock_init(&(g_HA_status->ha_lock), NULL);
     if (ret != 0) {
         write_runlog(LOG, "CMThreadsData init lock failed !\n");
@@ -2427,7 +2425,7 @@ static int server_loop(void)
 
     for (;;) {
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);
-        if (!cm_server_pending && g_HA_status->local_role == CM_SERVER_PRIMARY) {
+        if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
             if (g_isStart && (endTime.tv_sec - startTime.tv_sec) >= totalTime) {
                 g_isStart = false;
             }

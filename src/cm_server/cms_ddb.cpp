@@ -102,9 +102,7 @@ static bool IsNeedSyncStRoleFromDdb(uint32 groupIdx)
     if (g_instance_group_report_status_ptr[groupIdx].instance_status.ddbSynced == 0) {
         return true;
     }
-    if (cm_server_pending) {
-        return true;
-    }
+
     return false;
 }
 
@@ -669,7 +667,7 @@ void GetCoordinatorDynamicConfigChangeFromDdbNew(uint32 groupIdx)
     }
     if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
         GetCnStatusRoleFromDdbInCmsPrimary(groupIdx);
-    } else if (g_HA_status->local_role != CM_SERVER_PRIMARY || cm_server_pending == true) {
+    } else if (g_HA_status->local_role != CM_SERVER_PRIMARY) {
         GetCnStatusFromDdbForStandbyCm();
     }
 }
@@ -1247,7 +1245,7 @@ bool GetDnFailStatusFromDdb(int *statusOnline, int len)
             write_runlog(ERROR, "GetDnFailStatusFromDdb failed %d\n", dbResult);
             return false;
         }
-        if (value != NULL) {
+        if (statusOnline != NULL) {
             *(statusOnline + i) = (int)strtol(value, NULL, 10);
         }
     }
@@ -1295,7 +1293,7 @@ bool GetOnlineStatusFromDdb(int *statusOnline, int len)
             write_runlog(ERROR, "GetOnlineStatusFromDdb failed, %d\n", dbResult);
             return false;
         }
-        if (value != NULL) {
+        if (statusOnline != NULL) {
             *(statusOnline + i) = (int)strtol(value, NULL, 10);
         }
     }
@@ -1792,14 +1790,14 @@ static status_t GetKerberosValueFromDDb(char *value, uint32 len, int32 idx)
 
 void CmsGetKerberosInfoFromDdb()
 {
-    char kerberosValue[DDB_MIN_VALUE_LEN] = {0};
+    char kerberosValue[MAX_PATH_LEN] = {0};
     char *tempPtr = NULL;
     char *outPtr = NULL;
     char delims[] = ",";
     errno_t rc;
     status_t st = CM_SUCCESS;
     for (int i = 0; i < KERBEROS_NUM; i++) {
-        st = GetKerberosValueFromDDb(kerberosValue, DDB_MIN_VALUE_LEN, i);
+        st = GetKerberosValueFromDDb(kerberosValue, MAX_PATH_LEN, i);
         if (st != CM_SUCCESS) {
             continue;
         }
@@ -1815,8 +1813,8 @@ void CmsGetKerberosInfoFromDdb()
         g_kerberos_group_report_status.kerberos_status.node[i] = (uint32)strtol(tempPtr, NULL, 10);
         /* get kerberos nodeName */
         tempPtr = strtok_r(NULL, delims, &outPtr);
-        if (tempPtr == NULL) {
-            write_runlog(ERROR, "/%s/kerberosKey%d get ddb nodename.\n", pw->pw_name, i);
+        if (tempPtr == NULL || strlen(tempPtr) > CM_NODE_NAME) {
+            write_runlog(ERROR, "/%s/kerberosKey%d get ddb nodename(%s).\n", pw->pw_name, i, tempPtr);
             return;
         }
         rc = strncpy_s(g_kerberos_group_report_status.kerberos_status.nodeName[i],
@@ -1824,12 +1822,12 @@ void CmsGetKerberosInfoFromDdb()
         securec_check_errno(rc, (void)rc);
         /* get kerberos kerberos_ip */
         tempPtr = strtok_r(NULL, delims, &outPtr);
-        if (tempPtr == NULL) {
-            write_runlog(ERROR, "/%s/kerberosKey%d get ddb ip.\n", pw->pw_name, i);
+        if (tempPtr == NULL || strlen(tempPtr) > CM_IP_LENGTH) {
+            write_runlog(ERROR, "/%s/kerberosKey%d get ddb ip(%s).\n", pw->pw_name, i, tempPtr);
             return;
         }
         rc = strncpy_s(g_kerberos_group_report_status.kerberos_status.kerberos_ip[i],
-            CM_NODE_NAME, tempPtr, strlen(tempPtr));
+            CM_IP_LENGTH, tempPtr, strlen(tempPtr));
         securec_check_errno(rc, (void)rc);
         /* get kerberos port */
         tempPtr = strtok_r(NULL, delims, &outPtr);

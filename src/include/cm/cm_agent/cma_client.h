@@ -38,7 +38,7 @@ int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg);
 /* Agent to DN connection */
 int ProcessLockNoPrimaryCmd(uint32 instId);
 int ProcessLockChosenPrimaryCmd(const cm_to_agent_lock2 *msgTypeLock2Ptr);
-int ProcessObsDeleteXlogCmd(uint32 instance_id, uint64 lsn);
 void *DNSyncCheckMain(void * const arg);
-void ProcessCrossClusterBuildCommand(int instanceType, const char* dataDir, const cm_to_agent_build *buildMsg);
+void ProcessStreamingStandbyClusterBuildCommand(int instanceType, const char* dataDir, const cm_to_agent_build *buildMsg);
+void* DNBackupStatusCheckMain(void *arg);
 #endif  // CM_CMA_CLIENT_ADPT_H

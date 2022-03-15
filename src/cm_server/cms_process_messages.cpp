@@ -63,18 +63,20 @@ typedef struct _init_node_ {
     int primaryDn;
     int normalPrimaryDn;
     int normalStandbyDn[AZ_MEMBER_MAX_COUNT];
-    int normalPrimaryDnInCurSyncList;
-    int normalStandbyDnInCurSyncList;
+    int norPrimInCurSL;
+    int normStdbInCurSL;
     int normalVoteAzStandby;
     int normalVoteAzPrimary;
     uint32 primaryId;
-    uint32 primaryInVoteAz;
+    uint32 primInVA;
     int32 casStandby;
     int32 casNorStandby;
+    int32 curStatus;
     char primaryStr[MAX_PATH_LEN];
     char standbyStr[MAX_PATH_LEN];
     char casStr[MAX_PATH_LEN];
     char casNorStr[MAX_PATH_LEN];
+    char methodStr[MAX_PATH_LEN];
 } InitNodeMsg;
 
 CltCmdProc g_cmdProc[MSG_CM_TYPE_CEIL] = {0};
@@ -197,12 +199,7 @@ void CheckCoordinateStatus(uint32 *cn_count, uint32 *abnormal_cn_count, uint32 i
         (g_instance_group_report_status_ptr[i].instance_status.coordinatemember.status.status == INSTANCE_ROLE_NORMAL &&
             g_instance_group_report_status_ptr[i].instance_status.coordinatemember.status.db_state ==
                 INSTANCE_HA_STATE_STARTING)) {
-        if (backup_open == CLUSTER_OBS_STANDBY &&
-            g_instance_group_report_status_ptr[i].instance_status.coordinatemember.status.db_state ==
-                INSTANCE_HA_STATE_STARTING) {
-        } else {
-            (*abnormal_cn_count)++;
-        }
+        (*abnormal_cn_count)++;
     }
 
     return;
@@ -405,11 +402,11 @@ static void InitMultiAzDataNodePrimaryStatus(uint32 groupIdx, int memberIdx, Ini
     if (status == INSTANCE_HA_STATE_NORMAL) {
         nodeMsg->normalPrimaryDn++;
         if (IsInstanceIdInSyncList(dnRole->instanceId, &(instRep->currentSyncList))) {
-            ++nodeMsg->normalPrimaryDnInCurSyncList;
+            ++nodeMsg->norPrimInCurSL;
             nodeMsg->primaryId = dnRole->instanceId;
         } else if (IsCurInstanceInVoteAz(groupIdx, memberIdx)) {
             ++nodeMsg->normalVoteAzPrimary;
-            nodeMsg->primaryInVoteAz = dnRole->instanceId;
+            nodeMsg->primInVA = dnRole->instanceId;
         }
         GetInstanceStrInfo(dnRole->instanceId, nodeMsg->primaryStr, MAX_PATH_LEN);
     }
@@ -466,7 +463,7 @@ status_t InitMultiAzDataNodeStatus(uint32 i, int *minorityAz, InitNodeMsg *nodeM
         } else if (localRole == INSTANCE_ROLE_STANDBY && statusNormal) {
             nodeMsg->normalStandbyDn[azIndex]++;
             if (IsInstanceIdInSyncList(dnRole->instanceId, &(instRep->currentSyncList))) {
-                ++nodeMsg->normalStandbyDnInCurSyncList;
+                ++nodeMsg->normStdbInCurSL;
             } else if (IsCurInstanceInVoteAz(i, j)) {
                 ++nodeMsg->normalVoteAzStandby;
             }
@@ -474,18 +471,6 @@ status_t InitMultiAzDataNodeStatus(uint32 i, int *minorityAz, InitNodeMsg *nodeM
         }
     }
     return CM_SUCCESS;
-}
-
-int ProcessDataNodeStatusObsStandby(int normalStandbyDnSum, int groupDnNum)
-{
-    if ((normalStandbyDnSum < groupDnNum && normalStandbyDnSum > groupDnNum / 2) ||
-        (g_dn_replication_num == DOUBLE_REPLICATION && normalStandbyDnSum == 1)) {
-        g_HA_status->status = CM_STATUS_DEGRADE;
-    } else if (normalStandbyDnSum <= groupDnNum / 2) {
-        g_HA_status->status = CM_STATUS_NEED_REPAIR;
-        return -1;
-    }
-    return 0;
 }
 
 int ProcessDataNodeStatusStreamingStandby(int normalStandbyDnSum, int groupDnNum, const InitNodeMsg *nodeMsg)
@@ -573,25 +558,60 @@ int ProcessHaStatusWhenNoBackup(int normalStandbyDnSum, int groupDnNum, int mino
     return 0;
 }
 
-static int ProcessHaStatus2AzStartSyncThr(int count, int groupDnNum, const InitNodeMsg *nodeMsg)
+static void PrintClusterStatus(uint32 groupIdx, int32 groupDnNum, const InitNodeMsg *nodeMsg)
 {
-    if ((nodeMsg->normalPrimaryDnInCurSyncList + nodeMsg->normalVoteAzPrimary) != 1 ||
-        nodeMsg->normalStandbyDnInCurSyncList < count / 2) {
-        g_HA_status->status = CM_STATUS_NEED_REPAIR;
+    if (nodeMsg->curStatus == 0 && log_min_messages > LOG) {
+        return;
+    }
+    uint32 instId = g_instance_role_group_ptr[groupIdx].instanceMember[0].instanceId;
+    cm_instance_report_status *report = &(g_instance_group_report_status_ptr[groupIdx].instance_status);
+    int count = (report->currentSyncList.count == 0) ? groupDnNum : report->currentSyncList.count;
+    char syncList[MAX_PATH_LEN] = {0};
+    char voteAzList[MAX_PATH_LEN] = {0};
+    GetSyncListString(&(report->currentSyncList), syncList, MAX_PATH_LEN);
+    GetDnStatusString(&(report->voteAzInstance), voteAzList, MAX_PATH_LEN);
+    write_runlog(LOG, "%s: instanceId(%u) count: %d, groupDnNum: %d, "
+        "dn status:[primary: [%s], standby:[%s], cascade:[(%s): (%s)]], "
+        "syncList: [cur: [%s], norPrim: [%d], norSdb: [%d]], "
+        "voteAZ: [prim: (%u), list: [%s]], cluster_state=%d, current_cluster_az_status is %d.\n",
+        nodeMsg->methodStr, instId, count, groupDnNum,
+        nodeMsg->primaryStr, nodeMsg->standbyStr, nodeMsg->casNorStr, nodeMsg->casStr,
+        syncList, nodeMsg->norPrimInCurSL, nodeMsg->normStdbInCurSL,
+        nodeMsg->primInVA, voteAzList, nodeMsg->curStatus, (int)current_cluster_az_status);
+}
+
+static void SetNodeMsgMethodStr(InitNodeMsg *nodeMsg, const char *str)
+{
+    errno_t rc = strcpy_s(nodeMsg->methodStr, MAX_PATH_LEN, str);
+    securec_check_errno(rc, (void)rc);
+}
+
+static void SetNodeMsgCurState(InitNodeMsg *nodeMsg, int32 status)
+{
+    g_HA_status->status = status;
+    nodeMsg->curStatus = status;
+}
+
+static int ProcessHaStatus2AzStartSyncThr(int count, int groupDnNum, InitNodeMsg *nodeMsg)
+{
+    SetNodeMsgMethodStr(nodeMsg, "[ProcessHaStatus2AzStartSyncThr]");
+    if ((nodeMsg->norPrimInCurSL + nodeMsg->normalVoteAzPrimary) != 1 || nodeMsg->normStdbInCurSL < count / 2) {
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
         return -1;
     }
     if ((count + nodeMsg->normalVoteAzPrimary + nodeMsg->normalVoteAzStandby + nodeMsg->casNorStandby) != groupDnNum) {
-        g_HA_status->status = CM_STATUS_DEGRADE;
-    } else if (nodeMsg->normalPrimaryDnInCurSyncList + nodeMsg->normalStandbyDnInCurSyncList < count) {
-        g_HA_status->status = CM_STATUS_DEGRADE;
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_DEGRADE);
+    } else if (nodeMsg->norPrimInCurSL + nodeMsg->normStdbInCurSL < count) {
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_DEGRADE);
     }
-    write_runlog(LOG, "process ha status end, status = %d\n", g_HA_status->status);
+    write_runlog(DEBUG1, "process ha status end, status = %d\n", g_HA_status->status);
 
     return 1;
 }
 
-int JudgeAz3DeployMent(const int *statusDnFail, int i, const InitNodeMsg *nodeMsg)
+int JudgeAz3DeployMent(const int *statusDnFail, int i, InitNodeMsg *nodeMsg)
 {
+    SetNodeMsgMethodStr(nodeMsg, "[JudgeAz3DeployMent]");
     const int one_hundred = 100;
     /* step3: complex situation judgement, can not decide base on
     synchronous_standby_names since time delay */
@@ -603,7 +623,7 @@ int JudgeAz3DeployMent(const int *statusDnFail, int i, const InitNodeMsg *nodeMs
                 judgeHAStatus(nodeMsg->normalStandbyDn, nodeMsg->dnNum, AZ1_INDEX, i)) ||
             (current_cluster_az_status >= AnyAz2 && current_cluster_az_status <= FirstAz2 &&
                 judgeHAStatus(nodeMsg->normalStandbyDn, nodeMsg->dnNum, AZ2_INDEX, i))) {
-            g_HA_status->status = CM_STATUS_NEED_REPAIR;
+            SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
             write_runlog(LOG,
                 "Line:%d, statusDnFail[AZ1_INDEX] = %d, statusDnFail[AZ2_INDEX] = %d\n",
                 __LINE__,
@@ -613,18 +633,18 @@ int JudgeAz3DeployMent(const int *statusDnFail, int i, const InitNodeMsg *nodeMs
         return -1;
     } else if ((statusDnFail[AZ1_INDEX] * one_hundred) / ((int)g_datanode_instance_count) >= az_switchover_threshold &&
                judgeHAStatus(nodeMsg->normalStandbyDn, nodeMsg->dnNum, AZ2_INDEX, i)) {
-        g_HA_status->status = CM_STATUS_NEED_REPAIR;
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
         write_runlog(LOG, "Line:%d, statusDnFail[AZ2_INDEX] = %d\n", __LINE__, statusDnFail[AZ2_INDEX]);
         return -1;
     } else if ((statusDnFail[AZ2_INDEX] * one_hundred) / ((int)g_datanode_instance_count) >= az_switchover_threshold &&
                judgeHAStatus(nodeMsg->normalStandbyDn, nodeMsg->dnNum, AZ1_INDEX, i)) {
-        g_HA_status->status = CM_STATUS_NEED_REPAIR;
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
         write_runlog(LOG, "Line:%d, statusDnFail[AZ1_INDEX] = %d\n", __LINE__, statusDnFail[AZ1_INDEX]);
         return -1;
     }
     if (nodeMsg->normalStandbyDn[AZ1_INDEX] != 0 && nodeMsg->normalStandbyDn[AZ2_INDEX] != 0 &&
         judgeHAStatus(nodeMsg->normalStandbyDn, nodeMsg->dnNum, AZ_ALL_INDEX, i)) {
-        g_HA_status->status = CM_STATUS_NEED_REPAIR;
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
         write_runlog(LOG,
             "Line:%d, normalStandbyDn[AZ1_INDEX] = %d, normalStandbyDn[AZ2_INDEX] = %d\n",
             __LINE__,
@@ -635,23 +655,24 @@ int JudgeAz3DeployMent(const int *statusDnFail, int i, const InitNodeMsg *nodeMs
     return 0;
 }
 
-static int32 CheckStatusInCascade(int32 normalStandbyDnSum, int32 groupDnNum, const InitNodeMsg *nodeMsg)
+static int32 CheckStatusInCascade(int32 normalStandbyDnSum, int32 groupDnNum, InitNodeMsg *nodeMsg)
 {
     if (nodeMsg->casStandby == 0 || (g_isEnableUpdateSyncList != CANNOT_START_SYNCLIST_THREADS)) {
         return 0;
     }
+    SetNodeMsgMethodStr(nodeMsg, "[CheckStatusInCascade]");
     if (normalStandbyDnSum < (groupDnNum - nodeMsg->casStandby) / 2 || nodeMsg->normalPrimaryDn != 1) {
-        g_HA_status->status = CM_STATUS_NEED_REPAIR;
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
         return -1;
     }
     if ((normalStandbyDnSum + nodeMsg->casNorStandby) < (groupDnNum - 1)) {
-        g_HA_status->status = CM_STATUS_DEGRADE;
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_DEGRADE);
     }
     return 1;
 }
 
 int ProcessHaStatus2Az(
-    const int *statusDnFail, int i, int normalStandbyDnSum, int groupDnNum, const InitNodeMsg *nodeMsg)
+    const int *statusDnFail, int i, int normalStandbyDnSum, int groupDnNum, InitNodeMsg *nodeMsg)
 {
     int32 ret = CheckStatusInCascade(normalStandbyDnSum, groupDnNum, nodeMsg);
     if (ret != 0) {
@@ -661,20 +682,7 @@ int ProcessHaStatus2Az(
     we need judge the Ha status specially */
     int count = (g_instance_group_report_status_ptr[i].instance_status.currentSyncList.count == 0) ?
         groupDnNum : g_instance_group_report_status_ptr[i].instance_status.currentSyncList.count;
-    char syncList[MAX_PATH_LEN] = {0};
-    char voteAzList[MAX_PATH_LEN] = {0};
-    GetSyncListString(
-        &(g_instance_group_report_status_ptr[i].instance_status.currentSyncList), syncList, sizeof(syncList));
-    GetDnStatusString(
-        &(g_instance_group_report_status_ptr[i].instance_status.voteAzInstance), voteAzList, sizeof(voteAzList));
-    write_runlog(LOG,
-        "instanceId(%u) count is %d, groupDnNum=%d, normalPrimaryDnInCurSyncList=%d, "
-        "normalStandbyDnInCurSyncList=%d, primary is [%u], currentSyncList is [%s], "
-        "primary in voteAz is [%u], voteAzList is [%s], cascadeStr is [[%s]: [%s]].\n",
-        g_instance_role_group_ptr[i].instanceMember[0].instanceId, count, groupDnNum,
-        nodeMsg->normalPrimaryDnInCurSyncList, nodeMsg->normalStandbyDnInCurSyncList,
-        nodeMsg->primaryId, syncList, nodeMsg->primaryInVoteAz, voteAzList, nodeMsg->casNorStr, nodeMsg->casStr);
-    if (g_isEnableUpdateSyncList != CANNOT_START_SYNCLIST_THREADS && count != 0) {
+    if ((count != 0) && (current_cluster_az_status == AnyFirstNo)) {
         return ProcessHaStatus2AzStartSyncThr(count, groupDnNum, nodeMsg);
     }
     if (nodeMsg->dnNum[AZ3_INDEX] == 0) {
@@ -682,17 +690,13 @@ int ProcessHaStatus2Az(
         if (ret != 0) {
             return ret;
         }
-    } else {
-        if ((nodeMsg->normalPrimaryDn + normalStandbyDnSum) * 2 <= groupDnNum &&
-            g_dn_replication_num > DOUBLE_REPLICATION) {
-            g_HA_status->status = CM_STATUS_NEED_REPAIR;
-            write_runlog(LOG,
-                "Line:%d, normalPrimaryDn = %d, normalStandbyDnSum = %d\n",
-                __LINE__,
-                nodeMsg->normalPrimaryDn,
-                normalStandbyDnSum);
-            return -1;
-        }
+    } else if ((nodeMsg->normalPrimaryDn + normalStandbyDnSum) * 2 <= groupDnNum &&
+        g_dn_replication_num > DOUBLE_REPLICATION) {
+        SetNodeMsgMethodStr(nodeMsg, "[ProcessHaStatus2Az]");
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
+        write_runlog(LOG, "Line:%d, normalPrimaryDn = %d, normalStandbyDnSum = %d\n",
+            __LINE__, nodeMsg->normalPrimaryDn, normalStandbyDnSum);
+        return -1;
     }
 
     return 0;
@@ -720,24 +724,18 @@ int CheckMultiAzDataNodeStatus(uint32 i, const int *statusDnFail)
     if (SetOfflineNode()) {
         normalStandbyDnSum++;
     }
-    if (backup_open == CLUSTER_OBS_STANDBY) {
-        ret = ProcessDataNodeStatusObsStandby(normalStandbyDnSum, groupDnNum);
-        if (ret != 0) {
-            return ret;
-        }
-    } else if (backup_open == CLUSTER_STREAMING_STANDBY) {
+    if (backup_open == CLUSTER_STREAMING_STANDBY) {
         ret = ProcessDataNodeStatusStreamingStandby(normalStandbyDnSum, groupDnNum, &nodeMsg);
         if (ret != 0) {
             return ret;
         }
     } else {
-        write_runlog(LOG, "primary is [%s], standby is [%s], casacade standby is [(%s): (%s)].\n",
-            nodeMsg.primaryStr, nodeMsg.standbyStr, nodeMsg.casNorStr, nodeMsg.casStr);
         ret = ProcessHaStatusWhenNoBackup(normalStandbyDnSum, groupDnNum, minorityAz, &nodeMsg);
         if (ret != 0) {
             return ret;
         }
         ret = ProcessHaStatus2Az(statusDnFail, i, normalStandbyDnSum, groupDnNum, &nodeMsg);
+        PrintClusterStatus(i, groupDnNum, &nodeMsg);
         if (ret != 0) {
             return ret;
         }
@@ -1465,14 +1463,13 @@ static void MsgDiskUsageStatus(
 static void MsgDatanodeInstanceBarrier(
     CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
 {
-    SetDnBarrierInfo(con, inBuffer);
+    ProcessDnBarrierinfo(con, inBuffer);
 }
 
 static void MsgGlobalBarrierQuery(
     CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_global_barrier_query *ctlToCmGlobalBarrierQueryPtr = NULL;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_global_barrier_query, ctlToCmGlobalBarrierQueryPtr, ProcessCtlToCmQueryBarrierMsg);
+    ProcessCtlToCmQueryBarrierMsg(con);
 }
 
 static void MsgDnSyncList(
@@ -1584,7 +1581,7 @@ static void InitCmCtlCmdProc()
     g_cmdProc[MSG_CTL_CM_FINISH_REDO] = MsgFinishRedo;
     g_cmdProc[MSG_CTL_CM_FINISH_REDO_CHECK] = MsgFinishRedoCheck;
     g_cmdProc[MSG_CTL_CM_GLOBAL_BARRIER_QUERY] = MsgGlobalBarrierQuery;
-    g_cmdProc[MSG_CTL_CM_GLOBAL_BARRIER_QUERY_NEW] = MsgGlobalBarrierQuery;
+    g_cmdProc[MSG_CTL_CM_GLOBAL_BARRIER_QUERY_NEW] = NULL;
     g_cmdProc[MSG_CTL_CM_RELOAD] = MsgReload;
     g_cmdProc[MSG_EXEC_DDB_COMMAND] = MsgDdbCmd;
     g_cmdProc[MSG_CTL_CMS_SWITCH] = MsgSwitchCmd;

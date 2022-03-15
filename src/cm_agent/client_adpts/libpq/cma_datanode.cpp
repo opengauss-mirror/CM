@@ -35,7 +35,6 @@
 #include "cma_process_messages.h"
 
 static cltPqConn_t* g_dnConnSend[CM_MAX_DATANODE_PER_NODE] = {NULL};
-static cltPqConn_t *g_dnDeleteXlog[CM_MAX_DATANODE_PER_NODE] = {NULL};
 extern Alarm* g_abnormalAlarmList;
 extern bool g_cmServerNeedReconnect;
 
@@ -49,58 +48,6 @@ extern bool g_cmServerNeedReconnect;
         assert(NULL == con);                         \
         return -1;                                   \
     } while (0)
-
-int ProcessObsDeleteXlogCmd(uint32 instanceId, uint64 lsn)
-{
-    int nodeResult = 0;
-    int rcs = 0;
-
-    char pidPath[MAXPGPATH] = {0};
-    int ii = -1;
-
-    for (uint32 i = 0; i < g_currentNode->datanodeCount; i++) {
-        if (g_currentNode->datanode[i].datanodeId == instanceId) {
-            ii = (int)i;
-            break;
-        }
-    }
-    if (ii == -1) {
-        write_runlog(ERROR, "instance not found for obs_delete_xlog! \n");
-        return -1;
-    }
-    char *dataPath = g_currentNode->datanode[ii].datanodeLocalDataPath;
-    close_and_reset_connection(g_dnDeleteXlog[ii]);
-    rcs = snprintf_s(pidPath, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", dataPath);
-    securec_check_intval(rcs, (void)rcs);
-    g_dnDeleteXlog[ii] = get_connection(pidPath);
-    if (g_dnDeleteXlog[ii] == NULL || (!IsConnOk(g_dnDeleteXlog[ii]))) {
-        write_runlog(ERROR, "failed to connect to datanode:%s\n", dataPath);
-        if (g_dnDeleteXlog[ii] != NULL) {
-            write_runlog(ERROR, "connection return errmsg : %s\n", ErrorMessage(g_dnDeleteXlog[ii]));
-            close_and_reset_connection(g_dnDeleteXlog[ii]);
-        }
-        return -1;
-    }
-
-    char runCommand[CM_MAX_COMMAND_LONG_LEN] = {0};
-    errno_t rc = memset_s(runCommand, CM_MAX_COMMAND_LONG_LEN, 0, CM_MAX_COMMAND_LONG_LEN);
-    securec_check_errno(rc, (void)rc);
-
-    rcs = snprintf_s(runCommand,
-        CM_MAX_COMMAND_LONG_LEN,
-        CM_MAX_COMMAND_LONG_LEN - 1,
-        "select gs_set_obs_delete_location('%X/%X');",
-        uint32(lsn >> 32),
-        uint32(lsn));
-    securec_check_intval(rcs, (void)rcs);
-
-    nodeResult = SendQuery(g_dnDeleteXlog[ii], runCommand);
-    if (nodeResult == 0) {
-        write_runlog(ERROR, "gs_set_obs_delete_location fail return 0.\n");
-        CLOSE_CONNECTION(g_dnDeleteXlog[ii]);
-    }
-    return 0;
-}
 
 static int ProcessStatusFromStateFile(agent_to_cm_datanode_status_report *reportMsg, const GaussState *state)
 {
@@ -170,63 +117,6 @@ static int getDNStatusFromStateFile(agent_to_cm_datanode_status_report* report_m
 
     write_runlog(ERROR, "failed to read db state file:%s .\n", gaussdb_state_path);
     return -1;
-}
-
-static int GetDnBackUpStatus(cltPqConn_t *conn, DnStatus *dnStatus)
-{
-    agent_to_cm_coordinate_barrier_status_report *barrierMsg = &dnStatus->barrierMsg;
-    Agent2CmBarrierStatusReport *barrierMsgNew = &dnStatus->barrierMsgNew;
-    LocalBarrierStatus tmpLocalBarrierStatus = {0};
-    if (g_disasterRecoveryType == DISASTER_RECOVERY_NULL) {
-        write_runlog(DEBUG5, "[GetDnBackUpStatus] disaster_recovery_type=%d is not obs return!\n",
-            g_disasterRecoveryType);
-        return 0;
-    }
-    if (dnStatus->barrierMsgType == MSG_AGENT_CM_INSTANCE_BARRIER_NEW) {
-        if (GetCkptRedoPoint(conn, &barrierMsgNew->localStatus.ckptRedoPoint) != 0) {
-            return -1;
-        }
-
-        if (GetLocalBarrierStatus(conn, &barrierMsgNew->localStatus) != 0) {
-            return -1;
-        }
-
-#ifndef ENABLE_MULTIPLE_NODES
-        if (GetGlobalBarrierInfoNew(conn, &barrierMsgNew->globalStatus) != 0) {
-            return -1;
-        }
-#endif
-    } else if(dnStatus->barrierMsgType == MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER) {
-        if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
-            write_runlog(LOG, "Get barrier info, instanceId=%u\n", dnStatus->reportMsg.instanceId);
-            if (StandbyClusterGetBarrierInfo(conn, barrierMsg) != 0) {
-                return -1;
-            }
-            if (StandbyClusterCheckQueryBarrierID(conn, barrierMsg) != 0) {
-                return -1;
-            }
-            if (StandbyClusterSetTargetBarrierID(conn) != 0) {
-                return -1;
-            }
-        } else {
-            /* SQL7 check */
-            if (GetCkptRedoPoint(conn, &barrierMsg->ckpt_redo_point) != 0) {
-                return -1;
-            }
-            /* SQL8 check */
-            if (GetLocalBarrierStatus(conn, &tmpLocalBarrierStatus) != 0) {
-                return -1;
-            }
-            ChangeNewBarrierStatues2Old(&tmpLocalBarrierStatus, barrierMsg);
-        }
-#ifndef ENABLE_MULTIPLE_NODES
-        /* SQL9 check */
-        if (GetGlobalBarrierInfo(conn, barrierMsg) != 0) {
-            return -1;
-        }
-#endif
-    }
-    return 0;
 }
 
 static void GetRebuildCmd(char *cmd, size_t maxLen, const char *dataPath)
@@ -487,12 +377,6 @@ int DatanodeStatusCheck(
         return -1;
     }
 
-    // we should do this in other new thread in the future.
-    if (GetDnBackUpStatus(g_dnConn[dataNodeIndex], dnStatus)) {
-        write_runlog(ERROR, " get backup barrier info failed, datanode: %s.\n", dataPath);
-        CLOSE_CONNECTION(g_dnConn[dataNodeIndex]);
-        // we just recored log but not return failed, cause we should always make sure instance status report success.
-    }
     if (g_dnNoFreeProc) {
         ShowPgThreadWaitStatus(g_dnConn[dataNodeIndex], dataNodeIndex, INSTANCE_TYPE_DATANODE);
     }
@@ -887,9 +771,7 @@ static void BuildStartCommand(uint32 instanceIndex, char *command, size_t maxLen
         startModeArg = "-M standby -R";
     }
 
-    if (agent_backup_open == CLUSTER_OBS_STANDBY) {
-        startModeArg = "-M standby";
-    } else if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
+    if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
         startModeArg = "-M cascade_standby";
     }
 
@@ -1577,7 +1459,7 @@ void *DNSyncCheckMain(void * const arg)
 }
 #endif
 
-static int GetHadrUserInfoCiphertext(cltPqConn_t *healthConn, char *cipherText, uint32 cipherTextLen)
+static int GetHadrUserInfoCiphertext(cltPqConn_t* &healthConn, char *cipherText, uint32 cipherTextLen)
 {
     const char *sqlCommands = "select value from gs_global_config where name='hadr_user_info';";
     cltPqResult_t *nodeResult = Exec(healthConn, sqlCommands);
@@ -1611,7 +1493,7 @@ static int GetHadrUserInfoCiphertext(cltPqConn_t *healthConn, char *cipherText, 
     return 0;
 }
 
-static int GetHadrUserInfo(cltPqConn_t *healthConn, const char *cipherText, const char *plain, char *userInfo)
+static int GetHadrUserInfo(cltPqConn_t* &healthConn, const char *cipherText, const char *plain, char *userInfo)
 {
     char sqlCommands[CM_MAX_COMMAND_LEN];
     errno_t rc = snprintf_s(sqlCommands, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
@@ -1650,7 +1532,7 @@ static int GetHadrUserInfo(cltPqConn_t *healthConn, const char *cipherText, cons
     return 0;
 }
 
-static void ExecuteCrossClusterDnBuildCommand(const char *dataDir, char *userInfo, const cm_to_agent_build *buildMsg)
+static void ExecuteCrossClusterDnBuildCommand(const char *dataDir, char *userInfo)
 {
     char *userPassword = NULL;
     /* userInfo format is <userName>|<userPassword> */
@@ -1663,27 +1545,20 @@ static void ExecuteCrossClusterDnBuildCommand(const char *dataDir, char *userInf
 
 #ifdef ENABLE_MULTIPLE_NODES
     errno_t rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE
-        "%s build -Z %s -b standby_full %s -D %s %s -M cascade_standby -r %d -U %s -P %s >> %s 2>&1 &" SYSTEMQUOTE,
-        PG_CTL_NAME, g_only_dn_cluster ? "single_node" : "datanode", security_mode ? "-o \"--securitymode\"" : "",
-        dataDir, buildMsg->term, buildMsg->wait_seconds, userName, userPassword, system_call_log);
+        "%s build -Z datanode -D %s -M hadr_main_standby -U %s -P \'%s\' >> %s 2>&1 &" SYSTEMQUOTE,
+        PG_CTL_NAME, dataDir, userName, userPassword, system_call_log);
 #else
     errno_t rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE
-        "%s build -b standby_full %s -D %s %s -M cascade_standby -r %d -U %s -P %s >> %s 2>&1 &" SYSTEMQUOTE,
-        PG_CTL_NAME, security_mode ? "-o \"--securitymode\"" : "", dataDir, buildMsg->term, buildMsg->wait_seconds,
-        userName, userPassword, system_call_log);
+        "%s build -D %s -M hadr_main_standby -U %s -P \'%s\' >> %s 2>&1 &" SYSTEMQUOTE,
+        PG_CTL_NAME, dataDir, userName, userPassword, system_call_log);
 #endif
+    securec_check_intval(rc, (void)rc);
 
     write_runlog(LOG, "[ExecuteCrossClusterDnBuildCommand] start build operation.\n");
     int ret = system(command);
-    if (ret == -1) {
-        write_runlog(ERROR, "Failed to call the system function: func_name=\"%s\", error=\"[%d]\".\n",
-            "system", errno);
-    } else if (WIFSIGNALED(ret)) {
-        write_runlog(ERROR, "Failed to execute the shell, the shell command was killed by signal %d.\n", WTERMSIG(ret));
-    } else if (ret != 0) {
-        write_runlog(ERROR, "Failed to execute the shell, the shell command ended abnormally:"
-            " shell_return=%d, errno=%d.\n",
-            WEXITSTATUS(ret), errno);
+    if (ret != 0) {
+        write_runlog(ERROR, "ExecuteCrossClusterDnBuildCommand: exec command failed %d! errno=%d.\n", ret, errno);
+        return;
     }
     /* Clear sensitive information */
     rc = memset_s(command, MAXPGPATH, 0, MAXPGPATH);
@@ -1691,7 +1566,31 @@ static void ExecuteCrossClusterDnBuildCommand(const char *dataDir, char *userInf
     return;
 }
 
-static status_t GetRemoteHealthConnInfo(uint32 healthInstanceId, uint32 &remotePort, char *remoteListenIP)
+static void ExecuteCascadeStandbyDnBuildCommand(const char *dataDir)
+{
+    char command[MAXPGPATH] = {0};
+
+#ifdef ENABLE_MULTIPLE_NODES
+    errno_t rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE
+        "%s build -Z datanode -D %s -M cascade_standby -b standby_full >> %s 2>&1 &" SYSTEMQUOTE,
+        PG_CTL_NAME, dataDir, system_call_log);
+#else
+    errno_t rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE
+        "%s build -D %s -M cascade_standby -b standby_full >> %s 2>&1 &" SYSTEMQUOTE,
+        PG_CTL_NAME, dataDir, system_call_log);
+#endif
+    securec_check_intval(rc, (void)rc);
+
+    int ret = system(command);
+    if (ret != 0) {
+        write_runlog(ERROR, "ExecuteCascadeStandbyDnBuildCommand: exec command failed %d! command is %s, errno=%d.\n",
+            ret, command, errno);
+        return;
+    }
+    write_runlog(LOG, "ExecuteCascadeStandbyDnBuildCommand: exec command success! command is %s\n", command);
+}
+
+static status_t GetRemoteHealthConnInfo(uint32 healthInstanceId, uint32 &remotePort, char* &remoteListenIP)
 {
     for (uint32 i = 0; i < g_node_num; i++) {
         if (g_node[i].coordinate == 1 && g_node[i].coordinateId == healthInstanceId) {
@@ -1714,16 +1613,7 @@ static status_t GetRemoteHealthConnInfo(uint32 healthInstanceId, uint32 &remoteP
 static cltPqConn_t *GetHealthConnection(uint32 healthInstanceId, bool &isTmpConn)
 {
     char connStr[MAXCONNINFO] = {0};
-    /* Obtain the local connection first */
-    for (uint32 i = 0; i < g_currentNode->datanodeCount; i++) {
-        if (g_dnConn[i] != NULL) {
-            write_runlog(LOG, "[GetHealthConnection] healthInstance is local dn_%u\n",
-                g_currentNode->datanode[i].datanodeId);
-            return g_dnConn[i];
-        }
-    }
 
-    /* Failed to get the local connection. We tried to connect to the dn remotely */
     write_runlog(LOG, "[GetHealthConnection] healthInstance is dn_%u\n", healthInstanceId);
     isTmpConn = true;
     uint32 remotePort = 0;
@@ -1751,7 +1641,7 @@ static cltPqConn_t *GetHealthConnection(uint32 healthInstanceId, bool &isTmpConn
     return healthConn;
 }
 
-void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir, const cm_to_agent_build *buildMsg)
+static void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir)
 {
     uint32 healthInstance = g_healthInstance;
     bool isTmpConn = false;
@@ -1791,7 +1681,7 @@ void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir, cons
 
     switch (instanceType) {
         case INSTANCE_TYPE_DATANODE:
-            ExecuteCrossClusterDnBuildCommand(dataDir, userInfo, buildMsg);
+            ExecuteCrossClusterDnBuildCommand(dataDir, userInfo);
             break;
 #ifdef ENABLE_MULTIPLE_NODES
         case INSTANCE_TYPE_COORDINATE:
@@ -1808,4 +1698,14 @@ void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir, cons
     if (isTmpConn) {
         close_and_reset_connection(healthConn);
     }
+}
+
+void ProcessStreamingStandbyClusterBuildCommand(int instanceType, const char *dataDir,
+    const cm_to_agent_build *buildMsg)
+{
+    if (instanceType == INSTANCE_TYPE_DATANODE && buildMsg->role == INSTANCE_ROLE_STANDBY) {
+        ExecuteCascadeStandbyDnBuildCommand(dataDir);
+        return;
+    }
+    ProcessCrossClusterBuildCommand(instanceType, dataDir);
 }

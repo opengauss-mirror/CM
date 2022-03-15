@@ -15,8 +15,8 @@ set(CMA_LIB_PATHS
         ${ZLIB_DIRECTORY_LIB}
         )
 
-set(CMA_LINK_LIBS cmprotocol_static cmpq_static cmclient_static ${CM_ADPT_LIBS} m z
-        config_static pthread cjson alarmclient_static cmcommon_static securec dl ${G_BIN_EXT_LIBS})
+set(CMA_LINK_LIBS cmprotocol_static cmcommon_static cmpq_static cmclient_static m z
+        config_static pthread cjson alarmclient_static ${CM_ADPT_LIBS} securec dl ${G_BIN_EXT_LIBS})
 
 if (ENABLE_LIBPQ)
     aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/client_adpts/libpq TGT_cmagentPQ_SRC)

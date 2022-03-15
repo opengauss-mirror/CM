@@ -212,7 +212,7 @@ void ProcessCtlToCmExecDccCmdMsg(CM_Connection *con, ExecDdbCmdMsg *msg)
         securec_check_errno(rc, (void)rc);
     } else {
         ackMsg.isSuccess = (DoDdbExecCmd(msg->cmdLine, ackMsg.output, &ackMsg.outputLen, ackMsg.errMsg,
-            DCC_CMD_MAX_PARAMETER_LEN) == CM_SUCCESS);
+            DCC_CMD_MAX_OUTPUT_LEN) == CM_SUCCESS);
     }
 
     (void)cm_server_send_msg(con, 'S', reinterpret_cast<char*>(&ackMsg), sizeof(ExecDdbCmdAckMsg));

@@ -774,84 +774,6 @@ static int get_current_timestamp(char* timestamp, size_t len)
     return -1;
 }
 
-static void InsertLogFileCreateTime()
-{
-    char currentTime[LEN_TIMESTAMP] = {0};
-    char command[CM_MAX_COMMAND_LONG_LEN] = {0};
-    int rcs;
-
-    if (get_current_timestamp(currentTime, LEN_TIMESTAMP) != 0) {
-        write_runlog(ERROR, "get timestamp error\n");
-        return;
-    }
-
-    rcs = snprintf_s(command, CM_MAX_COMMAND_LONG_LEN, CM_MAX_COMMAND_LONG_LEN - 1,
-        "sed '1 ilog_file_create_time=%s' -i -c %s", currentTime, g_curEtcdLogFile);
-    securec_check_intval(rcs, (void)rcs);
-    rcs = system(command);
-    if (rcs != 0) {
-        write_runlog(ERROR, "insert log file create time failed, rcs is %d, errno=%d.\n", rcs, errno);
-    } else {
-        write_runlog(LOG, "insert log file create time to %s, errno=%d.\n", currentTime, errno);
-    }
-}
-
-static int GetLogFileCreateTime(char *createTime, size_t len)
-{
-    int rcs;
-    char command[CM_MAX_COMMAND_LONG_LEN] = {0};
-    FILE* stream = NULL;
-    char buf[LOG_MAX_TIMELEN] = {0};
-
-    rcs = snprintf_s(command, CM_MAX_COMMAND_LONG_LEN, CM_MAX_COMMAND_LONG_LEN - 1,
-        "head -n 5 %s | awk -F\"=\" '{if($1 ==\"log_file_create_time\")print$2}' ",
-        g_curEtcdLogFile);
-    securec_check_intval(rcs, (void)rcs);
-
-    stream = popen(command, "r");
-    if (stream == NULL) {
-        write_runlog(ERROR, "get log file create time failed.");
-        return -1;
-    }
-
-    size_t counter = fread(buf, sizeof(char), sizeof(buf), stream);
-    if (counter < len) {
-        write_runlog(ERROR, "read log file create time buff failed.\n");
-        (void)pclose(stream);
-        return -1;
-    }
-    (void)pclose(stream);
-    buf[counter - 1] = '\0'; // \n to \0
-    rcs = snprintf_s(createTime, len, len - 1, "%s", buf);
-    securec_check_intval(rcs, (void)rcs);
-    return 0;
-}
-
-static void update_log_file_create_time(const char* oldTime)
-{
-    char command[CM_MAX_COMMAND_LONG_LEN] = {0};
-    int rcs;
-    char createTime[LOG_MAX_TIMELEN] = {0};
-    pg_time_t currentTime = time(NULL);
-    struct tm *t = NULL;
-
-    t = localtime(&currentTime);
-    if (t != NULL) {
-        (void)strftime(createTime, LOG_MAX_TIMELEN, "%Y-%m-%d_%H%M%S", t);
-    }
-
-    rcs = snprintf_s(command, CM_MAX_COMMAND_LONG_LEN, CM_MAX_COMMAND_LONG_LEN - 1,
-        "sed -i 's/log_file_create_time=%s/log_file_create_time=%s/' %s",
-        oldTime, createTime, g_curEtcdLogFile);
-    securec_check_intval(rcs, (void)rcs);
-    rcs = system(command);
-    if (rcs != 0) {
-        write_runlog(ERROR, "update log file create time failed, rcs is %d, errno=%d.", rcs, errno);
-    } else {
-        write_runlog(ERROR, "update log file create time to %s", createTime);
-    }
-}
-
 static void CreateEtcdLog()
 {
     if (access(g_curEtcdLogFile, F_OK) != -1) {
@@ -879,8 +801,8 @@ static void CreateEtcdLog()
         write_runlog(ERROR, "create etcd log file failed! errno is %s\n", strerror(errno));
         return;
     }
-    counter = fwrite(buff, LOG_MAX_TIMELEN, sizeof(char), etcdLogFile);
-    write_runlog(LOG, "counter is %lu", counter);
+    counter = fwrite(buff, sizeof(char), LOG_MAX_TIMELEN, etcdLogFile);
+    write_runlog(LOG, "counter is %lu\n", counter);
     (void)fclose(etcdLogFile);
 }
 
@@ -894,8 +816,8 @@ static void switch_ETCD_logfile()
         int rcs;
 
         char createTime[LEN_TIMESTAMP] = {0};
-        if (GetLogFileCreateTime(createTime, LEN_TIMESTAMP) != 0) {
-            InsertLogFileCreateTime();
+        if (get_current_timestamp(createTime, LEN_TIMESTAMP) != 0) {
+            write_runlog(ERROR, "get timestamp error\n");
             return;
         }
 
@@ -903,10 +825,10 @@ static void switch_ETCD_logfile()
             "%s/%s-%s.log", g_etcdLogPath, "etcd", createTime);
         securec_check_intval(rcs, (void)rcs);
 
-        /* copy current to history and clean current file. */
+        /* copy current to history and clean current file. (sed -c -i not supported on some systems) */
         rcs = snprintf_s(command, 4 * MAXPGPATH, (4 * MAXPGPATH) - 1,
-            "sed -i%s \"2, $ d\" \"%s\" ; mv \"%s%s\" \"%s\"",
-            createTime, g_curEtcdLogFile, g_curEtcdLogFile, createTime, hstEtcdLogFile);
+            "cp %s %s;echo \"log_file_create_time=%s\" > %s;",
+            g_curEtcdLogFile, hstEtcdLogFile, createTime, g_curEtcdLogFile);
         securec_check_intval(rcs,);
 
         rcs = system(command);
@@ -916,8 +838,6 @@ static void switch_ETCD_logfile()
         } else {
             write_runlog(LOG, "switch ETCD logfile successfully. cmd:%s.\n", command);
         }
-
-        update_log_file_create_time(createTime);
     }
 }
 
@@ -1113,6 +1033,70 @@ int server_loop(void)
     }
 }
 
+/*
+ * etcd 3.3.23 support "--log-output", but It has been changed to "--log-outputs" in etcd 3.5.0.
+ * monitor must all support etcd 3.3.23 and etcd 3.5.0 command when upgrade cluster.
+ */
+int GetEtcdLogOutputCmd(char *logOutPutCmd, uint32 len)
+{
+    char command[MAXPGPATH * 2] = {0};
+    int rcs;
+    int ret;
+    rcs = snprintf_s(command, sizeof(command), sizeof(command) - 1, "%s --help | grep \"\\-\\-log-outputs\"",
+        g_etcdBinPath);
+    securec_check_intval(rcs, (void)rcs);
+    ret = system(command);
+    if (ret == 0) {
+        write_runlog(LOG, "run check etcd log-outputs command: %s success\n", command);
+        rcs = strcpy_s(logOutPutCmd, len, "--log-outputs");
+        securec_check_intval(rcs, (void)rcs);
+        return 0;
+    }
+    write_runlog(LOG, "run check etcd log-outputs command %s failed,try to check log-output command!\n",
+        command);
+    rcs = snprintf_s(command, sizeof(command), sizeof(command) - 1, "%s --help | grep \"\\-\\-log-output\"",
+        g_etcdBinPath);
+    securec_check_intval(rcs, (void)rcs);
+    ret = system(command);
+    if (ret == 0) {
+        write_runlog(LOG, "run check etcd log-output command: %s success\n", command);
+        rcs = strcpy_s(logOutPutCmd, len, "--log-output");
+        securec_check_intval(rcs, (void)rcs);
+        return 0;
+    }
+    write_runlog(WARNING, "run check etcd log-output command %s failed %d!\n", command, ret);
+    return -1;
+}
+void CheckStartEtcdCount(AlarmAdditionalParam *additionalParam)
+{
+    int status = 0;
+    int rcs;
+    if (g_startEtcdCount >= 3) {
+        if (g_startupAlarmList != NULL) {
+            WriteAlarmAdditionalInfo(additionalParam, "etcd", "", "", &(g_startupAlarmList[0]), ALM_AT_Fault);
+            AlarmReporter(&(g_startupAlarmList[0]), ALM_AT_Fault, additionalParam);
+        }
+    }
+    if (g_startEtcdCount % 20 == 0) {
+        status = get_prog_path(0, NULL);
+        if (status < 0) {
+            fprintf(stderr, "get_prog_path failed!\n");
+            exit(status);
+        } else {
+            write_runlog(LOG, "Reload env, ETCD path is %s.\n", g_etcdBinPath);
+        }
+    }
+    if (g_startEtcdCount == 100) {
+        write_runlog(LOG, "Monitor has started ETCD for 5 minutes, ETCD path is %s.\n", g_etcdBinPath);
+        char execPath[MAX_PATH_LEN] = {0};
+        rcs = GetHomePath(execPath, sizeof(execPath));
+        if (rcs != EOK) {
+            fprintf(stderr, "The environment variable 'GAUSSHOME' was not specified.\n");
+            exit(-1);
+        }
+        write_runlog(LOG, "env is %s.\n", execPath);
+    }
+}
 static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, const char *userName)
 {
     int status = 0;
@@ -1131,6 +1115,14 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
         if (access(g_etcdManualStartPath, 0) != 0) {
             status = check_process_status(PROCKIND_ETCD, 0);
             if (PROCESS_NOT_EXIST == status) {
+                char logOutPutCmd[MAXPGPATH] = {0};
+                if (GetEtcdLogOutputCmd(logOutPutCmd, MAXPGPATH) != 0) {
+                    write_runlog(ERROR, "get etcd log-output command failed, please check etcd bin file %s!\n",
+                        g_etcdBinPath);
+                    ++g_startEtcdCount;
+                    CheckStartEtcdCount(additionalParam);
+                    return;
+                }
                 char clientUrls[CM_IP_LENGTH * CM_IP_NUM] = {0};
                 for (uint32 ipnum = 0; ipnum < CM_IP_NUM; ipnum++) {
                     if (strlen(g_node[g_nodeHeader.node - 1].etcdClientListenIPs[ipnum]) == 0) {
@@ -1161,7 +1153,7 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                     "%s/etcd.key "
                     "-initial-advertise-peer-urls https://%s:%u  -listen-peer-urls https://%s:%u  "
                     "-listen-client-urls %s  -advertise-client-urls %s --election-timeout 5000 "
-                    "--heartbeat-interval 1000 --log-outputs 'stdout' --quota-backend-bytes $((8*1024*1024*1024)) "
+                    "--heartbeat-interval 1000 %s 'stdout' --quota-backend-bytes $((8*1024*1024*1024)) "
                     "--auto-compaction-mode 'periodic' --auto-compaction-retention '1h' "
                     "-initial-cluster-token etcd-cluster-%s --enable-v2=false -initial-cluster " SYSTEMQUOTE,
                     g_etcdBinPath,
@@ -1177,7 +1169,7 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                     g_node[g_nodeHeader.node - 1].etcdHAListenPort,
                     g_node[g_nodeHeader.node - 1].etcdHAListenIPs[0],
                     g_node[g_nodeHeader.node - 1].etcdHAListenPort,
-                    clientUrls, clientUrls, userName);
+                    clientUrls, clientUrls, logOutPutCmd, userName);
                 securec_check_intval(rcs, (void)rcs);
 
                 uint32 j = 0;
@@ -1238,35 +1230,7 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
 
                 /* if start etcd more than 3 times, then report the etcd process abnormal alarm. */
                 ++g_startEtcdCount;
-                if (g_startEtcdCount >= 3) {
-                    /* report the alarm. */
-                    if (g_startupAlarmList != NULL) {
-                        /* fill the alarm message. */
-                        WriteAlarmAdditionalInfo(
-                            additionalParam, "etcd", "", "", &(g_startupAlarmList[0]), ALM_AT_Fault);
-                        /* report the alarm. */
-                        AlarmReporter(&(g_startupAlarmList[0]), ALM_AT_Fault, additionalParam);
-                    }
-                }
-                if (g_startEtcdCount % 20 == 0) {
-                    status = get_prog_path(0, NULL);
-                    if (status < 0) {
-                        fprintf(stderr, "get_prog_path failed!\n");
-                        exit(status);
-                    } else {
-                        write_runlog(LOG, "Reload env, ETCD path is %s.\n", g_etcdBinPath);
-                    }
-                }
-                if (g_startEtcdCount == 100) {
-                    write_runlog(LOG, "Monitor has started ETCD for 5 minutes, ETCD path is %s.\n", g_etcdBinPath);
-                    char execPath[MAX_PATH_LEN] = {0};
-                    rcs = GetHomePath(execPath, sizeof(execPath));
-                    if (rcs != EOK) {
-                        fprintf(stderr, "The environment variable 'GAUSSHOME' was not specified.\n");
-                        exit(-1);
-                    }
-                    write_runlog(LOG, "env is %s.\n", execPath);
-                }
+                CheckStartEtcdCount(additionalParam);
             } else if (PROCESS_RUNNING == status) {
                 /* if the etcd process is running, then report the etcd process abnormal resume. */
                 g_startEtcdCount = 0;

@@ -70,7 +70,7 @@ void ProcessCtlToCmSwitchoverMsg(CM_Connection *con, const ctl_to_cm_switchover 
             ackMsg.command_result = CM_CAN_PRCESS_COMMAND;
         } else {
             ackMsg.command_result = CM_INVALID_COMMAND;
-            write_runlog(LOG, " switchover the gtm instance(node =%u  instanceid =%u) is not standby \n",
+            write_runlog(LOG, "switchover the gtm instance(node =%u instanceid =%u) is not standby \n",
                 switchoverMsg->node, switchoverMsg->instanceId);
         }
     } else if (instInfo->instanceType == INSTANCE_TYPE_DATANODE) {
@@ -86,6 +86,11 @@ void ProcessCtlToCmSwitchoverMsg(CM_Connection *con, const ctl_to_cm_switchover 
             write_runlog(LOG, "switchover the datanode instance(node =%u  instanceid =%u) is not standby, but is %s, "
                 "echeck is %d, peerInst is %u.\n", switchoverMsg->node, switchoverMsg->instanceId,
                 datanode_role_int_to_string(localRole), echeck, dnReport->dnLp.peerInst);
+        }
+        if (IsBoolCmParamTrue(g_enableDcf) && dnReport->receive_status.local_role != (int)DCF_ROLE_FOLLOWER) {
+            ackMsg.command_result = CM_INVALID_COMMAND;
+            write_runlog(LOG, "switchover the datanode instance(node =%u instanceid =%u) is not Follower, but is %s\n",
+                switchoverMsg->node, switchoverMsg->instanceId, DcfRoleToString(dnReport->receive_status.local_role));
         }
     } else {
         ackMsg.command_result = CM_INVALID_COMMAND;
@@ -114,10 +119,8 @@ void ProcessCtlToCmSwitchoverMsg(CM_Connection *con, const ctl_to_cm_switchover 
     (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[groupIndex].lk_lock));
     SetSwitchoverCmd(&(instStatus->command_member[memberIndex]), localRole, instInfo->instanceId,
         GetPeerInstId(groupIndex, memberIndex));
-    if ((instInfo->instanceType == INSTANCE_TYPE_GTM) || (instInfo->instanceType == INSTANCE_TYPE_DATANODE)) {
-        instStatus->command_member[memberIndex].time_out = switchoverMsg->wait_seconds;
-        SetSendTimes(groupIndex, memberIndex, switchoverMsg->wait_seconds);
-    }
+    instStatus->command_member[memberIndex].time_out = switchoverMsg->wait_seconds;
+    SetSendTimes(groupIndex, memberIndex, switchoverMsg->wait_seconds);
     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[groupIndex].lk_lock));
 
     return;
@@ -172,15 +175,20 @@ static bool ExistAnotherCommandRunning(uint32 groupIndex, cm_to_ctl_command_ack 
     return isAnotherCommandRunning;
 }
 
+static bool IsSendBuild(int32 localRole)
+{
+    return (localRole == INSTANCE_ROLE_STANDBY || localRole == INSTANCE_ROLE_CASCADE_STANDBY);
+}
+
 static void ProcessDatanodeCommandResult(const ctl_to_cm_build *buildMsg, cm_to_ctl_command_ack *ackMsg,
     const cm_local_replconninfo *dnStatus)
 {
     if (((buildMsg->force_build == CM_CTL_FORCE_BUILD) || (dnStatus->db_state == INSTANCE_HA_STATE_NEED_REPAIR)) &&
-        (dnStatus->local_role == INSTANCE_ROLE_STANDBY) &&
+        (IsSendBuild(dnStatus->local_role)) &&
         (dnStatus->buildReason != INSTANCE_HA_DATANODE_BUILD_REASON_DISCONNECT) &&
         (dnStatus->buildReason != INSTANCE_HA_DATANODE_BUILD_REASON_CONNECTING)) {
         ackMsg->command_result = CM_CAN_PRCESS_COMMAND;
-    } else if ((dnStatus->local_role == INSTANCE_ROLE_STANDBY) && (dnStatus->db_state == INSTANCE_HA_STATE_NORMAL)) {
+    } else if ((IsSendBuild(dnStatus->local_role)) && (dnStatus->db_state == INSTANCE_HA_STATE_NORMAL)) {
         ackMsg->command_result = CM_CAN_PRCESS_COMMAND;
     } else if (dnStatus->local_role == INSTANCE_ROLE_UNKNOWN) {
         ackMsg->command_result = CM_CAN_PRCESS_COMMAND;
@@ -347,7 +355,7 @@ void ProcessCtlToCmBuildMsg(CM_Connection *con, ctl_to_cm_build *buildMsg)
         return;
     }
 
-    if ((instStatus->data_node_member[memberIndex].local_status.local_role == INSTANCE_ROLE_STANDBY) &&
+    if ((IsSendBuild(instStatus->data_node_member[memberIndex].local_status.local_role)) &&
         (instStatus->data_node_member[memberIndex].local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
         (buildMsg->force_build != CM_CTL_FORCE_BUILD)) {
         ackMsg.command_result = CM_DN_NORMAL_STATE;
@@ -525,11 +533,10 @@ static bool CanDoSwitchoverInAllShard(
 
 static void CheckSwitchoverInstance(const ctl_to_cm_switchover* swithoverPtr, const char *str)
 {
-    uint32 switchoverSize = (uint32)switchOverInstances.size();
-    if (switchoverSize > 0) {
+    uint32 count = (uint32)switchOverInstances.size();
+    if (count > 0) {
         cmserver_switchover_timeout = (uint32)(swithoverPtr->wait_seconds);
-        write_runlog(LOG, "%s, switchoversize is %u, timeout is %u.\n",
-            str, switchoverSize, cmserver_switchover_timeout);
+        write_runlog(LOG, "%s, switchoversize is %u, timeout is %u.\n", str, count, cmserver_switchover_timeout);
     }
 }
 
@@ -1251,7 +1258,7 @@ static void FillCm2CtlRsp4CnGroup(uint32 ii, cm_to_ctl_instance_status *cmToCtlS
                 g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.status.status;
         }
     }
-    if (undocumentedVersion == 0 || undocumentedVersion >= 92214) {
+    if (undocumentedVersion == 0 || undocumentedVersion >= 92515) {
         cmToCtlStatusContent->data_node_member.local_status.db_state = INSTANCE_HA_STATE_NORMAL;
         if (backup_open == CLUSTER_STREAMING_STANDBY) {
             cmToCtlStatusContent->data_node_member.local_status.db_state =
@@ -1472,7 +1479,7 @@ static void ProcessCtlToCmOneInstanceQueryMsg(CM_Connection* con, uint32 node, u
                 statusMsg.coordinatemember.status = instStatus->coordinatemember.status.status;
             }
         }
-        if (undocumentedVersion == 0 || undocumentedVersion >= 92214) {
+        if (undocumentedVersion == 0 || undocumentedVersion >= 92515) {
             statusMsg.data_node_member.local_status.db_state = INSTANCE_HA_STATE_NORMAL;
             if (backup_open == CLUSTER_STREAMING_STANDBY) {
                 statusMsg.data_node_member.local_status.db_state =
@@ -1769,7 +1776,6 @@ static void HdlCtlToCmOneInstanceQryMsg(CM_Connection *con, const ctl_to_cm_quer
     int ret;
     struct stat statBuf = {0};
     char instanceManualStartFile[MAX_PATH_LEN] = {0};
-    const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[groupIndex].instance_status;
 
     errno_t rc = snprintf_s(instanceManualStartFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s_%u",
         g_cmInstanceManualStartPath, ctlToCmQry->instanceId);
@@ -1781,7 +1787,7 @@ static void HdlCtlToCmOneInstanceQryMsg(CM_Connection *con, const ctl_to_cm_quer
             ctlToCmQry->node, ctlToCmQry->instanceId);
         return;
     }
-
+    const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[groupIndex].instance_status;
     if (instStatus->command_member[memberIndex].pengding_command == MSG_CM_AGENT_SWITCHOVER &&
         (instStatus->data_node_member[memberIndex].local_status.db_state == INSTANCE_HA_STATE_WAITING ||
         instStatus->data_node_member[memberIndex].local_status.db_state == INSTANCE_HA_STATE_PROMOTING ||
@@ -2271,8 +2277,7 @@ void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchov
                         SetSwitchoverInSwitchoverProcess(i, j, switchoverMsg->wait_seconds);
                         needDoDnNum++;
                     } else if (initRole == INSTANCE_ROLE_PRIMARY && localStatus != INSTANCE_HA_STATE_NORMAL) {
-                        write_runlog(LOG,
-                            "dn instance=%u status=%s, will not switchover for status is unNormal.\n",
+                        write_runlog(LOG, "dn instance=%u status=%s, will not switchover for status is unNormal.\n",
                             instanceId, datanode_dbstate_int_to_string(localStatus));
                         msgBalanceResult.instances[imbalanceIndex++] = instanceId;
                         noNeedDoDnNum++;
@@ -2282,13 +2287,11 @@ void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchov
                             instanceId, datanode_dbstate_int_to_string(localStatus));
                         noNeedDoDnNum++;
                     } else if (initRole == INSTANCE_ROLE_PRIMARY && isInVoteAz && isCheckSyncList) {
-                        write_runlog(LOG,
-                            "dn instance=%u status=%s, will not switchover in vote AZ.\n",
+                        write_runlog(LOG, "dn instance=%u status=%s, will not switchover in vote AZ.\n",
                             instanceId, datanode_dbstate_int_to_string(localStatus));
                         noNeedDoDnNum++;
                     } else if (initRole == INSTANCE_ROLE_PRIMARY && isCatchUp) {
-                        write_runlog(LOG,
-                            "dn instance=%u status=%s, will not switchover for the xlog location gap"
+                        write_runlog(LOG, "dn instance=%u status=%s, will not switchover for the xlog location gap"
                             "between the primary and standby is too large.\n",
                             instanceId, datanode_dbstate_int_to_string(localStatus));
                         if (dnLocalRole == INSTANCE_ROLE_STANDBY && initRole == INSTANCE_ROLE_PRIMARY) {

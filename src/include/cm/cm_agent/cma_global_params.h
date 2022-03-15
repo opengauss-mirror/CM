@@ -195,7 +195,6 @@ extern bool g_mostAvailableSync[CM_MAX_DATANODE_PER_NODE];
 #ifndef ENABLE_MULTIPLE_NODES
 extern bool g_ltranDown[CM_MAX_DATANODE_PER_NODE];
 #endif
-extern bool g_cmServerInstancePending;
 extern bool g_cmAgentFirstStart;
 extern bool g_isStart;
 extern bool g_suppressAlarm;
@@ -248,6 +247,7 @@ extern bool g_dnPhonyDeadD[CM_MAX_DATANODE_PER_NODE];
 extern bool g_gtmPhonyDeadD;
 extern bool g_dnNoFreeProc;
 extern bool g_cnNoFreeProc;
+extern bool g_cnWaiting;
 
 extern int g_startCmsCount;
 extern int g_startCnCount;

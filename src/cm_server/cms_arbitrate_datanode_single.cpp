@@ -88,11 +88,6 @@ void datanode_instance_arbitrate_single(
 
     (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
 
-    if (cm_server_pending) {
-        write_runlog(LOG, "cm_server is in pending state\n");
-        goto process_finish;
-    }
-
     if (g_HA_status->local_role == CM_SERVER_STANDBY) {
         write_runlog(LOG, "cm_server is in standby state\n");
         EventDel(con->epHandle, con);

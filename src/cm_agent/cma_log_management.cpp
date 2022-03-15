@@ -139,7 +139,7 @@ gtm_ctl-,cm_agent-,system_call-,cm_server-,om_monitor-,gs_local-,\
 gs_preinstall-,gs_install-,gs_replace-,gs_uninstall-,gs_om-,pssh-,\
 gs_upgradectl-,gs_expand-,gs_shrink-,gs_postuninstall-,gs_backup-,\
 gs_checkos-,gs_collector-,GaussReplace-,GaussOM-,gs_checkperf-,gs_check-,\
-roach-agent-,roach-controller-,sync-,postgresql-,gtm-,sessionstat-,\
+roach_agent-,roach_controller-,sync-,postgresql-,gtm-,sessionstat-,\
 system_alarm-,pg_perf-,slow_query_log-,asp-,etcd-,gs_cgroup-,pscp-,\
 gs_hotpatch-,cmd_sender-,uploader-,checkRunStatus-,ffic_gaussdb-,key_event-";
 #else
@@ -149,7 +149,7 @@ cm_agent-,system_call-,cm_server-,om_monitor-,gs_local-,\
 gs_preinstall-,gs_install-,gs_replace-,gs_uninstall-,gs_om-,pssh-,\
 gs_upgradectl-,gs_expand-,gs_shrink-,gs_postuninstall-,gs_backup-,\
 gs_checkos-,gs_collector-,GaussReplace-,GaussOM-,gs_checkperf-,gs_check-,\
-roach-agent-,roach-controller-,sync-,postgresql-,sessionstat-,\
+roach_agent-,roach_controller-,sync-,postgresql-,sessionstat-,\
 system_alarm-,pg_perf-,slow_query_log-,asp-,etcd-,gs_cgroup-,pscp-,\
 gs_hotpatch-,cmd_sender-,uploader-,checkRunStatus-,ffic_gaussdb-,key_event-";
 #endif

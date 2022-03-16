@@ -839,153 +839,6 @@ int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg
     return 0;
 }
 
-int GetCkptRedoPoint(cltPqConn_t *conn, uint64 *ckptRedoPointInfo)
-{
-    uint32 hi = 0;
-    uint32 lo = 0;
-    const char *sqlCommands = "select ckpt_redo_point from local_ckpt_stat();";
-    cltPqResult_t *resultSet = Exec(conn, sqlCommands);
-    if (resultSet == NULL) {
-        write_runlog(ERROR, "GetCkptRedoPoint fail return NULL!\n");
-        return -1;
-    }
-    if ((ResultStatus(resultSet) == CLTPQRES_CMD_OK) || (ResultStatus(resultSet) == CLTPQRES_TUPLES_OK)) {
-        int maxRows = Ntuples(resultSet);
-        if (maxRows == 0) {
-            write_runlog(DEBUG1, "GetCkptRedoPoint is 0\n");
-            Clear(resultSet);
-            return 0;
-        } else {
-            char *ckpt_redo_point = Getvalue(resultSet, 0, 0);
-            if (ckpt_redo_point == NULL || strcmp(ckpt_redo_point, "") == 0) {
-                write_runlog(ERROR, "local_ckpt_stat is empty.\n");
-                Clear(resultSet);
-                return 0;
-            } else {
-                int rc = sscanf_s(ckpt_redo_point, "%X/%X", &hi, &lo);
-                check_sscanf_s_result(rc, 2);
-                securec_check_intval(rc, (void)rc);
-                *ckptRedoPointInfo = (((uint64)hi) << 32) | lo;
-            }
-        }
-    } else {
-        write_runlog(ERROR, "GetCkptRedoPoint fail ResultStatus=%d!\n", ResultStatus(resultSet));
-        Clear(resultSet);
-        return -1;
-    }
-    Clear(resultSet);
-    return 0;
-}
-
-int GetLocalBarrierStatus(cltPqConn_t *conn, LocalBarrierStatus *localBarrierStatus)
-{
-    uint32 hi = 0;
-    uint32 lo = 0;
-    const char *sqlCommand = "select * from gs_get_local_barrier_status ();";
-    cltPqResult_t *resultSet = Exec(conn, sqlCommand);
-    if (resultSet == NULL) {
-        write_runlog(ERROR, "GetLocalBarrierStatus: sql:%s, return NULL!\n", sqlCommand);
-        return -1;
-    }
-    if ((ResultStatus(resultSet) == CLTPQRES_CMD_OK) || (ResultStatus(resultSet) == CLTPQRES_TUPLES_OK)) {
-        int maxRows = Ntuples(resultSet);
-        if (maxRows == 0) {
-            write_runlog(DEBUG1, "GetLocalBarrierStatus: sql:%s, return 0!\n", sqlCommand);
-            Clear(resultSet);
-            return 0;
-        } else {
-            int rc;
-            char *tmp_result = Getvalue(resultSet, 0, 0);
-            if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
-                rc = snprintf_s(localBarrierStatus->barrierID, BARRIERLEN, BARRIERLEN - 1, "%s", tmp_result);
-                securec_check_intval(rc, (void)rc);
-            }
-            rc = sscanf_s(Getvalue(resultSet, 0, 1), "%X/%X", &hi, &lo);
-            check_sscanf_s_result(rc, 2);
-            securec_check_intval(rc, (void)rc);
-            localBarrierStatus->barrierLSN = (((uint64)hi) << 32) | lo;
-            rc = sscanf_s(Getvalue(resultSet, 0, 2), "%X/%X", &hi, &lo);
-            check_sscanf_s_result(rc, 2);
-            securec_check_intval(rc, (void)rc);
-            localBarrierStatus->archiveLSN = (((uint64)hi) << 32) | lo;
-            rc = sscanf_s(Getvalue(resultSet, 0, 3), "%X/%X", &hi, &lo);
-            check_sscanf_s_result(rc, 2);
-            securec_check_intval(rc, (void)rc);
-            localBarrierStatus->flushLSN = (((uint64)hi) << 32) | lo;
-        }
-    } else {
-        write_runlog(
-            ERROR, "GetLocalBarrierStatus: sql:%s, ResultStatus=%d!\n", sqlCommand, ResultStatus(resultSet));
-        Clear(resultSet);
-        return -1;
-    }
-    Clear(resultSet);
-    return 0;
-}
-
-static void RecordGlobalBarrier(const cltPqResult_t *resultSet, GlobalBarrierStatus *globalStatus)
-{
-    const int archFieldNum = 2;
-    int rc;
-    if (globalStatus->slotCount > MAX_BARRIER_SLOT_COUNT) {
-        write_runlog(WARNING,
-            "RecordGlobalBarrier:return rows(%d) that great than max(%d) will ignore!\n",
-            globalStatus->slotCount, MAX_BARRIER_SLOT_COUNT);
-        globalStatus->slotCount = MAX_BARRIER_SLOT_COUNT;
-    }
-
-    for (int32 numRows = 0; numRows < globalStatus->slotCount; numRows++) {
-        char *tmp_result = Getvalue(resultSet, numRows, 0);
-        if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
-            rc = snprintf_s(globalStatus->globalBarriers[numRows].slotname,
-                MAX_SLOT_NAME_LEN, MAX_SLOT_NAME_LEN - 1, "%s", tmp_result);
-            securec_check_intval(rc, (void)rc);
-        }
-        tmp_result = Getvalue(resultSet, numRows, 1);
-        if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
-            rc = snprintf_s(globalStatus->globalBarriers[numRows].globalBarrierId,
-                BARRIERLEN, BARRIERLEN - 1, "%s", tmp_result);
-            securec_check_intval(rc, (void)rc);
-        }
-        tmp_result = Getvalue(resultSet, numRows, archFieldNum);
-        if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
-            rc = snprintf_s(globalStatus->globalBarriers[numRows].globalAchiveBarrierId,
-                BARRIERLEN, BARRIERLEN - 1, "%s", tmp_result);
-            securec_check_intval(rc, (void)rc);
-        }
-    }
-}
-
-int GetGlobalBarrierInfoNew(cltPqConn_t *conn, GlobalBarrierStatus *globalStatus)
-{
-    const char *sqlCommand =
-        "select slot_name, global_barrier_id, global_achive_barrier_id from gs_get_global_barriers_status();";
-    cltPqResult_t *resultSet = Exec(conn, sqlCommand);
-    if (resultSet == NULL) {
-        write_runlog(ERROR, "GetGlobalBarrierInfoNew: sql:%s, return NULL!\n", sqlCommand);
-        return -1;
-    }
-
-    if ((ResultStatus(resultSet) == CLTPQRES_CMD_OK) || (ResultStatus(resultSet) == CLTPQRES_TUPLES_OK)) {
-        globalStatus->slotCount = Ntuples(resultSet);
-        if (globalStatus->slotCount == 0) {
-            write_runlog(DEBUG1, "GetGlobalBarrierInfoNew: sql:%s, return rows is 0!\n", sqlCommand);
-            Clear(resultSet);
-            return 0;
-        } else {
-            RecordGlobalBarrier(resultSet, globalStatus);
-        }
-    } else {
-        write_runlog(ERROR,
-            "GetGlobalBarrierInfoNew: sqlCommands:%s ResultStatus=%d!\n",
-            sqlCommand, ResultStatus(resultSet));
-        Clear(resultSet);
-        return -1;
-    }
-    Clear(resultSet);
-    return 0;
-}
-
 int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltPqConn_t **curDnConn)
 {
     cltPqResult_t *nodeResult = NULL;
@@ -1026,60 +879,28 @@ int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, 
     return 0;
 }
 
-int GetGlobalBarrierInfo(cltPqConn_t *conn, agent_to_cm_coordinate_barrier_status_report *barrierMsg)
-{
-    char *tmp_result = NULL;
-    const char *sqlCommand = "select * from gs_get_global_barrier_status();";
-    cltPqResult_t *resultSet = Exec(conn, sqlCommand);
-    if (resultSet == NULL) {
-        write_runlog(ERROR, "sqlCommands[9]: sqlCommands:%s, return NULL!\n", sqlCommand);
-        return -1;
-    }
-    if ((ResultStatus(resultSet) == CLTPQRES_CMD_OK) || (ResultStatus(resultSet) == CLTPQRES_TUPLES_OK)) {
-        int maxRows = Ntuples(resultSet);
-        if (maxRows == 0) {
-            write_runlog(DEBUG1, "dn_report_wrapper_1: sqlCommands:%s, return 0!\n", sqlCommand);
-            Clear(resultSet);
-            return 0;
-        } else {
-            int rc;
-            tmp_result = Getvalue(resultSet, 0, 0);
-            if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
-                rc = snprintf_s(barrierMsg->global_barrierId, BARRIERLEN, BARRIERLEN - 1, "%s", tmp_result);
-                securec_check_intval(rc, (void)rc);
-            }
-            tmp_result = Getvalue(resultSet, 0, 1);
-            if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
-                rc = snprintf_s(barrierMsg->global_achive_barrierId, BARRIERLEN, BARRIERLEN - 1, "%s", tmp_result);
-                securec_check_intval(rc, (void)rc);
-            }
-        }
-    } else {
-        write_runlog(
-            ERROR, "cn_report_wrapper_1: sqlCommands:%s ResultStatus=%d!\n", sqlCommand, ResultStatus(resultSet));
-        Clear(resultSet);
-        return -1;
-    }
-    Clear(resultSet);
-    return 0;
-}
-
 /* check whether query barrier id exists or not */
-int StandbyClusterCheckQueryBarrierID(cltPqConn_t *conn, agent_to_cm_coordinate_barrier_status_report *barrierInfo)
+int StandbyClusterCheckQueryBarrierID(cltPqConn_t* &conn, AgentToCmBarrierStatusReport *barrierInfo)
 {
-    int rc;
     char *tmpResult = NULL;
     char queryBarrier[BARRIERLEN] = {0};
     char sqlCommand[MAX_PATH_LEN] = {0};
-    // need locked
-    rc = memcpy_s(queryBarrier, BARRIERLEN - 1, g_agentQueryBarrier, BARRIERLEN - 1);
+
+    errno_t rc = memcpy_s(queryBarrier, BARRIERLEN - 1, g_agentQueryBarrier, BARRIERLEN - 1);
     securec_check_errno(rc, (void)rc);
     if (queryBarrier[0] == '\0') {
         write_runlog(LOG, "query barrier is NULL when checking it's existance.\n");
         return 0;
     }
+    if (strcmp(queryBarrier, g_agentTargetBarrier) == 0) {
+        write_runlog(LOG, "The query barrier:%s  has been checked\n", g_agentQueryBarrier);
+        rc = snprintf_s(barrierInfo->query_barrierId, BARRIERLEN, BARRIERLEN - 1, "%s", queryBarrier);
+        securec_check_intval(rc, (void)rc);
+        barrierInfo->is_barrier_exist = true;
+        return 0;
+    }
     rc = snprintf_s(sqlCommand, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-        "select gs_query_standby_cluster_barrier_id_exist('%s');", queryBarrier);
+        "select pg_catalog.gs_query_standby_cluster_barrier_id_exist('%s');", queryBarrier);
     securec_check_intval(rc, (void)rc);
     cltPqResult_t *nodeResult = Exec(conn, sqlCommand);
     if (nodeResult == NULL) {
@@ -1095,8 +916,6 @@ int StandbyClusterCheckQueryBarrierID(cltPqConn_t *conn, agent_to_cm_coordinate_
             tmpResult = Getvalue(nodeResult, 0, 0);
             if (strcmp(tmpResult, "t") == 0) {
                 barrierInfo->is_barrier_exist = true;
-            } else {
-                write_runlog(LOG, "value %s is not exists\n", queryBarrier);
             }
             // query success, so we need update the query_barrierId
             rc = snprintf_s(barrierInfo->query_barrierId, BARRIERLEN, BARRIERLEN - 1, "%s", queryBarrier);
@@ -1108,12 +927,12 @@ int StandbyClusterCheckQueryBarrierID(cltPqConn_t *conn, agent_to_cm_coordinate_
         CLEAR_AND_CLOSE_CONNECTION(nodeResult, conn);
     }
     Clear(nodeResult);
-    write_runlog(LOG, "check_query_barrierID, etcd val is %s, query barrier ID is %s, result is %s\n",
+    write_runlog(LOG, "check_query_barrierID, val is %s, query barrier ID is %s, result is %s\n",
         queryBarrier, barrierInfo->query_barrierId, tmpResult);
     return 0;
 }
 
-int StandbyClusterSetTargetBarrierID(cltPqConn_t *conn)
+int StandbyClusterSetTargetBarrierID(cltPqConn_t* &conn)
 {
     int maxRows = 0;
     char *tmpResult = NULL;
@@ -1126,11 +945,9 @@ int StandbyClusterSetTargetBarrierID(cltPqConn_t *conn)
     if (targetBarrier[0] == '\0') {
         write_runlog(LOG, "target barrier is NULL when setting it.\n");
         return 0;
- 
     }
-    write_runlog(LOG, "get target value from etcd is %s.\n", targetBarrier);
     rc = snprintf_s(sqlCommand, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-        "select gs_set_standby_cluster_target_barrier_id('%s');", targetBarrier);
+        "select pg_catalog.gs_set_standby_cluster_target_barrier_id('%s');", targetBarrier);
     securec_check_intval(rc, (void)rc);
     cltPqResult_t *nodeResult = Exec(conn, sqlCommand);
     if (nodeResult == NULL) {
@@ -1145,7 +962,7 @@ int StandbyClusterSetTargetBarrierID(cltPqConn_t *conn)
         } else {
             tmpResult = Getvalue(nodeResult, 0, 0);
             if (strncmp(tmpResult, targetBarrier, BARRIERLEN) != 0) {
-                write_runlog(WARNING, "the return target barrier value %s is not euqal to etcd value %s\n",
+                write_runlog(WARNING, "the return target barrier value %s is not euqal to set value %s\n",
                     tmpResult, targetBarrier);
             }
         }
@@ -1155,11 +972,11 @@ int StandbyClusterSetTargetBarrierID(cltPqConn_t *conn)
         CLEAR_AND_CLOSE_CONNECTION(nodeResult, conn);
     }
     Clear(nodeResult);
-    write_runlog(LOG, "set_tatget_barrierID, etcd val is %s, set result is %s\n", targetBarrier, tmpResult);
+    write_runlog(LOG, "set_tatget_barrierID, val is %s, set result is %s\n", targetBarrier, tmpResult);
     return 0;
 }
 
-int StandbyClusterGetBarrierInfo(cltPqConn_t *conn, agent_to_cm_coordinate_barrier_status_report *barrierInfo)
+int StandbyClusterGetBarrierInfo(cltPqConn_t* &conn, AgentToCmBarrierStatusReport *barrierInfo)
 {
     int maxRows = 0;
     char* tmpResult = NULL;
@@ -1191,7 +1008,7 @@ int StandbyClusterGetBarrierInfo(cltPqConn_t *conn, agent_to_cm_coordinate_barri
     return 0;
 }
 
-int StandbyClusterCheckCnWaiting(cltPqConn_t *conn, agent_to_cm_coordinate_status_report *reportMsg)
+int StandbyClusterCheckCnWaiting(cltPqConn_t* &conn)
 {
     int maxRows = 0;
     char* tmpResult = NULL;
@@ -1222,7 +1039,9 @@ int StandbyClusterCheckCnWaiting(cltPqConn_t *conn, agent_to_cm_coordinate_statu
     Clear(nodeResult);
     if (strlen(g_agentTargetBarrier) != 0 && strncmp(localBarrier, g_agentTargetBarrier, BARRIERLEN - 1) > 0) {
         write_runlog(LOG, "localBarrier %s is bigger than targetbarrier %s\n", localBarrier, g_agentTargetBarrier);
-        reportMsg->status.db_state = INSTANCE_HA_STATE_WAITING;
+        g_cnWaiting = true;
+    } else {
+        g_cnWaiting = false;
     }
     write_runlog(LOG, "StandbyClusterCheckCnWaiting, get localbarrier is %s\n", localBarrier);
     return 0;
@@ -1883,16 +1702,6 @@ int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDataba
     return 0;
 }
 
-void ChangeNewBarrierStatues2Old(
-    const LocalBarrierStatus *newBarrierStatus, agent_to_cm_coordinate_barrier_status_report *old)
-{
-    int rc = snprintf_s(old->barrierID, BARRIERLEN, BARRIERLEN - 1, "%s", newBarrierStatus->barrierID);
-    securec_check_intval(rc, (void)rc);
-    old->barrierLSN = newBarrierStatus->barrierLSN;
-    old->archive_LSN = newBarrierStatus->archiveLSN;
-    old->flush_LSN = newBarrierStatus->flushLSN;
-}
-
 int CheckMostAvailableSync(uint32 index)
 {
     cltPqResult_t *nodeResult = NULL;
@@ -1966,4 +1775,100 @@ int32 CheckDnSyncDone(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltP
     }
     Clear(nodeResult);
     return st;
+}
+
+int GetDnBackUpStatus(cltPqConn_t* &conn, AgentToCmBarrierStatusReport *barrierMsg)
+{
+    if (StandbyClusterGetBarrierInfo(conn, barrierMsg) != 0) {
+        return -1;
+    }
+    if (StandbyClusterCheckQueryBarrierID(conn, barrierMsg) != 0) {
+        return -1;
+    }
+    if (StandbyClusterSetTargetBarrierID(conn) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+status_t GetDnBarrierConn(cltPqConn_t* &dnBarrierConn, int dnIdx)
+{
+    if (dnBarrierConn == NULL) {
+        char *dataPath = g_currentNode->datanode[dnIdx].datanodeLocalDataPath;
+        char pid_path[MAXPGPATH] = {0};
+        errno_t rc = snprintf_s(pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", dataPath);
+        securec_check_intval(rc, (void)rc);
+        dnBarrierConn = get_connection(pid_path, false, (int)g_agentToDb);
+        if (dnBarrierConn == NULL || (!IsConnOk(dnBarrierConn))) {
+            write_runlog(ERROR, "instId(%u) failed to connect\n", g_currentNode->datanode[dnIdx].datanodeId);
+            if (dnBarrierConn != NULL) {
+                write_runlog(ERROR, "%u connection return errmsg : %s\n",
+                    g_currentNode->datanode[dnIdx].datanodeId, ErrorMessage(dnBarrierConn));
+                close_and_reset_connection(dnBarrierConn);
+            }
+            return CM_ERROR;
+        }
+    }
+    return CM_SUCCESS;
+}
+
+// we use cn reportMsg when in single-node cluster
+void InitDNBarrierMsg(AgentToCmBarrierStatusReport &barrierMsg, int dnIdx, CM_MessageType &barrierMsgType)
+{
+    bool isInUpgrade = isUpgradeCluster();
+    if (isInUpgrade) {
+        // won't check and report barrier
+        barrierMsgType = MSG_AGENT_CM_BUTT;
+    } else {
+        barrierMsgType = MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER;
+    }
+    write_runlog(LOG, "Get barrier info, instanceId=%u, isInUpgrade=%d\n",
+        g_currentNode->datanode[dnIdx].datanodeId, isInUpgrade);
+    barrierMsg.barrierID[0] = '\0';
+    barrierMsg.msg_type = (int)MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER;
+    barrierMsg.node = g_currentNode->node;
+    barrierMsg.instanceId = g_currentNode->datanode[dnIdx].datanodeId;
+    barrierMsg.instanceType = INSTANCE_TYPE_DATANODE;
+    barrierMsg.query_barrierId[0] = '\0';
+    barrierMsg.is_barrier_exist = false;
+}
+
+void* DNBackupStatusCheckMain(void * arg)
+{
+    int i = *(int*)arg;
+    pthread_t threadId = pthread_self();
+    cltPqConn_t* dnBarrierConn = NULL;
+    write_runlog(LOG, "dn(%d) backup status check thread start, threadid %lu.\n", i, threadId);
+
+    for (;;) {
+        if (g_shutdownRequest) {
+            cm_sleep(5);
+            continue;
+        }
+        AgentToCmBarrierStatusReport barrierMsg;
+        CM_MessageType barrierMsgType;
+        InitDNBarrierMsg(barrierMsg, i, barrierMsgType);
+
+        status_t st = GetDnBarrierConn(dnBarrierConn, i);
+        if (st != CM_SUCCESS) {
+            cm_sleep(1);
+            continue;
+        }
+
+        if (GetDnBackUpStatus(dnBarrierConn, &barrierMsg) != 0) {
+            write_runlog(ERROR, "get backup barrier info failed, datanode:%u\n", g_currentNode->datanode[i].datanodeId);
+            close_and_reset_connection(dnBarrierConn);
+            cm_sleep(1);
+            continue;
+        }
+
+        (void)pthread_rwlock_wrlock(&(g_dnReportMsg[i].lk_lock));
+        errno_t rc = memcpy_s((void *)&(g_dnReportMsg[i].dnStatus.barrierMsg), sizeof(AgentToCmBarrierStatusReport),
+            (void *)&barrierMsg, sizeof(AgentToCmBarrierStatusReport));
+        securec_check_errno(rc, (void)rc);
+        g_dnReportMsg[i].dnStatus.barrierMsgType = barrierMsgType;
+        (void)pthread_rwlock_unlock(&(g_dnReportMsg[i].lk_lock));
+
+        cm_sleep(1);
+    }
 }

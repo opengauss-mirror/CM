@@ -100,6 +100,20 @@ void CreateStartAndStopThread()
     }
 }
 
+void CreateDNBackupStatusCheckThread(int* i)
+{
+    int err;
+    pthread_t thr_id;
+
+    if (agent_backup_open != CLUSTER_STREAMING_STANDBY) {
+        return;
+    }
+    if ((err = pthread_create(&thr_id, NULL, DNBackupStatusCheckMain, i)) != 0) {
+        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        exit(-1);
+    }
+}
+
 void CreateDNStatusCheckThread(int* i)
 {
     int err;

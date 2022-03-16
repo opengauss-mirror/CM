@@ -220,7 +220,7 @@ const char* gtm_con_int_to_string(int con);
 extern const char* datanode_role_int_to_string(int role);
 extern const char* datanode_static_role_int_to_string(uint32 role);
 extern const char* datanode_rebuild_reason_int_to_string(int reason);
-extern const char* server_role_to_string(int role, bool is_pending);
+extern const char* server_role_to_string(int role);
 extern const char* etcd_role_to_string(int role);
 extern const char* kerberos_status_to_string(int role);
 const char *DatanodeLockmodeIntToString(uint32 lockmode);

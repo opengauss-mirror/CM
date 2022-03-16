@@ -47,7 +47,7 @@ extern int g_waitSeconds;
 extern uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM];
 extern bool g_commandRelationship;
 extern char g_cmData[CM_PATH_LENGTH];
-extern const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM];
+extern const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM + 1];
 extern uint32 g_commandOperationNodeId;
 extern char* g_logFile;
 extern bool g_gtmBalance;

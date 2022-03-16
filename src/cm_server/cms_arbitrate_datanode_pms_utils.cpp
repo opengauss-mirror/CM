@@ -180,8 +180,7 @@ void CheckDnBuildStatus(uint32 groupIdx, int32 memIdx, DnBuildStatus *buildStatu
             }
             continue;
         }
-        if (status[i].pengding_command == MSG_CM_AGENT_BUILD &&
-            dnReport[i].local_status.local_role == INSTANCE_ROLE_STANDBY) {
+        if (status[i].pengding_command == MSG_CM_AGENT_BUILD) {
             write_runlog(LOG, "instd(%u) CheckDnBuildStatus: instance(%u) is building.\n",
                 GetInstanceIdInGroup(groupIdx, memIdx), GetInstanceIdInGroup(groupIdx, i));
             buildStatus->buildCount++;
@@ -421,4 +420,66 @@ void GetDnIntanceInfo(const DnArbCtx *ctx, DnInstInfo *instInfo)
     GetSyncListStr(ctx->repGroup, instInfo);
     GetInstanceInfoStr(&(ctx->staCasCade), instInfo->stCasL, MAX_PATH_LEN);
     GetInstanceInfoStr(&(ctx->dyCascade), instInfo->dyCasL, MAX_PATH_LEN);
+}
+
+static int32 FindDnPeerIndex(const DnArbCtx *ctx)
+{
+    int32 staPrimIdx = -1;
+    int32 dynaPrimIdx = -1;
+    cm_instance_role_status *role = ctx->roleGroup->instanceMember;
+    cm_instance_datanode_report_status *report = ctx->repGroup->data_node_member;
+    for (int32 i = 0; i < ctx->roleGroup->count; ++i) {
+        if (role->role == INSTANCE_ROLE_PRIMARY) {
+            staPrimIdx = i;
+        }
+        if (report[i].local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+            dynaPrimIdx = i;
+        }
+    }
+    if (dynaPrimIdx != -1 && dynaPrimIdx != ctx->memIdx) {
+        return dynaPrimIdx;
+    }
+
+    if (staPrimIdx != -1 && staPrimIdx != ctx->memIdx) {
+        return staPrimIdx;
+    }
+    return (ctx->memIdx + 1) % ctx->roleGroup->count;
+}
+
+void PrintCurAndPeerDnInfo(const DnArbCtx *ctx, const char *str)
+{
+    int32 peerIdx = FindDnPeerIndex(ctx);
+    if (peerIdx == -1) {
+        peerIdx = 0;
+    }
+    const uint32 xlogOffset = 32;
+    int32 memIdx = ctx->memIdx;
+    cm_instance_role_status *role = ctx->roleGroup->instanceMember;
+    cm_instance_datanode_report_status *dnRep = ctx->repGroup->data_node_member;
+    cm_local_replconninfo *curInfo = &(dnRep[ctx->memIdx].local_status);
+    cm_local_replconninfo *peerInfo = &(dnRep[peerIdx].local_status);
+    cm_instance_arbitrate_status *dnArbi = ctx->repGroup->arbitrate_status_member;
+    DnInstInfo instInfo = {{0}};
+    GetSyncListStr(ctx->repGroup, &instInfo);
+    write_runlog(LOG, "%s, current report instance is %u, node %u, "
+        "instId[%u: %u], node[%u: %u], staticRole[%d=%s: %d=%s], dynamicRole[%d=%s: %d=%s], "
+        "term[%u: %u], lsn[%X/%X: %X/%X], dbState[%d: %d], buildReason[%d=%s: %d=%s], doubleRestarting[%d: %d], "
+        "disconn_mode[%u=%s: %u=%s], disconn[%s:%u, %s:%u], local[%s:%u, %s:%u], redoFinished[%d: %d], "
+        "arbiTime[%u: %u], syncList[cur: (%s), exp: (%s), vote: (%s)], groupTerm[%u], sync_standby_mode[%d: %d: %d].\n",
+        str, role[memIdx].instanceId, role[memIdx].node, role[memIdx].instanceId, role[peerIdx].instanceId,
+        role[memIdx].node, role[peerIdx].node, role[memIdx].role, datanode_role_int_to_string(role[memIdx].role),
+        role[peerIdx].role, datanode_role_int_to_string(role[peerIdx].role), curInfo->local_role,
+        datanode_role_int_to_string(curInfo->local_role), peerInfo->local_role,
+        datanode_role_int_to_string(peerInfo->local_role), curInfo->term, peerInfo->term,
+        (uint32)(curInfo->last_flush_lsn >> xlogOffset), (uint32)curInfo->last_flush_lsn,
+        (uint32)(peerInfo->last_flush_lsn >> xlogOffset), (uint32)peerInfo->last_flush_lsn, curInfo->db_state,
+        peerInfo->db_state, curInfo->buildReason, datanode_rebuild_reason_int_to_string(curInfo->buildReason),
+        peerInfo->buildReason, datanode_rebuild_reason_int_to_string(peerInfo->buildReason), dnArbi[memIdx].restarting,
+        dnArbi[peerIdx].restarting, curInfo->disconn_mode, DatanodeLockmodeIntToString(curInfo->disconn_mode),
+        peerInfo->disconn_mode, DatanodeLockmodeIntToString(peerInfo->disconn_mode),
+        curInfo->disconn_host, curInfo->disconn_port, peerInfo->disconn_host, peerInfo->disconn_port,
+        curInfo->local_host, curInfo->local_port, peerInfo->local_host, peerInfo->local_port,
+        curInfo->redo_finished, peerInfo->redo_finished, dnRep[memIdx].arbiTime, dnRep[peerIdx].arbiTime,
+        instInfo.curSl, instInfo.expSl, instInfo.voteL, ctx->repGroup->term, dnRep[memIdx].sync_standby_mode,
+        dnRep[peerIdx].sync_standby_mode, current_cluster_az_status);
 }

@@ -13,8 +13,8 @@ set(CMS_LIB_PATHS
         ${ETCD_DIRECTORY_LIB}
         )
 
-set(CMS_LINK_LIBS cmpq_static cmclient_static ${CM_ADPT_LIBS} ${HOTPATCH_LIBS} cmprotocol_static
-        config_static pthread cjson alarmclient_static cmcommon_static securec m dl ${G_BIN_EXT_LIBS})
+set(CMS_LINK_LIBS cmprotocol_static cmpq_static cmclient_static ${HOTPATCH_LIBS}
+        config_static cmcommon_static pthread cjson alarmclient_static ${CM_ADPT_LIBS} securec m dl ${G_BIN_EXT_LIBS})
 if (ENABLE_MULTIPLE_NODES)
     set(CMS_LINK_LIBS ${CMS_LINK_LIBS} cgroup)
 endif ()

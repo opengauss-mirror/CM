@@ -98,8 +98,7 @@ void process_agent_to_cm_kerberos_status_report_msg(
 void process_agent_to_cm_fenced_UDF_status_report_msg(
     const agent_to_cm_fenced_UDF_status_report* agent_to_cm_fenced_UDF_status_ptr);
 void ProcessCtlToCmQueryGlobalBarrierMsg(CM_Connection* con);
-void ProcessCtlToCmQueryBarrierMsg(CM_Connection *con, const ctl_to_cm_global_barrier_query *ctl2CmGlobalBarrierQueryPtr);
-void ProcessCtl2CmQueryGlobalBarrierMsgNew(CM_Connection *con);
+void ProcessCtlToCmQueryBarrierMsg(CM_Connection *con);
 void ProcessCtl2CmOneInstanceBarrierQueryMsg(CM_Connection* con, uint32 node, uint32 instanceId, int instanceType);
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 void ProcessGetDnSyncListMsg(CM_Connection *con, AgentToCmserverDnSyncList *agentToCmserverDnSyncList);
@@ -137,8 +136,8 @@ void SetAgentDataReportMsg(CM_Connection *con, CM_StringInfo inBuffer);
 void ProcessStopArbitrationMessage(void);
 void process_finish_redo_message(CM_Connection *con);
 void process_finish_redo_check_message(CM_Connection *con);
-void SetDnBarrierInfo(CM_Connection *con, CM_StringInfo inBuffer);
-void SetCnBarrierInfo(CM_Connection *con, CM_StringInfo inBuffer);
+void ProcessDnBarrierinfo(CM_Connection *con, CM_StringInfo inBuffer);
+void ProcessCnBarrierinfo(CM_Connection *con, CM_StringInfo inBuffer);
 void FlushCmToAgentMsg(CM_Connection *con, int msgType, const CmdMsgProc *msgProc);
 void InitCltCmdProc(void);
 void SetSwitchoverPendingCmd(

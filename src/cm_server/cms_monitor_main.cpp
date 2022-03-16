@@ -108,13 +108,15 @@ static void datanode_status_reset(int group_index, int member_index, bool isNode
     }
     errno_t rc;
     const uint32 max_arbitrate_interval = 100;
-    g_instance_group_report_status_ptr[group_index].instance_status.time += max_arbitrate_interval;
     cm_instance_datanode_report_status *dnReportStatus =
         g_instance_group_report_status_ptr[group_index].instance_status.data_node_member;
     dnReportStatus[member_index].local_status.local_role = INSTANCE_ROLE_UNKNOWN;
     int count = g_instance_role_group_ptr[group_index].count;
-    for (int i = 0; i < count; ++i) {
-        dnReportStatus[i].arbiTime += max_arbitrate_interval;
+    if (!g_clusterStarting) {
+        g_instance_group_report_status_ptr[group_index].instance_status.time += max_arbitrate_interval;
+        for (int i = 0; i < count; ++i) {
+            dnReportStatus[i].arbiTime += max_arbitrate_interval;
+        }
     }
     write_runlog(LOG,
         "datanode_status_reset, arbitrate time is : %u, InstanceId[%d][%d]=%u, local_arbitrate_time=%u.\n",
@@ -151,7 +153,7 @@ static void datanode_status_reset(int group_index, int member_index, bool isNode
 
 static void check_cluster_balance_status()
 {
-    if (!g_isStart && !cm_server_pending && g_HA_status->local_role == CM_SERVER_PRIMARY) {
+    if (!g_isStart && g_HA_status->local_role == CM_SERVER_PRIMARY) {
         int switchedCount = isNodeBalanced(NULL);
         if (switchedCount > 0) {
             report_unbalanced_alarm(ALM_AT_Fault);
@@ -287,11 +289,6 @@ static void ReloadParametersFromConfigfile()
         (int)INSTALL_TYPE_DEFAULT);
     g_clusterStartingArbitDelay =
         (uint32)get_int_value_from_config(configDir, "cluster_starting_aribt_delay", CLUSTER_STARTING_ARBIT_DELAY);
-#ifdef ENABLE_MULTIPLE_NODES
-    if (backup_open == CLUSTER_OBS_STANDBY) {
-        coordinator_heartbeat_timeout = 0;
-    }
-#endif
 
     force_promote = get_int_value_from_config(configDir, "force_promote", 0);
     g_enableE2ERto = (uint32)get_int_value_from_config(configDir, "enable_e2e_rto", 0);

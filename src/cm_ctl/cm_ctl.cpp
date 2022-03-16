@@ -117,8 +117,10 @@ bool g_datanodesBalance = true;
 cm_to_ctl_central_node_status g_centralNode;
 FILE* g_logFilePtr = NULL;
 
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 static char* hotpatch_exec = NULL;
 static char* hotpatch_path = NULL;
+#endif
 
 char manual_start_file[MAXPGPATH];
 char instance_manual_start_file[MAXPGPATH];
@@ -155,8 +157,9 @@ uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM] = {INVALID_NODE_NUM,
     INVALID_NODE_NUM,
     INVALID_NODE_NUM,
     INVALID_NODE_NUM};
-const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM] = {
-    "Init", "Init", "Init", "Init", "Init", "Init", "Init", "Init"};
+// we should make sure g_cmServerState str array's inited len >= 9
+const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM  + 1] = {
+    "Init", "Init", "Init", "Init", "Init", "Init", "Init", "Init", "Init"};
 static char* cm_app = "cm_server";
 static bool g_execute_cmctl_success = false;
 char result_path[MAXPGPATH] = {0};
@@ -188,7 +191,9 @@ unordered_map<string, CtlCommand> g_optToCommand {
     {"restart", RESTART_COMMAND},
     {"disable", CM_DISABLE_COMMAND},
 #endif
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
     {"hotpatch", CM_HOTPATCH_COMMAND},
+#endif
     {"set", CM_SET_COMMAND},
     {"get", CM_GET_COMMAND},
     {"view", CM_VIEW_COMMAND},
@@ -1308,7 +1313,10 @@ static void ReleaseResource()
         CmServer_conn = NULL;
     }
     FREE_AND_RESET(g_logFile);
+
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
     FREE_AND_RESET(hotpatch_path);
+#endif
     FreeDdbInfo();
 }
 
@@ -1440,6 +1448,9 @@ static void CheckArgcType(int argc, const char * const *argv)
 
 static int MakeupCmdline(int argc, char** argv)
 {
+    if (argc > 1 && (strcmp(argv[1], "ddb") == 0)) {
+        return 0;
+    }
     uint32 cmdLen;
     int ret = sprintf_s(g_cmdLine, MAX_PATH_LEN, "%s", argv[0]);
     securec_check_intval(ret, (void)ret);
@@ -1460,6 +1471,7 @@ static int MakeupCmdline(int argc, char** argv)
 static void CtlDccCommand(int argc, char** argv)
 {
     if (argc > 1 && (strcmp(argv[1], "ddb") == 0)) {
+        write_runlog(DEBUG1, "ip: \"%s\", cmd: cm_ctl ddb ...\n", g_currentNode->sshChannel[0]);
         DoDccCmd(argc, argv);
         exit(0);
     }
@@ -1781,11 +1793,18 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
         case 'I':
             MatchCmdArgI();
             break;
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
         case 'P':
             if (optarg != NULL) {
                 hotpatch_path = xstrdup(optarg);
             }
             break;
+        case 'E':
+            if (optarg != NULL) {
+                hotpatch_exec = xstrdup(optarg);
+            }
+            break;
+#endif
 #ifdef ENABLE_MULTIPLE_NODES
         case 'R':
             MatchCmdArgR();
@@ -1818,11 +1837,6 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
             break;
         case 'd':
             g_dataPathQuery = true;
-            break;
-        case 'E':
-            if (optarg != NULL) {
-                hotpatch_exec = xstrdup(optarg);
-            }
             break;
         case 'i':
             g_ipQuery = true;
@@ -1942,6 +1956,7 @@ static void SetCommonDataPath(bool setDataPath, CtlOption *ctlCtx)
     ctlCtx->comm.dataPath = xstrdup(g_cmData);
 }
 
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 static void CtlHotPatchComand(void)
 {
     if (ctl_command == CM_HOTPATCH_COMMAND) {
@@ -1956,6 +1971,7 @@ static void CtlHotPatchComand(void)
         }
     }
 }
+#endif
 
 static void SetLogicClusterName(void)
 {
@@ -1979,7 +1995,9 @@ static void CtlCheckComandType(void)
             }
         }
 
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
         CtlHotPatchComand();
+#endif
      }
 }
 
@@ -2121,9 +2139,11 @@ static void CtlCommandProcessCore(int *status, CtlOption *ctlCtx)
         case CM_SETMODE_COMMAND:
             *status = do_setmode();
             break;
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
         case CM_HOTPATCH_COMMAND:
             *status = do_hotpatch(hotpatch_exec, hotpatch_path);
             break;
+#endif
 #ifdef ENABLE_MULTIPLE_NODES
         case CM_DISABLE_COMMAND:
             *status = do_disable_cn();
@@ -2233,7 +2253,10 @@ int main(int argc, char** argv)
 #ifdef ENABLE_MULTIPLE_NODES
         {"logic_name", required_argument, NULL, 'L'},
 #endif
+
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
         {"hotpatch", required_argument, NULL, 'h'},
+#endif
         {"agent", no_argument, NULL, CM_AGENT_MODE},
         {"server", no_argument, NULL, CM_SERVER_MODE},
         {"ddb_type", optional_argument, NULL, CM_SWITCH_DDB},
@@ -2282,11 +2305,11 @@ int main(int argc, char** argv)
     }
     (void)read_logic_cluster_name(g_logicClusterListPath, lcList, &err_no);
 
+    /* support cm_ctl ddb */
+    CtlDccCommand(argc, argv);
     if (!RecordCommands(argc, argv)) {
         exit(-1);
     }
-    /* support cm_ctl ddb */
-    CtlDccCommand(argc, argv);
     /*
      * 'Action' can be before or after args so loop over both. Some
      * getopt_long() implementations will reorder argv[] to place all flags

@@ -63,4 +63,5 @@ void GetCandicateIdxBackup(DnArbCtx *ctx, const CandicateCond *cadiCond);
 void GetSyncListStr(const cm_instance_report_status *repGroup, DnInstInfo *instInfo);
 void GetDnIntanceInfo(const DnArbCtx *ctx, DnInstInfo *instInfo);
 void GetInstanceInfoStr(const StatusInstances *insInfo, char *logStr, size_t maxLen);
+void PrintCurAndPeerDnInfo(const DnArbCtx *ctx, const char *str);
 #endif

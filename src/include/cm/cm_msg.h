@@ -386,8 +386,8 @@ extern int g_dnPhonyDeadTimes[CM_MAX_DATANODE_PER_NODE];
 extern int g_cnPhonyDeadTimes;
 
 const int ERR_MSG_LENGTH = 2048;
-const int DCC_CMD_MAX_LEN = (1024 - 8);
-const int DCC_CMD_MAX_PARAMETER_LEN = (2048 - 64);
+const int DCC_CMD_MAX_LEN = 2057;
+const int DCC_CMD_MAX_OUTPUT_LEN = (2048 - 64);
 
 typedef enum DDB_OPER_t {
     DDB_INIT_OPER = 0,
@@ -971,7 +971,7 @@ typedef enum CM_DCF_ROLE {
     DCF_ROLE_CEIL,
 } DCF_ROLE;
 
-typedef struct agent_to_cm_coordinate_barrier_status_report {
+typedef struct {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -985,7 +985,7 @@ typedef struct agent_to_cm_coordinate_barrier_status_report {
     uint64 archive_LSN;
     uint64 flush_LSN;
     bool is_barrier_exist;
-} agent_to_cm_coordinate_barrier_status_report;
+} AgentToCmBarrierStatusReport;
 
 typedef struct GlobalBarrierItem_t {
     char slotname[MAX_SLOT_NAME_LEN];
@@ -1014,18 +1014,6 @@ typedef struct Agent2CmBarrierStatusReport_t {
     LocalBarrierStatus localStatus;
     GlobalBarrierStatus globalStatus;
 } Agent2CmBarrierStatusReport;
-
-typedef struct agent_to_cm_datanode_barrier_status_report {
-    int msg_type;
-    uint32 node;
-    uint32 instanceId;
-    int instanceType;
-    uint64 ckpt_redo_point;
-    char barrierID [BARRIERLEN];
-    uint64 barrierLSN;
-    uint64 archive_LSN;
-    uint64 flush_LSN;
-}agent_to_cm_datanode_barrier_status_report;
 
 typedef struct cm_local_replconninfo {
     int local_role;
@@ -1284,7 +1272,7 @@ typedef struct DnStatus_t {
     CM_MessageType barrierMsgType;
     agent_to_cm_datanode_status_report reportMsg;
     union {
-        agent_to_cm_coordinate_barrier_status_report barrierMsg;
+        AgentToCmBarrierStatusReport barrierMsg;
         Agent2CmBarrierStatusReport barrierMsgNew;
     };
     AgentCmDnLocalPeer lpInfo;
@@ -1300,7 +1288,7 @@ typedef struct CnStatus_t {
     agent_to_cm_coordinate_status_report reportMsg;
     Agent2CmBackupInfoRep backupMsg;
     union {
-        agent_to_cm_coordinate_barrier_status_report barrierMsg;
+        AgentToCmBarrierStatusReport barrierMsg;
         Agent2CmBarrierStatusReport barrierMsgNew;
     };
 } CnStatus;
@@ -1742,7 +1730,6 @@ typedef struct cm_to_ctl_balance_result {
 #define CM_STATUS_DEGRADE 4
 #define CM_STATUS_UNKNOWN 5
 #define CM_STATUS_NORMAL_WITH_CN_DELETED 6
-#define CM_STATUS_UNKNOWN_WITH_BINARY_DAMAGED (7)
 
 typedef struct cm_to_ctl_cluster_status {
     int msg_type;
@@ -1943,7 +1930,7 @@ typedef struct ExecDdbCmdMsgSt {
 typedef struct ExecDdbCmdAckMsgSt {
     int msgType;
     bool isSuccess;
-    char output[DCC_CMD_MAX_PARAMETER_LEN];
+    char output[DCC_CMD_MAX_OUTPUT_LEN];
     int outputLen;
     char errMsg[ERR_MSG_LENGTH];
 } ExecDdbCmdAckMsg;

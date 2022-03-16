@@ -576,12 +576,6 @@ void get_parameters_from_configfile()
     g_clusterStartingArbitDelay = (uint32)get_int_value_from_config(
         configDir, "cluster_starting_aribt_delay", CLUSTER_STARTING_ARBIT_DELAY);
 
-#ifdef ENABLE_MULTIPLE_NODES
-    if (backup_open == CLUSTER_OBS_STANDBY) {
-        coordinator_heartbeat_timeout = 0;
-    }
-#endif
-
     force_promote = get_int_value_from_config(configDir, "force_promote", 0);
     g_enableE2ERto = (uint32)get_int_value_from_config(configDir, "enable_e2e_rto", 0);
     if (g_enableE2ERto == 1) {

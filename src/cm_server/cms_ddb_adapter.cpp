@@ -30,6 +30,8 @@
 #include "cm/cm_elog.h"
 #include "cm/cs_ssl.h"
 
+static CM_ConnDdbInfo g_ddbSession = {0};
+
 static DDB_RESULT GetKVInDDb(DdbConn *ddbConn, DrvText *drvKey, DrvText *drvValue, int32 logLevel = -1);
 
 void RestDdbConn(DdbConn *ddbConn, status_t st, const DDB_RESULT *ddbResult)
@@ -320,16 +322,6 @@ bool IsDdbHealth(DDB_CHECK_MOD checkMod)
         return false;
     }
     return DdbIsValid(ddbConn, checkMod);
-}
-
-uint32 DdbHealCount(void)
-{
-    DdbConn *ddbConn = GetNextDdbConn();
-    if (ddbConn == NULL) {
-        write_runlog(ERROR, "%s:%d ddbConn is NULL.\n", __FUNCTION__, __LINE__);
-        return 0;
-    }
-    return ddbConn->drv->healCount();
 }
 
 void ClearDdbNodeInfo(const DdbConn *ddbConn)
@@ -846,11 +838,7 @@ status_t ServerDdbInit()
     if (!IsInteractWithDdb(false, true)) {
         return CM_SUCCESS;
     }
-    g_sess = (CM_ConnDdbInfo*)malloc(sizeof(CM_ConnDdbInfo));
-    if (g_sess == NULL) {
-        write_runlog(FATAL, "failed to malloc ddb conn!\n");
-        return CM_ERROR;
-    }
+    g_sess = &g_ddbSession;
 
     // divide 10 just to avoid creating too many conn to ddb if cmserver node number is too large
     uint32 connNum = g_node_num / CM_TEN_DIVISOR + CM_MIN_CONN_TO_DDB;
@@ -860,16 +848,14 @@ status_t ServerDdbInit()
 
     g_sess->count = connNum;
     errno_t rc = memset_s(g_sess->ddbConn, sizeof(g_sess->ddbConn), 0, sizeof(g_sess->ddbConn));
-    securec_check_errno(rc, FREE_AND_RESET(g_sess));
+    securec_check_errno(rc, (void)rc);
     if (GetDdbSession(g_sess, DDB_DEFAULT_TIMEOUT, NULL) != CM_SUCCESS) {
         ClearDdbNodeInfo(&(g_sess->ddbConn[0]));
-        FREE_AND_RESET(g_sess);
         return CM_ERROR;
     }
     write_runlog(LOG, "Init ddb connection success, connect to ddb num is %u.\n", g_sess->count);
     if (CreateGtm2etcdSession() != CM_SUCCESS) {
         CloseAllDdbSession();
-        FREE_AND_RESET(g_sess);
         return CM_ERROR;
     }
     LoadDdbParamterFromConfig();
@@ -915,8 +901,6 @@ void CloseAllDdbSession()
         for (uint i = 0; i < g_sess->count; i++) {
             CloseDdbSession(&(g_sess->ddbConn[i]));
         }
-        g_sess->ddbConn[0].drv->freeNodeInfo();
-        FREE_AND_RESET(g_sess);
     }
 }
 
@@ -939,9 +923,9 @@ status_t DoDdbExecCmd(const char *cmd, char *output, int *outputLen, char *errMs
         write_runlog(ERROR, "current ddbType is %s, don't support this operation", dbStr);
         return CM_ERROR;
     }
-    uint32 cmdLen = (uint32)strlen(cmd);
-    if (cmdLen > CM_PATH_LENGTH) {
-        write_runlog(ERROR, "ddb cmd is too long, len:%u.\n", cmdLen);
+    int cmdLen = (int)strlen(cmd);
+    if (cmdLen > DCC_CMD_MAX_LEN) {
+        write_runlog(ERROR, "ddb cmd is too long, len:%d.\n", cmdLen);
         return CM_ERROR;
     }
     DdbConn *ddbConn = GetNextDdbConn();
@@ -954,7 +938,7 @@ status_t DoDdbExecCmd(const char *cmd, char *output, int *outputLen, char *errMs
     if (DdbExecCmd(ddbConn, const_cast<char*>(cmd), output, outputLen, maxBufLen) != CM_SUCCESS) {
         /* Only print error info */
         const char *err = DdbGetLastError(ddbConn);
-        rc = strcpy_s(errMsg, ERR_MSG_LENGTH, err);
+        rc = strcpy_s(errMsg, maxBufLen, err);
         securec_check_errno(rc, (void)rc);
         write_runlog(WARNING, "ddb exec cmd(%d: %s) failed, error: %s\n", ddbConn->drv->type, ddbConn->drv->msg, err);
         return CM_ERROR;

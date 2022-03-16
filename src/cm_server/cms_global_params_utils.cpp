@@ -212,7 +212,7 @@ uint32 GetClusterUpgradeMode()
 
 bool ExistClusterMaintenance(bool *isInFailover)
 {
-    if (access(cluster_maintance_path, F_OK) == 0 && backup_open == CLUSTER_STREAMING_STANDBY) {
+    if (access(cluster_maintance_path, F_OK) == 0) {
         if (isInFailover == NULL) {
             return true;
         }
@@ -361,10 +361,6 @@ void InitClientCrt(const char *appPath)
 bool CanArbitrate(CM_Connection *con, const char *arbitrateType)
 {
     const uint32 stopPrintInterval = 5;
-    if (cm_server_pending) {
-        write_runlog(LOG, "%s: cm_server is in pending state, skip arbitrate\n", arbitrateType);
-        return false;
-    }
 
     if (g_HA_status->local_role == CM_SERVER_STANDBY) {
         write_runlog(LOG, "%s: cm_server is in standby state, skip arbitrate\n", arbitrateType);

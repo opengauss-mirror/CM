@@ -368,16 +368,12 @@ const char* etcd_role_to_string(int role)
     }
 }
 
-const char* server_role_to_string(int role, bool is_pending)
+const char* server_role_to_string(int role)
 {
     if (role <= CM_SERVER_UNKNOWN || role >= CM_SERVER_INIT) {
         return "Unknown";
     } else {
-        if (CM_SERVER_PRIMARY == role && is_pending) {
-            return "Pending";
-        } else {
-            return server_role_string_map[role].role_string;
-        }
+        return server_role_string_map[role].role_string;
     }
 }
 
@@ -778,25 +774,6 @@ cluster_msg_string cluster_msg_map_string[] = {
     {"MSG_GET_SHARED_STORAGE_INFO_ACK", (int32)MSG_GET_SHARED_STORAGE_INFO_ACK},
     {NULL, MSG_TYPE_BUTT},
 };
-
-static ObsBackupStatusMapString g_obsBackupMapping[] = {
-    {"build start", OBS_BACKUP_PROCESSING},
-    {"build failed", OBS_BACKUP_FAILED},
-    {"build done", OBS_BACKUP_COMPLETED},
-    {NULL, OBS_BACKUP_UNKNOWN},
-};
-
-int32 ObsStatusStr2Int(const char *statusStr)
-{
-    for (uint32 i = 0; g_obsBackupMapping[i].obsStatusStr != NULL; i++) {
-        if (strcmp(g_obsBackupMapping[i].obsStatusStr, statusStr) == 0) {
-            return g_obsBackupMapping[i].backupStatus;
-        }
-    }
-
-    write_runlog(ERROR, "ObsStatusStr2Int failed, input status is: (%s)\n", statusStr);
-    return OBS_BACKUP_UNKNOWN;
-}
 
 const char* cluster_msg_int_to_string(int cluster_msg)
 {

@@ -174,7 +174,7 @@ static status_t WaitCmsPrimaryNormal(CM_Conn **pCmsConn)
             write_runlog(ERROR, "connect primary timeout.\n");
             return CM_ERROR;
         }
-        do_conn_cmserver(false, 0);
+        do_conn_cmserver(false, 0, false, pCmsConn);
         cm_sleep(1);
     }
 
@@ -1446,9 +1446,6 @@ static void* check_cluster_start_status(void* arg)
         } else if (g_cluster_start_status == CM_STATUS_NORMAL_WITH_CN_DELETED) {
             write_runlog(LOG, "start cluster successfully. There is a coordinator that has been deleted. \n");
             exit(0);
-        } else if (g_cluster_start_status == CM_STATUS_UNKNOWN_WITH_BINARY_DAMAGED) {
-            write_runlog(ERROR, "start cluster failed, damaged binary file exist\n");
-            exit(-1);
         } else if (g_az_start_status == CM_STATUS_NORMAL) {
             for (uint32 ii = 0; ii < g_node_num; ii++) {
                 if (g_command_operation_azName != NULL && 0 == strcmp(g_node[ii].azName, g_command_operation_azName)) {
@@ -1628,22 +1625,6 @@ static void NotifyCMSClusterStarting()
     return;
 }
 
-static int ClusterStatusPreCheck()
-{
-    int result = -1;
-    int clusterStatus = 0;
-    for (uint32 i = 0; i < g_node_num; i++) {
-        if (g_node[i].datanodeCount != 0) {
-            CheckDnNodeStatusById(i, &result, 0);
-            if (result == PROCESS_BINARY_DAMAGED) {
-                clusterStatus = CM_STATUS_UNKNOWN_WITH_BINARY_DAMAGED;
-                write_runlog(WARNING, "node %u binary file:%s is damaged\n", g_node[i].node, DATANODE_BIN_NAME);
-            }
-        }
-    }
-    return clusterStatus;
-}
-
 static int start_check_cluster()
 {
     ctl_to_cm_query cm_ctl_cm_query_content;
@@ -1656,11 +1637,6 @@ static int start_check_cluster()
 
     int ret;
     int cluster_status = CM_STATUS_UNKNOWN;
-
-    ret = ClusterStatusPreCheck();
-    if (ret == CM_STATUS_UNKNOWN_WITH_BINARY_DAMAGED) {
-        return ret;
-    }
 
     if (CmServer_conn != NULL) {
         CMPQfinish(CmServer_conn);

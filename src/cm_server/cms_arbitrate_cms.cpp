@@ -34,10 +34,9 @@
 static void CMServerRecord()
 {
     write_runlog(LOG, "%d: node(%u) cm_server role is %s, to standby\n",
-        __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role, cm_server_pending));
+        __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role));
 
     g_HA_status->local_role = CM_SERVER_STANDBY;
-    cm_server_pending = false;
     SendSignalToAgentThreads();
 }
 
@@ -148,7 +147,7 @@ static void IncrementTermIfCmRestart()
     (void)pthread_rwlock_unlock(&term_update_rwlock);
     if (incrementTermSesult != 0) {
         write_runlog(ERROR, "Incrtement term to ddb failed, %d:node(%u) cm_server role is %s, will to primary.\n",
-            __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role, cm_server_pending));
+            __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role));
     }
 }
 
@@ -419,38 +418,36 @@ static PromoteMode GetCmsPromoteMode()
     }
 
     int logLevel = (curPMode != g_cmsPromoteMode) ? LOG : DEBUG1;
-    write_runlog(logLevel, "Cms promote mode[%d] change to %d", g_cmsPromoteMode, curPMode);
+    write_runlog(logLevel, "Cms promote mode[%d] change to %d.\n", g_cmsPromoteMode, curPMode);
     g_cmsPromoteMode = curPMode;
 
     return g_cmsPromoteMode;
 }
 
-static void CmsChange2Primary()
+static void CmsChange2Primary(int32 *cmsDemoteDelayOnConnLess)
 {
     if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
         return;
     }
     IncrementTermIfCmRestart();
     write_runlog(LOG, "node(%u) cms role is %s, change to primary by ddb, and g_ddbRole is %d.\n",
-        g_currentNode->node, server_role_to_string(g_HA_status->local_role, cm_server_pending), g_ddbRole);
+        g_currentNode->node, server_role_to_string(g_HA_status->local_role), g_ddbRole);
     g_HA_status->local_role = CM_SERVER_PRIMARY;
+    *cmsDemoteDelayOnConnLess = cmserver_demote_delay_on_conn_less;
     ClearSyncWithDdbFlag();
-    cm_server_pending = false;
     NotifyDdb(DDB_ROLE_LEADER);
 }
 
-static void PromoteCmsDirect()
+static void PromoteCmsDirect(int32 *cmsDemoteDelayOnConnLess)
 {
-    write_runlog(DEBUG5, "local role is %s\n", server_role_to_string(g_HA_status->local_role, cm_server_pending));
+    write_runlog(DEBUG5, "local role is %s\n", server_role_to_string(g_HA_status->local_role));
     if (g_HA_status->local_role != CM_SERVER_PRIMARY) {
         write_runlog(LOG, "%d: node(%u) cm_server role is %s, direct to primary\n", __LINE__,
-            g_currentNode->node, server_role_to_string(g_HA_status->local_role, cm_server_pending));
-        CmsChange2Primary();
+            g_currentNode->node, server_role_to_string(g_HA_status->local_role));
+        CmsChange2Primary(cmsDemoteDelayOnConnLess);
+        NotifyDdb(DDB_ROLE_LEADER);
     }
-    cm_server_pending = false;
-    NotifyDdb(DDB_ROLE_LEADER);
 }
-
 
 static void CmsChange2Standby()
 {
@@ -461,10 +458,9 @@ static void CmsChange2Standby()
         coordinator_notify_msg_reset();
     }
     write_runlog(LOG, "node(%u) cms role is %s, cms change to standby by ddb, and g_ddbRole is %d.\n",
-        g_currentNode->node, server_role_to_string(g_HA_status->local_role, cm_server_pending), g_ddbRole);
+        g_currentNode->node, server_role_to_string(g_HA_status->local_role), g_ddbRole);
     g_HA_status->local_role = CM_SERVER_STANDBY;
     CMServerRecord();
-    cm_server_pending = false;
     NotifyDdb(DDB_ROLE_FOLLOWER);
 }
 
@@ -479,7 +475,7 @@ static void CmsReportDdbAlarm()
     report_ddb_fail_alarm(ALM_AT_Fault, "", 0);
 }
 
-static status_t CmsRoleChangeWithDdb()
+static status_t CmsRoleChangeWithDdb(int32 *cmsDemoteDelayOnConnLess)
 {
     if (!IsDdbHealth(DDB_PRE_CONN)) {
         write_runlog(LOG, "ddb is unhealth.\n");
@@ -493,7 +489,7 @@ static status_t CmsRoleChangeWithDdb()
         if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
             return CM_SUCCESS;
         }
-        CmsChange2Primary();
+        CmsChange2Primary(cmsDemoteDelayOnConnLess);
     } else {
         if (g_HA_status->local_role == CM_SERVER_STANDBY) {
             return CM_SUCCESS;
@@ -560,15 +556,12 @@ static bool CheckCmsInMonrityStart()
     if (cm_arbitration_mode != MINORITY_ARBITRATION && cm_server_start_mode != MINORITY_START) {
         return false;
     }
-    write_runlog(DEBUG5, "local role is %s.\n", server_role_to_string(g_HA_status->local_role, cm_server_pending));
+    write_runlog(DEBUG5, "local role is %s.\n", server_role_to_string(g_HA_status->local_role));
     if (g_HA_status->local_role != CM_SERVER_PRIMARY) {
         write_runlog(LOG, "%d: node(%u) cm_server role is %s, to primary\n", __LINE__, 
-            g_currentNode->node, server_role_to_string(g_HA_status->local_role, cm_server_pending));
+            g_currentNode->node, server_role_to_string(g_HA_status->local_role));
         g_HA_status->local_role = CM_SERVER_PRIMARY;
         ClearSyncWithDdbFlag();
-    }
-    if (cm_server_pending) {
-        cm_server_pending = false;
     }
     return true;
 }
@@ -587,7 +580,7 @@ static void ComputArbTime(const struct timeval *checkBegin, struct timeval *chec
 
 static void CheckCmsNeed2Standby()
 {
-    write_runlog(DEBUG5, "local role is %s\n", server_role_to_string(g_HA_status->local_role, cm_server_pending));
+    write_runlog(DEBUG5, "local role is %s\n", server_role_to_string(g_HA_status->local_role));
     uint32 count = GetCmsConnCmaCount();
     if (g_cmserverDemoteDelayOnDdbFault > 0 && g_HA_status->local_role == CM_SERVER_PRIMARY && count > g_node_num / 2) {
         if ((!g_multi_az_cluster) || cm_server_start_mode != OTHER_MINORITY_START) {
@@ -596,7 +589,7 @@ static void CheckCmsNeed2Standby()
         }
     }
     write_runlog(LOG,"%d: ddb is unhealth, node(%u) cm_server role is %s, to standby, is unhealth.\n",
-        __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role, cm_server_pending));
+        __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role));
     CmsChange2Standby();
 }
 
@@ -605,19 +598,10 @@ static void PromotePrimaryInSingleNode()
     if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
         return;
     }
-    if (!cm_server_pending) {
-        write_runlog(LOG, "cm_server will change to primary from %d.\n", g_HA_status->local_role);
-        g_HA_status->local_role = CM_SERVER_PRIMARY;
-        ClearSyncWithDdbFlag();
-        cm_server_pending = false;
-        return;
-    }
 
-    if (cm_arbitration_mode == MINORITY_ARBITRATION) {
-        g_HA_status->local_role = CM_SERVER_PRIMARY;
-        ClearSyncWithDdbFlag();
-        cm_server_pending = false;
-    }
+    write_runlog(LOG, "cm_server will change to primary from %d.\n", g_HA_status->local_role);
+    g_HA_status->local_role = CM_SERVER_PRIMARY;
+    ClearSyncWithDdbFlag();
     return;
 }
 
@@ -629,7 +613,7 @@ static void ArbitratePromote(int32 *cmsDemoteDelayOnConnLess)
         return;
     }
     SetDdbMinority(false);
-    status_t st = CmsRoleChangeWithDdb();
+    status_t st = CmsRoleChangeWithDdb(cmsDemoteDelayOnConnLess);
     if (st == CM_SUCCESS) {
         CheckCmsPrimaryAgentConn(cmsDemoteDelayOnConnLess);
     } else {
@@ -663,7 +647,7 @@ void *CM_ThreadHAMain(void *argp)
         check_server_role_changed(g_HA_status->local_role);
 
         if (GetCmsPromoteMode() == PMODE_FORCE_PRIMAYR) {
-            PromoteCmsDirect();
+            PromoteCmsDirect(&cmsDemoteDelayOnConnLess);
         } else if (IsNeedSyncDdb()) {
             ArbitratePromote(&cmsDemoteDelayOnConnLess);
         } else {

@@ -58,7 +58,7 @@ extern char mpp_env_separate_file[MAXPGPATH];
 extern passwd* pw;
 extern uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM];
 extern char result_path[MAXPGPATH];
-extern const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM];
+extern const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM + 1];
 extern char* g_command_operation_azName;
 extern uint32 g_commandOperationNodeId;
 extern uint32 g_nodeId;
@@ -79,6 +79,7 @@ int g_hostInfo[CM_NODE_MAXNUM][CM_IP_NUM] = {0};
 uint32 g_execNodes = 0;
 bool g_stopAbnormal = false;
 bool g_isRestop = false;
+extern int g_waitSeconds;
 
 static void connect_to_first_normal_cmserver(uint32 cmsNodeIdx, CM_Conn **curConn);
 
@@ -295,8 +296,8 @@ static status_t CtlConnSslRequst(CM_Conn *conn, int ssl_req, bool *enableSsl)
     AgentToCmConnectRequest req_msg;
     req_msg.msg_type = ssl_req;
     req_msg.nodeid = g_nodeId;
-    const int waitAckTime = 20;
-    int timeOut = waitAckTime;
+    const int32 timesPerSec = 5;
+    int64 timeOut = g_waitSeconds * timesPerSec;
 
     if (cm_client_send_msg(conn, 'C', (const char *)&req_msg, sizeof(AgentToCmConnectRequest)) != 0) {
         return CM_ERROR;
@@ -436,6 +437,12 @@ static status_t DoConnCmserver(uint32 nodeIndex, uint32 cmsIndex, uint32 cmaInde
     CM_Conn *conn = NULL;
     int ret;
     const int timeOut = 5;
+    // in order to prevent connect timeout in big cluster
+    const int32 ComputeConnectTimeOut = 50;
+    int32 connectTimeout = ((int32)g_node_num) / ComputeConnectTimeOut + CONN_TO_CMSERVER_TIMEOUT;
+    if (connectTimeout >= timeOut) {
+        connectTimeout = timeOut;
+    }
 
     ret = memset_s(connstr, CONN_STRING_LEN, 0, CONN_STRING_LEN);
     securec_check_errno(ret, (void)ret);
@@ -444,7 +451,7 @@ static status_t DoConnCmserver(uint32 nodeIndex, uint32 cmsIndex, uint32 cmaInde
         "host=%s port=%u localhost=%s connect_timeout=%d user=%s node_id=%u node_name=%s "
         "remote_type=%d %s",
         g_node[nodeIndex].cmServer[cmsIndex], g_node[nodeIndex].port,
-        g_currentNode->cmAgentIP[cmaIndex], CONN_TO_CMSERVER_TIMEOUT,
+        g_currentNode->cmAgentIP[cmaIndex], connectTimeout,
         pw->pw_name, g_nodeHeader.node, "cm_ctl", CM_CTL, isFirstCms ? "" : "postmaster=1");
         securec_check_intval(ret, (void)ret);
 
@@ -1724,7 +1731,8 @@ bool CheckDdbHealth()
     if (g_sess == NULL) {
         return true;
     }
-    return DdbIsValid(g_sess, DDB_HEAL_COUNT);
+    const int ddbHealthTimeout = 4000;
+    return DdbIsValid(g_sess, DDB_HEAL_COUNT, ddbHealthTimeout);
 }
 
 bool IsCmsPrimary(const staticNodeConfig *node)

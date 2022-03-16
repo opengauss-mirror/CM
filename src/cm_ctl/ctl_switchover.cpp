@@ -155,7 +155,8 @@ static int DoSwitchoverBase(const CtlOption *ctx)
                         FINISH_CONNECTION();
                     }
                     if (ackMsg->command_result == CM_INVALID_COMMAND) {
-                        write_runlog(ERROR, "can not do switchover at current role.\n");
+                        write_runlog(ERROR, "can not do switchover at current role,"
+                            "You can execute \"cm_ctl query -v\" and check\n");
                         FINISH_CONNECTION();
                     }
                     SetSwitchoverOper(&oper, ackMsg->pengding_command, instanceId);

@@ -33,11 +33,10 @@
  */
 void ProcessCtlToCmQueryCmserverMsg(CM_Connection* con)
 {
-    cm_to_ctl_cmserver_status cmToCtlCmserverStatusContent;
+    cm_to_ctl_cmserver_status cmToCtlCmserverStatusContent = {0};
 
     cmToCtlCmserverStatusContent.msg_type = (int32)MSG_CM_CTL_CMSERVER;
     cmToCtlCmserverStatusContent.local_role = g_HA_status->local_role;
-    cmToCtlCmserverStatusContent.is_pending = cm_server_pending;
     (void)cm_server_send_msg(
         con, 'S', (char*)&(cmToCtlCmserverStatusContent), sizeof(cmToCtlCmserverStatusContent));
     return;

@@ -15,8 +15,8 @@ set(CTL_LIB_PATHS
         ${ETCD_DIRECTORY_LIB}
         )
 
-set(CMC_LINK_LIBS cmpq_static cmclient_static ${CM_ADPT_LIBS} config_static pthread cjson alarmclient_static
-        securec hotpatchclient_static cmcommon_static cmprotocol_static m ${G_BIN_EXT_LIBS})
+set(CMC_LINK_LIBS cmprotocol_static cmcommon_static cmpq_static cmclient_static config_static pthread cjson
+        hotpatchclient_static ${CM_ADPT_LIBS} alarmclient_static securec m ${G_BIN_EXT_LIBS})
 if (ENABLE_MULTIPLE_NODES)
     list(APPEND CMC_LINK_LIBS cgroup)
 endif ()

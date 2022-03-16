@@ -174,7 +174,6 @@ static uint32 ProvideHealthyInstanceForAgent(uint32 nodeId)
     return 0;
 }
 
-
 void process_agent_to_cm_heartbeat_msg(CM_Connection *con, const agent_to_cm_heartbeat *agent_to_cm_heartbeat_ptr)
 {
     uint32 group_index = 0;
@@ -879,7 +878,7 @@ void ProcessReportSetResDataMsg(CM_Connection *con, ReportSetResData *recvMsg)
         len = CM_MAX_RES_DATA_SIZE;
     }
     if (recvMsg->resData.slotId >= CM_MAX_RES_SLOT_COUNT) {
-        write_runlog(ERROR, "(client) slotId=%lu is more than 8.\n", recvMsg->resData.slotId);
+        write_runlog(ERROR, "(client) slotId=%lu >= 8.\n", recvMsg->resData.slotId);
         return;
     }
     resDataList[i].resData[recvMsg->resData.slotId].size = len;
@@ -898,7 +897,6 @@ void ProcessReportSetResDataMsg(CM_Connection *con, ReportSetResData *recvMsg)
 
 void ProcessRequestGetResData(CM_Connection *con, RequestGetResData *recvMsg)
 {
-    bool isResValid = false;
     if (g_res_list.empty()) {
         write_runlog(LOG, "(client) no resource, continue processing is unnecessary, ProcessRequestGetResData.\n");
         return;
@@ -910,13 +908,12 @@ void ProcessRequestGetResData(CM_Connection *con, RequestGetResData *recvMsg)
     vector<SaveResDataList> &resDataList = GetResDataList();
 
     // find client get which resource's resData
-    for (i = 0; i < static_cast<uint64>(resDataList.size()); ++i) {
+    for (i = 0; i < (uint64)resDataList.size(); ++i) {
         if (strcmp(resDataList[i].resName, recvMsg->resName) == 0) {
-            isResValid = true;
             break;
         }
     }
-    if (!isResValid) {
+    if (i == (uint64)resDataList.size()) {
         write_runlog(ERROR, "ProcessRequestGetResData, unknown resName(%s).\n", recvMsg->resName);
         return;
     }
@@ -994,8 +991,11 @@ void ProcessSslConnRequest(CM_Connection *con, const AgentToCmConnectRequest *re
     return;
 }
 
-void GetInstanceIdByIp(uint32 localInstd, uint32 *peerInstId, uint32 groupIdx, const DnLocalPeer *dnLpInfo)
+void GetInstanceIdByIp(uint32 localInstd, uint32 *peerInstId, uint32 groupIdx, DnLocalPeer *dnLpInfo)
 {
+    dnLpInfo->peerIp[CM_IP_LENGTH - 1] = '\0';
+    dnLpInfo->localIp[CM_IP_LENGTH - 1] = '\0';
+    dnLpInfo->reserver[DN_SYNC_LEN - 1] = '\0';
     if ((dnLpInfo->peerIp[0] == '\0') || (dnLpInfo->peerPort == 0)) {
         return;
     }
@@ -1030,10 +1030,9 @@ void ProcessDnLocalPeerMsg(CM_Connection *con, AgentCmDnLocalPeer *dnLpInfo)
     // get groupIndex, memberIndex
     int32 ret = find_node_in_dynamic_configure(node, instanceId, &groupIdx, &memIdx);
     if (ret != 0) {
-        write_runlog(LOG, "can't find the instance(node =%u  instanceid =%u)\n", node, instanceId);
+        write_runlog(LOG, "can't find the instance(node=%u  instanceid =%u)\n", node, instanceId);
         return;
     }
-    dnLpInfo->dnLpInfo.peerIp[CM_IP_LENGTH - 1] = '\0';
     GetInstanceIdByIp(instanceId,
         &(g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member[memIdx].dnLp.peerInst),
         groupIdx, &(dnLpInfo->dnLpInfo));

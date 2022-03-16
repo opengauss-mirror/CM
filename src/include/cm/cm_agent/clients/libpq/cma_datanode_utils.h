@@ -52,12 +52,8 @@ extern int check_datanode_status_by_SQL6(
     agent_to_cm_datanode_status_report *report_msg, uint32 ii, const char *data_path);
 extern int CheckDatanodeStatusBySqL10(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
 
-extern int GetCkptRedoPoint(cltPqConn_t *conn, uint64 *ckptRedoPointInfo);
-extern int GetLocalBarrierStatus(cltPqConn_t *conn, LocalBarrierStatus *localBarrierStatus);
-extern int GetGlobalBarrierInfoNew(cltPqConn_t *conn, GlobalBarrierStatus *globalStatus);
 extern int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltPqConn_t **curDnConn);
 extern int CheckMostAvailableSync(uint32 ii);
-extern int GetGlobalBarrierInfo(cltPqConn_t *conn, agent_to_cm_coordinate_barrier_status_report *barrier_info);
 extern int cmagent_execute_query(cltPqConn_t *db_connection, const char *run_command);
 extern int cmagent_execute_query_and_check_result(cltPqConn_t *db_connection, const char *run_command);
 
@@ -68,18 +64,11 @@ extern int datanode_rebuild_reason_enum_to_int(HaRebuildReason reason);
 extern cltPqConn_t *get_connection(const char *pid_path, bool isCoordinater = false, int connectTimeOut = 5,
     const int32 rwTimeout = 5);
 extern bool isUpgradeCluster();
-void ChangeNewBarrierStatues2Old(
-    const LocalBarrierStatus *newBarrierStatus, agent_to_cm_coordinate_barrier_status_report *old);
 int32 CheckDnSyncDone(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltPqConn_t **curDnConn);
-extern int StandbyClusterCheckQueryBarrierID(cltPqConn_t *conn,
-    agent_to_cm_coordinate_barrier_status_report *barrierInfo);
-extern int StandbyClusterSetTargetBarrierID(cltPqConn_t *conn);
-extern int StandbyClusterGetBarrierInfo(cltPqConn_t *conn, agent_to_cm_coordinate_barrier_status_report *barrierInfo);
-extern int StandbyClusterCheckCnWaiting(cltPqConn_t *conn, agent_to_cm_coordinate_status_report *reportMsg);
+extern int StandbyClusterCheckQueryBarrierID(cltPqConn_t* &conn, AgentToCmBarrierStatusReport *barrierInfo);
+extern int StandbyClusterSetTargetBarrierID(cltPqConn_t* &conn);
+extern int StandbyClusterGetBarrierInfo(cltPqConn_t* &conn, AgentToCmBarrierStatusReport *barrierInfo);
+extern int StandbyClusterCheckCnWaiting(cltPqConn_t* &conn);
 void ShowPgThreadWaitStatus(cltPqConn_t* Conn, uint32 index, int instanceType);
-
-#ifdef ENABLE_UT
-extern void RecordGlobalBarrier(const cltPqResult_t *resultSet, GlobalBarrierStatus *globalStatus);
-#endif
 
 #endif

@@ -101,7 +101,6 @@ bool g_cnNicDown = false;
 bool g_cmsNicDown = false;
 bool g_gtmNicDown = false;
 bool g_agentNicDown = false;
-bool g_cmServerInstancePending = false;
 bool g_suppressAlarm = false;
 bool g_isStart = false;
 bool g_dnDiskDamage[CM_MAX_DATANODE_PER_NODE];
@@ -112,6 +111,7 @@ bool g_mostAvailableSync[CM_MAX_DATANODE_PER_NODE];
 bool g_cnPhonyDeadD = false;
 bool g_dnNoFreeProc = false;
 bool g_cnNoFreeProc = false;
+bool g_cnWaiting = false;
 #ifndef ENABLE_MULTIPLE_NODES
 bool g_ltranDown[CM_MAX_DATANODE_PER_NODE];
 #endif

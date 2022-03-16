@@ -393,12 +393,12 @@ void DdbFreeNodeInfo(const DdbConn *ddbConn)
     DrvFreeNodeInfo(ddbConn->drv);
 }
 
-bool DdbIsValid(const DdbConn *ddbConn, DDB_CHECK_MOD checkMod)
+bool DdbIsValid(const DdbConn *ddbConn, DDB_CHECK_MOD checkMod, int timeOut)
 {
     if (ddbConn->drv == NULL) {
         return false;
     }
-    return ddbConn->drv->isHealth(checkMod);
+    return ddbConn->drv->isHealth(checkMod, timeOut);
 }
 
 void DdbNotify(const DdbConn *ddbConn, DDB_ROLE dbRole)
@@ -483,8 +483,8 @@ status_t DdbExecCmd(DdbConn *ddbConn, char *cmdLine, char *output, int *outputLe
     status_t st = ddbConn->drv->execCmd(ddbConn->session, cmdLine, output, outputLen, maxBufLen);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = { 0 };
-    errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbExecCmd], cmd[\n%s\n].",
-        ddbConn->drv->type, ddbConn->drv->msg, cmdLine);
+    errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbExecCmd].",
+        ddbConn->drv->type, ddbConn->drv->msg);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;

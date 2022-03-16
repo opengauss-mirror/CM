@@ -74,7 +74,8 @@ static void UsageHelp(const char *projectName)
     (void)printf(_("  %s view [-v | -N | -n NODEID] [-l FILENAME]\n"), projectName);
 #endif
     (void)printf(_("  %s set [--log_level=LOG_LEVEL] [--cm_arbitration_mode=ARBITRATION_MODE] "
-        "[--cm_switchover_az_mode=SWITCHOVER_AZ_MODE]\n"), projectName);
+                   "[--cm_switchover_az_mode=SWITCHOVER_AZ_MODE] [--cmsPromoteMode=CMS_PROMOTE_MODE -I INSTANCEID]\n"),
+        projectName);
     (void)printf(_("  %s set --param --agent | --server [-n [NODEID]] -k [PARAMETER]=\"[value]\"\n"), projectName);
     (void)printf(_("  %s get [--log_level] [--cm_arbitration_mode] [--cm_switchover_az_mode]\n"), projectName);
 #if defined(ENABLE_MULTIPLE_NODES) || defined(ENABLE_PRIVATEGAUSS)
@@ -182,7 +183,11 @@ static void QueryHelp()
     (void)printf(_("  -g                     show backup and recovery cluster info\n"));
     (void)printf(_("  -x                     show abnormal instances\n"));
     (void)printf(_("  -S                     show the results of the status check when the cluster was started\n"));
+#if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
     (void)printf(_("  --minorityAz           check the cms, etcd status only in the pointed AZ\n"));
+#else
+    (void)printf(_("  --minorityAz           check the cms status only in the pointed AZ\n"));
+#endif
 
 #ifdef ENABLE_MULTIPLE_NODES
     (void)printf(
@@ -204,12 +209,14 @@ static void RestartHelp()
 static void SetAndGetHelp()
 {
     (void)printf(_("\nOptions for set:\n"));
-    (void)printf(_("  --log_level=LOG_LEVEL                        LOG_LEVEL can be \"DEBUG5\", \"DEBUG1\", \"LOG\", "
-                   "\"WARNING\", \"ERROR\" or \"FATAL\"\n"));
+    (void)printf(_("  --log_level=LOG_LEVEL                           LOG_LEVEL can be \"DEBUG5\", \"DEBUG1\", \"LOG\","
+                   " \"WARNING\", \"ERROR\" or \"FATAL\"\n"));
     (void)printf(
-        _("  --cm_arbitration_mode=ARBITRATION_MODE       ARBITRATION_MODE can be \"MAJORITY\", \"MINORITY\"\n"));
+        _("  --cm_arbitration_mode=ARBITRATION_MODE          ARBITRATION_MODE can be \"MAJORITY\", \"MINORITY\"\n"));
     (void)printf(
-        _("  --cm_switchover_az_mode= SWITCHOVER_AZ_MODE  SWITCHOVER_AZ_MODE can be \"NON_AUTO\", \"AUTO\"\n"));
+        _("  --cm_switchover_az_mode= SWITCHOVER_AZ_MODE     SWITCHOVER_AZ_MODE can be \"NON_AUTO\", \"AUTO\"\n"));
+    (void)printf(
+        _("  --cmsPromoteMode=CMS_PROMOTE_MODE -I INSTANCEID CMS_PROMOTE_MODE can be \"AUTO\", \"PRIMARY_F\"\n"));
     (void)printf(_("  --agent                set cm agent conf\n"));
     (void)printf(_("  --server               set cm server conf\n"));
     (void)printf(_("  --k                    set parameter and value \n"));
@@ -269,6 +276,10 @@ static void StatusHelp()
         _("  Secondary              database system run as a dummy standby server, receive xlog from primary server "
           "when standby server down\n"));
 #endif
+#ifndef ENABLE_PRIVATEGAUSS
+    (void)printf(_("  Cascade Standby        database system run as a cascade standby server, receive xlog from "
+                   "standby server\n"));
+#endif
 #ifdef ENABLE_LIBPQ
     (void)printf(_("  Pending                database system run as a pending server, wait for promoting to primary or "
                    "demoting to standby\n"));
@@ -277,15 +288,14 @@ static void StatusHelp()
     (void)printf(_("  Unknown                database system not connected\n"));
 
     (void)printf(_("\nHA state including:\n"));
-    (void)printf(_("  Normal                 standby server is connected with primary\n"));
-    (void)printf(
-        _("  Need repair            standby server is not connected with primary server or not matched with primary "
-          "server\n"));
-    (void)printf(_("  Wait promoting         standby server is waiting to promote to primary during switchover\n"));
-    (void)printf(_("  Promoting              standby server is promoting to primary\n"));
-    (void)printf(_("  Building               standby server is building\n"));
-    (void)printf(_("  Catchup                standby server is catching up to primary\n"));
-    (void)printf(_("  Demoting               primary server is demoting to standby\n"));
+    (void)printf(_("  Normal                 database system is normal\n"));
+    (void)printf(_("  Need repair            database system is not connected with primary/standby server or not "
+                   "matched with primary/standby server\n"));
+    (void)printf(_("  Wait promoting         database system is waiting to promote during switchover\n"));
+    (void)printf(_("  Promoting              database system is promoting\n"));
+    (void)printf(_("  Building               database system is building\n"));
+    (void)printf(_("  Catchup                database system is catching up xlog\n"));
+    (void)printf(_("  Demoting               database system is demoting\n"));
     (void)printf(_("  Starting               database system is starting up\n"));
     (void)printf(_("  Manually stopped       database system is down for being manually stopped\n"));
     (void)printf(_("  Disk damaged           database system is down for disk damaged\n"));

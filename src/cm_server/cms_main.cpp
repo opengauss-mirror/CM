@@ -248,39 +248,49 @@ static void init_cluster_state_mode()
     write_runlog(LOG, "cluster is on init mode, set instance timeout to %d.\n", INIT_CLUSTER_MODE_INSTANCE_DEAL_TIME);
 }
 
+static void SetCmsIndexStr(char *cmServerIndxStr, uint32 len, uint32 cmServerIdx, uint32 nodeIdx)
+{
+    char cmServerStr[MAX_PATH_LEN];
+    errno_t rc = snprintf_s(cmServerStr, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+        "[%u node:%u, cmserverId:%u, cmServerIndex:%u], ",
+        cmServerIdx, g_node[nodeIdx].node, g_node[nodeIdx].cmServerId, nodeIdx);
+    securec_check_intval(rc, (void)rc);
+    rc = strcat_s(cmServerIndxStr, len, cmServerStr);
+    securec_check_errno(rc, (void)rc);
+}
+
 static void initialize_cm_server_node_index(void)
 {
     uint32 i = 0;
     uint32 j = 0;
     uint32 k = 0;
-    uint32 cm_instance_id[CM_PRIMARY_STANDBY_NUM] = {INVALID_NODE_NUM,
-        INVALID_NODE_NUM,
-        INVALID_NODE_NUM,
-        INVALID_NODE_NUM,
-        INVALID_NODE_NUM,
-        INVALID_NODE_NUM,
-        INVALID_NODE_NUM,
-        INVALID_NODE_NUM};
+    char cmServerIndxStr[MAX_PATH_LEN] = {0};
+    uint32 cm_instance_id[CM_PRIMARY_STANDBY_NUM] = {0};
+    uint32 cmServerNum = 0;
     /* get cmserver instance id */
     for (i = 0; i < g_node_num; i++) {
         if (g_node[i].cmServerLevel == 1) {
             cm_instance_id[j] = g_node[i].cmServerId;
             j++;
+            cmServerNum++;
         }
     }
 #undef qsort
-    qsort(cm_instance_id, CM_PRIMARY_STANDBY_NUM, sizeof(uint32), node_index_Comparator);
+    qsort(cm_instance_id, cmServerNum, sizeof(uint32), node_index_Comparator);
 
     j = 0;
-    for (k = 0; k < CM_PRIMARY_STANDBY_NUM; k++) {
+    for (k = 0; k < cmServerNum; k++) {
         for (i = 0; i < g_node_num; i++) {
-            if (cm_instance_id[k] == g_node[i].cmServerId) {
-                g_nodeIndexForCmServer[j] = i;
-                j++;
-                break;
+            if (cm_instance_id[k] != g_node[i].cmServerId) {
+                continue;
             }
+            g_nodeIndexForCmServer[j] = i;
+            SetCmsIndexStr(cmServerIndxStr, MAX_PATH_LEN, j, i);
+            j++;
+            break;
         }
     }
+    fprintf(stderr, "[%s]: cmserverNum is %u, and cmserver info is %s.\n", g_progname, cmServerNum, cmServerIndxStr);
 }
 
 static int read_config_file_check(void)

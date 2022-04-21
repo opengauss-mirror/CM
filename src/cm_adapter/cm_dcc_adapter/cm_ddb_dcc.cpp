@@ -913,7 +913,12 @@ static status_t InitDccInfoAndCreateThread(const DrvApiInfo *apiInfo)
         write_runlog(ERROR, "timeout(%d) is invalid.\n", apiInfo->timeOut);
         return CM_ERROR;
     }
-    g_timeOut = (uint32)apiInfo->timeOut;
+    const int32 toSec = 1000;
+    if (apiInfo->timeOut < toSec) {
+        g_timeOut = 1;
+    } else {
+        g_timeOut = (uint32)(apiInfo->timeOut / toSec);
+    }
     st = GetCurNodeIdx(apiInfo);
     CM_RETURN_IFERR(st);
 

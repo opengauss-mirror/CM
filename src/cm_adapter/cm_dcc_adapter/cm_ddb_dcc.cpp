@@ -509,8 +509,8 @@ status_t StartDccProcess(const DrvApiInfo *apiInfo)
     char curIdxStr[MAX_NUM_LEN] = {0};
     rc = snprintf_s(curIdxStr, MAX_NUM_LEN, MAX_NUM_LEN - 1, "%u", apiInfo->server_t.curServer.nodeIdInfo.instd);
     securec_check_intval(rc, FREE_AND_RESET(cfg));
-    char dccLogPath[MAX_NUM_LEN] = {0};
-    rc = snprintf_s(dccLogPath, MAX_NUM_LEN, MAX_NUM_LEN - 1, "%s/dcc", apiInfo->server_t.logPath);
+    char dccLogPath[DDB_MAX_PATH_LEN] = {0};
+    rc = snprintf_s(dccLogPath, DDB_MAX_PATH_LEN, DDB_MAX_PATH_LEN - 1, "%s/dcc", apiInfo->server_t.logPath);
     securec_check_intval(rc, FREE_AND_RESET(cfg));
     write_runlog(LOG, "cfg is %s, curIdx is %s, datapath is %s, logPath is %s.\n", cfg, curIdxStr,
         apiInfo->server_t.dataPath, dccLogPath);

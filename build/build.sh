@@ -26,6 +26,7 @@ export PKG_NAME_PRE="Package_ddes_cm"
 
 export SYMBOLS_NAME_PRE="Symbols_ddes_cm"
 export PKG_PREFIX_NAME=""
+export VERSION="DEFAULT"
 
 function help() {
     echo "$0 [-m {release|debug|memcheck|cov}] [-3rd \${THIRD_BINARY_PATH}] [-o \${OUTPUT_PATH}] [--pkg] [--single]
@@ -211,6 +212,11 @@ function build_cm() {
             ;;
     esac
 
+    if [ "${VERSION}x" != "DEFAULTx" ]; then
+        echo "update version(${VERSION}) into cm.ver file."
+        sed -i "s#^VERSION=.*\$#VERSION=${VERSION}#g" ${SCRIPT_PATH}/cm.ver
+    fi
+
     PKG_NAME="${PKG_NAME_PRE}_${VERSION_MODE}.tar.gz"
     cmake_def="-DCMAKE_INSTALL_PREFIX="${OUT_PATH}" -DENABLE_PRIVATEGAUSS=${PRIVATEGAUSS} -DCMAKE_BUILD_TYPE=${build_type} ${cmake_def} -DENABLE_MULTIPLE_NODES=${MULTIPLE_NODES} -DENABLE_ETCD=${ETCD} -DENABLE_HOTPATCH=${HOTPATCH} -DENABLE_LIBPQ=${LIBPQ} -DENABLE_KRB=${KRB} -DENABLE_ALARM=${ALARM}"
 
@@ -303,6 +309,13 @@ function main() {
                     exit 1
                 fi
                 GCC="$2"
+                shift 2
+                ;;
+            -v|--version)
+                if [ "$2"X = X ]; then
+                    echo "no given version values."
+                fi
+                VERSION=$2
                 shift 2
                 ;;
             --pkg)

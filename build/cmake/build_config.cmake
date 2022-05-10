@@ -9,7 +9,7 @@ EXECUTE_PROCESS(
         OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 EXECUTE_PROCESS(
-        COMMAND bash -c "source ${PROJECT_SOURCE_DIR}/build/cm.ver && echo \"\${PRODUCT} ${CMAKE_PROJECT_NAME} \${VERSION}\""
+        COMMAND bash -c "dos2unix ${PROJECT_SOURCE_DIR}/build/cm.ver && source ${PROJECT_SOURCE_DIR}/build/cm.ver && echo \"\${PRODUCT} ${CMAKE_PROJECT_NAME} \${VERSION}\""
         OUTPUT_VARIABLE PRO_INFO
         OUTPUT_STRIP_TRAILING_WHITESPACE
 )

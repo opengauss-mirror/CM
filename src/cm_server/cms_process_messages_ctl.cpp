@@ -411,7 +411,7 @@ static bool process_ctl_to_cm_switchover_incomplete_msg(
             size_t len = strlen(switchover_incomplete_msg.errMsg);
             if (len < (CM_MSG_ERR_INFORMATION_LENGTH - 1)) {
                 int rcs = snprintf_s(switchover_incomplete_msg.errMsg + len, CM_MSG_ERR_INFORMATION_LENGTH - len,
-                    (CM_MSG_ERR_INFORMATION_LENGTH - 1) - len, " and %d dn", (noNeedDoDnNum + needDoDnNum));
+                    (CM_MSG_ERR_INFORMATION_LENGTH - 1) - len, "need do %d dn for switchover, but only find %d dn", g_datanode_instance_count, (noNeedDoDnNum + needDoDnNum));
                 securec_check_intval(rcs, (void)rcs);
             }
         } else {

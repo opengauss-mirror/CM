@@ -631,11 +631,26 @@ restop:
                 g_waitSeconds);
         }
     } else if (g_az_stop_status == CM_STOP_STATUS_INIT) {
-        write_runlog(ERROR, "stop availability zone failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+                     "stop availability zone failed in (%d)s!\n\n"
+                     "HINT: Maybe the availability zone is continually being stopped in the background.\n"
+                     "You can wait for a while and check whether the availability zone stops, or immediately stop the cluster using "
+                     "\"cm_ctl stop -z <azid> -m i\".\n",
+                     g_waitSeconds);
     } else if (g_node_stop_status == CM_STOP_STATUS_INIT) {
-        write_runlog(ERROR, "stop node failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+                     "stop node failed in (%d)s!\n\n"
+                     "HINT: Maybe the node is continually being stopped in the background.\n"
+                     "You can wait for a while and check whether the node stops, or immediately stop the node using "
+                     "\"cm_ctl stop -n <nodeid> -m i\".\n",
+                     g_waitSeconds);
     } else if (g_instance_stop_status == CM_STOP_STATUS_INIT) {
-        write_runlog(ERROR, "stop instance failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+                     "stop instance failed in (%d)s!\n\n"
+                     "HINT: Maybe the instance is continually being stopped in the background.\n"
+                     "You can wait for a while and check whether the instance stops, or immediately stop the instance using "
+                     "\"cm_ctl stop -D <datapath> -m i\".\n",
+                     g_waitSeconds);
     }
 
     exit(-1);

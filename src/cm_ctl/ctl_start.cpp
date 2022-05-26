@@ -1509,15 +1509,31 @@ static void* check_cluster_start_status(void* arg)
 
     if ((g_command_operation_azName == NULL) && !g_commandOperationNodeId && ('\0' == g_cmData[0]) &&
         g_cluster_start_status != CM_STATUS_NORMAL && g_cluster_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
-        write_runlog(ERROR, "start cluster failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+            "start cluster failed in (%d)s!\n\n"
+            "HINT: Maybe the cluster is continually being started in the background.\n"
+            "You can wait for a while and check whether the cluster starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            g_waitSeconds);
     else if (!g_commandOperationNodeId && ('\0' == g_cmData[0]) && g_az_start_status != CM_STATUS_NORMAL &&
              g_az_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
-        write_runlog(ERROR, "start availability zone failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+            "start availability zone failed in (%d)s!\n\n"
+            "HINT: Maybe the availability zone is continually being started in the background.\n"
+            "You can wait for a while and check whether the availability zone starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            g_waitSeconds);
     else if (('\0' == g_cmData[0]) && g_node_start_status != CM_STATUS_NORMAL &&
              g_node_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
-        write_runlog(ERROR, "start node failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+            "start node failed in (%d)s!\n\n"
+            "HINT: Maybe the node is continually being started in the background.\n"
+            "You can wait for a while and check whether the node starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            g_waitSeconds);
     else if (g_instance_start_status != CM_STATUS_NORMAL)
-        write_runlog(ERROR, "start instance failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+            "start instance failed in (%d)s!\n\n"
+            "HINT: Maybe the instance is continually being started in the background.\n"
+            "You can wait for a while and check whether the instance starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            g_waitSeconds);
 
     exit(-1);
 }

@@ -674,6 +674,9 @@ static int32 CheckStatusInCascade(int32 normalStandbyDnSum, int32 groupDnNum, In
 int ProcessHaStatus2Az(
     const int *statusDnFail, int i, int normalStandbyDnSum, int groupDnNum, InitNodeMsg *nodeMsg)
 {
+    if (g_dn_replication_num <= DOUBLE_REPLICATION) {
+        return 0;
+    }
     int32 ret = CheckStatusInCascade(normalStandbyDnSum, groupDnNum, nodeMsg);
     if (ret != 0) {
         return ret;

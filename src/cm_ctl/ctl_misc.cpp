@@ -220,7 +220,11 @@ int do_set(void)
     }
 
     if (time_pass >= g_waitSeconds) {
-        write_runlog(ERROR, "set command timeout.\n");
+        write_runlog(ERROR,
+                "set command timeout!\n\n"
+                "HINT: Maybe the set action is continually running in the background.\n"
+                "You can wait for a while and check the value of item has been set using "
+                "\"cm_ctl get <item>\".\n");
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
         return -3;
@@ -1193,7 +1197,11 @@ int DoBuild(const CtlOption *ctx)
     }
 
     if (waitTime <= 0) {
-        write_runlog(ERROR, "build command timeout.\n");
+        write_runlog(ERROR,
+                     "build command timeout!\n\n"
+                     "HINT: Maybe the build action is continually running in the background.\n"
+                     "You can wait for a while and check the status of current cluster using "
+                     "\"cm_ctl query -Cv\".\n");
         FINISH_CONNECTION_WITHOUT_EXIT();
         return -3;
     }

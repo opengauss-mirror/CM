@@ -351,6 +351,10 @@ static int DoSwitchoverFull(const CtlOption *ctx)
                     hasWarning = true;
                     break;
 
+                case MSG_CM_CTL_BACKUP_OPEN:
+                    write_runlog(ERROR, "disable switchover in recovery mode.\n");
+                    FINISH_CONNECTION();
+
                 default:
                     write_runlog(ERROR, "unknown the msg type is %d.\n", msgType->msg_type);
                     break;

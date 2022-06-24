@@ -110,8 +110,6 @@ extern DnSyncListInfo g_dnSyncListInfo[CM_MAX_DATANODE_PER_NODE];
 extern CmDoWriteOper g_cmDoWriteOper[CM_MAX_DATANODE_PER_NODE];
 extern etcd_status_info g_etcdReportMsg;
 extern kerberos_status_info g_kerberosReportMsg;
-extern cma_resource_status_report g_cmResourceReportMsg;
-extern cm_res_status_check_time g_resStatusCheck[CM_MAX_RES_COUNT];
 
 /* Enable the datanode incremental build mode */
 extern volatile bool incremental_build;
@@ -282,8 +280,8 @@ extern char g_agentTargetBarrier[BARRIERLEN];
 extern char g_environmentThreshold[CM_PATH_LENGTH];
 extern char g_doradoIp[CM_IP_LENGTH];
 
-ClientSendQueue &GetSendQueueApi();
-ClientRecvQueue &GetRecvQueueApi();
+extern MsgQueue g_sendQueue;
+extern MsgQueue g_recvQueue;
 bool &GetIsSharedStorageMode();
 
 #define FENCE_TIMEOUT (agent_connect_retries * (agent_connect_timeout + agent_report_interval))

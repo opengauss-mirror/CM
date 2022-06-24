@@ -39,6 +39,28 @@ using namespace std;
 extern "C" {
 #endif
 
+typedef struct ResStatusCheckInfoSt {
+    long checkTime;
+    long startTime;
+    uint32 startCount;
+
+    uint32 checkInterval;
+    uint32 timeOut;
+    uint32 restartDelay;
+    uint32 restartPeriod;
+    uint32 restartTimes;
+} ResStatusCheckInfo;
+
+typedef struct CmResConfListSt {
+    char resName[CM_MAX_RES_NAME];
+    char script[MAX_PATH_LEN];
+    uint32 nodeId;
+    uint32 cmInstanceId;
+    uint32 resInstanceId;
+    uint32 isWorkMember;
+    ResStatusCheckInfo checkInfo;
+} CmResConfList;
+
 typedef struct st_conn_option {
     int connect_timeout; /* ms */
     int socket_timeout;  /* ms */
@@ -184,8 +206,8 @@ typedef struct Instance_t {
     };
 } Instance;
 
-extern vector<ResourceListInfo> g_res_list;
-typedef vector<ResourceListInfo>::iterator RES_PTR;
+extern vector<CmResStatList> g_resStatus;
+extern vector<CmResConfList> g_resConf;
 extern conn_option_t g_sslOption;
 
 /**
@@ -266,14 +288,13 @@ extern void delete_lock_file(const char *filename);
 
 extern void cm_pthread_rw_lock(pthread_rwlock_t* rwlock);
 extern void cm_pthread_rw_unlock(pthread_rwlock_t* rwlock);
-extern void ReadResourceDefConfig(int mode);
-extern void GetClusterWorkMode(void);
+extern status_t ReadResourceDefConfig(bool needGetResConf);
 extern int CmSSlConfigInit(bool is_client);
 void GetRealFile(char *realFile, uint32 fileLen, const char *path);
 #ifdef __cplusplus
 }
 #endif
-
+status_t GetGlobalResStatusIndex(const char *resName, uint32 &index);
 void GetAlarmConfig(const char *confDir);
 int32 GetDbStaticRoleInt(char c);
 char GetDbStaticRoleStr(int32 role);

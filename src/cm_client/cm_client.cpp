@@ -22,7 +22,6 @@
  * -------------------------------------------------------------------------
  */
 #include <pthread.h>
-#include <sys/un.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <sys/unistd.h>
@@ -31,23 +30,18 @@
 #include "cm/cm_elog.h"
 #include "cm_client.h"
 
-SetDataFlag g_setData;
-GetDataFlag g_resData;
-SendMsgQueue g_sendMsg;
-OneResStatList g_clientStatusList;
+InitFlag g_initFlag;
+bool g_isClientInit = false;
 
-static ConnAgent *g_agentConnect = NULL;
+static char g_resName[CM_MAX_RES_NAME] = {0};
+static ConnAgent g_agentConnect = {0};
+static bool g_shutdownClient = false;
+static SendMsgQueue g_sendMsg;
+static OneResStatList g_clientStatusList;
 
-static char g_resName[CM_MAX_RES_NAME];
-
-SetDataFlag &GetSetDataVector()
+bool &GetIsClientInit()
 {
-    return g_setData;
-}
-
-GetDataFlag &GetResDataVector()
-{
-    return g_resData;
+    return g_isClientInit;
 }
 
 OneResStatList &GetClientStatusList()
@@ -55,16 +49,49 @@ OneResStatList &GetClientStatusList()
     return g_clientStatusList;
 }
 
-char *GetResName()
+void SendMsgApi(char *msgPtr, size_t msgLen)
 {
-    return g_resName;
-}
-
-void SendMsgApi(char *msg)
-{
+    MsgPackage msg = {msgPtr, msgLen};
     (void)pthread_mutex_lock(&g_sendMsg.lock);
     g_sendMsg.sendQueue.push(msg);
     (void)pthread_mutex_unlock(&g_sendMsg.lock);
+    (void)pthread_cond_signal(&g_sendMsg.cond);
+}
+
+status_t SendInitMsg(uint32 instanceId, const char *resName)
+{
+    ClientInitMsg *initMsg = (ClientInitMsg*) malloc(sizeof(ClientInitMsg));
+    if (initMsg == NULL) {
+        write_runlog(ERROR, "Out of memory, client create init msg!\n");
+        return CM_ERROR;
+    }
+    errno_t rc = memset_s(initMsg, sizeof(ClientInitMsg), 0, sizeof(ClientInitMsg));
+    securec_check_errno(rc, (void)rc);
+    initMsg->head.msgVer = CM_CLIENT_MSG_VER;
+    initMsg->head.msgType = (int)MSG_CLIENT_AGENT_INIT_DATA;
+    initMsg->resInfo.resInstanceId = instanceId;
+    rc = strcpy_s(initMsg->resInfo.resName, CM_MAX_RES_NAME, resName);
+    securec_check_errno(rc, (void)rc);
+
+    SendMsgApi((char*)initMsg, sizeof(ClientInitMsg));
+
+    return CM_SUCCESS;
+}
+
+void SendHeartBeatMsg()
+{
+    ClientHbMsg *hbMsg = (ClientHbMsg*)malloc(sizeof(ClientHbMsg));
+    if (hbMsg == NULL) {
+        write_runlog(ERROR, "out of memory, SendHeartBeatMsg.\n");
+        return;
+    }
+    errno_t rc = memset_s(hbMsg, sizeof(ClientHbMsg), 0, sizeof(ClientHbMsg));
+    securec_check_errno(rc, (void)rc);
+    hbMsg->head.msgVer = CM_CLIENT_MSG_VER;
+    hbMsg->head.msgType = MSG_CLIENT_AGENT_HEARTBEAT;
+    hbMsg->version = g_clientStatusList.version;
+
+    SendMsgApi((char*)hbMsg, sizeof(ClientHbMsg));
 }
 
 static inline void ConnectSetTimeout(const ConnAgent *con)
@@ -76,56 +103,48 @@ static inline void ConnectSetTimeout(const ConnAgent *con)
     (void)setsockopt(con->sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
 }
 
-static ConnAgent* ConnectEmptyInit()
+static void ConnectClose()
 {
-    ConnAgent *con = NULL;
-
-    con = (ConnAgent*) malloc(sizeof(ConnAgent));
-    if (con == NULL) {
-        write_runlog(LOG, "Res:%s Line:%d, Out of memory for client to get connect with agent!\n",
-                     g_resName, __LINE__);
-        return con;
-    }
-
-    con->sock = CLIENT_INVALID_SOCKET;
-    con->isClosed = true;
-
-    return con;
-}
-
-static void ConnectClose(ConnAgent *con)
-{
-    if (con->isClosed) {
+    if (g_agentConnect.isClosed) {
         return;
     }
 
-    (void)cm_close_socket((int)con->sock);
-    con->sock = CLIENT_INVALID_SOCKET;
-    con->isClosed = true;
+    (void)close(g_agentConnect.sock);
+    g_agentConnect.sock = CLIENT_INVALID_SOCKET;
+    g_agentConnect.isClosed = true;
+
+    (void)pthread_mutex_lock(&g_sendMsg.lock);
+    while (!g_sendMsg.sendQueue.empty()) {
+        free(g_sendMsg.sendQueue.front().msgPtr);
+        g_sendMsg.sendQueue.pop();
+    }
+    (void)pthread_mutex_unlock(&g_sendMsg.lock);
+    (void)pthread_mutex_lock(&g_initFlag.lock);
+    g_initFlag.initSuccess = false;
+    (void)pthread_mutex_unlock(&g_initFlag.lock);
+
+    write_runlog(LOG, "client close connect with cm agent.\n");
 }
 
 static void ConnectCreate(ConnAgent *con)
 {
-    int ret;
-    char homePath[CM_MAX_PATH_LEN] = {0};
-    char serverPath[CM_MAX_PATH_LEN] = {0};
-    errno_t rc;
+    char homePath[MAX_PATH_LEN] = {0};
+    char serverPath[MAX_PATH_LEN] = {0};
     SockAddr remoteSock{};
 
     if (!con->isClosed) {
-        write_runlog(LOG, "Res:%s Line:%d, Create connect failed, because connect has been created.\n",
-                     g_resName, __LINE__);
+        write_runlog(LOG, "Create connect failed, because connect has been created.\n");
         return;
     }
     if (GetHomePath(homePath, sizeof(homePath)) != 0) {
         return;
     }
-    rc = snprintf_s(serverPath, CM_MAX_PATH_LEN, CM_MAX_PATH_LEN - 1, "%s/bin/%s", homePath, CM_DOMAIN_SOCKET);
+    errno_t rc = snprintf_s(serverPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", homePath, CM_DOMAIN_SOCKET);
     securec_check_intval(rc, (void)rc);
 
-    con->sock = (int)socket(AF_UNIX, SOCK_STREAM, 0);
+    con->sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (CLIENT_INVALID_SOCKET == con->sock) {
-        write_runlog(ERROR, "Res:%s Line:%d, Creat connect socket failed.\n", g_resName, __LINE__);
+        write_runlog(ERROR, "Creat connect socket failed.\n");
         return;
     }
 
@@ -139,59 +158,54 @@ static void ConnectCreate(ConnAgent *con)
     rc = strcpy_s(remoteSock.addr.sun_path, sizeof(remoteSock.addr.sun_path), serverPath);
     securec_check_errno(rc, (void)rc);
 
-    ret = connect(con->sock, (struct sockaddr *)&remoteSock.addr, remoteSock.addrLen);
+    int ret = connect(con->sock, (struct sockaddr *)&remoteSock.addr, remoteSock.addrLen);
     if (ret < 0) {
-        write_runlog(LOG, "Res:%s Line:%d, Client connect to agent error.\n", g_resName, __LINE__);
-        cm_close_socket(con->sock);
+        write_runlog(LOG, "Client connect to agent error, ret=%d.\n", ret);
+        close(con->sock);
         con->sock = CLIENT_INVALID_SOCKET;
         return;
     }
+    // create connect success
     con->isClosed = false;
-}
-
-static status_t ConnectSendInitMsg()
-{
-    errno_t rc;
-    ClientInitMsg *initMsg = NULL;
-
-    initMsg = (ClientInitMsg*) malloc(sizeof(ClientInitMsg));
-    if (initMsg == NULL) {
-        write_runlog(ERROR, "Res:%s Line:%d, Out of memory for client to create init msg!\n", g_resName, __LINE__);
-        return CM_ERROR;
-    }
-
-    initMsg->head.msgVer = CM_CLIENT_MSG_VER;
-    initMsg->head.msgType = MSG_CLIENT_AGENT_INIT_DATA;
-    initMsg->resInfo.resInstanceId = g_agentConnect->resInstanceId;
-    rc = strcpy_s(initMsg->resInfo.resName, CM_MAX_RES_NAME, g_resName);
-    securec_check_errno(rc, (void)rc);
-
-    SendMsgApi((char*)initMsg);
-
-    return CM_SUCCESS;
 }
 
 void *ConnectAgentMain(void *arg)
 {
+    struct timespec currentTime = { 0, 0 };
+    struct timespec lastReportTime = { 0, 0 };
     for (;;) {
-        if (g_agentConnect->isClosed) {
-            write_runlog(LOG, "Res:%s Line:%d, cm_client connect to cm_agent start.\n", g_resName, __LINE__);
-            ConnectCreate(g_agentConnect);
-            if (g_agentConnect->isClosed) {
-                write_runlog(LOG, "Res:%s Line:%d, cm_client connect to cm_agent fail errno = %d, retry.\n",
-                             g_resName, __LINE__, errno);
+        if (g_shutdownClient) {
+            write_runlog(LOG, "exit conn agent thread.\n");
+            break;
+        }
+        if (g_agentConnect.isClosed) {
+            write_runlog(LOG, "cm_client connect to cm_agent start.\n");
+            ConnectCreate(&g_agentConnect);
+            if (g_agentConnect.isClosed) {
+                write_runlog(LOG, "cm_client connect to cm_agent fail errno = %d, retry.\n", errno);
                 cm_usleep(CLIENT_CHECK_CONN_INTERVAL);
                 continue;
             }
-            write_runlog(LOG, "Res:%s Line:%d, cm_client connect to cm_agent success.\n", g_resName, __LINE__);
-            if (ConnectSendInitMsg() != CM_SUCCESS) {
-                write_runlog(DEBUG1, "Res:%s Line:%d, push init msg in send queue failed, close the connect!\n",
-                             g_resName, __LINE__);
-                ConnectClose(g_agentConnect);
+            (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
+            if (!g_isClientInit) {
+                write_runlog(LOG, "cm_client connect to cm_agent success.\n");
+                continue;
+            }
+            bool isSuccess = SendInitMsgAndGetResult(g_resName, g_agentConnect.resInstanceId);
+            if (!isSuccess) {
+                write_runlog(ERROR, "cm_client init failed, close the new connect.\n");
+                ConnectClose();
+            }
+        } else {
+            (void)clock_gettime(CLOCK_MONOTONIC, &currentTime);
+            if ((currentTime.tv_sec - lastReportTime.tv_sec) >= 1 && g_initFlag.initSuccess) {
+                SendHeartBeatMsg();
+                (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
             }
         }
         cm_usleep(CLIENT_CHECK_CONN_INTERVAL);
     }
+
     return NULL;
 }
 
@@ -199,254 +213,138 @@ status_t CreateConnectAgentThread()
 {
     int err;
     pthread_t thrId;
-
     if ((err = pthread_create(&thrId, NULL, ConnectAgentMain, NULL) != 0)) {
-        write_runlog(LOG, "Res:%s Line:%d, Failed to create new thread: error %d\n", g_resName, __LINE__, err);
+        write_runlog(LOG, "fail to create connect agent thread, err=%d.\n", err);
         return CM_ERROR;
     }
     return CM_SUCCESS;
-}
-
-static status_t TcpSendMsg(const ConnAgent *con, const char *buf, int remainSize)
-{
-    int sentSize;
-    uint32 offset = 0;
-
-    if (con->isClosed) {
-        return CM_ERROR;
-    }
-
-    while (remainSize > 0) {
-        sentSize = send(con->sock, buf + offset, remainSize, 0);
-        if (sentSize == 0) {
-            write_runlog(LOG, "Res:%s Line:%d, [tcp] Client disconnect with agent, errno=%d.",
-                         g_resName, __LINE__, errno);
-            return CM_ERROR;
-        }
-        if (sentSize < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            write_runlog(LOG, "Res:%s Line:%d, [tcp] Client can't send msg to agent with errno=%d\n",
-                         g_resName, __LINE__, errno);
-            return CM_ERROR;
-        }
-        offset += sentSize;
-        remainSize -= sentSize;
-    }
-
-    return CM_SUCCESS;
-}
-
-static void SendHeartbeat()
-{
-    status_t ret;
-    ClientHbMsg heartbeatMsg;
-
-    if (g_agentConnect->isClosed) {
-        return;
-    }
-
-    heartbeatMsg.head.msgVer = CM_CLIENT_MSG_VER;
-    heartbeatMsg.head.msgType = MSG_CLIENT_AGENT_HEARTBEAT;
-    heartbeatMsg.version = g_clientStatusList.version;
-
-    ret = TcpSendMsg(g_agentConnect, (char*)&heartbeatMsg, sizeof(ClientHbMsg));
-    if (ret != CM_SUCCESS) {
-        write_runlog(LOG, "Res:%s Line:%d, cm_client send heartbeat failed!\n", g_resName, __LINE__);
-        ConnectClose(g_agentConnect);
-        return;
-    }
-}
-
-static status_t SendMsgToAgent(const ConnAgent *con, const char *buf)
-{
-    size_t msgLen;
-    errno_t rc;
-    MsgHead head;
-    status_t ret;
-
-    rc = memcpy_s(&head, sizeof(MsgHead), buf, sizeof(MsgHead));
-    securec_check_errno(rc, (void)rc);
-
-    switch (head.msgType) {
-        case MSG_CLIENT_AGENT_INIT_DATA:
-            msgLen = sizeof(ClientInitMsg);
-            break;
-        case MSG_CLIENT_AGENT_SET_DATA:
-            msgLen = sizeof(ClientSetDataMsg);
-            break;
-        case MSG_CLIENT_AGENT_SET_RES_DATA:
-            msgLen = sizeof(ClientSetResDataMsg);
-            break;
-        case MSG_CLIENT_AGENT_GET_RES_DATA:
-            msgLen = sizeof(ClientGetResDataMsg);
-            break;
-        default:
-            write_runlog(LOG, "Line:%d cm_client will send unknown msg, blocking.\n", __LINE__);
-            msgLen = 0;
-            break;
-    }
-    ret = TcpSendMsg(con, buf, (int32)msgLen);
-
-    return ret;
 }
 
 void *SendMsgToAgentMain(void *arg)
 {
-    status_t ret;
-    struct timespec currentTime = { 0, 0 };
-    struct timespec lastReportTime = { 0, 0 };
-
-    (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
     for (;;) {
-        if (g_agentConnect->isClosed) {
+        if (g_shutdownClient) {
+            write_runlog(LOG, "exit send msg thread.\n");
+            break;
+        }
+        if (g_agentConnect.isClosed) {
             cm_usleep(CLIENT_SEND_CHECK_INTERVAL);
             continue;
         }
 
         (void)pthread_mutex_lock(&g_sendMsg.lock);
-        if (!g_sendMsg.sendQueue.empty()) {
-            ret = SendMsgToAgent(g_agentConnect, g_sendMsg.sendQueue.front());
-            if (ret != CM_SUCCESS) {
-                write_runlog(LOG, "Res:%s Line:%d, Client send msg to agent failed!\n", g_resName, __LINE__);
-                ConnectClose(g_agentConnect);
-            } else {
-                free(g_sendMsg.sendQueue.front());
-                g_sendMsg.sendQueue.pop();
-            }
-            (void)pthread_mutex_unlock(&g_sendMsg.lock);
-        } else {
-            (void)pthread_mutex_unlock(&g_sendMsg.lock);
-            cm_usleep(CLIENT_SEND_CHECK_INTERVAL);
+        while (g_sendMsg.sendQueue.empty()) {
+            (void)pthread_cond_wait(&g_sendMsg.cond, &g_sendMsg.lock);
         }
-        (void)clock_gettime(CLOCK_MONOTONIC, &currentTime);
-        if ((currentTime.tv_sec - lastReportTime.tv_sec) >= HEARTBEAT_SEND_INTERVAL) {
-            SendHeartbeat();
-            (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
+        MsgPackage msgPkg = g_sendMsg.sendQueue.front();
+        g_sendMsg.sendQueue.pop();
+        (void)pthread_mutex_unlock(&g_sendMsg.lock);
+
+        if (TcpSendMsg(g_agentConnect.sock, msgPkg.msgPtr, msgPkg.msgLen) != CM_SUCCESS) {
+            write_runlog(LOG, "client send msg to agent failed, close connect!\n");
+            ConnectClose();
         }
+        free(msgPkg.msgPtr);
     }
+
     return NULL;
 }
 
 status_t CreateSendMsgThread()
 {
     int err;
-
     pthread_t thrId;
     if ((err = pthread_create(&thrId, NULL, SendMsgToAgentMain, NULL) != 0)) {
-        write_runlog(LOG, "Res:%s, Failed to create new thread: error %d\n", g_resName, err);
+        write_runlog(LOG, "failed to create send msg thread, err=%d\n", err);
         return CM_ERROR;
     }
     return CM_SUCCESS;
 }
 
-static status_t TcpRecvMsg(const ConnAgent *con, char *buf, int remainSize)
+static void RecvInitAckProcess()
 {
-    int recvSize;
-    uint32 offset = 0;
+    InitResult result = {0};
 
-    if (con->isClosed) {
-        return CM_ERROR;
+    if (g_initFlag.initSuccess) {
+        write_runlog(LOG, "client has init, can't process init ack again.\n");
+        return;
     }
-
-    while (remainSize > 0) {
-        recvSize = recv(con->sock, buf + offset, remainSize, 0);
-        if (recvSize == 0) {
-            write_runlog(LOG, "Res:%s Line:%d, [tcp] Client disconnect with agent.\n", g_resName, __LINE__);
-            return CM_ERROR;
-        }
-        if (recvSize < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            write_runlog(LOG, "Res:%s Line:%d, [tcp] Can't receive msg from agent with errno=(%d)\n",
-                         g_resName, __LINE__, errno);
-            return CM_ERROR;
-        }
-        remainSize -= recvSize;
-        offset += (uint32)recvSize;
+    if (TcpRecvMsg(g_agentConnect.sock, (char*)&result, sizeof(InitResult)) != CM_SUCCESS) {
+        write_runlog(LOG, "cm_client recv init ack from agent fail or timeout.\n");
+        return;
     }
-
-    return CM_SUCCESS;
+    if (result.isSuccess) {
+        write_runlog(LOG, "client init success.\n");
+    } else {
+        write_runlog(ERROR, "client init fail.\n");
+    }
+    (void)pthread_mutex_lock(&g_initFlag.lock);
+    g_initFlag.initSuccess = result.isSuccess;
+    (void)pthread_mutex_unlock(&g_initFlag.lock);
+    (void)pthread_cond_signal(&g_initFlag.cond);
 }
 
 static inline void RecvHeartbeatAckProcess()
 {
-    write_runlog(DEBUG1, "Res:%s Line:%d, Recv heartbeat ack from agent\n", g_resName, __LINE__);
+    write_runlog(DEBUG1, "recv heartbeat ack from agent.\n");
 }
 
-static void RecvResStatusListProcess(uint32 isNotifyChange)
+static void RecvResStatusListProcess(int isNotifyChange)
 {
-    status_t ret;
+    OneResStatList tmpStatList = {0};
 
-    ret = TcpRecvMsg(g_agentConnect, (char*)&g_clientStatusList, sizeof(OneResStatList));
-    if (ret != CM_SUCCESS) {
-        write_runlog(LOG, "Res:%s Line:%d, Recv status_t from agent list fail\n", g_resName, __LINE__);
+    if (TcpRecvMsg(g_agentConnect.sock, (char*)&tmpStatList, sizeof(OneResStatList)) != CM_SUCCESS) {
+        write_runlog(LOG, "recv status list from agent fail.\n");
+        return;
+    }
+    if (!g_initFlag.initSuccess) {
+        write_runlog(LOG, "client has not init, can't refresh status list.\n");
         return;
     }
 
-    if (isNotifyChange) {
-        g_agentConnect->callback();
+    if (g_clientStatusList.version == tmpStatList.version) {
+        write_runlog(DEBUG1, "same version(%llu).\n", g_clientStatusList.version);
+        return;
     }
-}
 
-static void RecvSetResultProcess()
-{
-    SetResult result;
-    errno_t rc = memset_s(&result, sizeof(SetResult), 0, sizeof(SetResult));
+    errno_t rc = memcpy_s(&g_clientStatusList, sizeof(OneResStatList), &tmpStatList, sizeof(OneResStatList));
     securec_check_errno(rc, (void)rc);
-
-    status_t ret = TcpRecvMsg(g_agentConnect, (char*)&result, sizeof(SetResult));
-    if (ret != CM_SUCCESS) {
-        write_runlog(LOG, "Res:%s Line:%d, cm_client recv res data from agent fail or timeout.\n", g_resName, __LINE__);
-        return;
+    if (isNotifyChange == STAT_CHANGED) {
+        g_agentConnect.callback();
     }
-
-    (void)pthread_mutex_lock(&g_setData.lock);
-    g_setData.isSetSuccess = result.isSetSuccess;
-    (void)pthread_mutex_unlock(&g_setData.lock);
-
-    (void)pthread_cond_signal(&g_setData.cond);
-}
-
-static void RecvResDataProcess()
-{
-    ResData resData = {0};
-
-    status_t ret = TcpRecvMsg(g_agentConnect, (char*)&resData, sizeof(ResData));
-    if (ret != CM_SUCCESS) {
-        write_runlog(LOG, "Res:%s Line:%d, cm_client recv res data from agent fail or timeout.\n", g_resName, __LINE__);
-        return;
+    write_runlog(LOG, "version=%llu\n", g_clientStatusList.version);
+    for (uint32 i = 0; i < g_clientStatusList.instanceCount; ++i) {
+        write_runlog(LOG, "resName(%s):nodeId(%u),instanceId=%u,status=%u\n",
+            g_clientStatusList.resName,
+            g_clientStatusList.resStat[i].nodeId,
+            g_clientStatusList.resStat[i].cmInstanceId,
+            g_clientStatusList.resStat[i].status);
     }
-    (void)pthread_mutex_lock(&g_resData.lock);
-    errno_t rc = memcpy_s(&g_resData.resData, sizeof(resData), &resData, sizeof(resData));
-    securec_check_errno(rc, (void)rc);
-    (void)pthread_mutex_unlock(&g_resData.lock);
-
-    (void)pthread_cond_signal(&g_resData.cond);
 }
 
 void *RecvMsgFromAgentMain(void *arg)
 {
-    status_t ret;
-    MsgHead msgHead = {0};
-
     for (;;) {
-        if (g_agentConnect->isClosed) {
+        if (g_shutdownClient) {
+            write_runlog(LOG, "exit recv msg thread.\n");
+            break;
+        }
+        if (g_agentConnect.isClosed) {
             cm_usleep(CLIENT_CHECK_CONN_INTERVAL);
             continue;
         }
-
-        ret = TcpRecvMsg(g_agentConnect, (char*)&msgHead, sizeof(MsgHead));
-        if (ret != CM_SUCCESS) {
-            write_runlog(LOG, "Res:%s Line:%d, cm_client recv msg from agent fail or timeout.\n", g_resName, __LINE__);
-            ConnectClose(g_agentConnect);
+        MsgHead msgHead = {0};
+        if (TcpRecvMsg(g_agentConnect.sock, (char*)&msgHead, sizeof(MsgHead)) != CM_SUCCESS) {
+            write_runlog(LOG, "client recv msg from agent fail or timeout.\n");
+            ConnectClose();
             cm_usleep(CLIENT_RECV_CHECK_INTERVAL);
             continue;
         }
 
         switch (msgHead.msgType) {
+            case MSG_AGENT_CLIENT_INIT_ACK:
+                RecvInitAckProcess();
+                break;
             case MSG_AGENT_CLIENT_HEARTBEAT_ACK:
                 RecvHeartbeatAckProcess();
                 break;
@@ -456,94 +354,127 @@ void *RecvMsgFromAgentMain(void *arg)
             case MSG_AGENT_CLIENT_RES_STATUS_CHANGE:
                 RecvResStatusListProcess(STAT_CHANGED);
                 break;
-            case MSG_AGENT_CLIENT_SET_RES_DATA_STATUS:
-                RecvSetResultProcess();
-                break;
-            case MSG_AGENT_CLIENT_REPORT_RES_DATA:
-                RecvResDataProcess();
-                break;
             default:
-                write_runlog(LOG, "Res:%s Line:%d, client recv unknown msg from agent, msgType(%d).\n",
-                             g_resName, __LINE__, (int)msgHead.msgType);
-                ConnectClose(g_agentConnect);
+                write_runlog(ERROR, "recv unknown msg, msgType(%u).\n", msgHead.msgType);
+                ConnectClose();
                 break;
         }
     }
+
     return NULL;
 }
 
 status_t CreateRecvMsgThread()
 {
     int err;
-
     pthread_t thrId;
     if ((err = pthread_create(&thrId, NULL, RecvMsgFromAgentMain, NULL) != 0)) {
-        write_runlog(ERROR, "Res:%s, Failed to create new thread: error %d\n", g_resName, err);
+        write_runlog(ERROR, "failed to create recv msg thread, error=%d.\n", err);
         return CM_ERROR;
     }
     return CM_SUCCESS;
 }
 
-static status_t InitLogFile()
+static status_t InitLogFile(const char *resName)
 {
-    int rc;
-    char logPath[CM_MAX_PATH_LEN] = {0};
+    char logPath[MAX_PATH_LEN] = {0};
+    char clientLogPath[MAX_PATH_LEN] = {0};
 
-    char sysLogPath[CM_MAX_PATH_LEN] = {0};
+    prefix_name = resName;
 
-    prefix_name = "cm_client";
-
-    rc = cm_getenv("GAUSSLOG", logPath, sizeof(logPath));
-    if (rc != EOK) {
-        printf("cm_client get gausslog dir failed\n");
+    (void)syscalllockInit(&g_cmEnvLock);
+    if (cm_getenv("GAUSSLOG", logPath, sizeof(logPath)) != EOK) {
+        (void)printf(_("cm_client get GAUSSLOG dir failed\n"));
         return CM_ERROR;
     }
     check_input_for_security(logPath);
-    rc = snprintf_s(sysLogPath, CM_MAX_PATH_LEN, CM_MAX_PATH_LEN - 1, "%s/cm/%s", logPath, "cm_client");
-    securec_check_intval(rc, (void)rc);
+    int ret = snprintf_s(clientLogPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/cm/cm_client", logPath);
+    securec_check_intval(ret, (void)ret);
+    if (access(clientLogPath, F_OK) != 0) {
+        (void)mkdir(clientLogPath, S_IRWXU);
+    }
 
-    (void)mkdir(sysLogPath, S_IRWXU);
-
-    if (SetLogFilePath(sysLogPath) == -1) {
+    if (SetLogFilePath(clientLogPath) == -1) {
         return CM_ERROR;
     }
 
-    write_runlog(LOG, "Res:%s Line:%d, init cm_client log file success.\n", g_resName, __LINE__);
+    write_runlog(LOG, "init cm_client log file (%s) success.\n", clientLogPath);
+
     return CM_SUCCESS;
 }
 
 inline void EmptyCallback()
 {
-    write_runlog(LOG, "Res:%s Line:%d, client init null call back func.\n", g_resName, __LINE__);
+    write_runlog(LOG, "client init null call back func.\n");
 }
 
-status_t PreInit(uint32 instanceId, const char *resName, cm_notify_func_t func)
+static inline void InitAgentConnect(uint32 instanceId, CmNotifyFunc func)
 {
-    errno_t rc;
+    errno_t rc = memset_s(&g_agentConnect, sizeof(ConnAgent), 0, sizeof(ConnAgent));
+    securec_check_errno(rc, (void)rc);
+    g_agentConnect.sock = CLIENT_INVALID_SOCKET;
+    g_agentConnect.isClosed = true;
+    g_agentConnect.resInstanceId = instanceId;
+    g_agentConnect.callback = (func == NULL) ? EmptyCallback : func;
+}
 
-    (void)syscalllockInit(&g_cmEnvLock);
-
-    if (InitLogFile() != CM_SUCCESS) {
-        return CM_ERROR;
-    }
-
-    g_agentConnect = ConnectEmptyInit();
-    if (g_agentConnect == NULL) {
-        return CM_ERROR;
-    }
-
-    if (func == NULL) {
-        g_agentConnect->callback = EmptyCallback;
-    } else {
-        g_agentConnect->callback = func;
-    }
-
-    g_agentConnect->resInstanceId = instanceId;
-    rc = strcpy_s(g_resName, CM_MAX_RES_NAME, resName);
+static void InitGlobalVariable(const char *resName)
+{
+    errno_t rc = strcpy_s(g_resName, CM_MAX_RES_NAME, resName);
     securec_check_errno(rc, (void)rc);
 
     rc = memset_s(&g_clientStatusList, sizeof(OneResStatList), 0, sizeof(OneResStatList));
     securec_check_errno(rc, (void)rc);
 
+    g_initFlag.initSuccess = false;
+    (void)pthread_mutex_init(&g_initFlag.lock, NULL);
+    (void)pthread_cond_init(&g_initFlag.cond, NULL);
+
+    while (!g_sendMsg.sendQueue.empty()) {
+        g_sendMsg.sendQueue.pop();
+    }
+    (void)pthread_mutex_init(&g_sendMsg.lock, NULL);
+    (void)pthread_cond_init(&g_sendMsg.cond, NULL);
+}
+
+status_t PreInit(uint32 instanceId, const char *resName, CmNotifyFunc func, bool *isFirstInit)
+{
+    if (isFirstInit) {
+        CM_RETURN_IFERR(InitLogFile(resName));
+        InitGlobalVariable(resName);
+        *isFirstInit = false;
+    }
+    InitAgentConnect(instanceId, func);
+    g_shutdownClient = false;
+
     return CM_SUCCESS;
+}
+
+void ShutdownClient()
+{
+    g_shutdownClient = true;
+    // weak up send msg thread
+    (void)pthread_cond_signal(&g_sendMsg.cond);
+    ConnectClose();
+}
+
+bool SendInitMsgAndGetResult(const char *resName, uint32 instId)
+{
+    struct timespec releaseTime;
+    struct timeval tv = { 0, 0 };
+
+    (void)pthread_mutex_lock(&g_initFlag.lock);
+    g_initFlag.initSuccess = false;
+    if (SendInitMsg(instId, resName) != CM_SUCCESS) {
+        (void)pthread_mutex_unlock(&g_initFlag.lock);
+        return false;
+    }
+    (void)gettimeofday(&tv, NULL);
+    releaseTime.tv_sec = tv.tv_sec + CLIENT_RES_DATA_TIMEOUT;
+    releaseTime.tv_nsec = tv.tv_usec * CLIENT_USEC_TO_NSEC;
+    (void)pthread_cond_timedwait(&g_initFlag.cond, &g_initFlag.lock, &releaseTime);
+    bool result = g_initFlag.initSuccess;
+    (void)pthread_mutex_unlock(&g_initFlag.lock);
+
+    return result;
 }

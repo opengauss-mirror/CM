@@ -239,10 +239,10 @@ static void CheckProcessNum(const char* cmdLine)
     char    line[MAXPGPATH] = { 0 };
     char    buffer[MAXPGPATH] = { 0 };
     uint32  processCount = 0;
- 
+
     int ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, "ps ux | grep -v grep | grep \"%s\"", cmdLine);
     securec_check_intval(ret, (void)ret);
- 
+
     FILE *fp = popen(command, "re");
     if (fp == NULL) {
         return;
@@ -256,7 +256,7 @@ static void CheckProcessNum(const char* cmdLine)
         }
     }
     (void)pclose(fp);
- 
+
     if (processCount > 1) {
         write_runlog(ERROR, "Multiple processes <%s>, buf is\n%s", cmdLine, buffer);
         ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
@@ -630,8 +630,7 @@ void stop_instances_check(void)
         }
     }
 
-    size_t count = g_res_list.size();
-    if (count > 0) {
+    if (!g_resConf.empty()) {
         StopResourceCheck();
     }
 }
@@ -1250,9 +1249,9 @@ static void normal_shutdown_nodes(void)
         fast_stop_one_instance(g_currentNode->gtmLocalDataPath, INSTANCE_GTM);
     }
 
-    size_t count = g_res_list.size();
-    if (count > 0) {
-        write_runlog(LOG, "normal_shutdown_nodes, there are %u resource process will be stopped.\n", (uint32)count);
+    /* resource */
+    if (!g_resConf.empty()) {
+        write_runlog(LOG, "normal_shutdown_nodes, %u resource process will be stopped.\n", (uint32)g_resConf.size());
         StopResourceInstances();
     }
 }
@@ -1328,9 +1327,9 @@ void immediate_shutdown_nodes(bool kill_cmserver, bool kill_cn)
         immediate_stop_one_instance(g_currentNode->gtmLocalDataPath, INSTANCE_GTM);
     }
 
-    size_t count = g_res_list.size();
-    if (count > 0) {
-        write_runlog(LOG, "immediate_shutdown_nodes, there are %u resource process will be stopped.\n", (uint32)count);
+    /* resource */
+    if (!g_resConf.empty()) {
+        write_runlog(LOG, "immediate_shutdown_nodes, %u resource process will be stopped.\n", (uint32)g_resConf.size());
         StopResourceInstances();
     }
 }
@@ -1367,9 +1366,9 @@ void fast_shutdown_nodes(void)
         fast_stop_one_instance(g_currentNode->gtmLocalDataPath, INSTANCE_GTM);
     }
 
-    size_t count = g_res_list.size();
-    if (count > 0) {
-        write_runlog(LOG, "resource fast shutdown, there are %u resource process will be stopped.\n", (uint32)count);
+    /* resource */
+    if (!g_resConf.empty()) {
+        write_runlog(LOG, "fast shutdown, %u resource process will be stopped.\n", (uint32)g_resConf.size());
         StopResourceInstances();
     }
 }

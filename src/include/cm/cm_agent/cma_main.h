@@ -24,7 +24,6 @@
 #ifndef CMA_MAIN_H
 #define CMA_MAIN_H
 
-
 #include <queue>
 #include "common/config/cm_config.h"
 #include "alarm/alarm.h"
@@ -59,17 +58,17 @@ const uint32 g_check_dn_sql5_interval = 10;
 
 typedef long pgpid_t;
 
-typedef struct ClientSendQueueSt {
-    std::queue<char*> queue;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-} ClientSendQueue;
+typedef struct AgentMsgPkgSt {
+    char *msgPtr;
+    uint32 msgLen;
+    uint32 conId;
+} AgentMsgPkg;
 
-typedef struct ClientRecvQueueSt {
-    std::queue<char*> queue;
+typedef struct MsgQueueSt {
+    std::queue<AgentMsgPkg> msg;
     pthread_mutex_t lock;
     pthread_cond_t cond;
-} ClientRecvQueue;
+} MsgQueue;
 
 /* These global variables are used to compressed traces */
 typedef struct LogFile {

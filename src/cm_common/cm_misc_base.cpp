@@ -204,3 +204,61 @@ bool IsSharedStorageMode()
 
     return true;
 }
+
+status_t TcpSendMsg(int socket, const char *buf, size_t remainSize)
+{
+    long sentSize;
+    long offset = 0;
+
+    if (socket == -1) {
+        write_runlog(ERROR, "[tcp] connect has been closed, can't send msg.\n");
+        return CM_ERROR;
+    }
+
+    while (remainSize > 0) {
+        sentSize = send(socket, buf + offset, remainSize, 0);
+        if (sentSize == 0) {
+            if (errno == EAGAIN) {
+                write_runlog(LOG, "[tcp] send msg fail errno=(%d), send again.\n", errno);
+                continue;
+            }
+            write_runlog(ERROR, "[tcp] can't send msg to agent with errno=%d.\n", errno);
+            return CM_ERROR;
+        }
+        offset += sentSize;
+        remainSize -= (size_t)sentSize;
+    }
+
+    return CM_SUCCESS;
+}
+
+status_t TcpRecvMsg(int socket, char *buf, size_t remainSize)
+{
+    long recvSize;
+    long offset = 0;
+
+    if (socket == -1) {
+        write_runlog(ERROR, "[tcp] connect has been closed, can't recv msg.\n");
+        return CM_ERROR;
+    }
+
+    while (remainSize > 0) {
+        recvSize = recv(socket, buf + offset, remainSize, 0);
+        if (recvSize == 0) {
+            write_runlog(ERROR, "[tcp] disconnect, can't recv msg.\n");
+            return CM_ERROR;
+        }
+        if (recvSize < 0) {
+            if (errno == EINTR || errno == EAGAIN) {
+                write_runlog(LOG, "[tcp] recv msg fail errno=(%d), recv again.\n", errno);
+                continue;
+            }
+            write_runlog(ERROR, "[tcp] can't receive msg with errno=(%d)\n", errno);
+            return CM_ERROR;
+        }
+        remainSize -= (size_t)recvSize;
+        offset += recvSize;
+    }
+
+    return CM_SUCCESS;
+}

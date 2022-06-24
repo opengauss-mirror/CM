@@ -387,18 +387,15 @@ uint64 GetTimeMinus(struct timeval checkEnd, struct timeval checkBegin)
 
 void GetResStatusList()
 {
-    int ret;
-    RequestResStatList sendMsg;
-
-    if (g_node_num > CM_MAX_RES_NODE_COUNT) {
-        write_runlog(DEBUG1, "node num is more than 16, don't need get res status list.\n");
+    if (g_resStatus.empty()) {
+        write_runlog(DEBUG1, "[CLIENT] no resource config, don't need get res status list.\n");
         return;
     }
 
+    RequestResStatList sendMsg = {0};
     sendMsg.msgType = MSG_AGENT_CM_REQUEST_RES_STATUS_LIST;
 
-    ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&sendMsg, sizeof(sendMsg));
-    if (ret != 0) {
+    if (cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&sendMsg, sizeof(sendMsg)) != CM_SUCCESS) {
         write_runlog(ERROR, "send cm_agent msg failed!\n");
         CloseConnToCmserver();
         return;

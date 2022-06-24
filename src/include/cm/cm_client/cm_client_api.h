@@ -34,104 +34,29 @@ extern "C" {
 #define CLIENT_API __declspec(dllexport)
 #endif
 
-#define CM_CLIENT_MAX_RES_NAME 32
-#define CM_CLIENT_MAX_INSTANCES 32
-
-typedef void(*cm_notify_func_t)(void);
-
-typedef enum {
-    CMS_RES_STAT_UNKNOWN = 0,
-    CMS_RES_STAT_ONLINE  = 1,
-    CMS_RES_STAT_OFFLINE = 2,
-    /********************/
-    CMS_RES_STAT_COUNT = 3,
-} cm_res_stat;
-
-typedef struct st_cms_res_stat_info_t {
-    unsigned int node_id;
-    unsigned int cm_instance_id;
-    unsigned int res_instance_id;
-    char res_name[CM_CLIENT_MAX_RES_NAME];
-    cm_res_stat stat;
-    long long instance_data;
-} cms_res_stat_info_t;
-
-typedef struct st_ms_res_stat_list_t {
-    unsigned long long version;
-    unsigned int master_node_id;
-    unsigned int instance_count;
-    cms_res_stat_info_t resStat[CM_CLIENT_MAX_INSTANCES];
-} cms_res_stat_list_t;
-
-#ifndef WIN32
-/*
-* cm client init function for resource
-* @param [in] instance_id: resource instance id, not same with cm instance id
-* @param [in] res_name: resource name
-* @param [in] func: callback function
-* @return 0: success; -1 failed
-*/
-CLIENT_API int cm_init(unsigned int instance_id, const char *res_name, cm_notify_func_t func);
+typedef void(*CmNotifyFunc)(void);
 
 /*
-* resource set instance data function
-* @param [in] data: resource set instance data
+* cm client init function, before init success, other interfaces fail to be executed.
+* @param [in] instId: resource instance id, set in cm_resource.json
+* @param [in] resName: resource name, len need to be shorter than 32
+* @param [in] func: callback function, can be NULL
 * @return 0: success; -1 failed
 */
-CLIENT_API int cm_set_instance_data(long long data);
+CLIENT_API int CmInit(unsigned int instId, const char *resName, CmNotifyFunc func);
 
 /*
-* resource get instance stat list function
-* @param [in&out] stat_list: instance status list
-* @return 0: success; -1 failed
+* resource get instances stat list function
+* @return: res status list json str
 */
-CLIENT_API int cm_get_res_stat_list(cms_res_stat_list_t *stat_list);
+CLIENT_API char *CmGetResStats();
 
 /*
-* resource set data to global data list function
-* @param [in] slot_id: slot id
-* @param [in] data: set data
-* @param [in] size: data size
-* @param [in] old_version: old list version
+* free res status list json str
+* @param [in] resStats: res status list json str
 * @return 0: success; -1 failed
 */
-CLIENT_API int cm_set_res_data(unsigned int slot_id, char *data, unsigned int size, unsigned long long old_version);
-
-/*
-* resource get data for global data list function
-* @param [in] slot_id: slot id
-* @param [in&out] data: get data
-* @param [in] max_size: max data size
-* @param [in&out] size: data size
-* @param [in&out] new_version: new list version
-* @return 0: success; -1 failed
-*/
-CLIENT_API int cm_get_res_data(unsigned int slot_id, char *data, unsigned int max_size, unsigned int *size,
-    unsigned long long *new_version);
-#else
-static inline int cm_init(unsigned int instance_id, const char *res_name, cm_notify_func_t func)
-{
-    return 0;
-}
-static inline int cm_set_instance_data(unsigned long long data)
-{
-    return 0;
-}
-static inline int cm_get_res_stat_list(cms_res_stat_list_t *stat_list)
-{
-    return 0;
-}
-static inline int cm_set_res_data(unsigned int slot_id, char *data, unsigned int size,
-    unsigned long long old_version)
-{
-    return 0;
-}
-static inline int cm_get_res_data(unsigned int slot_id, char *data, unsigned int max_size, unsigned int *size,
-    unsigned long long *new_version)
-{
-    return 0;
-}
-#endif
+CLIENT_API int CmFreeResStats(char *resStats);
 
 #ifdef __cplusplus
 }

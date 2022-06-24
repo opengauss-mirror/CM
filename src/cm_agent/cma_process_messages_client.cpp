@@ -21,269 +21,195 @@
  *
  * -------------------------------------------------------------------------
  */
-#include <vector>
 #include "cm/cm_elog.h"
 #include "cma_connect.h"
 #include "cma_global_params.h"
 #include "cma_connect_client.h"
+#include "cma_common.h"
 #include "cma_process_messages_client.h"
 
-using namespace std;
+static void SendHeartbeatAckToClient(uint32 conId)
+{
+    MsgHead *hbAck = (MsgHead*)malloc(sizeof(MsgHead));
+    if (hbAck == NULL) {
+        write_runlog(LOG, "[CLIENT] malloc failed, SendHeartbeatAckToClient.\n");
+        return;
+    }
+    errno_t rc = memset_s(hbAck, sizeof(MsgHead), 0, sizeof(MsgHead));
+    securec_check_errno(rc, (void)rc);
+    hbAck->msgType = MSG_AGENT_CLIENT_HEARTBEAT_ACK;
+
+    PushMsgToClientSendQue((char*)hbAck, sizeof(MsgHead), conId);
+    write_runlog(DEBUG5, "[CLIENT] push client msg to send queue, hb ack msg conId(%u).\n", conId);
+}
+
+static void SendStatusListToClient(CmResStatList &statList, uint32 conId, bool isNotifyChange)
+{
+    AgentToClientResList *sendList = (AgentToClientResList*)malloc(sizeof(AgentToClientResList));
+    if (sendList == NULL) {
+        write_runlog(LOG, "[CLIENT] malloc failed, SendStatusListToClient.\n");
+        return;
+    }
+    errno_t rc = memset_s(sendList, sizeof(AgentToClientResList), 0, sizeof(AgentToClientResList));
+    securec_check_errno(rc, (void)rc);
+    if (isNotifyChange) {
+        sendList->head.msgType = MSG_AGENT_CLIENT_RES_STATUS_CHANGE;
+    } else {
+        sendList->head.msgType = MSG_AGENT_CLIENT_RES_STATUS_LIST;
+    }
+
+    (void)pthread_rwlock_wrlock(&(statList.rwlock));
+    rc = memcpy_s(&sendList->resStatusList, sizeof(OneResStatList), &statList.status, sizeof(OneResStatList));
+    securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_unlock(&(statList.rwlock));
+
+    write_runlog(LOG, "[CLIENT] send status list to res(%s), version=%llu.\n",
+        sendList->resStatusList.resName, sendList->resStatusList.version);
+    for (uint32 i = 0; i < sendList->resStatusList.instanceCount; ++i) {
+        write_runlog(LOG, "nodeId=%u,instanceId=%u,status=%u,isWork=%u\n",
+            sendList->resStatusList.resStat[i].nodeId,
+            sendList->resStatusList.resStat[i].cmInstanceId,
+            sendList->resStatusList.resStat[i].status,
+            sendList->resStatusList.resStat[i].isWorkMember);
+    }
+
+    PushMsgToClientSendQue((char*)sendList, sizeof(AgentToClientResList), conId);
+    write_runlog(DEBUG5, "[CLIENT] push client msg to queue, res(%s) stat list.\n", sendList->resStatusList.resName);
+}
 
 static void ProcessClientHeartbeat(const ClientHbMsg &hbMsg)
 {
-    MsgHead *hbAck = NULL;
-    MsgHead *sendList = NULL;
-    ClientSendQueue &sendQueue = GetSendQueueApi();
-    CmResStatList &statusList = GetResStatusListApi();
-
-    if (hbMsg.version == statusList.version) {
-        hbAck = (MsgHead*) malloc(sizeof(MsgHead));
-        if (hbAck == NULL) {
-            write_runlog(LOG, "[agent] Out of memory: hbAck failed.\n");
-            return;
-        }
-        hbAck->conId = hbMsg.head.conId;
-        hbAck->msgType = MSG_AGENT_CLIENT_HEARTBEAT_ACK;
-
-        (void)pthread_mutex_lock(&sendQueue.lock);
-        sendQueue.queue.push((char*)hbAck);
-
-        goto unlock;
-    }
-
-    sendList = (MsgHead*) malloc(sizeof(MsgHead));
-    if (sendList == NULL) {
-        write_runlog(LOG, "[agent] Out of memory: sendList failed.\n");
+    uint32 index = 0;
+    ClientConn *clientCon = GetClientConnect();
+    if (GetGlobalResStatusIndex(clientCon[hbMsg.head.conId].resName, index) != CM_SUCCESS) {
+        write_runlog(ERROR, "[CLIENT] ProcessClientHeartbeat, unknown the resName(%s) of client.\n",
+            clientCon[hbMsg.head.conId].resName);
         return;
     }
-    sendList->conId = hbMsg.head.conId;
-    sendList->msgType = MSG_AGENT_CLIENT_RES_STATUS_LIST;
 
-    (void)pthread_mutex_lock(&sendQueue.lock);
-    sendQueue.queue.push((char*)sendList);
-
-    goto unlock;
-
-unlock:
-    (void)pthread_mutex_unlock(&sendQueue.lock);
-    (void)pthread_cond_signal(&sendQueue.cond);
+    (void)pthread_rwlock_wrlock(&(g_resStatus[index].rwlock));
+    if (hbMsg.version == g_resStatus[index].status.version) {
+        (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
+        SendHeartbeatAckToClient(hbMsg.head.conId);
+        return;
+    }
+    (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
+    SendStatusListToClient(g_resStatus[index], hbMsg.head.conId, false);
 }
 
 static void ProcessInitMsg(const ClientInitMsg &initData)
 {
-    errno_t rc;
-    vector<ClientConn> &clientCon = GetClientConnect();
+    AgentToClientInitResult *sendMsg = (AgentToClientInitResult*)malloc(sizeof(AgentToClientInitResult));
+    if (sendMsg == NULL) {
+        write_runlog(LOG, "[CLIENT] malloc failed, ProcessInitMsg.\n");
+        return;
+    }
+    errno_t rc = memset_s(sendMsg, sizeof(AgentToClientInitResult), 0, sizeof(AgentToClientInitResult));
+    securec_check_errno(rc, (void)rc);
 
-    for (ResourceListInfo resInfo : g_res_list) {
-        if ((strcmp(initData.resInfo.resName, resInfo.resName) == 0) &&
-            ((g_nodeId + 1) == resInfo.nodeId) &&
+    sendMsg->head.msgType = (uint32)MSG_AGENT_CLIENT_INIT_ACK;
+    sendMsg->head.conId = initData.head.conId;
+    sendMsg->result.isSuccess = false;
+
+    ClientConn *clientCon = GetClientConnect();
+    for (const CmResConfList &resInfo : g_resConf) {
+        if ((strcmp(initData.resInfo.resName, resInfo.resName) == 0) && (g_currentNode->node == resInfo.nodeId) &&
             initData.resInfo.resInstanceId == resInfo.resInstanceId) {
             clientCon[initData.head.conId].cmInstanceId = resInfo.cmInstanceId;
             clientCon[initData.head.conId].resInstanceId = resInfo.resInstanceId;
             rc = strcpy_s(clientCon[initData.head.conId].resName, CM_MAX_RES_NAME, initData.resInfo.resName);
             securec_check_errno(rc, (void)rc);
-            return;
+            sendMsg->result.isSuccess = true;
+            break;
         }
     }
-}
 
-static void ProcessSetInstanceData(const uint32 &conId, const int64 &data)
-{
-    int ret;
-    ReportSetInstanceData sendMsg;
-    vector<ClientConn> &clientCon = GetClientConnect();
-
-    sendMsg.msgType = (int)MSG_AGENT_CM_SET_INSTANCE_DATA;
-    sendMsg.data = data;
-    sendMsg.nodeId = g_nodeId + 1;
-    sendMsg.instanceId = clientCon[conId].cmInstanceId;
-
-    write_runlog(LOG, "set instanceData, instanceId %u, nodeId %u!\n", clientCon[conId].cmInstanceId, g_nodeId);
-    ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&sendMsg, sizeof(ReportSetInstanceData));
-    if (ret != 0) {
-        write_runlog(ERROR, "send agent set res data to cms failed!\n");
-        CloseConnToCmserver();
+    if (sendMsg->result.isSuccess) {
+        write_runlog(LOG, "[CLIENT] res(%s) init success.\n", initData.resInfo.resName);
+    } else {
+        write_runlog(LOG, "[CLIENT] res(%s) init failed, init cfg: nodeId(%u), resInstId(%u).\n",
+            initData.resInfo.resName, g_currentNode->node, initData.resInfo.resInstanceId);
     }
-}
 
-static void ProcessSetResData(const ClientSetResDataMsg &recvMsg)
-{
-    int ret;
-    errno_t rc;
-    ReportSetResData sendMsg;
-    vector<ClientConn> &clientCon = GetClientConnect();
-
-    sendMsg.msgType = (int)MSG_AGENT_CM_SET_RES_DATA;
-    sendMsg.conId = recvMsg.head.conId;
-
-    rc = strcpy_s(sendMsg.resName, CM_MAX_RES_NAME, clientCon[recvMsg.head.conId].resName);
-    securec_check_errno(rc, (void)rc);
-
-    rc = memcpy_s(&sendMsg.resData, sizeof(ResData), &recvMsg.data, sizeof(ResData));
-    securec_check_errno(rc, (void)rc);
-
-    write_runlog(LOG, "set res data, slotId=%lu.\n", recvMsg.data.slotId);
-    ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&sendMsg, sizeof(ReportSetResData));
-    if (ret != 0) {
-        write_runlog(ERROR, "send agent set res data to cms failed!\n");
-        CloseConnToCmserver();
-    }
-}
-
-static void ProcessGetResData(const uint32 &conId, const uint32 &slotId)
-{
-    int ret;
-    errno_t rc;
-    RequestGetResData sendMsg;
-    vector<ClientConn> &clientCon = GetClientConnect();
-
-    sendMsg.msgType = (int)MSG_AGENT_CM_GET_RES_DATA;
-    sendMsg.slotId = slotId;
-    sendMsg.conId = conId;
-    rc = strcpy_s(sendMsg.resName, CM_MAX_RES_NAME, clientCon[conId].resName);
-    securec_check_errno(rc, (void)rc);
-
-    ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&sendMsg, sizeof(RequestGetResData));
-    if (ret != 0) {
-        write_runlog(ERROR, "send agent set res data to cms failed!\n");
-        CloseConnToCmserver();
-    }
+    PushMsgToClientSendQue((char*)sendMsg, sizeof(AgentToClientInitResult), initData.head.conId);
+    write_runlog(DEBUG5, "[CLIENT] push client msg to send queue, res(%s) init result.\n", initData.resInfo.resName);
 }
 
 static void ProcessClientMsg(char *recvMsg)
 {
-    const MsgHead *head = reinterpret_cast<const MsgHead *>(reinterpret_cast<const void *>(recvMsg));
+    const MsgHead *head = (MsgHead *)recvMsg;
 
     switch (head->msgType) {
-        case MSG_CLIENT_AGENT_HEARTBEAT: {
-            ClientHbMsg *hbMsg = reinterpret_cast<ClientHbMsg *>(reinterpret_cast<void *>(recvMsg));
-            ProcessClientHeartbeat(*hbMsg);
-            break;
-            }
         case MSG_CLIENT_AGENT_INIT_DATA: {
-            ClientInitMsg *initMsg = reinterpret_cast<ClientInitMsg *>(reinterpret_cast<void *>(recvMsg));
+            ClientInitMsg *initMsg = (ClientInitMsg *)recvMsg;
             ProcessInitMsg(*initMsg);
             break;
-            }
-        case MSG_CLIENT_AGENT_SET_DATA: {
-            ClientSetDataMsg *setDataMsg = reinterpret_cast<ClientSetDataMsg *>(reinterpret_cast<void *>(recvMsg));
-            ProcessSetInstanceData(setDataMsg->head.conId, setDataMsg->instanceData);
-            break;
-            }
-        case MSG_CLIENT_AGENT_SET_RES_DATA: {
-            ClientSetResDataMsg *setResDataMsg =
-                reinterpret_cast<ClientSetResDataMsg *>(reinterpret_cast<void *>(recvMsg));
-            ProcessSetResData(*setResDataMsg);
-            break;
-            }
-        case MSG_CLIENT_AGENT_GET_RES_DATA: {
-            ClientGetResDataMsg *getResDataMsg =
-                reinterpret_cast<ClientGetResDataMsg *>(reinterpret_cast<void *>(recvMsg));
-            ProcessGetResData(getResDataMsg->head.conId, getResDataMsg->slotId);
+        }
+        case MSG_CLIENT_AGENT_HEARTBEAT: {
+            ClientHbMsg *hbMsg = (ClientHbMsg *)recvMsg;
+            ProcessClientHeartbeat(*hbMsg);
             break;
         }
         default:
-            write_runlog(LOG, "agent get unknown msg from client\n");
+            write_runlog(LOG, "[CLIENT] agent get unknown msg from client\n");
             break;
     }
 }
 
 void* ProcessMessageMain(void * const arg)
 {
-    char *msg = NULL;
-    ClientRecvQueue &recvQueue = GetRecvQueueApi();
-
     for (;;) {
-        (void)pthread_mutex_lock(&recvQueue.lock);
-        while (recvQueue.queue.empty()) {
-            (void)pthread_cond_wait(&recvQueue.cond, &recvQueue.lock);
+        (void)pthread_mutex_lock(&g_recvQueue.lock);
+        while (g_recvQueue.msg.empty()) {
+            (void)pthread_cond_wait(&g_recvQueue.cond, &g_recvQueue.lock);
         }
-        msg = recvQueue.queue.front();
-        recvQueue.queue.pop();
-        (void)pthread_mutex_unlock(&recvQueue.lock);
-
+        char *msg = g_recvQueue.msg.front().msgPtr;
+        g_recvQueue.msg.pop();
+        (void)pthread_mutex_unlock(&g_recvQueue.lock);
         ProcessClientMsg(msg);
-        free(msg);
-        msg = NULL;
+        FREE_AND_RESET(msg);
     }
     return NULL;
 }
 
+void ProcessResStatusList(const CmsReportResStatList *msg)
+{
+    uint32 index = 0;
+    if (GetGlobalResStatusIndex(msg->resList.resName, index) != CM_SUCCESS) {
+        write_runlog(ERROR, "[CLIENT] ProcessResStatusList, unknown the res(%s) of client.\n", msg->resList.resName);
+        return;
+    }
+    (void)pthread_rwlock_wrlock(&(g_resStatus[index].rwlock));
+    errno_t rc = memcpy_s(&g_resStatus[index].status, sizeof(OneResStatList), &msg->resList, sizeof(OneResStatList));
+    securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
+
+    write_runlog(LOG, "[CLIENT] res(%s) statList changed, version=%llu.\n", msg->resList.resName, msg->resList.version);
+    for (uint32 j = 0; j < msg->resList.instanceCount; ++j) {
+        if (j == CM_MAX_INSTANCES) {
+            break;
+        }
+        write_runlog(LOG, "nodeId=%u,instanceId=%u,status=%u,isWork=%u\n",
+            g_resStatus[index].status.resStat[j].nodeId,
+            g_resStatus[index].status.resStat[j].cmInstanceId,
+            g_resStatus[index].status.resStat[j].status,
+            g_resStatus[index].status.resStat[j].isWorkMember);
+    }
+}
+
 void ProcessResStatusChanged(const CmsReportResStatList *msg)
 {
-    ClientSendQueue &sendQueue = GetSendQueueApi();
-    vector<ClientConn> &clientCon = GetClientConnect();
-
     ProcessResStatusList(msg);
-
+    uint32 index = 0;
+    if (GetGlobalResStatusIndex(msg->resList.resName, index) != CM_SUCCESS) {
+        write_runlog(ERROR, "[CLIENT] ProcessResStatusChanged, unknown the res(%s) of client.\n", msg->resList.resName);
+        return;
+    }
+    ClientConn *clientCon = GetClientConnect();
     for (uint32 i = 0; i < MAX_RES_NUM; ++i) {
-        if (clientCon[i].isClosed) {
+        if (clientCon[i].isClosed || strcmp(clientCon[i].resName, msg->resList.resName) != 0) {
             continue;
         }
-
-        MsgHead *sendList = NULL;
-        sendList = (MsgHead*) malloc(sizeof(MsgHead));
-        if (sendList == NULL) {
-            write_runlog(LOG, "Out of memory: sendList failed.\n");
-            return;
-        }
-        sendList->conId = i;
-        sendList->msgType = MSG_AGENT_CLIENT_RES_STATUS_CHANGE;
-
-        (void)pthread_mutex_lock(&sendQueue.lock);
-        sendQueue.queue.push((char*)sendList);
-
-        (void)pthread_mutex_unlock(&sendQueue.lock);
-        (void)pthread_cond_signal(&sendQueue.cond);
+        SendStatusListToClient(g_resStatus[index], i, true);
     }
-}
-
-void ProcessResDataSetResult(const CmsReportSetDataResult *msg)
-{
-    AgentToClientSetDataResult *sendMsg = NULL;
-    ClientSendQueue &sendQueue = GetSendQueueApi();
-
-    sendMsg = (AgentToClientSetDataResult*) malloc(sizeof(AgentToClientSetDataResult));
-    if (sendMsg == NULL) {
-        write_runlog(LOG, "[agent] Out of memory: AgentToClientSetDataResult failed.\n");
-        return;
-    }
-
-    sendMsg->head.msgType = MSG_AGENT_CLIENT_SET_RES_DATA_STATUS;
-    sendMsg->head.conId = msg->conId;
-    sendMsg->result.isSetSuccess = msg->isSetSuccess;
-
-    write_runlog(LOG, "set slot %lu, state=%d\n", msg->slotId, (int)msg->isSetSuccess);
-
-    (void)pthread_mutex_lock(&sendQueue.lock);
-    sendQueue.queue.push((char*)sendMsg);
-
-    (void)pthread_mutex_unlock(&sendQueue.lock);
-    (void)pthread_cond_signal(&sendQueue.cond);
-}
-
-void ProcessResDataFromCms(const CmsReportResData *msg)
-{
-    errno_t rc;
-    AgentToClientResData *sendData = NULL;
-    ClientSendQueue &sendQueue = GetSendQueueApi();
-
-    sendData = (AgentToClientResData*) malloc(sizeof(AgentToClientResData));
-    if (sendData == NULL) {
-        write_runlog(LOG, "[agent] Out of memory: ResData failed.\n");
-        return;
-    }
-
-    rc = memcpy_s(&sendData->msgData, sizeof(ResData), &msg->resData, sizeof(ResData));
-    securec_check_errno(rc, (void)rc);
-
-    sendData->head.msgType = MSG_AGENT_CLIENT_REPORT_RES_DATA;
-    sendData->head.conId = msg->conId;
-
-    (void)pthread_mutex_lock(&sendQueue.lock);
-    sendQueue.queue.push((char*)sendData);
-
-    (void)pthread_mutex_unlock(&sendQueue.lock);
-    (void)pthread_cond_signal(&sendQueue.cond);
 }

@@ -88,13 +88,6 @@ bool isDisconnectTimeout(struct timespec last, int timeout);
 int check_one_instance_status(const char *processName, const char *cmd_line, int *isPhonyDead);
 int get_agent_global_params_from_configfile();
 
-CmResStatList g_resStatusList;
-
-CmResStatList &GetResStatusListApi()
-{
-    return g_resStatusList;
-}
-
 void stop_flag(void)
 {
     g_exitFlag = true;
@@ -424,14 +417,14 @@ int get_prog_path(int argc, char **argv)
     return 0;
 }
 
-static void SetCmsIndexStr(char *cmServerIndxStr, uint32 len, uint32 cmServerIdx, uint32 nodeIdx)
+static void SetCmsIndexStr(char *cmServerIdxStr, uint32 strLen, uint32 cmServerIdx, uint32 nodeIdx)
 {
     char cmServerStr[MAX_PATH_LEN];
     errno_t rc = snprintf_s(cmServerStr, MAX_PATH_LEN, MAX_PATH_LEN - 1,
         "[%u node:%u, cmserverId:%u, cmServerIndex:%u], ",
         cmServerIdx, g_node[nodeIdx].node, g_node[nodeIdx].cmServerId, nodeIdx);
     securec_check_intval(rc, (void)rc);
-    rc = strcat_s(cmServerIndxStr, len, cmServerStr);
+    rc = strcat_s(cmServerIdxStr, strLen, cmServerStr);
     securec_check_errno(rc, (void)rc);
 }
 
@@ -1408,25 +1401,6 @@ int get_agent_global_params_from_configfile()
     return 0;
 }
 
-static void InitResStatusList()
-{
-    int rc;
-    ClientSendQueue &sendQueue = GetSendQueueApi();
-    ClientRecvQueue &recvQueue = GetRecvQueueApi();
-
-    g_resStatusList.version = 0;
-    (void)pthread_rwlock_init(&(g_resStatusList.lock), NULL);
-    for (int i = 0; i < CM_MAX_RES_NODE_COUNT; ++i) {
-        rc = memset_s(&g_resStatusList.nodeStatus[i], sizeof(OneNodeResourceStatus), 0, sizeof(OneNodeResourceStatus));
-        securec_check_errno(rc, (void)rc);
-    }
-
-    (void)pthread_mutex_init(&sendQueue.lock, NULL);
-    (void)pthread_mutex_init(&recvQueue.lock, NULL);
-    (void)pthread_cond_init(&sendQueue.cond, NULL);
-    (void)pthread_cond_init(&recvQueue.cond, NULL);
-}
-
 static status_t InitSendDdbOperRes()
 {
     if (g_currentNode->coordinate == 0) {
@@ -1601,6 +1575,11 @@ int main(int argc, char** argv)
 
     print_environ();
 
+    if (ReadResourceDefConfig(true) != CM_SUCCESS) {
+        (void)fprintf(stderr, "read cm_resource.json fail, exit!\n");
+        return -1;
+    }
+
     if (g_currentNode->datanodeCount > CM_MAX_DATANODE_PER_NODE) {
         write_runlog(ERROR,
             "%u datanodes deployed on this node more than limit(%d)\n",
@@ -1672,18 +1651,17 @@ int main(int argc, char** argv)
     }
     isSharedStorageMode = IsSharedStorageMode();
 
-    InitResStatusList();
     st = InitSendDdbOperRes();
     if (st != CM_SUCCESS) {
         write_runlog(ERROR, "failed to InitSendDdbOperRes.\n");
         exit(-1);
     }
-    if (!g_res_list.empty()) {
+    if (!g_resConf.empty()) {
         CreateRecvClientMessageThread();
         CreateSendMessageToClientThread();
         CreateProcessMessageThread();
     } else {
-        write_runlog(LOG, "(client) no resource, start client thread is unnecessary.\n");
+        write_runlog(LOG, "[CLIENT] no resource, start client thread is unnecessary.\n");
     }
     check_input_for_security(g_logBasePath);
     CreatePhonyDeadCheckThread();

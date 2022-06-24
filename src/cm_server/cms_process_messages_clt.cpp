@@ -60,7 +60,6 @@ static int NeedDoGsGuc(uint32 groupIndex, int memberIndex);
 static bool CompareMemberWithExpectSyncList(uint32 groupIndex, int memberIndex);
 static bool IsExpectSyncListInstanceNormal(uint32 groupIndex, uint32 instanceId, int *primaryCount);
 #endif
-void process_res_instance_status_msg(CM_Connection *con, const cm_to_ctl_group_resource_status *query_status_ptr);
 static bool SwitchoverStatusCheck(int group_index, int member_index);
 void process_to_query_instance_status_msg(CM_Connection *con, const cm_query_instance_status *query_status_ptr);
 
@@ -669,35 +668,6 @@ void CmToAgentMsg(CM_Connection *con, int msgType, bool doSwitchoverFast)
             }
         }
 #endif
-    }
-}
-
-void process_res_instance_status_msg(CM_Connection *con, const cm_to_ctl_group_resource_status *query_status_ptr)
-{
-    errno_t rc;
-    cm_to_ctl_group_resource_status instance_status_content;
-    std::vector<OneNodeResStatusInfo> &resStatusVector = GetResStatus();
-
-    if (query_status_ptr->msg_step == QUERY_STATUS_CMSERVER_STEP) {
-        instance_status_content.msg_type = MSG_CM_QUERY_INSTANCE_STATUS;
-        instance_status_content.msg_step = QUERY_STATUS_CMSERVER_STEP;
-        instance_status_content.instance_type = query_status_ptr->instance_type;
-        if (query_status_ptr->instance_type == PROCESS_RESOURCE) {
-            instance_status_content.instance_type = PROCESS_RESOURCE;
-            for (uint64 i = 0; i < CM_MAX_RES_NODE_COUNT; ++i) {
-                (void)pthread_rwlock_wrlock(&(resStatusVector[i].lk_lock));
-                rc = memcpy_s(&(instance_status_content.group_status[i]),
-                    sizeof(OneNodeResourceStatus),
-                    &(resStatusVector[i].nodeStatus),
-                    sizeof(OneNodeResourceStatus));
-                securec_check_errno(rc, (void)rc);
-                (void)pthread_rwlock_unlock(&(resStatusVector[i].lk_lock));
-            }
-        } else {
-            write_runlog(
-                ERROR, "unknown instance type %d for query instance status.\n", query_status_ptr->instance_type);
-        }
-        (void)cm_server_send_msg(con, 'S', (char *)&(instance_status_content), sizeof(instance_status_content), DEBUG5);
     }
 }
 

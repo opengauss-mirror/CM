@@ -116,22 +116,19 @@ static void StartResourceInstance();
 
 status_t DoCheckAndStartRes()
 {
-    bool find = false;
-    RES_PTR resInfo;
-    for (resInfo = g_res_list.begin(); resInfo != g_res_list.end(); resInfo++) {
-        if (resInfo->cmInstanceId != g_commandOperationInstanceId) {
-            continue;
-        } else {
-            find = true;
-            break;
+    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
+        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            if (g_resStatus[i].status.resStat[j].cmInstanceId == g_commandOperationInstanceId) {
+                StartResourceInstance();
+                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+                return CM_SUCCESS;
+            }
         }
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
-    if (!find) {
-        write_runlog(FATAL, "instanceId specified is illegal.\n");
-        return CM_ERROR;
-    }
-    StartResourceInstance();
-    return CM_SUCCESS;
+    write_runlog(FATAL, "instanceId specified is illegal.\n");
+    return CM_ERROR;
 }
 
 status_t StartWholeCluster()

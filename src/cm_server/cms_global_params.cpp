@@ -35,11 +35,6 @@
 const int HALF_HOUR = 1800;
 const int MINUS_ONE = -1;
 
-vector<SaveResDataList> g_resDataList;
-
-uint64 g_resStatListVersion = 0;
-vector<OneNodeResStatusInfo> g_resStatus(CM_MAX_RES_NODE_COUNT);
-
 set<int> g_stopNodes;
 set<int>::iterator g_stopNodeIter;
 vector<switchover_instance> switchOverInstances;
@@ -1518,21 +1513,6 @@ void instance_delay_arbitrate_time_out_clean(
             g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
                 .arbitrate_delay_time_out);
     }
-}
-
-vector<SaveResDataList> &GetResDataList()
-{
-    return g_resDataList;
-}
-
-uint64 &GetResStatusListVersion()
-{
-    return g_resStatListVersion;
-}
-
-vector<OneNodeResStatusInfo> &GetResStatus()
-{
-    return g_resStatus;
 }
 
 bool &GetIsSharedStorageMode()

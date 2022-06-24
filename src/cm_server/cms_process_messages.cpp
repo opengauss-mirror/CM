@@ -1346,8 +1346,8 @@ static void MsgQuery(CM_Connection *con, CM_StringInfo inBuffer, int msgType, Cm
 static void MsgCtlResourceStatus(
     CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
 {
-    cm_to_ctl_group_resource_status *query_status_ptr = NULL;
-    PROCESS_MSG_BY_TYPE(cm_to_ctl_group_resource_status, query_status_ptr, ProcessResInstanceStatusMsg);
+    CmsToCtlGroupResStatus *queryStatusPtr = NULL;
+    PROCESS_MSG_BY_TYPE(CmsToCtlGroupResStatus, queryStatusPtr, ProcessResInstanceStatusMsg);
 }
 
 static void MsgQueryCmserver(
@@ -1436,9 +1436,8 @@ static void MsgKerberosStatus(
 static void MsgAgentResourceStatus(
     CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
 {
-    cma_resource_status_msg *agentToCmResourceStatusPtr = NULL;
-    PROCESS_MSG_BY_TYPE(
-        cma_resource_status_msg, agentToCmResourceStatusPtr, process_agent_to_cm_resource_status_report_msg);
+    ReportResStatus *cmaToCmsResStatusPtr = NULL;
+    PROCESS_MSG_BY_TYPE_WITHOUT_CONN(ReportResStatus, cmaToCmsResStatusPtr, ProcessAgent2CmResStatReportMsg);
 }
 
 static void MsgFinishRedo(
@@ -1511,27 +1510,6 @@ static void MsgRequestResStatusList(
     ProcessRequestResStatusListMsg(con);
 }
 
-static void MsgSetInstanceData(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
-{
-    ReportSetInstanceData *resSetInstanceDataMsg = NULL;
-    PROCESS_MSG_BY_TYPE_WITHOUT_CONN(ReportSetInstanceData, resSetInstanceDataMsg, ProcessSetInstanceDataMsg);
-}
-
-static void MsgSetResData(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
-{
-    ReportSetResData *setResDataMsg = NULL;
-    PROCESS_MSG_BY_TYPE(ReportSetResData, setResDataMsg, ProcessReportSetResDataMsg);
-}
-
-static void MsgGetResData(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
-{
-    RequestGetResData *getResDataMsg = NULL;
-    PROCESS_MSG_BY_TYPE(RequestGetResData, getResDataMsg, ProcessRequestGetResData);
-}
-
 static void MsgGetSharedStorageInfo(
     CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
 {
@@ -1589,7 +1567,7 @@ static void InitCmCtlCmdProc()
 
 static void InitCmAgentCmdProc()
 {
-    // 16
+    // 14
     g_cmdProc[MSG_AGENT_CM_DATA_INSTANCE_REPORT_STATUS] = MsgDataInstanceReport;
     g_cmdProc[MSG_AGENT_CM_FENCED_UDF_INSTANCE_STATUS] = MsgFencedUdf;
     g_cmdProc[MSG_AGENT_CM_HEARTBEAT] = MsgHeatbeat;
@@ -1602,9 +1580,6 @@ static void InitCmAgentCmdProc()
     g_cmdProc[MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER] = MsgDatanodeInstanceBarrier;
     g_cmdProc[MSG_AGENT_CM_DN_SYNC_LIST] = MsgDnSyncList;
     g_cmdProc[MSG_AGENT_CM_REQUEST_RES_STATUS_LIST] = MsgRequestResStatusList;
-    g_cmdProc[MSG_AGENT_CM_SET_INSTANCE_DATA] = MsgSetInstanceData;
-    g_cmdProc[MSG_AGENT_CM_SET_RES_DATA] = MsgSetResData;
-    g_cmdProc[MSG_AGENT_CM_GET_RES_DATA] = MsgGetResData;
     g_cmdProc[MSG_AGENT_CM_DATANODE_LOCAL_PEER] = MsgDnLocalPeer;
     g_cmdProc[MSG_GET_SHARED_STORAGE_INFO] = MsgGetSharedStorageInfo;
 }

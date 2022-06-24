@@ -257,10 +257,6 @@ typedef struct CurrentInstanceStatus {
         }                                                                                      \
     } while (0)
 
-vector<SaveResDataList> &GetResDataList();
-
-uint64 &GetResStatusListVersion();
-vector<OneNodeResStatusInfo> &GetResStatus();
 bool &GetIsSharedStorageMode();
 
 extern set<int> g_stopNodes;

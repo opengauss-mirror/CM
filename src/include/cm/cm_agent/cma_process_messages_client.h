@@ -24,23 +24,7 @@
 #ifndef CMA_PROCESS_MESSAGES_CLIENT_H
 #define CMA_PROCESS_MESSAGES_CLIENT_H
 
-inline void ProcessResStatusList(const CmsReportResStatList *msg)
-{
-    errno_t rc;
-    CmResStatList &statusList = GetResStatusListApi();
-
-    (void)pthread_rwlock_wrlock(&(statusList.lock));
-    statusList.version = msg->resList.version;
-    for (int i = 0; i < CM_MAX_RES_NODE_COUNT; ++i) {
-        rc = memcpy_s(&statusList.nodeStatus[i], sizeof(OneNodeResourceStatus),
-            &msg->resList.nodeStatus[i], sizeof(OneNodeResourceStatus));
-        securec_check_errno(rc, (void)rc);
-    }
-    (void)pthread_rwlock_unlock(&(statusList.lock));
-}
-
+void ProcessResStatusList(const CmsReportResStatList *msg);
 void ProcessResStatusChanged(const CmsReportResStatList *msg);
-void ProcessResDataSetResult(const CmsReportSetDataResult *msg);
-void ProcessResDataFromCms(const CmsReportResData *msg);
 
 #endif // CMA_PROCESS_MESSAGES_CLIENT_H

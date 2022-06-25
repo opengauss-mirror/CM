@@ -47,11 +47,11 @@ extern bool UpdateLibcommConfig();
 void StartResourceCheck(void);
 void StopResourceInstances(void);
 void StopResourceCheck(void);
-void StartOneResourceInstance(const char *scriptPath, uint32 resInstanceId);
-void StopOneResourceInstance(const char *scriptPath, uint32 resInstanceId);
-int CheckOneResourceState(const char *scriptPath, uint32 resInstanceId);
+void StartOneResInst(const char *scriptPath, uint32 resInstanceId, uint32 timeout);
+void StopOneResInst(const char *scriptPath, uint32 resInstanceId, uint32 timeout);
+ResStatus CheckOneResInst(const char *scriptPath, uint32 resInstanceId, uint32 timeout);
 int ResourceStoppedCheck(void);
-int SystemExecute(const char *scriptPath, const char *oper);
+int SystemExecute(const char *scriptPath, const char *oper, uint32 timeout);
 int stop_instance_check(void);
 
 #ifdef ENABLE_UT

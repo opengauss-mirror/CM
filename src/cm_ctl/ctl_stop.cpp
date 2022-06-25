@@ -108,26 +108,19 @@ extern bool g_stopAbnormal;
 
 void DoCheckAndStopRes()
 {
-    if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
-        bool find = false;
-        RES_PTR resInfo;
-        for (resInfo = g_res_list.begin(); resInfo != g_res_list.end(); resInfo++) {
-            if (resInfo->cmInstanceId != g_commandOperationInstanceId) {
-                continue;
-            } else {
-                find = true;
-                break;
+    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
+        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            if (g_resStatus[i].status.resStat[j].cmInstanceId == g_commandOperationInstanceId) {
+                StopResourceInstance();
+                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+                exit(0);
             }
         }
-
-        if (!find) {
-            write_runlog(FATAL, "instanceId specified is illegal.\n");
-            exit(1);
-        }
-
-        StopResourceInstance();
-        exit(0);
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
+    write_runlog(FATAL, "instanceId specified is illegal.\n");
+    exit(1);
 }
 
 void do_stop(void)
@@ -143,7 +136,9 @@ void do_stop(void)
         exit(0);
     }
 #endif
-    DoCheckAndStopRes();
+    if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
+        DoCheckAndStopRes();
+    }
     if (NULL == g_command_operation_azName && 0 == g_commandOperationNodeId) {
         write_runlog(LOG, "stop cluster. \n");
         stop_cluster();

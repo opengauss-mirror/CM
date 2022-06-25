@@ -172,17 +172,6 @@ typedef struct CM_ConnDdbInfo {
     DdbConn ddbConn[CM_MAX_CONN_TO_DDB];
 } CM_ConnDdbInfo;
 
-typedef struct SaveResDataSt {
-    uint32 size;
-    char data[CM_MAX_RES_DATA_SIZE];
-} SaveResData;
-
-typedef struct SaveResDataListSt {
-    uint64 version;
-    char resName[CM_MAX_RES_NAME];
-    SaveResData resData[CM_MAX_RES_SLOT_COUNT];
-} SaveResDataList;
-
 #define THREAD_TYPE_HA 1
 #define THREAD_TYPE_MONITOR 2
 #define THREAD_TYPE_CTL_SERVER 3

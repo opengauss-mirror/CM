@@ -84,4 +84,7 @@ bool CheckStartDN(void);
 int ProcessDnBarrierInfoResp(const cm_to_agent_barrier_info *barrierRespMsg);
 int ProcessGsGucDnCommand(const CmToAgentGsGucSyncList *msgTypeDoGsGuc);
 void ExecuteCrossClusterCnBuildCommand(const char *dataDir, char *userInfo);
+void PushMsgToClientSendQue(char *msgPtr, uint32 msgLen, uint32 conId);
+void PushMsgToClientRecvQue(char *msgPtr, uint32 msgLen);
+void CleanClientMsgQueue(uint32 conId);
 #endif

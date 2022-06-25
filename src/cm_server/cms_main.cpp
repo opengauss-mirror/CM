@@ -1285,26 +1285,6 @@ static void cm_server_stop_command_check(int epollfd)
     return;
 }
 
-static void InitResDataList()
-{
-    int rc;
-    vector<SaveResDataList> &resDataList = GetResDataList();
-
-    for (ResourceListInfo &resInfo : g_res_list) {
-        if (resDataList.empty() || (strcmp(resDataList.back().resName, resInfo.resName) != 0)) {
-            SaveResDataList resData;
-            rc = strcpy_s(resData.resName, CM_MAX_RES_NAME, resInfo.resName);
-            securec_check_errno(rc, (void) rc);
-            resData.version = 0;
-            resDataList.push_back(resData);
-        }
-    }
-    SaveResDataList resData;
-    rc = memset_s(&resData, sizeof(SaveResDataList), 0, sizeof(SaveResDataList));
-    securec_check_errno(rc, (void)rc);
-    resDataList.push_back(resData);
-}
-
 static void cm_server_listen_socket_init(void)
 {
     int i;
@@ -1625,20 +1605,6 @@ static void CreateDataDirLockFile()
     }
 }
 
-static void CmGlobalVarInit()
-{
-    errno_t rc;
-    vector<OneNodeResStatusInfo> &resStatusVector = GetResStatus();
-
-    for (uint64 i = 0; i < static_cast<uint64>(resStatusVector.size()); ++i) {
-        (void)pthread_rwlock_init(&(resStatusVector[i].lk_lock), NULL);
-        rc = memset_s(&resStatusVector[i].nodeStatus, sizeof(OneNodeResourceStatus), 0, sizeof(OneNodeResourceStatus));
-        securec_check_errno(rc, (void)rc);
-        resStatusVector[i].nodeStatus.node = static_cast<uint32>(i + 1);
-        resStatusVector[i].nodeStatus.count = 0;
-    }
-}
-
 /**
  * @brief 
  * 
@@ -1656,8 +1622,6 @@ static void BaseInit()
     ChangeToDataDir();
 
     CreateDataDirLockFile();
-    ReadResourceDefConfig(0);
-    CmGlobalVarInit();
 }
 
 
@@ -2870,6 +2834,10 @@ int main(int argc, char** argv)
     }
 
     print_environ();
+    if (ReadResourceDefConfig(false) != CM_SUCCESS) {
+        write_runlog(ERROR, "read cm_resource.json failed, exit.\n");
+        return -1;
+    }
     AlarmEnvInitialize();
     create_system_alarm_log(sys_log_path);
     CreateKeyEventLogFile(sys_log_path);
@@ -2890,7 +2858,6 @@ int main(int argc, char** argv)
      * useful
      */
     BaseInit();
-    InitResDataList();
     InitCltCmdProc();
     isSharedStorageMode = IsSharedStorageMode();
 #if defined (ENABLE_MULTIPLE_NODES) || defined (ENABLE_PRIVATEGAUSS)

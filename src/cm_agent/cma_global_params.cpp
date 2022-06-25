@@ -21,7 +21,6 @@
  *
  * -------------------------------------------------------------------------
  */
-#include <queue>
 #include "cma_global_params.h"
 #include "cm/cm_cgroup.h"
 
@@ -39,8 +38,6 @@ datanode_status_info g_dnReportMsg[CM_MAX_DATANODE_PER_NODE];
 DnSyncListInfo g_dnSyncListInfo[CM_MAX_DATANODE_PER_NODE];
 CmDoWriteOper g_cmDoWriteOper[CM_MAX_DATANODE_PER_NODE];
 kerberos_status_info g_kerberosReportMsg;
-cma_resource_status_report g_cmResourceReportMsg;
-cm_res_status_check_time g_resStatusCheck[CM_MAX_RES_COUNT];
 
 pthread_t g_repairCnThread;
 pthread_t g_threadId[CM_MAX_DATANODE_PER_NODE + 5] = {0};
@@ -224,18 +221,8 @@ char g_environmentThreshold[CM_PATH_LENGTH] = {0};
 bool g_isSharedStorageMode = false;
 char g_doradoIp[CM_IP_LENGTH] = {0};
 
-ClientSendQueue g_sendQueue;
-ClientRecvQueue g_recvQueue;
-
-ClientSendQueue &GetSendQueueApi()
-{
-    return g_sendQueue;
-}
-
-ClientRecvQueue &GetRecvQueueApi()
-{
-    return g_recvQueue;
-}
+MsgQueue g_sendQueue;
+MsgQueue g_recvQueue;
 
 bool &GetIsSharedStorageMode()
 {

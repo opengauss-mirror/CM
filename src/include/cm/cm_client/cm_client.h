@@ -39,8 +39,6 @@ extern "C" {
 #define NO_STAT_CHANGED 0
 #define STAT_CHANGED    1
 
-#define CM_MAX_PATH_LEN 1024
-
 #define CLIENT_TCP_TIMEOUT      (5)
 #define CLIENT_USEC_TO_NSEC     (1000)
 #define CLIENT_INVALID_SOCKET   (-1)
@@ -49,9 +47,10 @@ extern "C" {
 #define CLIENT_RECV_CHECK_INTERVAL (300 * 1000)
 #define CLIENT_CHECK_CONN_INTERVAL (200 * 1000)
 
-#define HEARTBEAT_SEND_INTERVAL 1
-
-#define SOCK_PATH_LENGTH 128
+typedef struct MsgPackageSt {
+    char *msgPtr;
+    size_t msgLen;
+} MsgPackage;
 
 typedef struct SockAddrSt {
     struct sockaddr_un addr;
@@ -62,32 +61,35 @@ typedef struct ConnAgentSt {
     int sock;
     volatile bool isClosed;
     uint32 resInstanceId;
-    cm_notify_func_t callback;
+    CmNotifyFunc callback;
 } ConnAgent;
 
-typedef struct SetStateSt {
-    int32 state;
-    uint32 slotId;
-} SetState;
-
-typedef struct SetDataFlagSt {
-    bool isSetSuccess;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-} SetDataFlag;
-
-typedef struct GetDataFlagSt {
-    ResData resData;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-} GetDataFlag;
-
 typedef struct SendMsgQueueSt {
-    std::queue<char*> sendQueue;
+    std::queue<MsgPackage> sendQueue;
     pthread_mutex_t lock;
+    pthread_cond_t cond;
 } SendMsgQueue;
 
-status_t PreInit(uint32 instanceId, const char *resName, cm_notify_func_t func);
+typedef struct InitFlagSt {
+    bool initSuccess;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+} InitFlag;
+
+typedef struct LockFlagSt {
+    uint32 error;
+    uint32 ownerId;
+    pthread_mutex_t condLock;
+    pthread_mutex_t optLock;
+    pthread_cond_t cond;
+} LockFlag;
+
+typedef struct ClientLockResultSt {
+    uint32 error;
+    uint32 ownerId;
+} ClientLockResult;
+
+status_t PreInit(uint32 instanceId, const char *resName, CmNotifyFunc func, bool *isFirstInit);
 status_t CreateConnectAgentThread(void);
 status_t CreateSendMsgThread(void);
 status_t CreateRecvMsgThread(void);
@@ -95,11 +97,13 @@ status_t CreateRecvMsgThread(void);
 #ifdef __cplusplus
 }
 
-char *GetResName();
-void SendMsgApi(char *msg);
-SetDataFlag &GetSetDataVector();
-GetDataFlag &GetResDataVector();
+void ShutdownClient();
+void SendMsgApi(char *msgPtr, size_t msgLen);
+bool &GetIsClientInit();
 OneResStatList &GetClientStatusList();
+status_t SendInitMsg(uint32 instanceId, const char *resName);
+bool SendInitMsgAndGetResult(const char *resName, uint32 instId);
+ClientLockResult SendLockMsgAndWaitResult(char *msgPtr, uint32 msgLen);
 
 #endif
 #endif // CM_CLIENT_H

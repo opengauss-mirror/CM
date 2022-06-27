@@ -150,12 +150,13 @@ void SaveNodeReadOnlyConfig(int logLevel)
                             __FUNCTION__, __LINE__, instanceName, alarmIndex);
                         ReportReadOnlyAlarm(ALM_AT_Resume, instanceName, alarmIndex++);
                     }
+                    g_dynamicNodeReadOnlyInfo[i].coordinateNode.lastReadOnly = cnCurrReadOnly;
+                    g_dynamicNodeReadOnlyInfo[i].coordinateNode.currReadOnly = READONLY_OFF;
                 } else {
-                    write_runlog(WARNING, "[%s][line:%d] CN command:[%s] failed, errno=%d.\n", __FUNCTION__, __LINE__,
-                        command, errno);
+                    write_runlog(WARNING,
+                        "[%s][line:%d] CN command:[%s] failed, rc=%d, errno=%d.\n",
+                        __FUNCTION__, __LINE__, command, rc, errno);
                 }
-                g_dynamicNodeReadOnlyInfo[i].coordinateNode.lastReadOnly = cnCurrReadOnly;
-                g_dynamicNodeReadOnlyInfo[i].coordinateNode.currReadOnly = READONLY_OFF;
             } else {
                 alarmIndex++;
             }
@@ -206,12 +207,13 @@ void SaveNodeReadOnlyConfig(int logLevel)
                             __FUNCTION__, __LINE__, instanceName, alarmIndex);
                         ReportReadOnlyAlarm(ALM_AT_Resume, instanceName, alarmIndex++);
                     }
+                    g_dynamicNodeReadOnlyInfo[i].dataNode[j].lastReadOnly = dnCurrReadOnly;
+                    g_dynamicNodeReadOnlyInfo[i].dataNode[j].currReadOnly = READONLY_OFF;
                 } else {
-                    write_runlog(WARNING, "[%s][line:%d] DN command:[%s] failed, errno=%d.\n", __FUNCTION__, __LINE__,
-                        command, errno);
+                    write_runlog(WARNING,
+                        "[%s][line:%d] DN command:[%s] failed, rc=%d, errno=%d.\n",
+                        __FUNCTION__, __LINE__, command, rc, errno);
                 }
-                g_dynamicNodeReadOnlyInfo[i].dataNode[j].lastReadOnly = dnCurrReadOnly;
-                g_dynamicNodeReadOnlyInfo[i].dataNode[j].currReadOnly = READONLY_OFF;
             } else {
                 alarmIndex++;
             }

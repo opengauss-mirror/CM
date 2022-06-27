@@ -1921,6 +1921,7 @@ status_t SetNodeReadOnlyStatusToDdb(const char* bitsString, int logLevel)
 {
     char keyOfReadOnlyStatus[MAX_PATH_LEN] = {0};
     char valueOfReadOnlyStatus[MAX_PATH_LEN] = {0};
+    char valueOfReadOnlyStatusOld[MAX_PATH_LEN] = {0};
 
     if (bitsString == NULL) {
         write_runlog(ERROR, "[%s][line:%d] bitsString is null!\n", __FUNCTION__, __LINE__);
@@ -1932,10 +1933,25 @@ status_t SetNodeReadOnlyStatusToDdb(const char* bitsString, int logLevel)
     securec_check_intval(rci, (void)rci);
 
     Bin2Hex(bitsString, valueOfReadOnlyStatus, strlen(bitsString));
+
+    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVFromDDb(keyOfReadOnlyStatus, MAX_PATH_LEN, valueOfReadOnlyStatusOld, MAX_PATH_LEN, &ddbResult);
+    if (st != CM_SUCCESS) {
+        // get kv only for log level, we should continue even got error.
+        int logLvl = (ddbResult == CAN_NOT_FIND_THE_KEY) ? LOG : ERROR;
+        write_runlog(logLvl, "failed to get value with key(%s).\n", keyOfReadOnlyStatus);
+    } else {
+        if (strcmp(valueOfReadOnlyStatusOld, valueOfReadOnlyStatus) != 0) {
+            logLevel = LOG;
+            write_runlog(logLevel, "[%s][line:%d] valueOfReadOnlyStatus in ddb is:%s\n",
+                __FUNCTION__, __LINE__, valueOfReadOnlyStatusOld);
+        }
+    }
+
     write_runlog(logLevel, "[%s][line:%d] bitsString:%s, valueOfReadOnlyStatus:%s, strlen(bitsString):%lu\n",
         __FUNCTION__, __LINE__, bitsString, valueOfReadOnlyStatus, strlen(bitsString));
 
-    status_t st = SetKV2Ddb(keyOfReadOnlyStatus, MAX_PATH_LEN, valueOfReadOnlyStatus, MAX_PATH_LEN, NULL);
+    st = SetKV2Ddb(keyOfReadOnlyStatus, MAX_PATH_LEN, valueOfReadOnlyStatus, MAX_PATH_LEN, NULL);
     if (st != CM_SUCCESS) {
         write_runlog(ERROR,
             "[%s][line:%d]: ddb set failed. key = %s, readonly = %s.\n",

@@ -979,8 +979,8 @@ const char* kerberos_status_to_string(int role)
 static status_t GetValueIntFromCJson(uint32 *infoValue, const cJSON *instance, const char *infoKey)
 {
     cJSON *objValue = cJSON_GetObjectItem(instance, infoKey);
-    if (objValue == NULL) {
-        write_runlog(ERROR, "cannot get objValue from cJson, by key(%s).\n", infoKey);
+    if (!cJSON_IsNumber(objValue)) {
+        write_runlog(ERROR, "(%s) object is not number.\n", infoKey);
         return CM_ERROR;
     }
     if (objValue->valueint < 0) {
@@ -996,13 +996,17 @@ static status_t GetValueIntFromCJson(uint32 *infoValue, const cJSON *instance, c
 static status_t GetValueStrFromCJson(char *valueStr, uint32 valueLen, const cJSON *object, const char *infoKey)
 {
     cJSON *objValue = cJSON_GetObjectItem(object, infoKey);
-    if (objValue == NULL) {
-        write_runlog(ERROR, "cannot get objValue from cJson, by key(%s).\n", infoKey);
+    if (!cJSON_IsString(objValue)) {
+        write_runlog(ERROR, "(%s) object is not string.\n", infoKey);
+        return CM_ERROR;
+    }
+    if (objValue->valuestring == NULL || objValue->valuestring[0] == '\0') {
+        write_runlog(ERROR, "(%s) object is null.\n", infoKey);
         return CM_ERROR;
     }
     if (valueStr != NULL) {
-        if (strlen(objValue->valuestring) > valueLen) {
-            write_runlog(ERROR, "in cJson, objValue of key(%s), is longer than max(%u).\n", infoKey, valueLen);
+        if (strlen(objValue->valuestring) >= valueLen) {
+            write_runlog(ERROR, "(%s):str(%s) is longer than max(%u).\n", infoKey, objValue->valuestring, valueLen);
             return CM_ERROR;
         }
         errno_t rc = strcpy_s(valueStr, valueLen, objValue->valuestring);
@@ -1028,22 +1032,19 @@ static status_t GetOneInstConf(CmResStatInfo *instInfo, const cJSON *instJson, u
     return CM_SUCCESS;
 }
 
-static status_t GetAllIntsConf(OneResStatList *newRes, const cJSON *object, const char *configDir, uint32 *curInstId)
+static status_t GetAllIntsConf(OneResStatList *newRes, const cJSON *object, uint32 *curInstId)
 {
-    cJSON *instanceArray = cJSON_GetObjectItem(object, "instances");
-    if (instanceArray == NULL) {
-        write_runlog(ERROR, "parse instance info from configure file \"%s\" fail.\n", configDir);
+    cJSON *instArray = cJSON_GetObjectItem(object, "instances");
+    if (!cJSON_IsArray(instArray)) {
+        write_runlog(ERROR, "instances is not array.\n");
         return CM_ERROR;
     }
     newRes->instanceCount = 0;
-    do {
-        cJSON *instConf = cJSON_GetArrayItem(instanceArray, (int)newRes->instanceCount);
-        if (instConf == NULL) {
-            break;
-        }
+    cJSON *instConf;
+    cJSON_ArrayForEach(instConf, instArray) {
         CM_RETURN_IFERR(GetOneInstConf(&newRes->resStat[newRes->instanceCount], instConf, curInstId));
         ++newRes->instanceCount;
-    } while (1);
+    }
 
     return CM_SUCCESS;
 }
@@ -1062,18 +1063,36 @@ static status_t VerifyCheckInfo(const ResStatusCheckInfo *checkInfo)
         return CM_ERROR;
     }
     if (checkInfo->restartTimes > maxRestartTimes) {
-        write_runlog(ERROR, "restart_times(%u) is invalid, range [0, 3600].\n", checkInfo->restartTimes);
+        write_runlog(ERROR, "restart_times(%u) is invalid, range [0, 9999].\n", checkInfo->restartTimes);
         return CM_ERROR;
     }
     return CM_SUCCESS;
 }
 
-static status_t GetOneResConf(
-        OneResStatList *resConf, const cJSON *resJson, const char *configDir, uint32 *curInstId, bool needGetResConf)
+static void FillTheResConf(CmResConfList *newInfo, const OneResStatList *resConf)
+{
+    errno_t rc = strcpy_s(newInfo->resName, CM_MAX_RES_NAME, resConf->resName);
+    securec_check_errno(rc, (void)rc);
+    newInfo->checkInfo.checkTime = 0;
+    newInfo->checkInfo.startTime = 0;
+    newInfo->checkInfo.startCount = 0;
+    for (uint32 i = 0; i < resConf->instanceCount; ++i) {
+        if (resConf->resStat[i].nodeId != g_currentNode->node) {
+            continue;
+        }
+        newInfo->nodeId = resConf->resStat[i].nodeId;
+        newInfo->cmInstanceId = resConf->resStat[i].cmInstanceId;
+        newInfo->resInstanceId = resConf->resStat[i].resInstanceId;
+        newInfo->isWorkMember = 1;
+        g_resConf.push_back(*newInfo);
+    }
+}
+
+static status_t GetOneResConf(OneResStatList *resConf, const cJSON *resJson, uint32 *curInstId, bool isAgent)
 {
     CM_RETURN_IFERR(GetValueStrFromCJson(resConf->resName, CM_MAX_RES_NAME, resJson, "name"));
-    CM_RETURN_IFERR(GetAllIntsConf(resConf, resJson, configDir, curInstId));
-    if (needGetResConf) {
+    CM_RETURN_IFERR(GetAllIntsConf(resConf, resJson, curInstId));
+    if (isAgent) {
         CmResConfList newInfo;
         CM_RETURN_IFERR(GetValueStrFromCJson(newInfo.script, MAX_PATH_LEN, resJson, "script"));
         CM_RETURN_IFERR(GetValueIntFromCJson(&newInfo.checkInfo.checkInterval, resJson, "check_interval"));
@@ -1082,21 +1101,7 @@ static status_t GetOneResConf(
         CM_RETURN_IFERR(GetValueIntFromCJson(&newInfo.checkInfo.restartPeriod, resJson, "restart_period"));
         CM_RETURN_IFERR(GetValueIntFromCJson(&newInfo.checkInfo.restartTimes, resJson, "restart_times"));
         CM_RETURN_IFERR(VerifyCheckInfo(&newInfo.checkInfo));
-        errno_t rc = strcpy_s(newInfo.resName, CM_MAX_RES_NAME, resConf->resName);
-        securec_check_errno(rc, (void)rc);
-        newInfo.checkInfo.checkTime = 0;
-        newInfo.checkInfo.startTime = 0;
-        newInfo.checkInfo.startCount = 0;
-        for (uint32 i = 0; i < resConf->instanceCount; ++i) {
-            if (resConf->resStat[i].nodeId != g_currentNode->node) {
-                continue;
-            }
-            newInfo.nodeId = resConf->resStat[i].nodeId;
-            newInfo.cmInstanceId = resConf->resStat[i].cmInstanceId;
-            newInfo.resInstanceId = resConf->resStat[i].resInstanceId;
-            newInfo.isWorkMember = 1;
-            g_resConf.push_back(newInfo);
-        }
+        FillTheResConf(&newInfo, resConf);
     } else {
         CM_RETURN_IFERR(GetValueStrFromCJson(NULL, 0, resJson, "script"));
         CM_RETURN_IFERR(GetValueIntFromCJson(NULL, resJson, "check_interval"));
@@ -1122,41 +1127,57 @@ static status_t CheckResConf(const OneResStatList *resConf)
     return CM_SUCCESS;
 }
 
-static status_t GetAllResConf(const char *confData, const char *confDir, bool needGetResConf)
+static inline status_t GetResArrayFromJson(cJSON **resArray, const cJSON *root)
 {
-    cJSON *root = cJSON_Parse(confData);
-    cJSON *resObject = cJSON_GetObjectItem(root, "resources");
-    if (resObject == NULL) {
-        write_runlog(ERROR, "parse resources info from configure file %s fail, incorrect format.\n", confDir);
+    *resArray = cJSON_GetObjectItem(root, "resources");
+    if (!cJSON_IsArray(*resArray)) {
+        write_runlog(ERROR, "resources conf info is not array.\n");
         return CM_ERROR;
     }
-    int ind = 0;
+    return CM_SUCCESS;
+}
+
+static inline void ParseFail(cJSON *root, const char *confDir)
+{
+    write_runlog(ERROR, "parse json \"%s\" failed.\n", confDir);
+    cJSON_Delete(root);
+}
+
+status_t GetAllResConf(const char *confData, const char *confDir, bool isAgent)
+{
+    cJSON *root = cJSON_Parse(confData);
+    if (!cJSON_IsObject(root)) {
+        write_runlog(ERROR, "parse json file \"%s\" failed, format incorrect.\n", confDir);
+        return CM_ERROR;
+    }
+
+    cJSON *resArray = NULL;
+    CM_RETURN_IFERR_EX(GetResArrayFromJson(&resArray, root), ParseFail(root, confDir));
+
+    cJSON *resItem;
     uint32 curInstId = RES_INSTANCE_ID_MIN + 1;
-    do {
-        cJSON *resArray = cJSON_GetArrayItem(resObject, ind++);
-        if (resArray == NULL) {
-            break;
-        }
+    cJSON_ArrayForEach(resItem, resArray) {
         CmResStatList newRes;
         errno_t rc = memset_s(&newRes, sizeof(CmResStatList), 0, sizeof(CmResStatList));
         securec_check_errno(rc, (void)rc);
         (void)pthread_rwlock_init(&newRes.rwlock, NULL);
-        CM_RETURN_IFERR(GetOneResConf(&newRes.status, resArray, confDir, &curInstId, needGetResConf));
-        CM_RETURN_IFERR(CheckResConf(&newRes.status));
+        CM_RETURN_IFERR_EX(GetOneResConf(&newRes.status, resItem, &curInstId, isAgent), ParseFail(root, confDir));
+        CM_RETURN_IFERR_EX(CheckResConf(&newRes.status), ParseFail(root, confDir));
         g_resStatus.push_back(newRes);
-    } while(1);
+    }
 
     cJSON_Delete(root);
+    write_runlog(DEBUG1, "parse \"%s\" success.\n", confDir);
 
     return CM_SUCCESS;
 }
 
 // By default, g_resStatus is obtained, can determine whether to obtain g_resConf.
-status_t ReadResourceDefConfig(bool needGetResConf)
+status_t ReadResourceDefConfig(bool isAgent)
 {
     char confFile[MAX_PATH_LEN] = {0};
     int ret = snprintf_s(
-            confFile, sizeof(confFile), sizeof(confFile) - 1, "%s/cm_agent/cm_resource.json", g_currentNode->cmDataPath);
+        confFile, sizeof(confFile), sizeof(confFile) - 1, "%s/cm_agent/cm_resource.json", g_currentNode->cmDataPath);
     securec_check_intval(ret, (void)ret);
     check_input_for_security(confFile);
     canonicalize_path(confFile);
@@ -1181,7 +1202,7 @@ status_t ReadResourceDefConfig(bool needGetResConf)
 
     g_resStatus.clear();
     g_resConf.clear();
-    CM_RETURN_IFERR(GetAllResConf(confData, confFile, needGetResConf));
+    CM_RETURN_IFERR(GetAllResConf(confData, confFile, isAgent));
 
     return CM_SUCCESS;
 }

@@ -33,7 +33,7 @@ static void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList &
     securec_check_errno(rc, (void)rc);
 
     write_runlog(LOG, "[CLIENT] res(%s) statList changed, version=%llu.\n", status.resName, status.version);
-    for (uint32 j = 0; j <= status.instanceCount; ++j) {
+    for (uint32 j = 0; j < status.instanceCount; ++j) {
         write_runlog(LOG, "nodeId=%u, instanceId=%u, status=%u.\n",
             status.resStat[j].nodeId, status.resStat[j].cmInstanceId, status.resStat[j].status);
     }

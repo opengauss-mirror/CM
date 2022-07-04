@@ -104,6 +104,10 @@ void ProcessCtl2CmOneInstanceBarrierQueryMsg(CM_Connection* con, uint32 node, ui
 void ProcessGetDnSyncListMsg(CM_Connection *con, AgentToCmserverDnSyncList *agentToCmserverDnSyncList);
 #endif
 void ProcessAgent2CmResStatReportMsg(const ReportResStatus *resStatusPtr);
+void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList &status);
+void SetResStatReportInter(uint32 nodeId);
+status_t InitNodeReportResStatInter();
+uint32 GetResStatReportInter(uint32 nodeId);
 
 int GetCurAz();
 uint32 GetPrimaryDnIndex(void);

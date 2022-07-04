@@ -2901,6 +2901,9 @@ int main(int argc, char** argv)
     GetBackupOpenConfig();
     InstanceAlarmItemInitialize();
     GetCmAzInfo();
+    if (InitNodeReportResStatInter() != CM_SUCCESS) {
+        return -1;
+    }
     status = CM_CreateMonitor();
     if (status < 0) {
         write_runlog(ERROR, "CM_CreateMonitor  failed!\n");

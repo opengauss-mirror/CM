@@ -1588,6 +1588,7 @@ typedef struct cm_to_ctl_instance_coordinate_status {
 
 typedef struct CmResourceStatusSt {
     char resName[CM_MAX_RES_NAME];
+    uint32 nodeId;
     uint32 cmInstanceId;
     uint32 resInstanceId;
     uint32 status;

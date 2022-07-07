@@ -640,7 +640,15 @@ void ProcessCtlToCmSwitchoverAzMsg(CM_Connection* con, ctl_to_cm_switchover* ctl
 {
     ctl_to_cm_swithover_ptr->azName[CM_AZ_NAME - 1] = '\0';
     int instanceType = 0;
-    cm_msg_type msgSwitchoverAZAck;
+
+    cm_to_ctl_switchover_az_check_ack msgSwitchoverAZAck;
+    msgSwitchoverAZAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_ACK;
+
+    if (CheckEnableFlag()) {
+        msgSwitchoverAZAck.switchoverDone = INVALID_COMMAND;
+        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
+        return;
+    }
 
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverAZAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;

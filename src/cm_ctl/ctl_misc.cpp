@@ -1895,7 +1895,7 @@ static status_t SetCmsPromoteModeCore(const Instance *inst, PromoteMode pMode)
             ret = snprintf_s(command,
                 sizeof(command),
                 sizeof(command) - 1,
-                SYSTEMQUOTE "rm %s > \"%s\" 2>&1" SYSTEMQUOTE,
+                SYSTEMQUOTE "rm -f %s > \"%s\" 2>&1" SYSTEMQUOTE,
                 cmsPModeFile,
                 DEVNULL);
             break;

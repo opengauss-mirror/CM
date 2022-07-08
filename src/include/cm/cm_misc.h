@@ -288,7 +288,7 @@ extern void delete_lock_file(const char *filename);
 
 extern void cm_pthread_rw_lock(pthread_rwlock_t* rwlock);
 extern void cm_pthread_rw_unlock(pthread_rwlock_t* rwlock);
-extern status_t ReadResourceDefConfig(bool needGetResConf);
+extern status_t ReadResourceDefConfig(bool isAgent);
 extern int CmSSlConfigInit(bool is_client);
 void GetRealFile(char *realFile, uint32 fileLen, const char *path);
 #ifdef __cplusplus
@@ -298,6 +298,7 @@ status_t GetGlobalResStatusIndex(const char *resName, uint32 &index);
 void GetAlarmConfig(const char *confDir);
 int32 GetDbStaticRoleInt(char c);
 char GetDbStaticRoleStr(int32 role);
+status_t GetAllResConf(const char *confData, const char *confDir, bool isAgent);
 
 #define RANDOM_LEN 16
 

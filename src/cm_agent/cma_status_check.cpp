@@ -1426,8 +1426,6 @@ static void CheckOneResInstStatus(const CmResConfList *resConf, CmResourceStatus
 {
     errno_t rc = strcpy_s(resStat->resName, CM_MAX_RES_NAME, resConf->resName);
     securec_check_errno(rc, (void)rc);
-    resStat->cmInstanceId = resConf->cmInstanceId;
-    resStat->resInstanceId = resConf->resInstanceId;
     ResStatus ret = CheckOneResInst(resConf->script, resConf->resInstanceId, timeout);
     if (ret == CM_RES_STAT_ONLINE) {
         resStat->status = (uint32)CM_RES_ONLINE;
@@ -1457,6 +1455,11 @@ void CheckResourceState(OneNodeResourceStatus *nodeStat)
 {
     nodeStat->node = g_currentNode->node;
     for (uint32 i = 0; i < (uint32)g_resConf.size(); ++i) {
+        errno_t rc = strcpy_s(nodeStat->status[i].resName, CM_MAX_RES_NAME, g_resConf[i].resName);
+        securec_check_errno(rc, (void)rc);
+        nodeStat->status[i].nodeId = g_resConf[i].nodeId;
+        nodeStat->status[i].cmInstanceId = g_resConf[i].cmInstanceId;
+        nodeStat->status[i].resInstanceId = g_resConf[i].resInstanceId;
         DoCheckResourceStatus(&g_resConf[i], &nodeStat->status[i]);
         nodeStat->status[i].isWorkMember = g_resConf[i].isWorkMember;
     }
@@ -1468,12 +1471,7 @@ void CheckResourceState(OneNodeResourceStatus *nodeStat)
 void *ResourceStatusCheckMain(void * const arg)
 {
     OneNodeResourceStatus nodeStat = {0};
-    pthread_t threadId = pthread_self();
-
-    set_thread_state(threadId);
-
-    write_runlog(LOG, "Resource status check thread start, threadid %lu.\n", threadId);
-
+    write_runlog(LOG, "Resource status check thread start.\n");
     for (;;) {
         if (g_shutdownRequest || g_node_num > CM_MAX_RES_NODE_COUNT) {
             cm_sleep(5);

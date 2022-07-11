@@ -64,7 +64,7 @@ CmClusterWorkMode g_cluster_work_mode = CM_CLUSTER_UNKNOWN;
 vector<CmResStatList> g_resStatus;
 vector<CmResConfList> g_resConf;
 conn_option_t g_sslOption;
-unit32 maxResNameLen = strlen("res_name");
+uint32 maxResNameLen = strlen("res_name");
 
 #define RES_INSTANCE_ID_MIN 20000
 #define RES_INSTANCE_ID_MAX 20999

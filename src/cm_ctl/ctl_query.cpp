@@ -71,7 +71,7 @@ extern CM_Conn* CmServer_conn1;
 extern CM_Conn* CmServer_conn2;
 extern bool g_logFileSet;
 extern char* g_commandMinortityAzName;
-extern unit32 maxResNameLen;
+extern uint32 maxResNameLen;
 
 
 extern bool g_gtmBalance;

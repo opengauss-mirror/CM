@@ -64,6 +64,7 @@ CmClusterWorkMode g_cluster_work_mode = CM_CLUSTER_UNKNOWN;
 vector<CmResStatList> g_resStatus;
 vector<CmResConfList> g_resConf;
 conn_option_t g_sslOption;
+unit32 maxResNameLen = strlen("res_name");
 
 #define RES_INSTANCE_ID_MIN 20000
 #define RES_INSTANCE_ID_MAX 20999
@@ -1163,6 +1164,8 @@ status_t GetAllResConf(const char *confData, const char *confDir, bool isAgent)
         (void)pthread_rwlock_init(&newRes.rwlock, NULL);
         CM_RETURN_IFERR_EX(GetOneResConf(&newRes.status, resItem, &curInstId, isAgent), ParseFail(root, confDir));
         CM_RETURN_IFERR_EX(CheckResConf(&newRes.status), ParseFail(root, confDir));
+        maxResNameLen = maxResNameLen < strlen(newRes.status.resName) ?
+            strlen(newRes.status.resName) : maxResNameLen;
         g_resStatus.push_back(newRes);
     }
 

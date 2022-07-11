@@ -71,6 +71,7 @@ extern CM_Conn* CmServer_conn1;
 extern CM_Conn* CmServer_conn2;
 extern bool g_logFileSet;
 extern char* g_commandMinortityAzName;
+extern unit32 maxResNameLen;
 
 
 extern bool g_gtmBalance;
@@ -642,28 +643,14 @@ static void QueryResourceStatus(int *clusterState)
 {
     uint32 node_len = MAX_NODE_ID_LEN + SPACE_LEN + max_node_name_len + SPACE_LEN;
     int instance_len = INSTANCE_ID_LEN + SPACE_LEN + 4;
-    int res_len = 9;
+    /* There are three states of resources: OnLine, OffLine, Unknown. */
+    const int maxResStateLen = strlen("OffLine");
 
     fprintf(g_logFilePtr, "\n[ Defined Resource State ]\n\n");
-    if (g_ipQuery) {
-        fprintf(g_logFilePtr,
-            "%-*s%-*s%-*s%-*s%-s\n",
-            node_len,
-            "node",
-            MAX_IP_LEN + 1,
-            "node_ip",
-            res_len,
-            "res_name",
-            instance_len,
-            "instance",
-            "state");
-    } else {
-        fprintf(
-            g_logFilePtr, "%-*s%-*s%-*s%-s\n", node_len, "node", res_len, "res_name", instance_len, "instance", "state");
-    }
-    for (uint32 i = 0; i < node_len + instance_len + INSTANCE_DYNAMIC_ROLE_LEN + res_len +
-                        (g_ipQuery ? (MAX_IP_LEN + 1) : 0);
-        i++) {
+    fprintf(
+        g_logFilePtr, "%-*s%-*s%-*s%-s\n", node_len, "node", maxResNameLen + SPACE_LEN, "res_name", instance_len, "instance", "state");
+    uint32 lineLen = node_len + maxResNameLen + SPACE_LEN + instance_len + maxResStateLen;
+    for (uint32 i = 0; i < lineLen; i++) {
         fprintf(g_logFilePtr, "-");
     }
     fprintf(g_logFilePtr, "\n");
@@ -706,12 +693,12 @@ static void PrintResStatusLine(const OneNodeResourceStatus *nodeStatus, int *clu
                 status = "Unknown";
                 *clusterState = CM_STATUS_NEED_REPAIR;
             }
-            fprintf(g_logFilePtr, "%u %s  %-9s%u    %s\n",
-                g_resStatus[i].status.resStat[j].nodeId,
-                g_node[g_resStatus[i].status.resStat[j].nodeId - 1].nodeName,
-                g_resStatus[i].status.resName,
-                g_resStatus[i].status.resStat[j].cmInstanceId,
-                status);
+            fprintf(g_logFilePtr, "%-2u ", g_resStatus[i].status.resStat[j].nodeId);
+            fprintf(g_logFilePtr, "%-*s ", max_node_name_len,
+                g_node[g_resStatus[i].status.resStat[j].nodeId - 1].nodeName);
+            fprintf(g_logFilePtr, "%-*s ", maxResNameLen, g_resStatus[i].status.resName);
+            fprintf(g_logFilePtr, "%-8u ", g_resStatus[i].status.resStat[j].cmInstanceId);
+            fprintf(g_logFilePtr, "%s\n", status);
         }
         (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }

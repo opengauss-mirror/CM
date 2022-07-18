@@ -104,7 +104,7 @@ void SaveNodeReadOnlyConfig(int logLevel)
             uint32 cnLastReadOnly = g_dynamicNodeReadOnlyInfo[i].coordinateNode.lastReadOnly;
             uint32 cnCurrReadOnly = g_dynamicNodeReadOnlyInfo[i].coordinateNode.currReadOnly;
             uint32 cnInstanceId = g_dynamicNodeReadOnlyInfo[i].coordinateNode.instanceId;
-            bitsString[bitIndex++] = ((cnCurrReadOnly == READONLY_OFF) ? '0' : '1');
+            bitsString[bitIndex++] = ((cnLastReadOnly == READONLY_OFF) ? '0' : '1');
             write_runlog(DEBUG1,
                 "[%s][line:%d] bitIndex = %u cnLastReadOnly:%u cnCurrReadOnly:%u, bitsString[bitIndex] = [%c].\n",
                 __FUNCTION__, __LINE__, bitIndex, cnLastReadOnly, cnCurrReadOnly, bitsString[bitIndex - 1]);
@@ -165,7 +165,7 @@ void SaveNodeReadOnlyConfig(int logLevel)
             uint32 dnLastReadOnly = g_dynamicNodeReadOnlyInfo[i].dataNode[j].lastReadOnly;
             uint32 dnCurrReadOnly = g_dynamicNodeReadOnlyInfo[i].dataNode[j].currReadOnly;
             uint32 dnInstanceId = g_dynamicNodeReadOnlyInfo[i].dataNode[j].instanceId;
-            bitsString[bitIndex++] = dnCurrReadOnly == READONLY_OFF ? '0' : '1';
+            bitsString[bitIndex++] = dnLastReadOnly == READONLY_OFF ? '0' : '1';
             write_runlog(DEBUG1,
                 "[%s][line:%d] bitIndex = %u dnLastReadOnly:%u, dnCurrReadOnly: %u,  bitsString[bitIndex] = [%c].\n",
                 __FUNCTION__, __LINE__, bitIndex, dnLastReadOnly, dnCurrReadOnly, bitsString[bitIndex - 1]);

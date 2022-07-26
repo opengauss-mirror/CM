@@ -1438,17 +1438,21 @@ static void CheckOneResInstStatus(const CmResConfList *resConf, CmResourceStatus
 
 static void DoCheckResourceStatus(CmResConfList *resConf, CmResourceStatus *resStat)
 {
+    static uint32 lastResStatus = 0;
     long currTime = time(NULL);
     if (resConf->checkInfo.checkTime == 0) {
         CheckOneResInstStatus(resConf, resStat, resConf->checkInfo.timeOut);
+        lastResStatus = resStat->status;
         resConf->checkInfo.checkTime = currTime;
         return;
     }
     if((currTime - resConf->checkInfo.checkTime) < resConf->checkInfo.checkInterval) {
+        resStat->status = lastResStatus;
         return;
     }
     CheckOneResInstStatus(resConf, resStat, resConf->checkInfo.timeOut);
     resConf->checkInfo.checkTime = currTime;
+    lastResStatus = resStat->status;
 }
 
 void CheckResourceState(OneNodeResourceStatus *nodeStat)

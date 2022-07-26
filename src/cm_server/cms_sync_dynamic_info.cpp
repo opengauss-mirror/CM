@@ -194,7 +194,7 @@ static void SyncReadOnlyStatusFromDdb()
 {
     if (g_syncDNReadOnlyStatusFromDdb) {
         /* readonly: get read only status from ddb. */
-        GetNodeReadOnlyStatusFromDdb();
+        (void)GetNodeReadOnlyStatusFromDdb();
         g_syncDNReadOnlyStatusFromDdb = false;
         write_runlog(LOG, "[%s][line:%d] get read only status from ddb finished. \n", __FUNCTION__, __LINE__);
     }

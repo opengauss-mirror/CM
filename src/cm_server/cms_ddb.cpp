@@ -1737,7 +1737,7 @@ void Bin2Hex(const char *sSrc, char *sDest, size_t nSrcLen)
     securec_check_errno(rc, (void)rc);
 }
 
-void GetNodeReadOnlyStatusFromDdb()
+int GetNodeReadOnlyStatusFromDdb()
 {
     uint32 i = 0;
     uint32 j = 0;
@@ -1766,9 +1766,11 @@ void GetNodeReadOnlyStatusFromDdb()
         }
     } else {
         write_runlog(LOG, "[%s][line:%d] key:[%s] error:[%d]\n", __FUNCTION__, __LINE__, keyOfReadOnlyStatus, dbResult);
+        return -1;
     }
 
     write_runlog(LOG, "[%s][line:%d] bitIndex:[%u]\n", __FUNCTION__, __LINE__, bitIndex);
+    return 0;
 }
 
 static status_t GetKerberosValueFromDDb(char *value, uint32 len, int32 idx)

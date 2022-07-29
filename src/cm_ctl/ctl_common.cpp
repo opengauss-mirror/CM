@@ -1879,3 +1879,14 @@ void GetUpgradeVersionFromCmaConfig()
     securec_check_intval(rc, (void)rc);
     undocumentedVersion = get_uint32_value_from_config(cmAgentConfigFile, "upgrade_from", 0);
 }
+
+/*
+ * get the status of process cm_agent
+ */
+int GetAgentStatus()
+{
+    char agentDataDir[CM_PATH_LENGTH] = {0};
+    const int ret = snprintf_s(agentDataDir, CM_PATH_LENGTH, CM_PATH_LENGTH - 1, "%s/bin/%s", g_appPath, CM_AGENT_BIN_NAME);
+    securec_check_intval(ret,);
+    return CheckInstanceStatus(CM_AGENT_BIN_NAME, agentDataDir);
+}

@@ -313,5 +313,6 @@ void GetUpgradeVersionFromCmaConfig();
 bool SetOfflineNode(uint32 nodeIndex, CM_Conn *con);
 void ReleaseConn(CM_Conn *con);
 bool IsCmSharedStorageMode();
+int GetAgentStatus();
 
 #endif

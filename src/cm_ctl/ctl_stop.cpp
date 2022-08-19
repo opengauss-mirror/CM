@@ -108,6 +108,12 @@ extern bool g_stopAbnormal;
 
 void DoCheckAndStopRes()
 {
+    /* check whether cm_agent is running */
+    if (GetAgentStatus() != PROCESS_RUNNING) {
+        write_runlog(ERROR, "The state of cm_agent is abnormal, maybe the cluster is not running.\n");
+        exit(1);
+    }
+
     for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
         (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
@@ -1049,12 +1055,12 @@ static void StopResourceInstance()
 
     ret = runCmdByNodeId(command, g_commandOperationNodeId);
     if (ret != 0) {
-        write_runlog(DEBUG1, "Failed to stop the etcd node with executing the command: command=\"%s\","
+        write_runlog(ERROR, "Failed to stop the resource instance with executing the command: command=\"%s\","
             " nodeId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
             command, g_commandOperationNodeId, ret, SHELL_RETURN_CODE(ret), errno);
+    } else {
+        write_runlog(LOG, "Stop resource instance successfully.\n");
     }
-
-    write_runlog(LOG, "stop resource instance successfully.\n");
 }
 
 

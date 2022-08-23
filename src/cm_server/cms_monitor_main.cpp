@@ -295,6 +295,7 @@ static void ReloadParametersFromConfigfile()
     if (g_enableE2ERto == 1) {
         instance_heartbeat_timeout = INSTANCE_HEARTBEAT_TIMEOUT_FOR_E2E_RTO;
     }
+    g_cm_agent_kill_instance_time = get_uint32_value_from_config(configDir, "agent_fault_timeout", 60);
     get_config_param(configDir, "enable_transaction_read_only", g_enableSetReadOnly, sizeof(g_enableSetReadOnly));
     if (!CheckBoolConfigParam(g_enableSetReadOnly)) {
         rcs = strcpy_s(g_enableSetReadOnly, sizeof(g_enableSetReadOnly), "on");

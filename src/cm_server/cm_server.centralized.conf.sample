@@ -65,4 +65,5 @@ ddb_log_backup_file_count = 10           # Maximum number of log files that can 
 ddb_max_log_file_size = 10M              # Maximum number of bytes in a log
 ddb_log_suppress_enable = 1              # Indicates whether to enable the log suppression function. 1: open 0, close
 ddb_election_timeout = 3                 # DCC election timeout interval [1S,600S]
+agent_fault_timeout = 60
 ############### End ###################

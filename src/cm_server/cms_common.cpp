@@ -318,40 +318,6 @@ void get_paramter_coordinator_heartbeat_timeout()
 }
 #endif
 
-static uint32 get_cm_agent_kill_instance_time()
-{
-    errno_t rc;
-    FILE* fd = NULL;
-    char configDir_agent[MAX_PATH_LEN] = {0};
-    uint32 connCmsTimeOut = 1;
-    uint32 connCmsTryTime = 15;
-    uint32 cmaCmsHeartTimeOut = 10;
-
-    rc = snprintf_s(
-        configDir_agent, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/cm_agent/cm_agent.conf", g_currentNode->cmDataPath);
-    securec_check_intval(rc, (void)rc);
-    canonicalize_path(configDir_agent);
-
-    /*
-     * check whether the configDir_agent exit, if the configDir_agent not exit,in get_uint32_value_from_config,
-     * cm_server will exit(1)
-     */ 
-    fd = fopen(configDir_agent, "r");
-    if (fd == NULL) {
-        write_runlog(LOG, "cann't open the  configDir_agent file %s\n", configDir_agent);
-        return (
-            g_cm_server_num * connCmsTimeOut * connCmsTryTime + cmaCmsHeartTimeOut + CMA_KILL_INSTANCE_BALANCE_TIME);
-    }
-    fclose(fd);
-    fd = NULL;
-
-    cmaCmsHeartTimeOut = (uint32)get_int_value_from_config(configDir_agent, "agent_heartbeat_timeout", 8);
-    connCmsTimeOut = (uint32)get_int_value_from_config(configDir, "agent_connect_timeout", 1);
-    connCmsTryTime = (uint32)get_int_value_from_config(configDir, "agent_connect_retries", 15);
-
-    return (g_cm_server_num * connCmsTimeOut * connCmsTryTime + cmaCmsHeartTimeOut + CMA_KILL_INSTANCE_BALANCE_TIME);
-}
-
 bool CheckBoolConfigParam(const char* value)
 {
     if (strcasecmp(value, "on") == 0 || strcasecmp(value, "yes") == 0 || strcasecmp(value, "true") == 0 ||
@@ -581,7 +547,7 @@ void get_parameters_from_configfile()
     if (g_enableE2ERto == 1) {
         instance_heartbeat_timeout = INSTANCE_HEARTBEAT_TIMEOUT_FOR_E2E_RTO;
     }
-    g_cm_agent_kill_instance_time = get_cm_agent_kill_instance_time();
+    g_cm_agent_kill_instance_time = get_uint32_value_from_config(configDir, "agent_fault_timeout", 60);
     GetCmsParaFromConfig();
 
     GetDdbArbiCfg(INIT_GET_PARAMTER);

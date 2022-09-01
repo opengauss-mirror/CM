@@ -1752,23 +1752,26 @@ int GetNodeReadOnlyStatusFromDdb()
 
     DDB_RESULT dbResult = SUCCESS_GET_VALUE;
     status_t st = GetKVFromDDb(keyOfReadOnlyStatus, MAX_PATH_LEN, valueOfReadOnlyStatus, MAX_PATH_LEN, &dbResult);
-    if (st == CM_SUCCESS) {
-        Hex2Bin(valueOfReadOnlyStatus, bitsString, strlen(valueOfReadOnlyStatus));
-        write_runlog(LOG, "[%s][line:%d] bitsString:%s, valueOfReadOnlyStatus:%s, strlen(valueOfReadOnlyStatus):%lu\n",
-            __FUNCTION__, __LINE__, bitsString, valueOfReadOnlyStatus, strlen(valueOfReadOnlyStatus));
-        for (i = 0; i < g_node_num; i++) {
-            if (g_node[i].coordinate == 1) {
-                g_dynamicNodeReadOnlyInfo[i].coordinateNode.lastReadOnly = (uint32)((int)bitsString[bitIndex++] - '0');
-            }
-            for (j = 0; j < g_dynamicNodeReadOnlyInfo[i].dataNodeCount; j++) {
-                g_dynamicNodeReadOnlyInfo[i].dataNode[j].lastReadOnly = (uint32)((int)bitsString[bitIndex++] - '0');
-            }
+    if (st != CM_SUCCESS) {
+        if (dbResult == CAN_NOT_FIND_THE_KEY) {
+            write_runlog(LOG, "[%s] can't find key(%s)\n", __FUNCTION__, keyOfReadOnlyStatus);
+            return 0;
+        } else {
+            write_runlog(ERROR, "[%s] get key(%s) failed\n", __FUNCTION__, keyOfReadOnlyStatus);
+            return -1;
         }
-    } else {
-        write_runlog(LOG, "[%s][line:%d] key:[%s] error:[%d]\n", __FUNCTION__, __LINE__, keyOfReadOnlyStatus, dbResult);
-        return -1;
     }
-
+    Hex2Bin(valueOfReadOnlyStatus, bitsString, strlen(valueOfReadOnlyStatus));
+    write_runlog(LOG, "[%s][line:%d] bitsString:%s, valueOfReadOnlyStatus:%s, strlen(valueOfReadOnlyStatus):%lu\n",
+        __FUNCTION__, __LINE__, bitsString, valueOfReadOnlyStatus, strlen(valueOfReadOnlyStatus));
+    for (i = 0; i < g_node_num; i++) {
+        if (g_node[i].coordinate == 1) {
+            g_dynamicNodeReadOnlyInfo[i].coordinateNode.lastReadOnly = (uint32)((int)bitsString[bitIndex++] - '0');
+        }
+        for (j = 0; j < g_dynamicNodeReadOnlyInfo[i].dataNodeCount; j++) {
+            g_dynamicNodeReadOnlyInfo[i].dataNode[j].lastReadOnly = (uint32)((int)bitsString[bitIndex++] - '0');
+        }
+    }
     write_runlog(LOG, "[%s][line:%d] bitIndex:[%u]\n", __FUNCTION__, __LINE__, bitIndex);
     return 0;
 }

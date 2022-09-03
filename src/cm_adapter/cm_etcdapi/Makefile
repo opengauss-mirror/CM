@@ -43,6 +43,6 @@ uninstall:
 	rm -f '$(DESTDIR)$(libdir)/libetcdapi.a'
 
 librace.a: cm_etcdapi.o
-	ar -x ${with_3rd}/dependency/$(PLAT_FORM_STR)/etcd/comm/lib/libclientv3.a
+	ar -x ${with_3rd}/kernel/dependency/etcd/comm/lib/libclientv3.a
 	ar -crv $@ *.o
 	mv $@ libetcdapi.a

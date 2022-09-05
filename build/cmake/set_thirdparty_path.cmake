@@ -27,9 +27,9 @@ else ()
         set(3RD_PATH ${DEFAULT_3RD_PATH})
     endif ()
 
-    set(3RD_DEPENDENCY_ROOT ${3RD_PATH}/dependency/${PLAT_FORM_NAME})
-    set(3RD_PLATFORM_ROOT ${3RD_PATH}/platform/${PLAT_FORM_NAME})
-    set(3RD_BUILDTOOLS_ROOT ${3RD_PATH}/buildtools/${PLAT_FORM_NAME})
+    set(3RD_DEPENDENCY_ROOT ${3RD_PATH}/kernel/dependency)
+    set(3RD_PLATFORM_ROOT ${3RD_PATH}/kernel/platform)
+    set(3RD_BUILDTOOLS_ROOT ${3RD_PATH}/kernel/buildtools)
 endif ()
 
 message("Using 3rd_library path is [${3RD_PATH}]")

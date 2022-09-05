@@ -78,8 +78,7 @@ function update_dcc_dependency() {
     fi
 
     if [ "x${THIRD_BIN_PATH}" != "x" ]; then
-        local plantform=$(sh ${SCRIPT_PATH}/build/get_PlatForm_str.sh)
-        local dccHome="${THIRD_BIN_PATH}/component/${plantform}/dcc"
+        local dccHome="${THIRD_BIN_PATH}/kernel/component/dcc"
 
         if [ -d "${dccHome}" ]; then
             echo "We well get dcc lib from 3rd[${dccHome}]."
@@ -102,8 +101,7 @@ function gcc_env() {
         export CXX=$(which g++)
         return
     fi
-    local plantform=$(sh ${SCRIPT_PATH}/build/get_PlatForm_str.sh)
-    export GCCFOLDER=${THIRD}/buildtools/${plantform}/gcc${GCC}/
+    export GCCFOLDER=${THIRD}/buildtools/gcc${GCC}/
     echo "gcc set to 3rd path:[${GCCFOLDER}]!"
     export CC=$GCCFOLDER/gcc/bin/gcc
     export CXX=$GCCFOLDER/gcc/bin/g++

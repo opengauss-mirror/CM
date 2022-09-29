@@ -49,7 +49,7 @@ void GetDatanodeDynamicConfigChangeFromDdbNew(uint32 groupIdx);
 void GetGtmDynamicConfigChangeFromDdb(uint32 groupIdx);
 void SetStaticPrimaryRole(const uint32 groupIndex, const int staticPrimaryIndex);
 int SetReplaceCnStatusToDdb(void);
-void GetNodeReadOnlyStatusFromDdb(void);
+int GetNodeReadOnlyStatusFromDdb(void);
 status_t SetNodeReadOnlyStatusToDdb(const char *bitsString, int logLevel);
 
 status_t TryDdbGet(const char *key, char *value, int32 maxSize, int32 tryTimes, int32 logLevel = ERROR);

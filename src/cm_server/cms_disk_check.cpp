@@ -104,7 +104,7 @@ void SaveNodeReadOnlyConfig(int logLevel)
             uint32 cnLastReadOnly = g_dynamicNodeReadOnlyInfo[i].coordinateNode.lastReadOnly;
             uint32 cnCurrReadOnly = g_dynamicNodeReadOnlyInfo[i].coordinateNode.currReadOnly;
             uint32 cnInstanceId = g_dynamicNodeReadOnlyInfo[i].coordinateNode.instanceId;
-            bitsString[bitIndex++] = ((cnCurrReadOnly == READONLY_OFF) ? '0' : '1');
+            bitsString[bitIndex++] = ((cnLastReadOnly == READONLY_OFF) ? '0' : '1');
             write_runlog(DEBUG1,
                 "[%s][line:%d] bitIndex = %u cnLastReadOnly:%u cnCurrReadOnly:%u, bitsString[bitIndex] = [%c].\n",
                 __FUNCTION__, __LINE__, bitIndex, cnLastReadOnly, cnCurrReadOnly, bitsString[bitIndex - 1]);
@@ -165,7 +165,7 @@ void SaveNodeReadOnlyConfig(int logLevel)
             uint32 dnLastReadOnly = g_dynamicNodeReadOnlyInfo[i].dataNode[j].lastReadOnly;
             uint32 dnCurrReadOnly = g_dynamicNodeReadOnlyInfo[i].dataNode[j].currReadOnly;
             uint32 dnInstanceId = g_dynamicNodeReadOnlyInfo[i].dataNode[j].instanceId;
-            bitsString[bitIndex++] = dnCurrReadOnly == READONLY_OFF ? '0' : '1';
+            bitsString[bitIndex++] = dnLastReadOnly == READONLY_OFF ? '0' : '1';
             write_runlog(DEBUG1,
                 "[%s][line:%d] bitIndex = %u dnLastReadOnly:%u, dnCurrReadOnly: %u,  bitsString[bitIndex] = [%c].\n",
                 __FUNCTION__, __LINE__, bitIndex, dnLastReadOnly, dnCurrReadOnly, bitsString[bitIndex - 1]);
@@ -709,10 +709,11 @@ void* StorageDetectMain(void* arg)
      * 12 hours later will continue check status,12 hours is system
      * recovery time;
      */
-    int ret = InitNodeReadonlyInfo();
     int checkTimes = 0;
     int logLevel = DEBUG1;
     const uint32 default_check_interval = 10;
+    bool hasHistory = false;
+    int ret = InitNodeReadonlyInfo();
     if (ret != 0) {
         write_runlog(
             ERROR,
@@ -781,10 +782,19 @@ void* StorageDetectMain(void* arg)
         write_runlog(logLevel, "[%s][line:%d] role:[%d]\n", __FUNCTION__, __LINE__, g_HA_status->local_role);
 
         if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
+            if (!hasHistory) {
+                if (GetNodeReadOnlyStatusFromDdb() != 0) {
+                    cm_sleep((uint32)datastorage_threshold_check_interval);
+                    continue;
+                }
+                hasHistory = true;
+            }
             /* Pre-alarm processing */
             PreAlarmForNodeThreshold(logLevel);
             /* Read-only overrun processing */
             CheckAndSetStorageThresholdReadOnlyAlarm(logLevel);
+        } else {
+            hasHistory = false;
         }
 
         if (!CmserverCheckDisc(g_currentNode->cmDataPath)) {

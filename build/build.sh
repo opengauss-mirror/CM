@@ -150,7 +150,8 @@ function pkg() {
     fi
 
     cd ${OUT_PATH}
-    tar -czf "${bin_tar}" bin lib share
+    cp ${PROJECT_ROOT_PATH}/tool . -R
+    tar -czf "${bin_tar}" bin lib share tool
     if [ -d symbols ]; then
         tar -czf "${sym_tar}" symbols
     fi

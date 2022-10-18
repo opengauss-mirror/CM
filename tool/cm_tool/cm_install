@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+#############################################################################
+# Copyright (c) 2022 Huawei Technologies Co.,Ltd.
+#
+# openGauss is licensed under Mulan PSL v2.
+# You can use this software according to the terms
+# and conditions of the Mulan PSL v2.
+# You may obtain a copy of Mulan PSL v2 at:
+#
+#          http://license.coscl.org.cn/MulanPSL2
+#
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS,
+# WITHOUT WARRANTIES OF ANY KIND,
+# EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+# MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+# See the Mulan PSL v2 for more details.
+# ----------------------------------------------------------------------------
+# Description  : cm_install is a utility to deploy CM tool to openGauss database cluster.
+#############################################################################
+
+import getopt
+import os
+import sys
+import re
+import subprocess
+import xml.etree.cElementTree as ETree
+from CMLog import CMLog
+from Common import *
+from ErrorCode import ErrorCode
+from InstallImpl import InstallImpl
+
+sys.path.append(sys.path[0] + "/../../")
+
+class Install:
+    """
+    The class is used to do perform installation
+    """
+
+    def __init__(self):
+        self.envFile = ""
+        self.xmlFile = ""
+        self.gaussHome = ""
+        self.gaussLog = ""
+        self.toolPath = ""
+        self.tmpPath = ""
+        self.cmDirs = []
+        self.hostNames = []
+        self.localhostName = ""
+        self.cmpkg = ""
+
+    def getLocalhostName(self):
+        import socket
+        self.localhostName = socket.gethostname()
+
+    def getEnvParams(self):
+        self.gaussHome = getEnvParam(self.envFile, "GAUSSHOME")
+        self.gaussLog = getEnvParam(self.envFile, "GAUSSLOG")
+        self.toolPath = getEnvParam(self.envFile, "GPHOME")
+        self.tmpPath = getEnvParam(self.envFile, "PGHOST")
+
+    def checkXMLFile(self):
+        """
+        function: check XML file
+                1.check -X parameter
+                2.check XML file exists
+                3.check XML file an absolute path
+                4.permission
+        input : NA
+        output: NA
+        """
+        if self.xmlFile.startswith('~/'):
+            homePath = os.path.expanduser('~')
+            self.xmlFile = homePath + self.xmlFile[1:]
+        if not os.path.isfile(self.xmlFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50210"] % "xmlFile")
+        if not os.path.exists(self.xmlFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % "xmlFile")
+        if not os.path.isabs(self.xmlFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50213"] % "xmlFile")
+        if not os.access(self.xmlFile, os.R_OK):
+            CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50100"] % (self.xmlFile, "current user"))
+
+    def checkExeUser(self):
+        if os.getuid() == 0:
+            CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50105"])
+
+    def usage(self):
+        """
+cm_install is a utility to deploy CM tool to openGauss database cluster.
+
+Usage:
+    cm_install -? | --help
+    cm_install -X XMLFILE [-e envFile] --cmpkg=cmpkgPath
+General options:
+    -X                                 Path of the XML configuration file.
+    -e                                 Path of env file.
+                                       Default value "~/.bashrc".
+    --cmpkg                            Path of CM pacakage.
+    -?, --help                         Show help information for this
+                                       utility, and exit the command line mode.
+        """
+        print(self.usage.__doc__)
+
+    def parseCommandLine(self):
+        if len(sys.argv) == 1:
+            self.usage()
+            sys.exit(1)
+
+        try:
+            opts, args = getopt.getopt(sys.argv[1:], "?X:e:", ["help", "cmpkg="])
+        except getopt.GetoptError as e:
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50000"] % str(e))
+
+        for opt, value in opts:
+            if opt in ("-?", "--help"):
+                self.usage()
+                sys.exit(0)
+            elif opt in ("-X"):
+                self.xmlFile = value
+            elif opt in ("-e"):
+                self.envFile = value
+            elif opt in ("--cmpkg"):
+                self.cmpkg = value
+
+    def checkParam(self):
+        if self.xmlFile == "":
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'X or xml' + ".")
+
+        if self.cmpkg == "":
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'p or cmpkg' + ".")
+
+        if self.envFile == "":
+            self.envFile = "~/.bashrc"
+
+    def checkOm(self):
+        """
+        check whether there is om tool
+        """
+        cmd = "source %s; gs_om --version" % self.envFile
+        status, output = subprocess.getstatusoutput(cmd)
+        if status != 0:
+            errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s\n" % (
+                cmd, status, output)
+            CMLog.exitWithError("OM tool is required." + errorDetail)
+
+    def checkXMLFileSecurity(self):
+        """
+        function : check XML contain DTDs
+        input : String
+        output : NA
+        """
+        # Check xml for security requirements
+        # if it have "<!DOCTYPE" or it have "<!ENTITY",
+        # exit and print "File have security risks."
+        try:
+            with open(self.xmlFile, "r", encoding='utf-8') as fb:
+                lines = fb.readlines()
+            for line in lines:
+                if re.findall("<!DOCTYPE", line) or re.findall("<!ENTITY", line):
+                    raise Exception("File have security risks.")
+        except Exception as e:
+            raise Exception(str(e))
+
+    def initParserXMLFile(self):
+        """
+        function : Init parser xml file
+        input : String
+        output : Object
+        """
+        try:
+            # check xml for security requirements
+            self.checkXMLFileSecurity()
+            dom_tree = ETree.parse(self.xmlFile)
+            rootNode = dom_tree.getroot()
+        except Exception as e:
+            raise Exception(ErrorCode.GAUSS_512["GAUSS_51236"] + " Error: \n%s." % str(e))
+        return rootNode
+    
+    def getInfoListOfAllNodes(self):
+        """
+        get hostname and cmDir list of all nodes
+        """
+        self.localhostName = getLocalhostName()
+
+        rootNode = self.initParserXMLFile()
+        elementName = 'DEVICELIST'
+        if not rootNode.findall('DEVICELIST'):
+            raise Exception(ErrorCode.GAUSS_512["GAUSS_51200"] % elementName)
+        deviceArray = rootNode.findall('DEVICELIST')[0]
+        deviceNodes = deviceArray.findall('DEVICE')
+        for dev in deviceNodes:
+            paramList = dev.findall('PARAM')
+            for param in paramList:
+                if param.attrib['name'] == 'name':
+                    self.hostNames.append(param.attrib['value'])
+                if param.attrib['name'] == 'cmDir':
+                    self.cmDirs.append(param.attrib['value'])
+
+    def _checkTrust(self, host):
+        """
+        check trust between current host and the given host
+        """
+        checkTrustCmd = "source %s; pssh -s -H %s 'pwd'" % (self.envFile, host)
+        status, output = subprocess.getstatusoutput(checkTrustCmd)
+        return status
+
+    def checkHostTrust(self):
+        for host in self.hostNames:
+            if host == self.localhostName:
+                continue
+            if self._checkTrust(host) != 0:
+                CMLog.exitWithError(ErrorCode.GAUSS_511["GAUSS_51100"] % host)
+
+    def initLogger(self):
+        logPath = os.path.join(self.gaussLog, "cm", "cm_tool")
+        if not os.path.exists(logPath):
+            os.makedirs(logPath)
+        self.logger = CMLog(logPath, "cm_install", "cm_install")
+
+    def checkCM(self):
+        """
+        Check whether there is CM in current cluster.
+        """
+        checkCMExistCmd = "source %s; gs_om -t status --detail | " \
+            "grep 'CMServer State' > /dev/null" % self.envFile
+        status, output = subprocess.getstatusoutput(checkCMExistCmd)
+        if status == 0:
+            CMLog.exitWithError("CM exists in current cluster.")
+    def run(self):
+        self.checkExeUser()
+        self.parseCommandLine()
+        self.checkParam()
+        self.checkOm()
+        self.checkCM()
+        self.checkXMLFile()
+        self.getEnvParams()
+        self.initLogger()
+        self.getLocalhostName()
+        self.getInfoListOfAllNodes()
+        self.checkHostTrust()
+        installImpl = InstallImpl(self)
+        installImpl.run()
+
+if __name__ == "__main__":
+    install = Install()
+    install.run()

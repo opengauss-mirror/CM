@@ -204,15 +204,16 @@ General options:
         if not self.bDeleteData:
             return
         self.logger.log("Deleting CM data path.")
+        self.logger.closeLog()
         for host, path in zip(self.hostnames, self.cmDataPaths):
             isLocal = False
             if host == self.localhostName:
                 isLocal = True
-            cmd = "source %s; rm -rf %s" % (self.envFile, path)
+            cmd = "source %s; rm -rf %s $GAUSSLOG/cm" % (self.envFile, path)
             status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
-                self.logger.exitWithError(("Failed to delete CM data path on host %s." % host) + errorDetail)
+                CMLog.exitWithError(("Failed to delete CM data path on host %s." % host) + errorDetail)
 
     def deleteBinary(self):
         """
@@ -225,11 +226,12 @@ General options:
             isLocal = False
             if host == self.localhostName:
                 isLocal = True
-            cmd = "source %s; cd $GAUSSHOME/bin; rm -f om_monitor cm_agent cm_server cm_ctl; cd -" % self.envFile
+            cmd = "source %s; cd $GAUSSHOME/bin; rm -f om_monitor* cm_agent* cm_server* " \
+                "cm_ctl* *manual*start*; cd -" % self.envFile
             status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
-                self.logger.exitWithError(("Failed to delete CM binaries on host %s." % host) + errorDetail)
+                self.logger.logExit(("Failed to delete CM binaries on host %s." % host) + errorDetail)
 
     def initLogger(self):
         gaussLog = getEnvParam(self.envFile, "GAUSSLOG")
@@ -254,10 +256,12 @@ General options:
         self.cancleMonitorCrontab()
         self.stopCMProcess()
         self.refreshStaticAndDynamicFile()
-        self.deleteData()
         self.deleteBinary()
-        self.logger.log("Uninstall CM tool success.")
-
+        self.deleteData()
+        if self.bDeleteData:
+            self.logger.printMessage("Uninstall CM tool success.")
+        else:
+            self.logger.logExit("Uninstall CM tool success.")
 
 if __name__ == "__main__":
     unInstall = UnIntall()

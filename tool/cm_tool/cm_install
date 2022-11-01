@@ -60,9 +60,6 @@ class Install:
         self.toolPath = getEnvParam(self.envFile, "GPHOME")
         self.tmpPath = getEnvParam(self.envFile, "PGHOST")
 
-    def checkXMLFile(self):
-        checkXMLFile(self.xmlFile)
-
     def checkExeUser(self):
         if os.getuid() == 0:
             CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50105"])
@@ -107,13 +104,23 @@ General options:
 
     def checkParam(self):
         if self.xmlFile == "":
-            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'X or xml' + ".")
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'X' + ".")
+        checkXMLFile(self.xmlFile)
 
         if self.cmpkg == "":
-            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'cmpkg' + ".")
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % '-cmpkg' + ".")
+        if not os.path.exists(self.cmpkg):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % self.cmpkg)
 
         if self.envFile == "":
-            self.envFile = "~/.bashrc"
+            self.envFile = os.path.join(os.environ['HOME'], ".bashrc")
+        if not os.path.exists(self.envFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % ("envFile " + self.envFile))
+        if not os.path.isfile(self.envFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50210"] % ("envFile " + self.envFile))
+        self.envFile = getEnvParam(self.envFile, "MPPDB_ENV_SEPARATE_PATH")
+        if self.envFile == "" or not os.path.exists(self.envFile) or not os.path.isfile(self.envFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_518["GAUSS_51802"] % 'MPPDB_ENV_SEPARATE_PATH' + ".")
 
     def checkOm(self):
         """
@@ -239,7 +246,6 @@ General options:
         self.checkParam()
         self.checkOm()
         self.checkCM()
-        self.checkXMLFile()
         self.getEnvParams()
         self.initLogger()
         self.getLocalhostName()

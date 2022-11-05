@@ -247,14 +247,18 @@ General options:
         if os.getuid() == 0:
             CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50105"])
 
+    def checkHostTrust(self):
+        checkHostsTrust(self.hostnames, self.localhostName)
+
     def run(self):
         self.checkExeUser()
         self.parseCommandLine()
         self.checkParam()
         self.checkXMLContainCMInfo()
         self.initLogger()
-        self.logger.log("Start to uninstall CM.")
         self.getHostnames()
+        self.checkHostTrust()
+        self.logger.log("Start to uninstall CM.")
         self.getCMDataPaths()
         self.cancleMonitorCrontab()
         self.stopCMProcess()

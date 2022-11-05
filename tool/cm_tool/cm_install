@@ -46,7 +46,7 @@ class Install:
         self.toolPath = ""
         self.tmpPath = ""
         self.cmDirs = []
-        self.hostNames = []
+        self.hostnames = []
         self.localhostName = ""
         self.cmpkg = ""
 
@@ -207,23 +207,11 @@ General options:
             CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerPortBase')
         if cmDict['cmServerPortStandby'] != "" and not cmDict['cmServerPortStandby'].isdigit():
             CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerPortStandby')
-        if len(self.hostNames) != len(self.cmDirs):
+        if len(self.hostnames) != len(self.cmDirs):
             CMLog.exitWithError("\"cmDir\" of all nodes must be provided.")
 
-    def _checkTrust(self, host):
-        """
-        check trust between current host and the given host
-        """
-        checkTrustCmd = "source %s; pssh -s -H %s 'pwd'" % (self.envFile, host)
-        status, output = subprocess.getstatusoutput(checkTrustCmd)
-        return status
-
     def checkHostTrust(self):
-        for host in self.hostNames:
-            if host == self.localhostName:
-                continue
-            if self._checkTrust(host) != 0:
-                CMLog.exitWithError(ErrorCode.GAUSS_511["GAUSS_51100"] % host)
+        checkHostsTrust(self.hostnames, self.localhostName)
 
     def initLogger(self):
         logPath = os.path.join(self.gaussLog, "cm", "cm_tool")

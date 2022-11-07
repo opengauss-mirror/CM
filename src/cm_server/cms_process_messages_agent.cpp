@@ -21,14 +21,13 @@
  *
  * -------------------------------------------------------------------------
  */
-#include <string>
-#include <vector>
 #include "cms_global_params.h"
 #include "cms_process_messages.h"
 #include "cms_ddb.h"
 #include "cms_common.h"
 #include "cs_ssl.h"
-#include "cms_conn.h"
+#include "cms_arbitrate_cluster.h"
+#include "cm_util.h"
 
 using namespace std;
 
@@ -45,9 +44,11 @@ void process_agent_to_cm_fenced_UDF_status_report_msg(
     g_fenced_UDF_report_status_ptr[agent_to_cm_fenced_UDF_status_ptr->nodeid].status =
         agent_to_cm_fenced_UDF_status_ptr->status;
     (void)pthread_rwlock_unlock(&(g_fenced_UDF_report_status_ptr[agent_to_cm_fenced_UDF_status_ptr->nodeid].lk_lock));
+
+    write_runlog(DEBUG5, "agent_to_cm_fenced_UDF_status_ptr process succeed.\n");
 }
-static void deal_keep_heart_beat_time_out(
-    CM_Connection *con, const agent_to_cm_heartbeat *agent_to_cm_heartbeat_ptr, int group_index, int member_index)
+static void deal_keep_heart_beat_time_out(MsgRecvInfo *recvMsgInfo,
+    const agent_to_cm_heartbeat *agent_to_cm_heartbeat_ptr, uint32 group_index, int member_index)
 {
     /* keep heartbeat timeout doesn't work. */
     if (instance_keep_heartbeat_timeout == 0) {
@@ -56,8 +57,7 @@ static void deal_keep_heart_beat_time_out(
 
     /* record down instance was lost within last one second. */
     cm_instance_report_status *report = &g_instance_group_report_status_ptr[group_index].instance_status;
-    write_runlog(LOG, "can't receive heart beat of instance %u for %d sec.\n",
-        agent_to_cm_heartbeat_ptr->instanceId,
+    write_runlog(LOG, "can't receive heart beat of instance %u for %d sec.\n", agent_to_cm_heartbeat_ptr->instanceId,
         report->command_member[member_index].keep_heartbeat_timeout);
 
     if (report->command_member[member_index].keep_heartbeat_timeout >= (int)instance_heartbeat_timeout &&
@@ -78,11 +78,11 @@ static void deal_keep_heart_beat_time_out(
 
     if (agent_to_cm_heartbeat_ptr->instanceType == INSTANCE_TYPE_DATANODE &&
         (report->data_node_member[member_index].local_status.db_state == INSTANCE_HA_STATE_UNKONWN ||
-            report->data_node_member[member_index].local_status.db_state == INSTANCE_HA_STATE_NORMAL)) {
+        report->data_node_member[member_index].local_status.db_state == INSTANCE_HA_STATE_NORMAL)) {
         sendRestart = true;
     }
 
-    // gtm connect_status was last success(or reset by timeout) stat when hang, we can't rely on it. 
+    // gtm connect_status was last success(or reset by timeout) stat when hang, we can't rely on it.
     if (agent_to_cm_heartbeat_ptr->instanceType == INSTANCE_TYPE_GTM &&
         (report->gtm_member[member_index].local_status.connect_status == CON_OK ||
         report->gtm_member[member_index].local_status.connect_status == CON_UNKNOWN)) {
@@ -93,8 +93,10 @@ static void deal_keep_heart_beat_time_out(
             for (int i = 0; i < g_instance_role_group_ptr[group_index].count && sendRestart; i++) {
                 if (report->gtm_member[i].local_status.local_role == INSTANCE_ROLE_STANDBY &&
                     report->gtm_member[i].local_status.connect_status == CON_OK) {
-                    write_runlog(LOG, "instance %u role is standby, and db state is normal, "
-                        "will not set keep timeout.\n", agent_to_cm_heartbeat_ptr->instanceId);
+                    write_runlog(LOG,
+                        "instance %u role is standby, and db state is normal, "
+                        "will not set keep timeout.\n",
+                        agent_to_cm_heartbeat_ptr->instanceId);
 
                     /* To avoid mistake, don't restart primary GTM if some standby can connect to it. */
                     sendRestart = false;
@@ -112,13 +114,12 @@ static void deal_keep_heart_beat_time_out(
         restart_msg.instanceId = agent_to_cm_heartbeat_ptr->instanceId;
 
         /* send message to CMA to restart CN instance. */
-        write_runlog(LOG, "restart %u, there is not report msg for %d sec.\n",
-            agent_to_cm_heartbeat_ptr->instanceId,
+        write_runlog(LOG, "restart %u, there is not report msg for %d sec.\n", agent_to_cm_heartbeat_ptr->instanceId,
             report->command_member[member_index].keep_heartbeat_timeout);
         WriteKeyEventLog(KEY_EVENT_RESTART, agent_to_cm_heartbeat_ptr->instanceId,
-            "send restart message, node=%u, instanceId=%u",
-            agent_to_cm_heartbeat_ptr->node, agent_to_cm_heartbeat_ptr->instanceId);
-        (void)cm_server_send_msg(con, 'S', (char *)(&restart_msg), sizeof(cm_to_agent_restart));
+            "send restart message, node=%u, instanceId=%u", agent_to_cm_heartbeat_ptr->node,
+            agent_to_cm_heartbeat_ptr->instanceId);
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&restart_msg), sizeof(cm_to_agent_restart));
 
         /* after restart is sent, reset keep heartbeat timeout counter. */
         report->command_member[member_index].keep_heartbeat_timeout = 0;
@@ -170,17 +171,20 @@ static uint32 ProvideHealthyInstanceForAgent(uint32 nodeId)
     }
 #ifdef ENABLE_MULTIPLE_NODES
     return AssignCnForAutoRepair(nodeId);
-#endif
+#else
     return 0;
+#endif
 }
 
-void process_agent_to_cm_heartbeat_msg(CM_Connection *con, const agent_to_cm_heartbeat *agent_to_cm_heartbeat_ptr)
+void process_agent_to_cm_heartbeat_msg(
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_heartbeat *agent_to_cm_heartbeat_ptr)
 {
     uint32 group_index = 0;
     int member_index = 0;
     int ret;
 
     if (agent_to_cm_heartbeat_ptr->instanceType == CM_AGENT) {
+        write_runlog(DEBUG5, "agent_to_cm_heartbeat_ptr->instanceType=CM_AGENT\n");
         /* respond heartbeat to cm_agent */
         cm_to_agent_heartbeat msgServerHeartbeat = {0};
         msgServerHeartbeat.msg_type = MSG_CM_AGENT_HEARTBEAT;
@@ -197,7 +201,7 @@ void process_agent_to_cm_heartbeat_msg(CM_Connection *con, const agent_to_cm_hea
                     (g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_DATANODE) &&
                     (g_instance_role_group_ptr[i].instanceMember[j].role == INSTANCE_ROLE_PRIMARY)) {
                     write_runlog(
-                        LOG, "get cma(%d) heart beat, will reset kill static primary time.\n", msgServerHeartbeat.node);
+                        LOG, "get cma(%u) heart beat, will reset kill static primary time.\n", msgServerHeartbeat.node);
                     g_instance_group_report_status_ptr[i].instance_status.cma_kill_instance_timeout = 0;
                     break;
                 }
@@ -222,28 +226,30 @@ void process_agent_to_cm_heartbeat_msg(CM_Connection *con, const agent_to_cm_hea
 
         msgServerHeartbeat.healthInstanceId = ProvideHealthyInstanceForAgent(msgServerHeartbeat.node);
 
-        (void)cm_server_send_msg(con, 'S', (char *)(&msgServerHeartbeat), sizeof(msgServerHeartbeat), DEBUG5);
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgServerHeartbeat), sizeof(msgServerHeartbeat), DEBUG5);
+        NotifyResRegOrUnreg();
     } else {
+        write_runlog(DEBUG5, "agent_to_cm_heartbeat_ptr->instanceType=CM_CTL\n");
         ret = find_node_in_dynamic_configure(agent_to_cm_heartbeat_ptr->node,
             agent_to_cm_heartbeat_ptr->instanceId,
             &group_index,
             &member_index);
         if (ret != 0) {
             write_runlog(LOG,
-                "can't find the instance(node =%d instanceid =%d)\n",
+                "can't find the instance(node =%u instanceid =%u)\n",
                 agent_to_cm_heartbeat_ptr->node,
                 agent_to_cm_heartbeat_ptr->instanceId);
             return;
         }
         (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
         g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index].heat_beat = 0;
-        if (((int)(g_dn_replication_num - 1) != member_index && !g_multi_az_cluster && 3 == g_dn_replication_num) ||
+        if ((member_index != (int)(g_dn_replication_num - 1) && !g_multi_az_cluster && g_dn_replication_num == 3) ||
             g_multi_az_cluster) {
-            deal_keep_heart_beat_time_out(con, agent_to_cm_heartbeat_ptr, group_index, member_index);
+            deal_keep_heart_beat_time_out(recvMsgInfo, agent_to_cm_heartbeat_ptr, group_index, member_index);
         }
         (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
-        if ((int)(g_dn_replication_num - 1) == member_index && false == g_multi_az_cluster &&
-            false == g_single_node_cluster && 3 == g_dn_replication_num) {
+        if (member_index == (int)(g_dn_replication_num - 1) && !g_multi_az_cluster &&
+            !g_single_node_cluster && g_dn_replication_num == 3) {
             g_instance_group_report_status_ptr[group_index]
                 .instance_status.data_node_member[member_index]
                 .local_status.local_role = INSTANCE_ROLE_DUMMY_STANDBY;
@@ -254,56 +260,37 @@ void process_agent_to_cm_heartbeat_msg(CM_Connection *con, const agent_to_cm_hea
     }
 }
 
-/**
- * @brief process agent's massage of instance's disk usage
- *
- * @param  con                          CM connection object
- * @param  agent_to_cm_disk_usage_ptr   Instance disk usage info
- */
-void process_agent_to_cm_disk_usage_msg(CM_Connection *con, const AgentToCMS_DiskUsageStatusReport *agent2CmDiskUsage)
+void process_agent_to_cm_disk_usage_msg(const AgentToCmDiskUsageStatusReport *diskUsage)
 {
-    if (agent2CmDiskUsage == NULL) {
-        return;
-    }
-
-    bool isSupportedNodeType = IS_DN_INSTANCEID(agent2CmDiskUsage->instanceId) ||
-                               IS_CN_INSTANCEID(agent2CmDiskUsage->instanceId);
-    if (!isSupportedNodeType) {
-        write_runlog(ERROR,
-            "unexpected instance type was found, it should be CN or DN, instanceId=%u.\n",
-            agent2CmDiskUsage->instanceId);
-        return;
-    }
-
-    if (agent2CmDiskUsage->dataPathUsage > 100 || agent2CmDiskUsage->logPathUsage > 100) {
+    const int maxUsage = 100;
+    if (diskUsage->dataPathUsage > maxUsage || diskUsage->logPathUsage > maxUsage) {
         write_runlog(ERROR,
             "the percentage of disk usage is illegal, it must be [0-100], dataDiskUsage=%u, logDiskUsage=%u.\n",
-            agent2CmDiskUsage->dataPathUsage,
-            agent2CmDiskUsage->logPathUsage);
+            diskUsage->dataPathUsage, diskUsage->logPathUsage);
         return;
     }
 
     /* find and set instance's log&data usage */
     for (uint32 i = 0; i < g_node_num; i++) {
         DynamicNodeReadOnlyInfo *curNodeInfo = &g_dynamicNodeReadOnlyInfo[i];
-
         /* CN */
-        if (IS_CN_INSTANCEID(agent2CmDiskUsage->instanceId)) {
-            if (agent2CmDiskUsage->instanceId == curNodeInfo->coordinateNode.instanceId) {
-                curNodeInfo->coordinateNode.dataDiskUsage = agent2CmDiskUsage->dataPathUsage;
-                /* node's log usgage*/
-                curNodeInfo->logDiskUsage = agent2CmDiskUsage->logPathUsage;
+        if (diskUsage->instanceType == INSTANCE_TYPE_COORDINATE) {
+            if (diskUsage->instanceId == curNodeInfo->coordinateNode.instanceId) {
+                curNodeInfo->coordinateNode.dataDiskUsage = diskUsage->dataPathUsage;
+                curNodeInfo->coordinateNode.readOnly = diskUsage->readOnly;
+                curNodeInfo->coordinateNode.instanceType = INSTANCE_TYPE_COORDINATE;
+                curNodeInfo->logDiskUsage = diskUsage->logPathUsage;
                 return;
             }
         }
-
         /* DN */
         for (uint32 j = 0; j < curNodeInfo->dataNodeCount; j++) {
             DataNodeReadOnlyInfo *curDn = &curNodeInfo->dataNode[j];
-            if (agent2CmDiskUsage->instanceId == curDn->instanceId) {
-                /* node's log usgage*/
-                curDn->dataDiskUsage = agent2CmDiskUsage->dataPathUsage;
-                curNodeInfo->logDiskUsage = agent2CmDiskUsage->logPathUsage;
+            if (diskUsage->instanceId == curDn->instanceId) {
+                curDn->dataDiskUsage = diskUsage->dataPathUsage;
+                curDn->readOnly = diskUsage->readOnly;
+                curDn->instanceType = INSTANCE_TYPE_DATANODE;
+                curNodeInfo->logDiskUsage = diskUsage->logPathUsage;
                 return;
             }
         }
@@ -339,9 +326,8 @@ void SetInstanceSyncList(DatanodeSyncList *list, uint32 groupIndex, uint32 insta
 
 DatanodeSyncList GetSyncList(uint32 groupIndex, uint32 instanceId, char *syncList, size_t len)
 {
-    errno_t rc = 0;
     DatanodeSyncList list;
-    rc = memset_s(&list, sizeof(DatanodeSyncList), 0, sizeof(DatanodeSyncList));
+    errno_t rc = memset_s(&list, sizeof(DatanodeSyncList), 0, sizeof(DatanodeSyncList));
     securec_check_errno(rc, (void)rc);
     list.dnSyncList[0] = instanceId;
     if (len == 0) {
@@ -370,7 +356,7 @@ DatanodeSyncList GetSyncList(uint32 groupIndex, uint32 instanceId, char *syncLis
         if (strlen(syncListStr) >= strlen("dn_") && strncmp(syncListStr, "dn_", strlen("dn_")) == 0) {
             // syncListStr is dn_6001, instance need to skip 'dn_'
             syncListStr += strlen("dn_");
-            int newInstanceId = strtol(syncListStr, &syncListStr, 10);
+            int newInstanceId = (int)strtol(syncListStr, &syncListStr, 10);
             if (!IsInstanceIdInGroup(groupIndex, newInstanceId)) {
                 write_runlog(ERROR, "InstanceId(%u) synchronous_standby_names is invalid(%d).\n",
                     instanceId, newInstanceId);
@@ -387,10 +373,10 @@ DatanodeSyncList GetSyncList(uint32 groupIndex, uint32 instanceId, char *syncLis
     return list;
 }
 
-void ProcessGetDnSyncListMsg(CM_Connection *con, AgentToCmserverDnSyncList *agentDnSyncList)
+void ProcessGetDnSyncListMsg(AgentToCmserverDnSyncList *agentDnSyncList)
 {
     if (agentDnSyncList->instanceType != INSTANCE_TYPE_DATANODE) {
-        write_runlog(ERROR, "cms get instance(%d) is not dn, this type is %d.\n",
+        write_runlog(ERROR, "cms get instance(%u) is not dn, this type is %d.\n",
             agentDnSyncList->instanceId, agentDnSyncList->instanceType);
         return;
     }
@@ -469,7 +455,7 @@ static void CmsClearKerberosInfo()
 
 /* cm server process the msg from cm_agent kerberos info and save these */
 void process_agent_to_cm_kerberos_status_report_msg(
-    CM_Connection *con, agent_to_cm_kerberos_status_report *agent_to_cm_kerberos_status_ptr)
+    agent_to_cm_kerberos_status_report *agent_to_cm_kerberos_status_ptr)
 {
     agent_to_cm_kerberos_status_ptr->kerberos_ip[CM_IP_LENGTH - 1] = '\0';
     agent_to_cm_kerberos_status_ptr->nodeName[CM_NODE_NAME - 1] = '\0';
@@ -479,7 +465,7 @@ void process_agent_to_cm_kerberos_status_report_msg(
     char kerberosDdbValue[MAX_PATH_LEN] = {0};
     char *kerberosIpPtr = g_kerberos_group_report_status.kerberos_status.kerberos_ip[0];
     char *kerberosIpPtr1 = g_kerberos_group_report_status.kerberos_status.kerberos_ip[1];
-    
+
     status_t st = CM_SUCCESS;
     if (agent_to_cm_kerberos_status_ptr->port != 0) {
         if (*kerberosIpPtr != '\0' && *kerberosIpPtr1 != '\0' &&
@@ -616,12 +602,12 @@ void process_gs_guc_feedback_msg(const agent_to_cm_gs_guc_feedback *feedback_ptr
         for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             if (feedback_ptr->node == g_instance_role_group_ptr[i].instanceMember[j].node &&
                 feedback_ptr->instanceId == g_instance_role_group_ptr[i].instanceMember[j].instanceId &&
-                AnyFirstNo !=
-                    g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode) {
+                g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode !=
+                AnyFirstNo) {
                 g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].send_gs_guc_time = 0;
                 if (feedback_ptr->status &&
                     feedback_ptr->type ==
-                        g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode) {
+                    g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode) {
                     write_runlog(LOG,
                         "do gs_guc reload success, type:%d, node:%u, instanceId:%u.\n",
                         g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode,
@@ -638,8 +624,8 @@ void process_gs_guc_feedback_msg(const agent_to_cm_gs_guc_feedback *feedback_ptr
                         feedback_ptr->instanceId);
                 }
             }
-            if (AnyFirstNo !=
-                g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode) {
+            if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode !=
+                AnyFirstNo) {
                 hasDoGsGucFlag = true;
             }
         }
@@ -686,61 +672,56 @@ void process_gs_guc_feedback_msg(const agent_to_cm_gs_guc_feedback *feedback_ptr
     }
 }
 
-void RemoveCmagentSslConn(CM_Connection *con)
+void RemoveCmagentSslConn(MsgRecvInfo* recvMsgInfo)
 {
     if (g_sslOption.enable_ssl == CM_TRUE) {
-        EventDel(con->epHandle, con);
-        RemoveCMAgentConnection(con);
+        AsyncProcMsg(recvMsgInfo, PM_REMOVE_CONN, NULL, 0);
     }
 }
 
-void ProcessSslConnRequest(CM_Connection *con, const AgentToCmConnectRequest *requestMsg)
+void ProcessSslConnRequest(MsgRecvInfo* recvMsgInfo, const AgentToCmConnectRequest *requestMsg)
 {
-    int ret = 0;
     if (requestMsg == NULL || requestMsg->msg_type != MSG_CM_SSL_CONN_REQUEST) {
         write_runlog(ERROR, "ssl connect error.\n");
-        RemoveCmagentSslConn(con);
+        RemoveCmagentSslConn(recvMsgInfo);
         return;
     }
+
+    write_runlog(DEBUG5, "g_sslOption.enable_ssl=%s\n", g_sslOption.enable_ssl ? "TRUE" : "FALSE");
 
     CmToAgentConnectAck ackMsg;
     ackMsg.msg_type = MSG_CM_SSL_CONN_ACK;
     if (g_sslOption.enable_ssl == CM_TRUE) {
         ackMsg.status = SSL_ENABLE;
+        CmsSSLConnMsg msg;
+        msg.startConnTime = GetMonotonicTimeMs();
+        AsyncProcMsg(recvMsgInfo, PM_REMOVE_EPOLL, (char *)&msg, sizeof(CmsSSLConnMsg));
     } else {
         ackMsg.status = SSL_DISABLE;
     }
-    ret = cm_server_send_msg(con, 'S', (char *)(&ackMsg), sizeof(CmToAgentConnectAck));
+
+    int ret = RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(CmToAgentConnectAck));
     if (ret != 0) {
         write_runlog(ERROR, "ProcessSslConnRequest send msg failed.\n");
         return;
     }
 
-    ret = cm_server_flush_msg(con);
-    if (ret != 0) {
-        return;
-    }
-    if (ackMsg.status == 2) {
+    if (g_sslOption.enable_ssl == CM_FALSE) {
         return;
     }
 
     write_runlog(LOG, "ProcessSslConnRequest, node id: %u.\n", requestMsg->nodeid);
     if (g_ssl_acceptor_fd == NULL) {
         write_runlog(ERROR, "[ProcessSslConnRequest]srv ssl_acceptor_fd null.\n");
-        RemoveCmagentSslConn(con);
+        RemoveCmagentSslConn(recvMsgInfo);
         return;
     }
 
-    if (cm_cs_ssl_accept(g_ssl_acceptor_fd, &con->port->pipe) != CM_SUCCESS) {
-        write_runlog(ERROR, "[ProcessSslConnRequest]srv ssl accept failed.\n");
-        RemoveCmagentSslConn(con);
-        return;
-    }
-    if (con->fd >= 0 && con->port->remote_type == CM_AGENT && con->port->node_id < CM_MAX_CONNECTIONS &&
-        !con->port->is_postmaster) {
-        AddCMAgentConnection(con);
-    }
-    write_runlog(LOG, "[ProcessSslConnRequest]srv ssl connect success.\n");
+    CmsSSLConnMsg msg;
+    msg.startConnTime = GetMonotonicTimeMs();
+
+    AsyncProcMsg(recvMsgInfo, PM_SSL_ACCEPT, (char *)&msg, sizeof(CmsSSLConnMsg));
+
     return;
 }
 
@@ -769,7 +750,7 @@ void GetInstanceIdByIp(uint32 localInstd, uint32 *peerInstId, uint32 groupIdx, D
     write_runlog(ERROR, "[GetInstanceIdByIp] instId(%u) cannot find the peerInst.\n", localInstd);
 }
 
-void ProcessDnLocalPeerMsg(CM_Connection *con, AgentCmDnLocalPeer *dnLpInfo)
+void ProcessDnLocalPeerMsg(MsgRecvInfo* recvMsgInfo, AgentCmDnLocalPeer *dnLpInfo)
 {
     if (dnLpInfo->instanceType != INSTANCE_TYPE_DATANODE) {
         write_runlog(ERROR, "cms get instance(%u) is not dn, this type is %d.\n",

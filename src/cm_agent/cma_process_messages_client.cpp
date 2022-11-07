@@ -23,58 +23,63 @@
  */
 #include "cm/cm_elog.h"
 #include "cma_connect.h"
-#include "cma_global_params.h"
 #include "cma_connect_client.h"
 #include "cma_common.h"
+#include "cma_global_params.h"
+#include "cma_instance_check.h"
+#include "cma_status_check.h"
+#include "cma_instance_management_res.h"
 #include "cma_process_messages_client.h"
 
 static void SendHeartbeatAckToClient(uint32 conId)
 {
-    MsgHead *hbAck = (MsgHead*)malloc(sizeof(MsgHead));
-    if (hbAck == NULL) {
-        write_runlog(LOG, "[CLIENT] malloc failed, SendHeartbeatAckToClient.\n");
-        return;
-    }
-    errno_t rc = memset_s(hbAck, sizeof(MsgHead), 0, sizeof(MsgHead));
-    securec_check_errno(rc, (void)rc);
-    hbAck->msgType = MSG_AGENT_CLIENT_HEARTBEAT_ACK;
+    MsgHead hbAck = {0};
+    hbAck.msgType = MSG_AGENT_CLIENT_HEARTBEAT_ACK;
 
-    PushMsgToClientSendQue((char*)hbAck, sizeof(MsgHead), conId);
-    write_runlog(DEBUG5, "[CLIENT] push client msg to send queue, hb ack msg conId(%u).\n", conId);
+    PushMsgToClientSendQue((char*)&hbAck, sizeof(MsgHead), conId);
 }
 
 static void SendStatusListToClient(CmResStatList &statList, uint32 conId, bool isNotifyChange)
 {
-    AgentToClientResList *sendList = (AgentToClientResList*)malloc(sizeof(AgentToClientResList));
-    if (sendList == NULL) {
-        write_runlog(LOG, "[CLIENT] malloc failed, SendStatusListToClient.\n");
-        return;
-    }
-    errno_t rc = memset_s(sendList, sizeof(AgentToClientResList), 0, sizeof(AgentToClientResList));
+    AgentToClientResList sendList;
+    errno_t rc = memset_s(&sendList, sizeof(AgentToClientResList), 0, sizeof(AgentToClientResList));
     securec_check_errno(rc, (void)rc);
+
     if (isNotifyChange) {
-        sendList->head.msgType = MSG_AGENT_CLIENT_RES_STATUS_CHANGE;
+        sendList.head.msgType = (uint32)MSG_AGENT_CLIENT_RES_STATUS_CHANGE;
     } else {
-        sendList->head.msgType = MSG_AGENT_CLIENT_RES_STATUS_LIST;
+        sendList.head.msgType = (uint32)MSG_AGENT_CLIENT_RES_STATUS_LIST;
     }
 
-    (void)pthread_rwlock_wrlock(&(statList.rwlock));
-    rc = memcpy_s(&sendList->resStatusList, sizeof(OneResStatList), &statList.status, sizeof(OneResStatList));
-    securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_rdlock(&(statList.rwlock));
+    rc = memcpy_s(&sendList.resStatusList, sizeof(OneResStatList), &statList.status, sizeof(OneResStatList));
     (void)pthread_rwlock_unlock(&(statList.rwlock));
+    securec_check_errno(rc, (void)rc);
 
     write_runlog(LOG, "[CLIENT] send status list to res(%s), version=%llu.\n",
-        sendList->resStatusList.resName, sendList->resStatusList.version);
-    for (uint32 i = 0; i < sendList->resStatusList.instanceCount; ++i) {
-        write_runlog(LOG, "nodeId=%u,instanceId=%u,status=%u,isWork=%u\n",
-            sendList->resStatusList.resStat[i].nodeId,
-            sendList->resStatusList.resStat[i].cmInstanceId,
-            sendList->resStatusList.resStat[i].status,
-            sendList->resStatusList.resStat[i].isWorkMember);
+        sendList.resStatusList.resName, sendList.resStatusList.version);
+    for (uint32 i = 0; i < sendList.resStatusList.instanceCount; ++i) {
+        write_runlog(LOG, "nodeId=%u,instanceId=%u,resInstanceId=%u,status=%d,isWork=%u\n",
+            sendList.resStatusList.resStat[i].nodeId,
+            sendList.resStatusList.resStat[i].cmInstanceId,
+            sendList.resStatusList.resStat[i].resInstanceId,
+            (int)sendList.resStatusList.resStat[i].status,
+            sendList.resStatusList.resStat[i].isWorkMember);
     }
 
-    PushMsgToClientSendQue((char*)sendList, sizeof(AgentToClientResList), conId);
-    write_runlog(DEBUG5, "[CLIENT] push client msg to queue, res(%s) stat list.\n", sendList->resStatusList.resName);
+    PushMsgToClientSendQue((char*)&sendList, sizeof(AgentToClientResList), conId);
+}
+
+static void SendLockFailAckToClient(uint32 conId)
+{
+    AgentToClientResLockResult clientAck;
+    errno_t rc = memset_s(&clientAck, sizeof(AgentToClientResLockResult), 0, sizeof(AgentToClientResLockResult));
+    securec_check_errno(rc, (void)rc);
+    clientAck.head.msgType = MSG_CM_RES_LOCK_ACK;
+    clientAck.head.conId = conId;
+    clientAck.result.error = (uint32)CM_RES_CLIENT_CANNOT_DO;
+
+    PushMsgToClientSendQue((char*)&clientAck, sizeof(AgentToClientResLockResult), conId);
 }
 
 static void ProcessClientHeartbeat(const ClientHbMsg &hbMsg)
@@ -87,29 +92,26 @@ static void ProcessClientHeartbeat(const ClientHbMsg &hbMsg)
         return;
     }
 
-    (void)pthread_rwlock_wrlock(&(g_resStatus[index].rwlock));
-    if (hbMsg.version == g_resStatus[index].status.version) {
-        (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
-        SendHeartbeatAckToClient(hbMsg.head.conId);
-        return;
-    }
+    (void)pthread_rwlock_rdlock(&(g_resStatus[index].rwlock));
+    bool isResStatChanged = (hbMsg.version != g_resStatus[index].status.version);
     (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
-    SendStatusListToClient(g_resStatus[index], hbMsg.head.conId, false);
+
+    if (isResStatChanged) {
+        SendStatusListToClient(g_resStatus[index], hbMsg.head.conId, false);
+    } else {
+        SendHeartbeatAckToClient(hbMsg.head.conId);
+    }
 }
 
 static void ProcessInitMsg(const ClientInitMsg &initData)
 {
-    AgentToClientInitResult *sendMsg = (AgentToClientInitResult*)malloc(sizeof(AgentToClientInitResult));
-    if (sendMsg == NULL) {
-        write_runlog(LOG, "[CLIENT] malloc failed, ProcessInitMsg.\n");
-        return;
-    }
-    errno_t rc = memset_s(sendMsg, sizeof(AgentToClientInitResult), 0, sizeof(AgentToClientInitResult));
+    AgentToClientInitResult sendMsg;
+    errno_t rc = memset_s(&sendMsg, sizeof(AgentToClientInitResult), 0, sizeof(AgentToClientInitResult));
     securec_check_errno(rc, (void)rc);
 
-    sendMsg->head.msgType = (uint32)MSG_AGENT_CLIENT_INIT_ACK;
-    sendMsg->head.conId = initData.head.conId;
-    sendMsg->result.isSuccess = false;
+    sendMsg.head.msgType = (uint32)MSG_AGENT_CLIENT_INIT_ACK;
+    sendMsg.head.conId = initData.head.conId;
+    sendMsg.result.isSuccess = false;
 
     ClientConn *clientCon = GetClientConnect();
     for (const CmResConfList &resInfo : g_resConf) {
@@ -119,20 +121,67 @@ static void ProcessInitMsg(const ClientInitMsg &initData)
             clientCon[initData.head.conId].resInstanceId = resInfo.resInstanceId;
             rc = strcpy_s(clientCon[initData.head.conId].resName, CM_MAX_RES_NAME, initData.resInfo.resName);
             securec_check_errno(rc, (void)rc);
-            sendMsg->result.isSuccess = true;
+            sendMsg.result.isSuccess = true;
             break;
         }
     }
 
-    if (sendMsg->result.isSuccess) {
+    if (sendMsg.result.isSuccess) {
         write_runlog(LOG, "[CLIENT] res(%s) init success.\n", initData.resInfo.resName);
     } else {
         write_runlog(LOG, "[CLIENT] res(%s) init failed, init cfg: nodeId(%u), resInstId(%u).\n",
             initData.resInfo.resName, g_currentNode->node, initData.resInfo.resInstanceId);
     }
 
-    PushMsgToClientSendQue((char*)sendMsg, sizeof(AgentToClientInitResult), initData.head.conId);
-    write_runlog(DEBUG5, "[CLIENT] push client msg to send queue, res(%s) init result.\n", initData.resInfo.resName);
+    PushMsgToClientSendQue((char*)&sendMsg, sizeof(AgentToClientInitResult), initData.head.conId);
+}
+
+static void GetResLockSendMsg(CmaToCmsResLock *sendMsg, const ClientCmLockMsg *lockMsg)
+{
+    sendMsg->msgType = (int)MSG_CM_RES_LOCK;
+    sendMsg->lockOpt = lockMsg->info.lockOpt;
+    sendMsg->conId = lockMsg->head.conId;
+    const ClientConn *clientCon = GetClientConnect();
+    sendMsg->cmInstId = clientCon[sendMsg->conId].cmInstanceId;
+    errno_t rc = strcpy_s(sendMsg->resName, CM_MAX_RES_NAME, clientCon[sendMsg->conId].resName);
+    securec_check_errno(rc, (void)rc);
+    rc = strcpy_s(sendMsg->lockName, CM_MAX_LOCK_NAME, lockMsg->info.lockName);
+    securec_check_errno(rc, (void)rc);
+}
+
+static uint32 ResInstIdToCmInstId(const char *resName, uint32 resInstId)
+{
+    uint32 index = 0;
+    if (GetGlobalResStatusIndex(resName, index) != CM_SUCCESS) {
+        write_runlog(ERROR, "[CLIENT] ProcessResStatusList, unknown the res(%s) of client.\n", resName);
+        return 0;
+    }
+    (void)pthread_rwlock_rdlock(&(g_resStatus[index].rwlock));
+    for (uint32 i = 0; i < g_resStatus[index].status.instanceCount; ++i) {
+        if (g_resStatus[index].status.resStat[i].resInstanceId == resInstId) {
+            (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
+            return g_resStatus[index].status.resStat[i].cmInstanceId;
+        }
+    }
+    (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
+    return 0;
+}
+
+static void ProcessCmResLock(ClientCmLockMsg *lockMsg)
+{
+    CmaToCmsResLock sendMsg = {0};
+    GetResLockSendMsg(&sendMsg, lockMsg);
+
+    if (lockMsg->info.lockOpt == (uint32)CM_RES_LOCK_TRANS) {
+        sendMsg.transInstId = ResInstIdToCmInstId(sendMsg.resName, lockMsg->info.transInstId);
+        if (!IsResInstIdValid((int)sendMsg.transInstId)) {
+            write_runlog(ERROR, "[CLIENT] res instId(%u) is invalid, ack client!\n", sendMsg.transInstId);
+            SendLockFailAckToClient(lockMsg->head.conId);
+            return;
+        }
+    }
+
+    PushMsgToCmsSendQue((char*)&sendMsg, sizeof(CmaToCmsResLock), "res lock");
 }
 
 static void ProcessClientMsg(char *recvMsg)
@@ -149,6 +198,11 @@ static void ProcessClientMsg(char *recvMsg)
             ClientHbMsg *hbMsg = (ClientHbMsg *)recvMsg;
             ProcessClientHeartbeat(*hbMsg);
             break;
+            }
+        case MSG_CM_RES_LOCK: {
+            ClientCmLockMsg *lockMsg = (ClientCmLockMsg *)recvMsg;
+            ProcessCmResLock(lockMsg);
+            break;
         }
         default:
             write_runlog(LOG, "[CLIENT] agent get unknown msg from client\n");
@@ -158,43 +212,65 @@ static void ProcessClientMsg(char *recvMsg)
 
 void* ProcessMessageMain(void * const arg)
 {
+    thread_name = "ProcessClientMsg";
+    write_runlog(LOG, "process client recv msg thread begin.\n");
+
     for (;;) {
-        (void)pthread_mutex_lock(&g_recvQueue.lock);
-        while (g_recvQueue.msg.empty()) {
-            (void)pthread_cond_wait(&g_recvQueue.cond, &g_recvQueue.lock);
+        if (g_shutdownRequest || g_exitFlag) {
+            cm_sleep(SHUTDOWN_SLEEP_TIME);
+            continue;
         }
-        char *msg = g_recvQueue.msg.front().msgPtr;
-        g_recvQueue.msg.pop();
-        (void)pthread_mutex_unlock(&g_recvQueue.lock);
+        MsgQueue &recvQueue = GetClientRecvQueue();
+        (void)pthread_mutex_lock(&recvQueue.lock);
+        while (recvQueue.msg.empty()) {
+            (void)pthread_cond_wait(&recvQueue.cond, &recvQueue.lock);
+        }
+        char *msg = recvQueue.msg.front().msgPtr;
+        recvQueue.msg.pop();
+        (void)pthread_mutex_unlock(&recvQueue.lock);
         ProcessClientMsg(msg);
-        FREE_AND_RESET(msg);
+        FreeBufFromMsgPool(msg);
     }
     return NULL;
 }
 
+static void UpdateResStatusList(CmResStatList *resStat, const OneResStatList *newStat)
+{
+    (void)pthread_rwlock_wrlock(&(resStat->rwlock));
+    errno_t rc = memcpy_s(&resStat->status, sizeof(OneResStatList), newStat, sizeof(OneResStatList));
+    (void)pthread_rwlock_unlock(&(resStat->rwlock));
+    securec_check_errno(rc, (void)rc);
+}
+
+static void PrintLatestResStatusList(const OneResStatList *resStat)
+{
+    write_runlog(LOG, "[CLIENT] res(%s) statList changed, version=%llu.\n", resStat->resName, resStat->version);
+    for (uint32 i = 0; i < resStat->instanceCount; ++i) {
+        write_runlog(LOG, "nodeId=%u,cmInstanceId=%u,resInstanceId=%u,status=%u,isWork=%u\n",
+            resStat->resStat[i].nodeId,
+            resStat->resStat[i].cmInstanceId,
+            resStat->resStat[i].resInstanceId,
+            resStat->resStat[i].status,
+            resStat->resStat[i].isWorkMember);
+    }
+}
+
 void ProcessResStatusList(const CmsReportResStatList *msg)
 {
+    if (msg->resList.instanceCount > CM_MAX_RES_INST_COUNT) {
+        write_runlog(ERROR, "cms send to cma, custom resource instance count (%u) is unavail, range[0, %d].\n",
+            msg->resList.instanceCount, CM_MAX_RES_INST_COUNT);
+        return;
+    }
+
     uint32 index = 0;
     if (GetGlobalResStatusIndex(msg->resList.resName, index) != CM_SUCCESS) {
         write_runlog(ERROR, "[CLIENT] ProcessResStatusList, unknown the res(%s) of client.\n", msg->resList.resName);
         return;
     }
-    (void)pthread_rwlock_wrlock(&(g_resStatus[index].rwlock));
-    errno_t rc = memcpy_s(&g_resStatus[index].status, sizeof(OneResStatList), &msg->resList, sizeof(OneResStatList));
-    securec_check_errno(rc, (void)rc);
-    (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
 
-    write_runlog(LOG, "[CLIENT] res(%s) statList changed, version=%llu.\n", msg->resList.resName, msg->resList.version);
-    for (uint32 j = 0; j < msg->resList.instanceCount; ++j) {
-        if (j == CM_MAX_INSTANCES) {
-            break;
-        }
-        write_runlog(LOG, "nodeId=%u,instanceId=%u,status=%u,isWork=%u\n",
-            g_resStatus[index].status.resStat[j].nodeId,
-            g_resStatus[index].status.resStat[j].cmInstanceId,
-            g_resStatus[index].status.resStat[j].status,
-            g_resStatus[index].status.resStat[j].isWorkMember);
-    }
+    UpdateResStatusList(&g_resStatus[index], &msg->resList);
+    PrintLatestResStatusList(&msg->resList);
 }
 
 void ProcessResStatusChanged(const CmsReportResStatList *msg)
@@ -206,10 +282,120 @@ void ProcessResStatusChanged(const CmsReportResStatList *msg)
         return;
     }
     ClientConn *clientCon = GetClientConnect();
-    for (uint32 i = 0; i < MAX_RES_NUM; ++i) {
+    for (uint32 i = 0; i < CM_MAX_RES_COUNT; ++i) {
         if (clientCon[i].isClosed || strcmp(clientCon[i].resName, msg->resList.resName) != 0) {
             continue;
         }
         SendStatusListToClient(g_resStatus[index], i, true);
     }
+}
+
+void ProcessResLockAckFromCms(const CmsReportLockResult *recvMsg)
+{
+    AgentToClientResLockResult sendMsg;
+    errno_t rc = memset_s(&sendMsg, sizeof(AgentToClientResLockResult), 0, sizeof(AgentToClientResLockResult));
+    securec_check_errno(rc, (void)rc);
+
+    sendMsg.head.msgType = MSG_CM_RES_LOCK_ACK;
+    sendMsg.head.conId = recvMsg->conId;
+    sendMsg.result.error = recvMsg->error;
+    rc = strcpy_s(sendMsg.result.lockName, CM_MAX_LOCK_NAME, recvMsg->lockName);
+    securec_check_errno(rc, (void)rc);
+
+    ClientConn *clientCon = GetClientConnect();
+    if (recvMsg->lockOpt == (uint32)CM_RES_GET_LOCK_OWNER && recvMsg->error == 0) {
+        uint32 index = 0;
+        if (GetGlobalResStatusIndex(clientCon[sendMsg.head.conId].resName, index) != CM_SUCCESS) {
+            write_runlog(ERROR, "[CLIENT] ProcessResLockAckFromCms, unknown the res(%s) of client.\n",
+                clientCon[sendMsg.head.conId].resName);
+            return;
+        }
+        bool getFlag = false;
+        (void)pthread_rwlock_rdlock(&(g_resStatus[index].rwlock));
+        for (uint32 i = 0; i < g_resStatus[index].status.instanceCount; ++i) {
+            if (g_resStatus[index].status.resStat[i].cmInstanceId == recvMsg->lockOwner) {
+                sendMsg.result.lockOwner = g_resStatus[index].status.resStat[i].resInstanceId;
+                getFlag = true;
+                break;
+            }
+        }
+        (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
+        if (!getFlag) {
+            sendMsg.result.lockOwner = 0;
+            sendMsg.result.error = (uint32)CM_RES_CLIENT_CANNOT_DO;
+            write_runlog(ERROR, "[CLIENT] unknown cmInstId %u.\n", recvMsg->lockOwner);
+        }
+    }
+
+    PushMsgToClientSendQue((char*)&sendMsg, sizeof(AgentToClientResLockResult), recvMsg->conId);
+}
+
+static void ProcessUnregResInst(const CmsNotifyAgentRegMsg *recvMsg)
+{
+    CmResConfList *local = CmaGetResConfByResName(recvMsg->resName);
+    if (local == NULL) {
+        write_runlog(ERROR, "%s, get local res list failed.\n", __FUNCTION__);
+        return;
+    }
+
+    ResIsregStatus isreg = IsregOneResInst(local, recvMsg->resInstId);
+    if (isreg == CM_RES_ISREG_UNREG) {
+        write_runlog(LOG, "local res inst[%s:%u] has been unreg.\n", recvMsg->resName, recvMsg->resInstId);
+    } else if ((isreg == CM_RES_ISREG_REG) || (isreg == CM_RES_ISREG_PENDING)) {
+        (void)UnregOneResInst(local, recvMsg->resInstId);
+    } else if (isreg == CM_RES_ISREG_NOT_SUPPORT) {
+        write_runlog(LOG, "res inst[%s:%u] don't support reg, not need unreg.\n", recvMsg->resName, recvMsg->resInstId);
+    } else {
+        write_runlog(ERROR, "res inst[%s:%u] isreg:%s, can't do unreg.\n", recvMsg->resName, recvMsg->resInstId,
+            GetIsregStatus((int)isreg));
+    }
+}
+
+static void ProcessRegResInst(const CmsNotifyAgentRegMsg *recvMsg)
+{
+    if (g_currentNode->node != recvMsg->nodeId) {
+        return;
+    }
+
+    CmResConfList *local = CmaGetResConfByResName(recvMsg->resName);
+    if (local == NULL) {
+        write_runlog(ERROR, "%s, get local res list failed.\n", __FUNCTION__);
+        return;
+    }
+
+    ResIsregStatus isreg = IsregOneResInst(local, recvMsg->resInstId);
+    if (isreg == CM_RES_ISREG_REG) {
+        write_runlog(LOG, "local res inst[%s:%u] has been reg.\n", recvMsg->resName, recvMsg->resInstId);
+    } else if ((isreg == CM_RES_ISREG_UNREG) || (isreg == CM_RES_ISREG_PENDING) || (isreg == CM_RES_ISREG_UNKNOWN)) {
+        write_runlog(LOG, "before reg res inst, need clean res inst first.\n");
+        if (CleanOneResInst(local) == CM_SUCCESS) {
+            (void)RegOneResInst(local, recvMsg->resInstId);
+        }
+    } else if (isreg == CM_RES_ISREG_NOT_SUPPORT) {
+        write_runlog(LOG, "res inst[%s:%u] don't support reg, not need reg.\n", recvMsg->resName, recvMsg->resInstId);
+    } else {
+        write_runlog(ERROR, "res inst[%s:%u] isreg:%s, can't do reg.\n", recvMsg->resName, recvMsg->resInstId,
+            GetIsregStatus((int)isreg));
+    }
+}
+
+void ProcessResRegFromCms(const CmsNotifyAgentRegMsg *recvMsg)
+{
+    switch (recvMsg->resMode) {
+        case 0:
+            ProcessUnregResInst(recvMsg);
+            break;
+        case 1:
+            ProcessRegResInst(recvMsg);
+            break;
+        default:
+            write_runlog(ERROR, "ProcessResRegFromCms, unknown res mode.\n");
+            break;
+    }
+}
+
+void ProcessIsregCheckListChanged(const CmsFlushIsregCheckList *recvMsg)
+{
+    write_runlog(LOG, "node(%u) report isreg list is wrong, need update.\n", g_currentNode->node);
+    UpdateIsregCheckList(recvMsg->checkList, recvMsg->checkCount);
 }

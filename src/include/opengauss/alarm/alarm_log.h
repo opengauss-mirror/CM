@@ -37,7 +37,7 @@ void clean_system_alarm_log(const char* file_name, const char* sys_log_path);
 
 void create_system_alarm_log(const char* sys_log_path);
 
-void write_alarm(Alarm* alarmItem, const char* alarmName, const char* alarmLevel, AlarmType type,
+void write_alarm(const Alarm* alarmItem, const char* alarmName, const char* alarmLevel, AlarmType type,
     AlarmAdditionalParam* additionalParam);
 
 void set_alarm_scope(const char* alarmScope);

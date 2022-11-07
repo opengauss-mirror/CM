@@ -34,13 +34,14 @@
 #include "cm/cm_c.h"
 #include "cm/cm_misc.h"
 #include "cm_server.h"
+#include "cms_conn.h"
 
 using std::set;
 using std::string;
 using std::vector;
 
 
-typedef struct azInfo {
+typedef struct azInfoT {
     char azName[CM_AZ_NAME];
     uint32 nodes[CM_NODE_MAXNUM];
 } azInfo;
@@ -84,38 +85,38 @@ typedef enum GET_HEART_BEAT_FROM_ETCD {
 } getHeartBeatFromEtcd;
 
 /* data structures to record instances that are in switchover procedure */
-typedef struct switchover_instance {
+typedef struct switchover_instance_t {
     uint32 node;
     uint32 instanceId;
     int instanceType;
 } switchover_instance;
-typedef struct DataNodeReadOnlyInfo {
-    char dataNodePath[CM_PATH_LENGTH];
+typedef struct DataNodeReadOnlyInfoT {
+    uint32 node;
     uint32 instanceId;
-    uint32 currReadOnly;
-    uint32 lastReadOnly;
-    uint32 currPreAlarm;
-    uint32 lastPreAlarm;
     uint32 dataDiskUsage;
+    int instanceType;
+    char ddbValue;
+    bool readOnly;
+    bool finalState;
+    char dataNodePath[CM_PATH_LENGTH];
+    char instanceName[CM_NODE_NAME];
+    char nodeName[CM_NODE_NAME];
 } DataNodeReadOnlyInfo;
 
-typedef struct InstanceStatusKeyValue {
+typedef struct InstanceStatusKeyValueT {
     char key[ETCD_KEY_LENGTH];
     char value[ETCD_VLAUE_LENGTH];
 } InstanceStatusKeyValue;
 
-typedef struct DynamicNodeReadOnlyInfo {
-    char nodeName[CM_NODE_NAME];
+typedef struct DynamicNodeReadOnlyInfoT {
+    char instanceName[CM_NODE_NAME];
     uint32 dataNodeCount;
-    DataNodeReadOnlyInfo dataNode[CM_MAX_DATANODE_PER_NODE];
-
-    DataNodeReadOnlyInfo coordinateNode;
-    uint32 currLogDiskPreAlarm;
-    uint32 lastLogDiskPreAlarm;
     uint32 logDiskUsage;
+    DataNodeReadOnlyInfo dataNode[CM_MAX_DATANODE_PER_NODE];
+    DataNodeReadOnlyInfo coordinateNode;
 } DynamicNodeReadOnlyInfo;
 
-typedef struct CurrentInstanceStatus {
+typedef struct CurrentInstanceStatusT {
         // recode online dns
     DatanodeDynamicStatus statusDnOnline;
     // recode fail dns
@@ -128,11 +129,23 @@ typedef struct CurrentInstanceStatus {
     DatanodeDynamicStatus statusDnVoteAz;
 } CurrentInstanceStatus;
 
-#define ELASTICGROUP "elastic_group"
+typedef struct CmsArbitrateStatusT {
+    bool isDdbHealth;
+    int32 cmsRole;
+    maintenance_mode upgradeMode;
+} CmsArbitrateStatus;
 
-#define PROCESS_NOT_EXIST 0
-#define PROCESS_CORPSE 1
-#define PROCESS_RUNNING 2
+typedef enum ThreadProcessStatusE {
+    THREAD_PROCESS_INIT = 0,
+    THREAD_PROCESS_READY,
+    THREAD_PROCESS_UNKNOWN,
+    THREAD_PROCESS_RUNNING,
+    THREAD_PROCESS_STOP,
+    THREAD_PROCESS_SLEEP,
+    THREAD_PROCESS_CEIL,  // it must be end
+} ThreadProcessStatus;
+
+#define ELASTICGROUP "elastic_group"
 
 #define CMS_CURRENT_VERSION 1
 #define LOGIC_CLUSTER_LIST "logic_cluster_name.txt"
@@ -167,10 +180,8 @@ typedef struct CurrentInstanceStatus {
 #define AZ_MEMBER_MAX_COUNT (3)
 #define INIT_CLUSTER_MODE_INSTANCE_DEAL_TIME 180
 #define CM_SERVER_ARBITRATE_DELAY_CYCLE_MAX_COUNT 3
-#define MAX_PATH_LEN 1024
 #define THREAHOLD_LEN 10
 #define BYTENUM 4
-#define DEFAULT_THREAD_NUM 5
 #define SWITCHOVER_SEND_CHECK_NUM 3
 #define MAX_VALUE_OF_CM_PRIMARY_HEARTBEAT 86400
 #define MAX_COUNT_OF_NOTIFY_CN 86400
@@ -184,8 +195,6 @@ typedef struct CurrentInstanceStatus {
 
 #define CN_DELETE_DELAY_SECONDS 10
 #define MAX_QUERY_DOWN_COUNTS 30
-
-#define SECONDS_PER_DAY 86400U
 
 #define INSTANCE_DATA_NO_REDUCED 0 //  no reduce shard instanceId
 #define INSTANCE_DATA_REDUCED 1   // reduce shard instanceId
@@ -212,12 +221,6 @@ typedef struct CurrentInstanceStatus {
 #define PSSH_TIMEOUT " -t 30 "
 
 
-/*
- * the sum of cm_server heartbeat timeout and arbitrate delay time must be less than
- * cm_agent disconnected timeout. or else, cm_agent may self-kill before cm_server
- * standby failover.
- */
-#define AZ_MEMBER_MAX_COUNT (3)
 #define SWITCHOVER_DEFAULT_WAIT 120  /* It needs an integer multiple of 3, because of sleep(3) */
 
 #define AUTHENTICATION_TIMEOUT 60
@@ -229,17 +232,9 @@ typedef struct CurrentInstanceStatus {
 #define NOT_NEED_TO_SEND_SYNC_LIST 2
 #define NEED_TO_SEND_SYNC_LIST 3
 #define SEND_AZ_SYNC_LIST 4
+const int DEFAULT_PHONY_DEAD_EFFECTIVE_TIME = 5;
 
-#define BIG_CLUSTER_FRAGENT_COUNT (64)
-
-#define MAX_SEND_FAILOVER_TIMES (3)
-
-#define IS_CN_INSTANCEID(instanceId) \
-    ((instanceId) > 5000 && (instanceId) < 6000)
-#define IS_DN_INSTANCEID(instanceId) \
-    ((instanceId) > 6000 && (instanceId) < 7000)
-#define IS_GTM_INSTANCEID(instanceId) \
-    ((instanceId) > 1000 && (instanceId) < 2000)
+#define MAX_SEND_FAILOVER_TIMES (10)
 
 #define WITHOUT_CN_CLUSTER(str)                                                                \
     do {                                                                                       \
@@ -286,7 +281,6 @@ extern DdbConn g_gtm2Etcd;
 extern TlsAuthPath g_tlsPath;
 extern dynamicConfigHeader* g_dynamic_header;
 extern cm_instance_group_report_status* g_instance_group_report_status_ptr;
-extern CM_Connections gConns;
 extern cm_instance_central_node g_centralNode;
 extern pthread_rwlock_t switchover_az_rwlock;
 extern pthread_rwlock_t gsguc_feedback_rwlock;
@@ -294,7 +288,8 @@ extern pthread_rwlock_t g_finish_redo_rwlock;
 extern pthread_rwlock_t g_sendQueueRwlock;
 extern pthread_rwlock_t g_recvQueueRwlock;
 extern synchronous_standby_mode current_cluster_az_status;
-extern CM_Threads gThreads;
+extern CM_WorkThreads gWorkThreads;
+extern CM_IOThread gIOThread;
 extern CM_HAThreads gHAThreads;
 extern CM_MonitorThread gMonitorThread;
 extern CM_MonitorNodeStopThread gMonitorNodeStopThread;
@@ -317,7 +312,7 @@ extern volatile switchover_az_mode cm_switchover_az_mode;
 
 extern THR_LOCAL ProcessingMode Mode;
 
-extern const int majority_reelection_timeout_init;
+extern const uint32 majority_reelection_timeout_init;
 #ifdef ENABLE_MULTIPLE_NODES
 extern const int coordinator_deletion_timeout_init;
 #endif
@@ -329,7 +324,6 @@ extern int cm_auth_method;
 extern int g_cms_ha_heartbeat;
 extern int cm_server_arbitrate_delay_set;
 extern int g_init_cluster_delay_time;
-extern int datastorage_threshold_check_interval;
 extern int max_datastorage_threshold_check;
 extern int az_switchover_threshold;
 extern int az_check_and_arbitrate_interval;
@@ -349,7 +343,9 @@ extern int ccn_change_delay_time;
 extern int* cn_dn_disconnect_times;
 extern int* g_lastCnDnDisconnectTimes;
 extern char g_enableDcf[10];
+extern char g_shareDiskPath[MAX_PATH_LEN];
 
+extern uint32 datastorage_threshold_check_interval;
 extern const uint32 min_normal_cn_number;
 extern uint32 g_instance_manual_start_file_exist;
 extern uint32 g_gaussdb_restart_counts;
@@ -371,7 +367,6 @@ extern uint32 instance_heartbeat_timeout;
 extern uint32 instance_failover_delay_timeout;
 extern uint32 cmserver_ha_connect_timeout;
 extern DdbArbiCfg g_ddbArbicfg;
-extern DdbPreAgentCon g_preAgentCon;
 extern uint32 cmserver_self_vote_timeout;
 extern uint32 instance_keep_heartbeat_timeout;
 extern uint32 g_clusterStartingTimeout;
@@ -395,6 +390,10 @@ extern azInfo g_azArray[CM_NODE_MAXNUM];
 extern uint32 g_azNum;
 extern uint32 g_enableE2ERto;
 extern uint32 g_sslCertExpireCheckInterval;
+extern uint32 g_diskTimeout;
+extern uint32 g_agentNetworkTimeout;
+extern DnArbitrateMode g_dnArbitrateMode;
+extern uint32 g_readOnlyThreshold;
 extern bool do_finish_redo;
 extern bool isNeedCancel;
 extern bool g_init_cluster_mode;
@@ -404,7 +403,6 @@ extern bool g_open_new_logical;
 extern bool g_isStart;
 extern bool switchoverAZInProgress;
 extern bool g_dnWithoutPrimaryFlag;
-extern bool g_syncDNReadOnlyStatusFromDdb;
 extern bool switchoverFullInProgress;
 extern bool g_elastic_exist_node;
 extern bool g_kerberos_check_cms_primary_standby;
@@ -416,7 +414,7 @@ extern bool g_needIncTermToDdbAgain;
 extern bool g_instance_status_for_cm_server_pending[CM_PRIMARY_STANDBY_NUM];
 extern bool g_clusterStarting;
 /* thread count of thread pool */
-extern unsigned int cm_thread_count;
+extern int cm_thread_count;
 
 extern FILE* syslogFile;
 extern char* cm_server_dataDir;
@@ -432,7 +430,6 @@ extern char g_cmsPModeFilePath[MAX_PATH_LEN];
 extern char g_cmInstanceManualStartPath[MAX_PATH_LEN];
 
 extern char g_enableSetReadOnly[10];
-extern char g_enableSetReadOnlyThreshold[THREAHOLD_LEN];
 extern char g_storageReadOnlyCheckCmd[MAX_PATH_LEN];
 extern char g_cmStaticConfigurePath[MAX_PATH_LEN];
 extern char cm_dynamic_configure_path[MAX_PATH_LEN];
@@ -445,6 +442,7 @@ extern CmAzInfo g_cmAzInfo[AZ_MEMBER_MAX_COUNT];
 extern char g_queryBarrier[BARRIERLEN];
 extern char g_targetBarrier[BARRIERLEN];
 extern char g_doradoIp[CM_IP_LENGTH];
+extern char g_votingDiskPath[MAX_PATH_LEN];
 
 extern volatile int log_min_messages;
 extern volatile int maxLogFileSize;
@@ -458,6 +456,7 @@ extern ThreadExecStatus g_loopState;
 extern DdbArbiCon g_ddbArbiCon;
 extern ssl_ctx_t *g_ssl_acceptor_fd;
 extern uint32 g_delayArbiTime;
+extern int32 g_clusterArbiTime;
 
 extern void clean_init_cluster_state();
 extern void instance_delay_arbitrate_time_out_direct_clean(uint32 group_index, int member_index,
@@ -477,7 +476,8 @@ extern int instance_delay_arbitrate_time_out(
 extern void CleanCommand(uint32 groupIndex, int memberIndex);
 extern bool isLoneNode(int timeout);
 extern int SetNotifyPrimaryInfoToEtcd(uint32 groupIndex, int memberIndex);
-void DealPhonyDeadStatus(CM_Connection *con, int32 instRole, uint32 groupIdx, int32 memIdx, maintenance_mode mode);
+void DealPhonyDeadStatus(
+    MsgRecvInfo* recvMsgInfo, int32 instRole, uint32 groupIdx, int32 memIdx, maintenance_mode mode);
 extern void DealDNPhonyDeadStatusE2E(uint32 groupIndex, int memberIndex);
 extern void DealCNPhonyDeadStatusE2E(uint32 groupIndex, int memberIndex);
 extern void DealGTMPhonyDeadStatusE2E(uint32 groupIndex, int memberIndex);
@@ -508,7 +508,7 @@ extern uint32 GetInstanceIdInGroup(uint32 groupIndex, int memberIndex);
 extern int32 GetInstanceCountsInGroup(uint32 groupIndex);
 extern bool CurAzIsNeedToStop(const char *azName);
 void InitClientCrt(const char *appPath);
-bool CanArbitrate(CM_Connection *con, const char *arbitrateType);
+bool CanArbitrate(MsgRecvInfo* recvMsgInfo, const char *arbitrateType);
 void ChangeDnMemberIndex(const char *str, uint32 groupIdx, int32 memIdx, int32 instTypePur, int32 instTypeSor);
 void SetSwitchoverCmd(cm_instance_command_status *cmd, int32 localRole, uint32 instId, uint32 peerInstId);
 void HashCascadeStandby(cm_to_ctl_instance_datanode_status *dnReport, uint32 groupIdx, int32 memIdx);
@@ -519,4 +519,7 @@ EnCheckSynclist CheckInstInSyncList(uint32 groupIdx, int32 memIdx, const char *s
 void PrintSyncListMsg(uint32 groupIdx, int32 memIdx, const char *str);
 bool CheckAllDnShardSynclist(const char *str);
 uint32 GetPeerInstId(uint32 groupIdx, int32 memIdx);
+bool CheckGroupAndMemIndex(uint32 groupIdx, int32 memIdx, const char *str);
+status_t CmsCanArbitrate(CmsArbitrateStatus *cmsSt, const char *str);
+status_t GetNodeIdxByNodeId(uint32 nodeId, uint32 *nodeIdx, const char *str);
 #endif

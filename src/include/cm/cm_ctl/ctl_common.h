@@ -24,19 +24,18 @@
 #ifndef CTL_COMMON_H
 #define CTL_COMMON_H
 
+#include "cjson/cJSON.h"
 #include "cm/cm_msg.h"
 #include "cm/cm_misc.h"
 #include "cm/cm_defs.h"
 #include "cm_ddb_adapter.h"
-#include "cipher.h"
+#include "cm_cipher.h"
 
 #define DEFAULT_WAIT 60
 #define DYNAMIC_PRIMARY 0
 #define DYNAMIC_STANDBY 1
 #define RELOAD_WAIT_TIME 60
 
-#define CM_SERVER_BIN_NAME "cm_server"
-#define CM_AGENT_BIN_NAME "cm_agent"
 #define ETCD_BIN_NAME "etcd"
 #ifndef ENABLE_MULTIPLE_NODES
 // add for libnet
@@ -64,13 +63,7 @@ const int PARALLELISM_MIN = 0;
 const int PARALLELISM_MAX = 16;
 const int SHARED_STORAGE_MODE_TIMEOUT = 120;
 
-/**
- * @def SHELL_RETURN_CODE
- * @brief Get the shell command return code.
- * @return Return the shell command return code.
- */
-#define SHELL_RETURN_CODE(systemReturn) \
-    ((systemReturn) > 0 ? static_cast<int>(static_cast<uint32>(systemReturn) >> 8) : (systemReturn))
+const int CTL_RECV_CYCLE = 200000;
 
 #define FINISH_CONNECTION()        \
     do {                           \
@@ -106,14 +99,6 @@ const int SHARED_STORAGE_MODE_TIMEOUT = 120;
         (conn) = NULL;           \
     } while (0)
 
-#define FREE_AND_RESET(ptr)  \
-    do {                     \
-        if (NULL != (ptr)) { \
-            free(ptr);       \
-            (ptr) = NULL;    \
-        }                    \
-    } while (0)
-
 typedef enum {
     NO_COMMAND = 0,
     RESTART_COMMAND,
@@ -140,7 +125,9 @@ typedef enum {
     CM_RELOAD_COMMAND,
     CM_LIST_COMMAND,
     CM_ENCRYPT_COMMAND,
-    CM_SWITCH_COMMAND
+    CM_SWITCH_COMMAND,
+    CM_RES_COMMAND,
+    CM_SHOW_COMMAND
 } CtlCommand;
 
 
@@ -211,6 +198,48 @@ typedef struct DcfOptionSt {
     int priority;
 } DcfOption;
 
+typedef enum ResOptModeEn {
+    RES_CONF_UNKNOWN = 0,
+    RES_ADD_CONF = 1,
+    RES_EDIT_CONF = 2,
+    RES_DEL_CONF = 3,
+    RES_CHECK_CONF = 4,
+} ResOptMode;
+
+typedef enum ResEditModeEn {
+    RES_EDIT_UNKNOWN = 0,
+    RES_ADD_INST_CONF = 1,
+    RES_DEL_INST_CONF = 2,
+    RES_EDIT_RES_CONF = 3,
+    RES_EDIT_CEIL,  // it must be end
+} ResEditMode;
+
+typedef enum ResTypeE {
+    RES_TYPE_UNKOWN,
+    RES_TYPE_APP,
+    RES_TYPE_DN,
+    RES_TYPE_CEIL, // it must be end
+} ResType;
+
+typedef struct ResOptionSt {
+    ResOptMode mode;
+    ResType type;
+    char *resName;
+    char *resAttr;
+    ResEditMode editMode;
+    char *addInstStr;
+    char *delInstStr;
+} ResOption;
+
+typedef status_t (*CheckResInfo)(cJSON *resItem, const char *resName);
+
+typedef struct ResTypeMapT {
+    ResType type;
+    const char *typeStr;
+    const char *value;
+    CheckResInfo check;
+} ResTypeMap;
+
 typedef struct CtlOptionSt {
     CommonOption comm;
     GucOption guc;
@@ -218,15 +247,16 @@ typedef struct CtlOptionSt {
     SwitchoverOption switchover;
     SwitchOption switchOption;
     DcfOption dcfOption;
+    ResOption resOpt;
 } CtlOption;
 
 extern bool g_isRestop;
-extern vector<ResourceListInfo> g_res_list;
 extern DdbConn *g_sess;
 extern TlsAuthPath g_tlsPath;
+extern ResTypeMap g_resTypeMap[];
 
 status_t do_start(void);
-void do_stop(void);
+int DoStop(void);
 int do_query(void);
 int do_global_barrier_query(void);
 int DoSwitchover(const CtlOption *ctx);
@@ -252,6 +282,12 @@ void DoDccCmd(int argc, char **argv);
 int DoGuc(CtlOption *ctx);
 int DoEncrypt(const CtlOption *ctx);
 int DoSwitch(const CtlOption *ctx);
+int DoResCommand(const CtlOption *ctx);
+int DoShowCommand();
+
+void GetExecCmdResult(const char *option, int expCmd);
+void HandleRhbAck(CmRhbStatAck *ack);
+void HandleNodeDiskAck(CmNodeDiskStatAck *ack);
 
 void stop_etcd_cluster(void);
 int stop_check_node(uint32 node_id_check);
@@ -313,6 +349,7 @@ void GetUpgradeVersionFromCmaConfig();
 bool SetOfflineNode(uint32 nodeIndex, CM_Conn *con);
 void ReleaseConn(CM_Conn *con);
 bool IsCmSharedStorageMode();
-int GetAgentStatus();
+void CtlGetCmJsonConf();
+int DoRhbPrint();
 
 #endif

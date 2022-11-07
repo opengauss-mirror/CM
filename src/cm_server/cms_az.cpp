@@ -24,22 +24,23 @@
 #include "cm/cm_elog.h"
 #include "cms_global_params.h"
 #include "cms_ddb.h"
-#include "cms_az.h"
 #include "cms_process_messages.h"
 #include "cms_common.h"
+#include "cms_az.h"
 
 static uint32 GetCurrentAZnodeNum(const char *azName);
-static void StartOrStopInstanceByCommand(OperateType operateType, uint32 node, const char *instanceDataPath);
+static void StartOrStopInstanceByCommand(OperateType operateType, uint32 node, const char *instanceDataPath,
+    int32 timeOut = 0);
 static bool IsCnDeleted(uint32 nodeId);
 static void DoMultiAzStartDecision(
     bool isLeaf1AZConnectOK, const char *leaf1AzName, bool isLeaf2AZConnectOK, const char *leaf2AzName);
 static void DoMultiAzStopDecision(bool isLeaf1AZConnectOK, const char *leaf1AzName, bool isLeaf2AZConnectOK,
     const char *leaf2AzName, bool isCmsConnectOK);
-static bool SetIsolatedAzToDdb(const char *arbAzName, const char *peerAzName);
+static bool SetIsolatedAzToDdb(const char *disconAzName, const char *conAzName);
 static void DdbKeyOfAzConnectStatus(
     const char *azName, char *azConnectStatusKey, uint32 keyLen, const char *peerAzName);
 static bool SetOrGetDdbKeyValueOfAzConnectStatus(
-    DdbOperateType ddbOperateType, const char *key, int32 value, bool *operResult);
+    DdbOperateType ddbOperateType, const char *key, int value, bool *operResult);
 static void StartCmsNodeInstances(bool isLeaf1AZConnectOK, bool isLeaf2AZConnectOK);
 static void CleanMultiConnState(const char *azName1, const char *azName2);
 
@@ -70,7 +71,7 @@ bool SetStopAzFlagToDdb(AZRole azRole, bool stopFlag)
         az_role_map_string[azRole].role_string);
     securec_check_intval(rc, (void)rc);
 
-    rc = snprintf_s(value, DDB_MIN_VALUE_LEN, DDB_MIN_VALUE_LEN - 1, "%d", stopFlag);
+    rc = snprintf_s(value, DDB_MIN_VALUE_LEN, DDB_MIN_VALUE_LEN - 1, "%d", (int)stopFlag);
     securec_check_intval(rc, (void)rc);
 
     int tryTimes = 3;
@@ -102,28 +103,33 @@ bool GetStopAzFlagFromDdb(AZRole azRole)
     char status_key[MAX_PATH_LEN] = {0};
     char value[DDB_MIN_VALUE_LEN] = {0};
 
-    rc = snprintf_s(status_key,
-        MAX_PATH_LEN,
-        MAX_PATH_LEN - 1,
-        "/%s/CMServer/StopAz/%s",
-        pw->pw_name,
-        az_role_map_string[azRole].role_string);
+    rc = snprintf_s(status_key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/StopAz/%s",
+        pw->pw_name, az_role_map_string[azRole].role_string);
     securec_check_intval(rc, (void)rc);
     DdbOption option = {SUCCESS_GET_VALUE, DEBUG1};
     int32 tryTimes = TRY_TIMES;
     status_t st = CM_SUCCESS;
+    static DDB_RESULT lastDdbResult = SUCCESS_GET_VALUE;
+    int32 logLevel = DEBUG1;
     do {
         st = GetKVConAndLog(&g_dbConn, status_key, value, DDB_MIN_VALUE_LEN, &option);
+        if (option.ddbResult != lastDdbResult) {
+            lastDdbResult = option.ddbResult;
+            logLevel = LOG;
+        }
         if (option.ddbResult == CAN_NOT_FIND_THE_KEY) {
-            write_runlog(ERROR, "get stop az(%s) flag from Ddb failed: %d\n", status_key, option.ddbResult);
+            write_runlog(logLevel, "get stop az(%s) flag from Ddb, message is: %d\n",
+                status_key, (int)option.ddbResult);
             break;
         }
         if (st != CM_SUCCESS) {
             cm_sleep(1);
+            --tryTimes;
         }
-    } while (st != CM_SUCCESS && --tryTimes > 0);
+    } while (st != CM_SUCCESS && tryTimes > 0);
     if (st != CM_SUCCESS) {
-        write_runlog(LOG, "get stop az(%s) flag from Ddb: %d\n", status_key, option.ddbResult);
+        logLevel = (option.ddbResult == CAN_NOT_FIND_THE_KEY) ? DEBUG1 : LOG;
+        write_runlog(logLevel, "get stop az(%s) flag from Ddb: %d\n", status_key, (int)option.ddbResult);
         return false;
     }
 
@@ -169,7 +175,7 @@ bool isAZPrioritySatisfyAZRole(uint32 azPriority, AZRole azRole)
  */
 int GetNodeIndexByAzRole(AZRole azRole)
 {
-    uint32 node_index = 0;
+    uint32 node_index;
     for (node_index = 0; node_index < g_node_num; node_index++) {
         if (isAZPrioritySatisfyAZRole(g_node[node_index].azPriority, azRole)) {
             break;
@@ -196,9 +202,7 @@ void StartAZ(AZRole azRole)
         return;
     }
 
-    int rc = snprintf_s(startAzCmd,
-        MAX_PATH_LEN,
-        MAX_PATH_LEN - 1,
+    int rc = snprintf_s(startAzCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1,
         "nohup cm_ctl start -z %s > /dev/null 2>&1 &",
         g_node[node_index].azName);
     securec_check_intval(rc, (void)rc);
@@ -226,13 +230,9 @@ void StopAZ(const char *ArbiterAZIp, AZRole azRole)
         return;
     }
 
-    int rc = snprintf_s(stopAzCmd,
-        MAX_PATH_LEN,
-        MAX_PATH_LEN - 1,
+    int rc = snprintf_s(stopAzCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1,
         "pssh %s -s -H %s \"nohup cm_ctl stop -z %s > /dev/null 2>&1 &\" ",
-        PSSH_TIMEOUT,
-        ArbiterAZIp,
-        g_node[node_index].azName);
+        PSSH_TIMEOUT, ArbiterAZIp, g_node[node_index].azName);
     securec_check_intval(rc, (void)rc);
 
     rc = system(stopAzCmd);
@@ -261,31 +261,19 @@ bool doPingAzNodes(const char *sshIp, AZRole azRole)
         for (i = 0; i < g_node_num; i++) {
             if (isAZPrioritySatisfyAZRole(g_node[i].azPriority, azRole)) {
                 if (sshIp != NULL) {
-                    rc = snprintf_s(pingCommand,
-                        CM_MAX_COMMAND_LEN,
-                        CM_MAX_COMMAND_LEN - 1,
+                    rc = snprintf_s(pingCommand, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
                         "pssh %s -s -H %s \"ping %s %s\" ",
-                        PSSH_TIMEOUT,
-                        sshIp,
-                        g_node[i].cmAgentIP[0],
-                        PING_TIMEOUT_OPTION);
+                        PSSH_TIMEOUT, sshIp, g_node[i].cmAgentIP[0], PING_TIMEOUT_OPTION);
                 } else {
-                    rc = snprintf_s(pingCommand,
-                        CM_MAX_COMMAND_LEN,
-                        CM_MAX_COMMAND_LEN - 1,
-                        "ping %s %s",
-                        g_node[i].cmAgentIP[0],
-                        PING_TIMEOUT_OPTION);
+                    rc = snprintf_s(pingCommand, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
+                        "ping %s %s", g_node[i].cmAgentIP[0], PING_TIMEOUT_OPTION);
                 }
                 securec_check_intval(rc, (void)rc);
                 rc = system(pingCommand);
                 if (rc != 0) {
                     write_runlog(ERROR,
                         "Execute %s failed: system result is %d, shell result is %d, errno=%d.\n",
-                        pingCommand,
-                        rc,
-                        WEXITSTATUS(rc),
-                        errno);
+                        pingCommand, rc, WEXITSTATUS(rc), errno);
                 } else {
                     return true;
                 }
@@ -307,13 +295,12 @@ bool doPingAzNodes(const char *sshIp, AZRole azRole)
  */
 bool doCheckAzStatus(const char *sshIp, AZRole azRole)
 {
-    uint32 i = 0;
     int rc = 0;
     int count = 0;
     int totalCount = 0;
     char checkStartFile[CM_MAX_COMMAND_LONG_LEN] = {0};
 
-    for (i = 0; i < g_node_num; i++) {
+    for (uint32 i = 0; i < g_node_num; i++) {
         if (isAZPrioritySatisfyAZRole(g_node[i].azPriority, azRole)) {
             if (sshIp == NULL) {
                 rc = snprintf_s(checkStartFile,
@@ -354,9 +341,9 @@ bool doCheckAzStatus(const char *sshIp, AZRole azRole)
             securec_check_intval(rc, (void)rc);
 
             rc = system(checkStartFile);
-            if (rc != -1 && 0 == WEXITSTATUS(rc)) {
+            if (rc != -1 && WEXITSTATUS(rc) == 0) {
                 write_runlog(LOG, "Execute %s may success, start file exist.\n", checkStartFile);
-            } else if (rc != -1 && 0 != WEXITSTATUS(rc)) {
+            } else if (rc != -1 && WEXITSTATUS(rc) != 0) {
                 write_runlog(DEBUG1,
                     "Execute %s may failed, start file don't exist, system result is %d, shell result is %d,"
                     " errno=%d.\n",
@@ -461,27 +448,27 @@ int GetDnCountOfAZ(int *azDnCount, int32 len, bool inCurSyncList, bool isVoteAz)
 int GetAzDeploymentType(bool isVoteAz)
 {
     if (!g_multi_az_cluster) {
-        return UNKNOWN_AZ_DEPLOYMENT;
+        return (int)UNKNOWN_AZ_DEPLOYMENT;
     }
 
     int azDnCount[AZ_MEMBER_MAX_COUNT] = {0, 0, 0};
     int ret = GetDnCountOfAZ(azDnCount, AZ_MEMBER_MAX_COUNT, false, isVoteAz);
-    write_runlog(LOG,
+    write_runlog(DEBUG1,
         "GetDnCountOfAZ: ret=%d, Az1DnCount=%d, Az2DnCount=%d, Az3DnCount=%d.\n",
         ret,
         azDnCount[AZ1_INDEX],
         azDnCount[AZ2_INDEX],
         azDnCount[AZ3_INDEX]);
     if (ret == -1) {
-        return UNKNOWN_AZ_DEPLOYMENT;
+        return (int)UNKNOWN_AZ_DEPLOYMENT;
     }
     /* AZ3 is arbitrable AZ, which does not deploy dn and only deloys Ddb */
     if (azDnCount[AZ1_INDEX] > 0 && azDnCount[AZ2_INDEX] > 0 && azDnCount[AZ3_INDEX] == 0) {
-        return TWO_AZ_DEPLOYMENT;
+        return (int)TWO_AZ_DEPLOYMENT;
     } else if (azDnCount[AZ1_INDEX] > 0 && azDnCount[AZ2_INDEX] > 0 && azDnCount[AZ3_INDEX] > 0) {
-        return THREE_AZ_DEPLOYMENT;
+        return (int)THREE_AZ_DEPLOYMENT;
     }
-    return UNKNOWN_AZ_DEPLOYMENT;
+    return (int)UNKNOWN_AZ_DEPLOYMENT;
 }
 
 /**
@@ -495,38 +482,36 @@ static void *PingIpThrdFuncMain(void *arg)
 {
     char command[MAXPGPATH] = {0};
     char buf[MAXPGPATH];
-    uint32 tryTimes = 2;
     PingCheckThreadParmInfo *info = (PingCheckThreadParmInfo *)arg;
     uint32 threadIndex = info->threadIdx;
-    uint32 node = info->azNode;
+    uint32 nodeIndex = 0;
+    int ret = find_node_index_by_nodeid(info->azNode, &nodeIndex);
+    if (ret != 0) {
+        write_runlog(ERROR, "PingIpThrdFuncMain: get node index failed!\n");
+        return NULL;
+    }
 
     int rc = snprintf_s(command,
         MAXPGPATH,
         MAXPGPATH - 1,
         "ping -c 1 -w 1 %s > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
-        g_node[node - 1].cmAgentIP[0]);
+        g_node[nodeIndex].cmAgentIP[0]);
     securec_check_intval(rc, (void)rc);
     write_runlog(DEBUG1, "ping command is %s.\n", command);
 
-    while (tryTimes > 0) {
-        FILE *fp = popen(command, "r");
-        if (fp == NULL) {
-            write_runlog(ERROR, "popen failed\n.");
-            return NULL;
-        }
-        if (fgets(buf, sizeof(buf), fp) != NULL) {
-            if (strstr(buf, "success") != NULL) {
-                info->pingResultArrayRef[threadIndex] = 1;
-                (void)pclose(fp);
-                break;
-            } else {
-                info->pingResultArrayRef[threadIndex] = 0;
-            }
-        }
-        cm_sleep(1);
-        tryTimes--;
-        (void)pclose(fp);
+    FILE *fp = popen(command, "r");
+    if (fp == NULL) {
+        write_runlog(ERROR, "popen failed\n.");
+        return NULL;
     }
+    if (fgets(buf, sizeof(buf), fp) != NULL) {
+        if (strstr(buf, "success") != NULL) {
+            info->pingResultArrayRef[threadIndex] = 1;
+        } else {
+            info->pingResultArrayRef[threadIndex] = 0;
+        }
+    }
+    (void)pclose(fp);
     return NULL;
 }
 
@@ -588,10 +573,10 @@ bool MulAzThread(const uint32 pthreadNum, const uint32* azNodes)
     }
 
     for (threadIndex = 0; threadIndex < pthreadNum; threadIndex++) {
-        pthread_join(thr_id[threadIndex], NULL);
+        (void)pthread_join(thr_id[threadIndex], NULL);
     }
 
-    if (CheckPingReulst(pingCheckResult, pthreadNum) == true) {
+    if (CheckPingReulst(pingCheckResult, pthreadNum)) {
         return true;
     } else {
         return false;
@@ -634,11 +619,9 @@ static void GetAzNodes(const char *azName, uint32 *tempNodesArray, uint32 arrLen
     }
 
     if (arrLen > MAX_PING_NODE_NUM) {
-        srand(time(0));
-        int32 tempIndex = 0;
-        for (int32 nodeIndex = 0; nodeIndex < MAX_PING_NODE_NUM; nodeIndex++) {
-            tempIndex = rand() % MAX_PING_NODE_NUM;
-            tempNodesArray[nodeIndex] = azNodesArrray[tempIndex];
+        srand((unsigned int)time(0));
+        for (uint32 nodeIndex = 0; nodeIndex < MAX_PING_NODE_NUM; nodeIndex++) {
+            tempNodesArray[nodeIndex] = azNodesArrray[rand() % MAX_PING_NODE_NUM];
         }
     } else {
         ret = memcpy_s(tempNodesArray, sizeof(azNodesArrray), azNodesArrray, sizeof(azNodesArrray));
@@ -696,7 +679,11 @@ static void GetCmsNode(const char *azName, uint32 *cmsNodeArray, uint32 arrLen)
 
     uint32 cmsNodeIdx = 0;
     for (ii = 0; ii < currentAzNodeNum; ii++) {
-        nodeIndex = g_azArray[kk].nodes[ii] - 1;
+        int ret = find_node_index_by_nodeid(g_azArray[kk].nodes[ii], &nodeIndex);
+        if (ret != 0) {
+            write_runlog(ERROR, "GetCmsNode: get node index failed!\n");
+            return;
+        }
         for (jj = 0; jj < CM_IP_NUM; jj++) {
             if (strcmp(g_node[nodeIndex].cmAgentIP[0], g_node[nodeIndex].cmServer[jj]) != 0 ||
                 strcmp(g_node[nodeIndex].azName, azName) != 0) {
@@ -726,7 +713,7 @@ static uint32 GetCmsPrimaryAZ(char *azName)
     uint32 nodeIndex;
 
     rc = snprintf_s(primary_key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/primary_node_id", pw->pw_name);
-    securec_check_intval(rc, );
+    securec_check_intval(rc, (void)rc);
 
     DdbConn dbConn = g_dbConn;
     DDB_RESULT dbResult = SUCCESS_GET_VALUE;
@@ -755,7 +742,7 @@ static uint32 GetCmsPrimaryAZ(char *azName)
             if (cmsNodeArray[nodeIndex] == cmsPrimaryNodeId) {
                 rc = memcpy_s(azName, CM_AZ_NAME, g_azArray[ii].azName, CM_AZ_NAME);
                 write_runlog(LOG, "The cms(%u) primay az is %s.\n", cmsNodeArray[nodeIndex], azName);
-                securec_check_errno(rc, );
+                securec_check_errno(rc, (void)rc);
                 return 1;
             }
             nodeIndex++;
@@ -778,7 +765,7 @@ bool DoPingAz(const char *azName)
     uint32 currenAzNodeNum;
     int rc;
     currenAzNodeNum = GetCurrentAZnodeNum(azName);
-    if (currenAzNodeNum <= 0) {
+    if (currenAzNodeNum == 0) {
         return true;
     }
     /*
@@ -806,7 +793,7 @@ bool DoPingAz(const char *azName)
 
     uint32 azNodes[tempAzNodeNum];
     rc = memset_s(azNodes, sizeof(azNodes), 0, sizeof(azNodes));
-    securec_check_errno(rc, );
+    securec_check_errno(rc, (void)rc);
     GetAzNodes(azName, azNodes, currenAzNodeNum);
     return MulAzThread(tempAzNodeNum, azNodes);
 }
@@ -823,10 +810,10 @@ static void DdbKeyOfAzConnectStatus(const char *azName, char *azConnectStatusKey
     char tempAzName[CM_AZ_NAME] = {0};
     if (peerAzName == NULL) {
         rcs = memcpy_s(tempAzName, CM_AZ_NAME, g_currentNode->azName, CM_AZ_NAME);
-        securec_check_errno(rcs, );
+        securec_check_errno(rcs, (void)rcs);
     } else {
         rcs = memcpy_s(tempAzName, CM_AZ_NAME, peerAzName, CM_AZ_NAME);
-        securec_check_errno(rcs, );
+        securec_check_errno(rcs, (void)rcs);
     }
 
     if (strcmp(tempAzName, azName) < 0) {
@@ -854,8 +841,9 @@ static bool SetDdbKeyValueOfAzConnectStatus(const char *key, int value)
         st = SetKVWithConn(&g_dbConn, azConnectStatusKey, MAX_PATH_LEN, azConnectStatusValue, DDB_MIN_VALUE_LEN);
         if (st != CM_SUCCESS) {
             cm_sleep(1);
+            --tryTimes;
         }
-    } while (st != CM_SUCCESS && (--tryTimes) > 0);
+    } while (st != CM_SUCCESS && tryTimes > 0);
     if (st != CM_SUCCESS) {
         write_runlog(ERROR,
             "ddb set(SetOnlineStatusToDdb) failed. key=%s, value=%s.\n",
@@ -876,7 +864,6 @@ static bool GetDdbKeyValueOfAzConnectStatus(const char *key, int32 value, bool *
     DDB_RESULT dbResult = SUCCESS_GET_VALUE;
     char azConnectStatusKey[MAX_PATH_LEN] = {0};
     char azConnectStatusValue[DDB_MIN_VALUE_LEN] = {0};
-    int32 tempValue = 0;
     errno_t rc = snprintf_s(azConnectStatusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/%s", pw->pw_name, key);
     securec_check_intval(rc, (void)rc);
     status_t st = CM_SUCCESS;
@@ -888,8 +875,9 @@ static bool GetDdbKeyValueOfAzConnectStatus(const char *key, int32 value, bool *
         }
         if (st != CM_SUCCESS) {
             cm_sleep(1);
+            --tryTimes;
         }
-    } while (st != CM_SUCCESS && (--tryTimes) > 0);
+    } while (st != CM_SUCCESS && tryTimes > 0);
     if (st != CM_SUCCESS) {
         write_runlog(ERROR,
             "ddb get(SetOnlineStatusToDdb) failed. key=%s, value=%s, %d.\n",
@@ -905,7 +893,7 @@ static bool GetDdbKeyValueOfAzConnectStatus(const char *key, int32 value, bool *
             azConnectStatusValue);
         *operResult = true;
     }
-    tempValue = (int32)strtol(azConnectStatusValue, NULL, 10);
+    int32 tempValue = (int32)strtol(azConnectStatusValue, NULL, 10);
     if (tempValue == value) {
         write_runlog(LOG, "The azConnectStatusValue is %d\n", tempValue);
         return true;
@@ -922,7 +910,7 @@ static bool GetDdbKeyValueOfAzConnectStatus(const char *key, int32 value, bool *
  * @value : the ddb value of az connection status
  */
 static bool SetOrGetDdbKeyValueOfAzConnectStatus(
-    DdbOperateType ddbOperateType, const char *key, int32 value, bool *operResult)
+    DdbOperateType ddbOperateType, const char *key, int value, bool *operResult)
 {
     if (ddbOperateType == SET_DDB_AZ) {
         return SetDdbKeyValueOfAzConnectStatus(key, value);
@@ -939,7 +927,7 @@ static bool SetOrGetDdbKeyValueOfAzConnectStatus(
  * @Key: the ddb key of az connection status
  * @value : the ddb value of az connection status
  */
-static bool SetIsolatedAzToDdb(const char *arbAzName, const char *peerAzName)
+static bool SetIsolatedAzToDdb(const char *disconAzName, const char *conAzName)
 {
     /*
      * If the AZ is isolated, we cannot write key-value to ddb.
@@ -947,29 +935,48 @@ static bool SetIsolatedAzToDdb(const char *arbAzName, const char *peerAzName)
      */
     int rc;
     char keyOfMulAzConnectStatus[MAX_PATH_LEN] = {0};
-    bool isSetOk = false;
+    bool isSetOk;
     bool isGetOk1 = false;
     bool isGetOk2 = false;
     int value;
+    static uint32 consistentTimes = 0;
+    static bool lastLeaf1AzSetted = false;
+    static bool lastLeaf2AzSetted = false;
+    const uint32 maxConsistentTimes = 5;
 
     cm_sleep(AZ_START_STOP_INTERVEL);
-    DdbKeyOfAzConnectStatus(arbAzName, keyOfMulAzConnectStatus, MAX_PATH_LEN, NULL);
+    DdbKeyOfAzConnectStatus(disconAzName, keyOfMulAzConnectStatus, MAX_PATH_LEN, NULL);
     bool isLeaf1AzSetted = SetOrGetDdbKeyValueOfAzConnectStatus(GET_DDB_AZ, keyOfMulAzConnectStatus, 1, &isGetOk1);
     rc = memset_s(keyOfMulAzConnectStatus, MAX_PATH_LEN, 0, MAX_PATH_LEN);
-    securec_check_errno(rc, );
-    DdbKeyOfAzConnectStatus(arbAzName, keyOfMulAzConnectStatus, MAX_PATH_LEN, peerAzName);
+    securec_check_errno(rc, (void)rc);
+    DdbKeyOfAzConnectStatus(disconAzName, keyOfMulAzConnectStatus, MAX_PATH_LEN, conAzName);
     bool isLeaf2AzSetted = SetOrGetDdbKeyValueOfAzConnectStatus(GET_DDB_AZ, keyOfMulAzConnectStatus, 1, &isGetOk2);
-    if (isLeaf1AzSetted == true && isLeaf2AzSetted == true) {
+    if (isLeaf1AzSetted == lastLeaf1AzSetted && isLeaf2AzSetted == lastLeaf2AzSetted) {
+        consistentTimes++;
+    } else {
+        write_runlog(LOG, "[%s] Leaf1AzSetted[%d:%d] Leaf2AzSetted[%d:%d], ConsistentTimes is %u.\n", __FUNCTION__,
+            isLeaf1AzSetted, lastLeaf1AzSetted, isLeaf2AzSetted, lastLeaf2AzSetted, consistentTimes);
+        lastLeaf1AzSetted = isLeaf1AzSetted;
+        lastLeaf2AzSetted = isLeaf2AzSetted;
+        consistentTimes = 0;
+    }
+
+    if (consistentTimes < maxConsistentTimes) {
+        return false;
+    }
+
+    write_runlog(LOG, "[%s] Leaf1AzSetted[%d] Leaf2AzSetted[%d].\n", __FUNCTION__, isLeaf1AzSetted, isLeaf2AzSetted);
+    if (isLeaf1AzSetted && isLeaf2AzSetted) {
         value = 1;
-    } else if (isGetOk1 == true && isGetOk2 == true) {
+    } else if (isGetOk1 && isGetOk2) {
         value = 0;
     } else {
         write_runlog(ERROR, "Can't get edge status value from ddb.\n");
         return false;
     }
 
-    isSetOk = SetOrGetDdbKeyValueOfAzConnectStatus(SET_DDB_AZ, arbAzName, value, NULL);
-    if (isSetOk == false) {
+    isSetOk = SetOrGetDdbKeyValueOfAzConnectStatus(SET_DDB_AZ, disconAzName, value, NULL);
+    if (!isSetOk) {
         write_runlog(ERROR, "Set the isolated AZ status failed, value %d.\n", value);
         return false;
     }
@@ -997,9 +1004,9 @@ int CreateStopNodeInstancesFlagFile(int type)
         rc = snprintf_s(stopFlagFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, "az_node_instances_stop");
     }
 
-    securec_check_intval(rc, );
+    securec_check_intval(rc, (void)rc);
     ret = snprintf_s(cmd, MAX_PATH_LEN, MAX_PATH_LEN - 1, "touch %s;chmod 600 %s", stopFlagFile, stopFlagFile);
-    securec_check_intval(ret, );
+    securec_check_intval(ret, (void)ret);
 
     ret = system(cmd);
     if (ret != 0) {
@@ -1024,7 +1031,7 @@ bool CheckStopFileExist(int type)
     } else if (type == SINGLEAZ_TYPE) {
         rc = snprintf_s(stopFlagFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, "az_node_instances_stop");
     }
-    securec_check_intval(rc, );
+    securec_check_intval(rc, (void)rc);
 
     struct stat stat_buf = {0};
     if (stat(stopFlagFile, &stat_buf) == 0) {
@@ -1036,12 +1043,10 @@ bool CheckStopFileExist(int type)
 
 static void CheckAndDoAzStop(const char *azName)
 {
-    bool isAzStopped = false;
     bool isGetOk = false;
-    bool isSetOk = false;
 
     cm_sleep(AZ_STOP_DELAY);
-    isAzStopped = SetOrGetDdbKeyValueOfAzConnectStatus(GET_DDB_AZ, azName, MULTIAZ_STOPPING_STATUS, &isGetOk);
+    bool isAzStopped = SetOrGetDdbKeyValueOfAzConnectStatus(GET_DDB_AZ, azName, MULTIAZ_STOPPING_STATUS, &isGetOk);
     if (!isGetOk) {
         return;
     }
@@ -1050,7 +1055,8 @@ static void CheckAndDoAzStop(const char *azName)
         return;
     }
     StartOrStopAZ(STOP_AZ, g_currentNode->azName);
-    isSetOk = SetOrGetDdbKeyValueOfAzConnectStatus(SET_DDB_AZ, g_currentNode->azName, MULTIAZ_STOPPING_STATUS, NULL);
+    bool isSetOk =
+        SetOrGetDdbKeyValueOfAzConnectStatus(SET_DDB_AZ, g_currentNode->azName, MULTIAZ_STOPPING_STATUS, NULL);
     if (!isSetOk) {
         write_runlog(ERROR, "set ddb value failed.\n");
     }
@@ -1064,11 +1070,10 @@ static void CheckAndDoAzStop(const char *azName)
 
 static void CheckNumAndDoAzStop(const char *leaf1AzName)
 {
-    bool isAzStopped = false;
     bool isGetOk = false;
     bool isSetOk = false;
     cm_sleep(AZ_STOP_DELAY);
-    isAzStopped = SetOrGetDdbKeyValueOfAzConnectStatus(GET_DDB_AZ, leaf1AzName, MULTIAZ_STOPPING_STATUS, &isGetOk);
+    bool isAzStopped = SetOrGetDdbKeyValueOfAzConnectStatus(GET_DDB_AZ, leaf1AzName, MULTIAZ_STOPPING_STATUS, &isGetOk);
     if (!isGetOk) {
         return;
     }
@@ -1107,11 +1112,6 @@ static void DoMultiAzStopSingleEdge(
     uint32 ret;
     char cmsPrimayAz[CM_AZ_NAME] = {0};
     ret = GetCmsPrimaryAZ(cmsPrimayAz);
-    bool cond1 = false;
-    bool cond2 = false;
-    bool cond3 = false;
-    bool cond4 = false;
-
     if (ret == 0) {
         write_runlog(ERROR, "Cannot get cms-primary Az.\n");
         return;
@@ -1124,10 +1124,10 @@ static void DoMultiAzStopSingleEdge(
      * as there is no enough information to indicate current_az is "fully-isolated" fromother nodes.
      */
     cm_sleep(AZ_START_STOP_INTERVEL);
-    cond1 = isLeaf1AZConnectOK == false && isLeaf2AZConnectOK == true && (strcmp(cmsPrimayAz, leaf1AzName) == 0);
-    cond2 = isLeaf1AZConnectOK == true && isLeaf2AZConnectOK == false && (strcmp(cmsPrimayAz, leaf2AzName) == 0);
-    cond3 = isLeaf1AZConnectOK == false && isLeaf2AZConnectOK == true && (strcmp(cmsPrimayAz, leaf2AzName) == 0);
-    cond4 = isLeaf1AZConnectOK == true && isLeaf2AZConnectOK == false && (strcmp(cmsPrimayAz, leaf1AzName) == 0);
+    bool cond1 = !isLeaf1AZConnectOK && isLeaf2AZConnectOK && (strcmp(cmsPrimayAz, leaf1AzName) == 0);
+    bool cond2 = isLeaf1AZConnectOK && !isLeaf2AZConnectOK && (strcmp(cmsPrimayAz, leaf2AzName) == 0);
+    bool cond3 = !isLeaf1AZConnectOK && isLeaf2AZConnectOK && (strcmp(cmsPrimayAz, leaf2AzName) == 0);
+    bool cond4 = isLeaf1AZConnectOK && !isLeaf2AZConnectOK && (strcmp(cmsPrimayAz, leaf1AzName) == 0);
 
     if (cond1) {
         CheckAndDoAzStop(leaf1AzName);
@@ -1169,19 +1169,19 @@ static void DoMultiAzStopDecision(bool isLeaf1AZConnectOK, const char *leaf1AzNa
         return;
     }
 
-    if (isLeaf1AZConnectOK == false && isLeaf2AZConnectOK == false && isCmsConnectOK == false) {
+    if (!isLeaf1AZConnectOK && !isLeaf2AZConnectOK && !isCmsConnectOK) {
         if (CheckStopFileExist(SINGLENODE_TYPE)) {
             write_runlog(LOG, "node stop file exist, return.\n");
             return;
         }
-        StartOrStopNodeInstanceByCommand(STOP_AZ, g_currentNode->node - 1);
+        StartOrStopNodeInstanceByCommand(STOP_AZ, g_currentNode->node);
         if (CreateStopNodeInstancesFlagFile(SINGLENODE_TYPE) == -1) {
             write_runlog(ERROR, "Create stop cms node FlagFile failed.\n");
         }
         write_runlog(
             LOG, "The %s CMS is disconnected, and the ping result is %d.\n", g_currentNode->azName, isCmsConnectOK);
         return;
-    } else if (isLeaf1AZConnectOK == false && isLeaf2AZConnectOK == false) {
+    } else if (!isLeaf1AZConnectOK && !isLeaf2AZConnectOK) {
         StartOrStopAZ(STOP_AZ, g_currentNode->azName);
         if (CreateStopNodeInstancesFlagFile(SINGLEAZ_TYPE) == -1) {
             write_runlog(ERROR, "Create stop cms node FlagFile failed.\n");
@@ -1207,16 +1207,15 @@ static void ResetStoppedAz()
         return;
     }
     rc = snprintf_s(stopFlagFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, "az_node_instances_stop");
-    securec_check_intval(rc, );
+    securec_check_intval(rc, (void)rc);
     if (stat(stopFlagFile, &stat_buf) == 0) {
         if (unlink(stopFlagFile) != 0) {
             write_runlog(ERROR, "delete cms-node stop instances flag file: %s failed.\n", stopFlagFile);
         }
     }
 
-    bool isSetOk = false;
-    isSetOk = SetOrGetDdbKeyValueOfAzConnectStatus(SET_DDB_AZ, g_currentNode->azName, AZ_STATUS_RUNNING, NULL);
-    if (isSetOk == false) {
+    bool isSetOk = SetOrGetDdbKeyValueOfAzConnectStatus(SET_DDB_AZ, g_currentNode->azName, AZ_STATUS_RUNNING, NULL);
+    if (!isSetOk) {
         write_runlog(ERROR, "Set the started AZ(%s) failed.\n", g_currentNode->azName);
     } else {
         write_runlog(DEBUG1, "Set the started AZ(%s) successfully.\n", g_currentNode->azName);
@@ -1230,7 +1229,7 @@ static void CheckAzStoppedStatus(const char *azName, bool *isAzStopped)
     bool isGetOk = false;
 
     *isAzStopped = SetOrGetDdbKeyValueOfAzConnectStatus(GET_DDB_AZ, azName, AZ_STAUTS_STOPPED, &isGetOk);
-    if (isGetOk && *isAzStopped == false) {
+    if (isGetOk && !*isAzStopped) {
         write_runlog(LOG, "AZ(%s) no stopped flag in ddb.\n", azName);
     } else {
         write_runlog(LOG, "Get AZ(%s) stopped flag in ddb.\n", azName);
@@ -1245,13 +1244,11 @@ static void DoMultiAzStartDecision(
     bool isLeaf1AZConnectOK, const char *leaf1AzName, bool isLeaf2AZConnectOK, const char *leaf2AzName)
 {
     bool doStart = false;
-    bool isExist = false;
     bool isCurAzStopped = false;
     bool isLeft1AzStopped = false;
     bool isLeft2AzStopped = false;
-    uint32 ret = 0;
 
-    isExist = CheckStopFileExist(SINGLEAZ_TYPE);
+    bool isExist = CheckStopFileExist(SINGLEAZ_TYPE);
     if (!isExist) {
         write_runlog(LOG, "No stop file exist, There is no any AZ to start.\n");
         return;
@@ -1271,18 +1268,18 @@ static void DoMultiAzStartDecision(
      * to ensure that only the isolated Az is stopped.
      */
     char cmsPrimayAz[CM_AZ_NAME] = {0};
-    ret = GetCmsPrimaryAZ(cmsPrimayAz);
+    uint32 ret = GetCmsPrimaryAZ(cmsPrimayAz);
     if (ret == 0) {
         write_runlog(ERROR, "Cannot get cms-primary Az.\n");
         return;
     }
-    if (isLeaf1AZConnectOK == true && isLeaf2AZConnectOK == true) {
+    if (isLeaf1AZConnectOK && isLeaf2AZConnectOK) {
         StartOrStopAZ(START_AZ, g_currentNode->azName);
         ResetStoppedAz();
         CleanMultiConnState(g_currentNode->azName, NULL);
         doStart = true;
-    } else if ((isLeaf1AZConnectOK == false && isLeaf2AZConnectOK == true) ||
-               (isLeaf1AZConnectOK == true && isLeaf2AZConnectOK == false)) {
+    } else if ((!isLeaf1AZConnectOK && isLeaf2AZConnectOK) ||
+        (isLeaf1AZConnectOK && !isLeaf2AZConnectOK)) {
         if ((strcmp(cmsPrimayAz, g_currentNode->azName) == 0) || isLeft1AzStopped || isLeft2AzStopped) {
             StartOrStopAZ(START_AZ, g_currentNode->azName);
             ResetStoppedAz();
@@ -1313,10 +1310,8 @@ static void DoMultiAzStartDecision(
 
 bool AzPingCheck(bool *preConnStatusAZ, const char *azName1)
 {
-    bool isAZConnectOK = true;
-
-    isAZConnectOK = (cm_server_start_mode != MAJORITY_START) ? true : DoPingAz(azName1);
-    if (isAZConnectOK == false) {
+    bool isAZConnectOK = (cm_server_start_mode != MAJORITY_START) || DoPingAz(azName1);
+    if (!isAZConnectOK) {
         write_runlog(LOG, "The %s is disconnected, and the ping result is %d.\n", azName1, isAZConnectOK);
     } else if (cm_server_start_mode != MAJORITY_START) {
         write_runlog(
@@ -1335,12 +1330,11 @@ bool AzPingCheck(bool *preConnStatusAZ, const char *azName1)
 
 static int SetMultiAzConnectStatus(const char *leaf1Az, int value)
 {
-    bool isSetKeyValueOK = false;
     char keyOfMulAzConnectStatus[MAX_PATH_LEN] = {0};
 
     DdbKeyOfAzConnectStatus(leaf1Az, keyOfMulAzConnectStatus, MAX_PATH_LEN, NULL);
-    isSetKeyValueOK = SetOrGetDdbKeyValueOfAzConnectStatus(SET_DDB_AZ, keyOfMulAzConnectStatus, value, NULL);
-    if (isSetKeyValueOK == false) {
+    bool isSetKeyValueOK = SetOrGetDdbKeyValueOfAzConnectStatus(SET_DDB_AZ, keyOfMulAzConnectStatus, value, NULL);
+    if (!isSetKeyValueOK) {
         write_runlog(ERROR, "Set the ddb key %s failed.\n", keyOfMulAzConnectStatus);
         return -1;
     }
@@ -1364,7 +1358,7 @@ static void CleanMultiConnState(const char *azName1, const char *azName2)
     errno_t rc = 0;
     if (azName2 == NULL) {
         rc = memcpy_s(keyOfMulAzConnectStatus, MAX_PATH_LEN, azName1, CM_AZ_NAME);
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
     } else {
         DdbKeyOfAzConnectStatus(azName1, keyOfMulAzConnectStatus, MAX_PATH_LEN, azName2);
     }
@@ -1373,15 +1367,16 @@ static void CleanMultiConnState(const char *azName1, const char *azName2)
         dbCon = GetNextDdbConn();
     }
     rc = snprintf_s(azConnectStatusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/%s", pw->pw_name, keyOfMulAzConnectStatus);
-    securec_check_intval(rc, );
+    securec_check_intval(rc, (void)rc);
     status_t st = CM_SUCCESS;
     int32 tryTimes = TRY_TIMES;
     do {
         st = DelKeyWithConn(dbCon, azConnectStatusKey, MAX_PATH_LEN);
         if (st != CM_SUCCESS) {
+            --tryTimes;
             cm_sleep(1);
         }
-    } while (st != CM_SUCCESS && (--tryTimes) > 0);
+    } while (st != CM_SUCCESS && tryTimes > 0);
     if (st != CM_SUCCESS) {
         write_runlog(ERROR, "ddb delete (SetOnlineStatusToDdb) failed. key=%s.\n", azConnectStatusKey);
     } else {
@@ -1393,7 +1388,10 @@ static void CleanMultiConnState(const char *azName1, const char *azName2)
 
 status_t GetDdbSessionInAz(DdbConn *dbConn, int32 timeOut, const char *azNames)
 {
-    DdbInitConfig config = {g_dbType};
+    DdbInitConfig config;
+    errno_t rc = memset_s(&config, sizeof(DdbInitConfig), 0, sizeof(DdbInitConfig));
+    securec_check_errno(rc, (void)rc);
+    config.type = g_dbType;
     status_t st = InitDdbCfgApi(config.type, &(config.drvApiInfo), timeOut, azNames);
     CM_RETURN_IFERR(st);
 
@@ -1444,18 +1442,18 @@ static bool IsNeedAzConnectStateCheck()
     return true;
 }
 
-static void InitAZName(char *leaf1Az,uint32 len1, char *leaf2Az, uint32 len2)
+static void InitAZName(char *leaf1Az, uint32 len1, char *leaf2Az, uint32 len2)
 {
     int rc;
-    for (uint32 ii = 0; ii < g_azNum ; ii++) {
+    for (uint32 ii = 0; ii < g_azNum; ii++) {
         if (strcmp(g_azArray[ii].azName, g_currentNode->azName) != 0 && leaf1Az[0] == '\0') {
             rc = memcpy_s(leaf1Az, len1, g_azArray[ii].azName, len1);
             write_runlog(DEBUG1, "The leaf1 AZ name is %s.\n", leaf1Az);
-            securec_check_errno(rc, );
+            securec_check_errno(rc, (void)rc);
         } else if (strcmp(g_azArray[ii].azName, g_currentNode->azName) != 0 && leaf2Az[0] == '\0') {
             rc = memcpy_s(leaf2Az, len2, g_azArray[ii].azName, len2);
             write_runlog(DEBUG1, "The leaf2 AZ name is %s.\n", leaf2Az);
-            securec_check_errno(rc, );
+            securec_check_errno(rc, (void)rc);
         }
     }
 }
@@ -1494,9 +1492,9 @@ void *MultiAzConnectStateCheckMain(void *arg)
     long totalTime = 21;
     long intervalTime = 0;
     int rc;
-    bool isSetKeyValueOK = false;
+    int isSetKeyValueOK;
     uint32 failedWriteTimes = 0;
-    uint32 maxRetryTime = 3;
+    uint32 maxRetryTime = 15;
     thread_name = "MultiAzCheck";
     char Leaf1Az[CM_AZ_NAME] = {0};
     char Leaf2Az[CM_AZ_NAME] = {0};
@@ -1509,83 +1507,57 @@ void *MultiAzConnectStateCheckMain(void *arg)
             cm_sleep(AZ_START_STOP_INTERVEL);
             continue;
         }
+        checkConnTimes++;
         g_loopState.execStatus[cnt] = 0;
         rc = memset_s(keyOfMulAzConnectStatus, MAX_PATH_LEN, 0, MAX_PATH_LEN);
-        securec_check_errno(rc, );
-        gettimeofday(&beginPing, NULL);
+        securec_check_errno(rc, (void)rc);
+        (void)gettimeofday(&beginPing, NULL);
         /* ping Leaf1 Az */
         checkLeft1AZConnectOK = AzPingCheck(&isLeaf1AZConnectOK, Leaf1Az);
         checkLeft2AZConnectOK = AzPingCheck(&isLeaf2AZConnectOK, Leaf2Az);
         checkCurrAZConnectOK = AzPingCheck(&currConnStatus, g_currentNode->azName);
 
         if ((!isLeaf1AZConnectOK) || (!isLeaf2AZConnectOK) || (!currConnStatus)) {
-            write_runlog(LOG,
-                "The AZ Conn Status %s:%d, %s:%d, %s:%d Changed this time  %d, try next time.\n",
-                Leaf1Az,
-                isLeaf1AZConnectOK,
-                Leaf2Az,
-                isLeaf2AZConnectOK,
-                g_currentNode->azName,
-                currConnStatus,
-                checkConnTimes);
+            write_runlog(LOG, "The AZ Conn Status %s:%d, %s:%d, %s:%d Changed this time %u, try next time.\n", Leaf1Az,
+                isLeaf1AZConnectOK, Leaf2Az, isLeaf2AZConnectOK, g_currentNode->azName, currConnStatus, checkConnTimes);
         }
 
+        bool needContinue = false;
         if ((!checkLeft1AZConnectOK) || (!checkLeft2AZConnectOK) || (!checkCurrAZConnectOK)) {
             checkConnTimes = 0;
             cm_sleep(AZ_START_STOP_INTERVEL);
             g_loopState.execStatus[cnt] = 1;
-            continue;
+            needContinue = true;
         } else {
-            if (((++checkConnTimes) % checkConnMax) != 0) {
+            if (checkConnTimes < checkConnMax) {
                 cm_sleep(AZ_START_STOP_INTERVEL);
                 g_loopState.execStatus[cnt] = 1;
-                continue;
+                needContinue = true;
             } else {
                 checkConnTimes = 0;
             }
         }
+
         if (isLeaf1AZConnectOK != lastLeft1Conn || isLeaf2AZConnectOK != lastLeft2Conn ||
             currConnStatus != lastCurAzConn || g_dbConn.modId == MOD_ALL) {
             write_runlog(LOG,
                 "left1(%s %d: %d), left2(%s %d: %d), cur(%s %d: %d), will open "
                 "new ddb Connect.\n",
-                Leaf1Az,
-                lastLeft1Conn,
-                isLeaf1AZConnectOK,
-                Leaf2Az,
-                lastLeft2Conn,
-                isLeaf2AZConnectOK,
-                g_currentNode->azName,
-                lastCurAzConn,
-                currConnStatus);
+                Leaf1Az, lastLeft1Conn, isLeaf1AZConnectOK, Leaf2Az, lastLeft2Conn, isLeaf2AZConnectOK,
+                g_currentNode->azName, lastCurAzConn, currConnStatus);
             lastLeft1Conn = isLeaf1AZConnectOK;
             lastLeft2Conn = isLeaf2AZConnectOK;
             lastCurAzConn = currConnStatus;
             CreateDdbConnSession(lastLeft1Conn, lastLeft2Conn, lastCurAzConn);
         }
 
-        if (isLeaf1AZConnectOK == false || isLeaf2AZConnectOK == false) {
-            write_runlog(LOG, "failedWriteTimes = %d, local_role = %d \n", failedWriteTimes, g_HA_status->local_role);
-            if (failedWriteTimes >= maxRetryTime && (g_HA_status->local_role != CM_SERVER_PRIMARY)) {
-                if (!CheckStopFileExist(SINGLEAZ_TYPE) && !CheckStopFileExist(SINGLENODE_TYPE)) {
-                    write_runlog(ERROR, "ddb write failed reach max times, restart current az.\n");
-                    StopCurrentAz();
-                }
-                cm_sleep(AZ_START_STOP_INTERVEL);
-                g_loopState.execStatus[cnt] = 1;
-                continue;
-            }
-        } else {
-            failedWriteTimes = 0;
-        }
-
         /* set multi az connect status */
-        if (isLeaf1AZConnectOK == false && isLeaf2AZConnectOK == false) {
+        if (!isLeaf1AZConnectOK && !isLeaf2AZConnectOK) {
             /*
              * If both the isLeaf1AZConnectOK and isLeaf1AZConnectOK are false, the current az is network isolatedd.
              * So, we cannot set this az connection status to ddb.
              */
-        } else if (isLeaf1AZConnectOK == false && isLeaf2AZConnectOK == true) {
+        } else if (!isLeaf1AZConnectOK && isLeaf2AZConnectOK) {
             isSetKeyValueOK = SetMultiAzConnectStatus(Leaf1Az, MULTIAZ_STOPPING_STATUS);
             if (isSetKeyValueOK == 0) {
                 failedWriteTimes = 0;
@@ -1595,7 +1567,7 @@ void *MultiAzConnectStateCheckMain(void *arg)
                 g_loopState.execStatus[cnt] = 1;
                 continue;
             }
-        } else if (isLeaf1AZConnectOK == true && isLeaf2AZConnectOK == false) {
+        } else if (isLeaf1AZConnectOK && !isLeaf2AZConnectOK) {
             isSetKeyValueOK = SetMultiAzConnectStatus(Leaf2Az, MULTIAZ_STOPPING_STATUS);
             if (isSetKeyValueOK == 0) {
                 failedWriteTimes = 0;
@@ -1605,7 +1577,7 @@ void *MultiAzConnectStateCheckMain(void *arg)
                 g_loopState.execStatus[cnt] = 1;
                 continue;
             }
-        } else if (isLeaf1AZConnectOK == true && isLeaf2AZConnectOK == true) {
+        } else if (isLeaf1AZConnectOK && isLeaf2AZConnectOK) {
             failedWriteTimes = 0;
             isSetKeyValueOK = SetMultiAzConnectStatus(Leaf1Az, MULTIAZ_RUNNING_STATUS);
             if (isSetKeyValueOK != 0) {
@@ -1621,27 +1593,46 @@ void *MultiAzConnectStateCheckMain(void *arg)
             }
         }
 
-        if (isLeaf1AZConnectOK && isLeaf2AZConnectOK && currConnStatus) {
-            if (!CheckStopFileExist(SINGLEAZ_TYPE) && !CheckStopFileExist(SINGLENODE_TYPE)) {
-                cm_sleep(AZ_START_STOP_INTERVEL);
+        /* set isolated az */
+        bool isSetIsolatedAzOk = true;
+        if (!isLeaf1AZConnectOK && isLeaf2AZConnectOK) {
+            isSetIsolatedAzOk = SetIsolatedAzToDdb(Leaf1Az, Leaf2Az);
+            if (!isSetIsolatedAzOk) {
+                write_runlog(LOG, "Try to merge the IsolatedAz %s failed.\n", Leaf1Az);
+                g_loopState.execStatus[cnt] = 1;
+                continue;
+            }
+        } else if (isLeaf1AZConnectOK && !isLeaf2AZConnectOK) {
+            isSetIsolatedAzOk = SetIsolatedAzToDdb(Leaf2Az, Leaf1Az);
+            if (!isSetIsolatedAzOk) {
+                write_runlog(LOG, "Try to merge the IsolatedAz %s failed.\n", Leaf2Az);
                 g_loopState.execStatus[cnt] = 1;
                 continue;
             }
         }
 
-        /* set isolated az */
-        bool isSetIsolatedAzOk = true;
-        if (isLeaf1AZConnectOK == false && isLeaf2AZConnectOK == true) {
-            isSetIsolatedAzOk = SetIsolatedAzToDdb(Leaf1Az, Leaf2Az);
-            if (isSetIsolatedAzOk == false) {
-                write_runlog(ERROR, "Try to merge the IsolatedAz %s failed.\n", Leaf1Az);
+        if (needContinue) {
+            continue;
+        }
+
+        if (!isLeaf1AZConnectOK || !isLeaf2AZConnectOK) {
+            write_runlog(LOG, "failedWriteTimes = %u, local_role = %d \n", failedWriteTimes, g_HA_status->local_role);
+            if (failedWriteTimes >= maxRetryTime && (g_HA_status->local_role != CM_SERVER_PRIMARY)) {
+                if (!CheckStopFileExist(SINGLEAZ_TYPE) && !CheckStopFileExist(SINGLENODE_TYPE)) {
+                    write_runlog(ERROR, "ddb write failed reach max times, restart current az.\n");
+                    StopCurrentAz();
+                }
+                cm_sleep(AZ_START_STOP_INTERVEL);
                 g_loopState.execStatus[cnt] = 1;
                 continue;
             }
-        } else if (isLeaf1AZConnectOK == true && isLeaf2AZConnectOK == false) {
-            isSetIsolatedAzOk = SetIsolatedAzToDdb(Leaf2Az, Leaf1Az);
-            if (isSetIsolatedAzOk == false) {
-                write_runlog(ERROR, "Try to merge the IsolatedAz %s failed.\n", Leaf2Az);
+        } else {
+            failedWriteTimes = 0;
+        }
+
+        if (isLeaf1AZConnectOK && isLeaf2AZConnectOK && currConnStatus) {
+            if (!CheckStopFileExist(SINGLEAZ_TYPE) && !CheckStopFileExist(SINGLENODE_TYPE)) {
+                cm_sleep(AZ_START_STOP_INTERVEL);
                 g_loopState.execStatus[cnt] = 1;
                 continue;
             }
@@ -1660,17 +1651,18 @@ void *MultiAzConnectStateCheckMain(void *arg)
             CleanMultiConnState(g_currentNode->azName, NULL);
         }
 
-        gettimeofday(&endPing, NULL);
+        (void)gettimeofday(&endPing, NULL);
         intervalTime = endPing.tv_sec - beginPing.tv_sec;
         if (intervalTime < totalTime) {
             write_runlog(DEBUG1, "The ping opretation takes time %ld seconds.\n", intervalTime);
-            cm_sleep(totalTime - intervalTime);
+            cm_sleep((unsigned int)(totalTime - intervalTime));
         } else {
             write_runlog(DEBUG1, "The ping opretation takes time %ld seconds.\n", intervalTime);
             cm_sleep(5);
         }
         g_loopState.execStatus[cnt] = 1;
     }
+    return NULL;
 }
 
 /**
@@ -1691,13 +1683,13 @@ static void StartCmsNodeInstances(bool isLeaf1AZConnectOK, bool isLeaf2AZConnect
         return;
     }
     rc = snprintf_s(stopFlagFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, "node_instances_stop");
-    securec_check_intval(rc, );
+    securec_check_intval(rc, (void)rc);
 
     struct stat stat_buf = {0};
-    if (isLeaf1AZConnectOK == true && isLeaf2AZConnectOK == true) {
+    if (isLeaf1AZConnectOK && isLeaf2AZConnectOK) {
         if (stat(stopFlagFile, &stat_buf) == 0) {
             write_runlog(LOG, "We only need start current node(%u).\n", g_currentNode->node);
-            StartOrStopNodeInstanceByCommand(START_AZ, g_currentNode->node - 1);
+            StartOrStopNodeInstanceByCommand(START_AZ, g_currentNode->node);
             if (unlink(stopFlagFile) != 0) {
                 write_runlog(ERROR, "delete cms-node stop instances flag file: %s failed.\n", stopFlagFile);
             } else {
@@ -1717,7 +1709,7 @@ void StartOrStopAZ(OperateType operateType, const char *azName)
         }
         uint32 jj = 0;
         while (g_azArray[ii].nodes[jj] != 0) {
-            StartOrStopNodeInstanceByCommand(operateType, g_azArray[ii].nodes[jj] - 1);
+            StartOrStopNodeInstanceByCommand(operateType, g_azArray[ii].nodes[jj]);
             jj++;
             /* When the node index jj exceeds the maximum CM_NODE_MAXNUM of aznodes-arry, we need break the loop. */
             if (jj >= CM_NODE_MAXNUM) {
@@ -1732,27 +1724,35 @@ void StartOrStopAZ(OperateType operateType, const char *azName)
 /* start or stop node in the AZ */
 void StartOrStopNodeInstanceByCommand(OperateType operateType, uint32 nodeId)
 {
-    if (g_node[nodeId].coordinate == 1) {
+    uint32 nodeIndex;
+    int ret = find_node_index_by_nodeid(nodeId, &nodeIndex);
+    if (ret != 0) {
+        write_runlog(ERROR, "[%s] get node index failed!\n", __FUNCTION__);
+        return;
+    }
+    if (g_node[nodeIndex].coordinate == 1) {
         if (operateType == START_AZ && IsCnDeleted(nodeId)) {
-            write_runlog(LOG, "cn_%u in this node has been deleted, do not start it.\n", g_node[nodeId].coordinateId);
+            const int32 timeOut = 30;
+            StartOrStopInstanceByCommand(operateType, nodeId, g_node[nodeIndex].DataPath, timeOut);
         } else {
-            StartOrStopInstanceByCommand(operateType, g_node[nodeId].node, g_node[nodeId].DataPath);
+            StartOrStopInstanceByCommand(operateType, nodeId, g_node[nodeIndex].DataPath);
         }
     }
 
-    if (g_node[nodeId].gtm == 1) {
-        StartOrStopInstanceByCommand(operateType, g_node[nodeId].node, g_node[nodeId].gtmLocalDataPath);
+    if (g_node[nodeIndex].gtm == 1) {
+        StartOrStopInstanceByCommand(operateType, nodeId, g_node[nodeIndex].gtmLocalDataPath);
     }
 
-    for (uint32 ii = 0; ii < g_node[nodeId].datanodeCount; ii++) {
+    for (uint32 ii = 0; ii < g_node[nodeIndex].datanodeCount; ii++) {
         StartOrStopInstanceByCommand(
-            operateType, g_node[nodeId].node, g_node[nodeId].datanode[ii].datanodeLocalDataPath);
+            operateType, nodeId, g_node[nodeIndex].datanode[ii].datanodeLocalDataPath);
     }
     return;
 }
 
 /* start or stop instacnes in the node by command */
-static void StartOrStopInstanceByCommand(OperateType operateType, uint32 node, const char *instanceDataPath)
+static void StartOrStopInstanceByCommand(OperateType operateType, uint32 node, const char *instanceDataPath,
+    int32 timeOut)
 {
     int ret;
     errno_t rc;
@@ -1760,24 +1760,28 @@ static void StartOrStopInstanceByCommand(OperateType operateType, uint32 node, c
     uint32 tryTimes = 2;
 
     if (operateType == START_AZ) {
-        rc = snprintf_s(
-            cmd, MAXPGPATH, MAXPGPATH - 1, "cm_ctl start -n %u -D %s > /dev/null 2>&1 &", node, instanceDataPath);
+        if (timeOut == 0) {
+            rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "cm_ctl start -n %u -D %s > /dev/null 2>&1 &", node,
+                instanceDataPath);
+        } else {
+            rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "cm_ctl start -n %u -D %s -t %d > /dev/null 2>&1 &", node,
+                instanceDataPath, timeOut);
+        }
     } else if (operateType == STOP_AZ) {
-        rc = snprintf_s(
-            cmd, MAXPGPATH, MAXPGPATH - 1, "cm_ctl stop -n %u -D %s -m i > /dev/null 2>&1 &", node, instanceDataPath);
+        rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "cm_ctl stop -n %u -D %s -m i > /dev/null 2>&1 &", node,
+            instanceDataPath);
     } else {
         write_runlog(ERROR, "Invalid start-stop command, please recheck it.\n");
         return;
     }
-    securec_check_intval(rc, );
+    securec_check_intval(rc, (void)rc);
 
     while (tryTimes > 0) {
         ret = system(cmd);
         write_runlog(DEBUG1, "Call system command(%s) to execute node start and stop.\n", cmd);
         if (ret != 0) {
             /* If system command failed, we need try again. */
-            write_runlog(
-                ERROR, "StartOrStopInstanceByCommand failed:%s, errnum:%d, errno=%d, errmsg:%m.\n", cmd, ret, errno);
+            write_runlog(ERROR, "StartOrStopInstanceByCommand failed:%s, errnum:%d, errno=%d.\n", cmd, ret, errno);
             tryTimes--;
             cm_sleep(1);
         } else {
@@ -1788,7 +1792,7 @@ static void StartOrStopInstanceByCommand(OperateType operateType, uint32 node, c
     return;
 }
 
-/**
+/* *
  * @brief IsCnDeleted: Judge whether the CN of the node has been deleted
  *
  * @param  nodeId: node
@@ -1797,681 +1801,22 @@ static void StartOrStopInstanceByCommand(OperateType operateType, uint32 node, c
  */
 static bool IsCnDeleted(uint32 nodeId)
 {
-    cm_instance_role_status *member = &g_instance_role_group_ptr[nodeId].instanceMember[0];
-    if (member->instanceType != INSTANCE_TYPE_COORDINATE) {
-        write_runlog(ERROR, "The current instance is not Coordinate.\n");
+    cm_instance_role_status *member = NULL;
+    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
+        if (g_instance_role_group_ptr[i].instanceMember[0].node == nodeId &&
+            g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE) {
+            member = &g_instance_role_group_ptr[i].instanceMember[0];
+            break;
+        }
+    }
+    if (member == NULL) {
+        write_runlog(ERROR, "can't find cn in node %u.\n", nodeId);
         return false;
     }
     if (member->role == INSTANCE_ROLE_DELETED || member->role == INSTANCE_ROLE_DELETING) {
-        write_runlog(LOG, "The CN of node %u have been deleted.\n", nodeId + 1);
+        write_runlog(LOG, "The CN of node %u have been deleted.\n", nodeId);
         return true;
     }
-    write_runlog(LOG, "The CN of node %u have not been deleted.\n", nodeId + 1);
+    write_runlog(LOG, "The CN of node %u have not been deleted.\n", nodeId);
     return false;
-}
-
-/**
- * @brief
- *
- * @param  syncMode         My Param doc
- * @return int
- */
-int findNeedDoAzForGsGuc(synchronous_standby_mode syncMode)
-{
-    int azIndex = AZ_ALL_INDEX;
-    switch (syncMode) {
-        case AnyAz1:
-        case FirstAz1:
-            azIndex = AZ1_INDEX;
-            break;
-        case AnyAz2:
-        case FirstAz2:
-            azIndex = AZ2_INDEX;
-            break;
-        default:
-            break;
-    }
-
-    return azIndex;
-}
-
-/**
- * @brief
- *
- */
-void cleanGsGucState()
-{
-    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-            g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode = AnyFirstNo;
-        }
-    }
-}
-
-static status_t TrySetStatus2Ddb(char *status_key, uint32 keyLen, char *value, uint32 valueLen)
-{
-    int tryTimes = 20;
-    status_t st;
-    do {
-        st = SetKV2Ddb(status_key, keyLen, value, valueLen, NULL);
-        if (st != CM_SUCCESS) {
-            write_runlog(ERROR, "ddb set failed. key=%s, value=%s.\n", status_key, value);
-            if (g_HA_status->local_role != CM_SERVER_PRIMARY) {
-                break;
-            }
-            cm_sleep(1);
-        }
-        tryTimes--;
-    } while (st != CM_SUCCESS && tryTimes > 0);
-
-    return st;
-}
-
-static void SetOneStatus(synchronous_standby_mode syncMode, int azIndex,
-    const cm_instance_role_group *status, cm_instance_group_report_status *reportStatus)
-{
-    for (int j = 0; j < status->count; j++) {
-        uint32 priority = status->instanceMember[j].azPriority;
-
-        if (status->instanceMember[j].instanceType != INSTANCE_TYPE_DATANODE) {
-            continue;
-        }
-
-        if ((azIndex == AZ1_INDEX && (priority < g_az_slave || priority >= g_az_arbiter)) ||
-            (azIndex == AZ2_INDEX && priority >= g_az_slave) || (azIndex == AZ_ALL_INDEX)) {
-            write_runlog(LOG,
-                "set instanceId %u to do gs guc, type=%d.\n",
-                status->instanceMember[j].instanceId,
-                syncMode);
-            reportStatus->instance_status.data_node_member[j].sync_standby_mode = syncMode;
-            reportStatus->instance_status.data_node_member[j].send_gs_guc_time = 0;
-        }
-
-        if ((azIndex == AZ1_INDEX && priority >= g_az_slave && priority < g_az_arbiter) ||
-            (azIndex == AZ2_INDEX && priority >= g_az_master && priority < g_az_slave)) {
-            write_runlog(LOG,
-                "set instanceId %u to do gs guc, type=%d.\n",
-                status->instanceMember[j].instanceId,
-                AnyFirstNo);
-            reportStatus->instance_status.data_node_member[j].sync_standby_mode =
-                AnyFirstNo;
-            reportStatus->instance_status.data_node_member[j].send_gs_guc_time = 0;
-        }
-    }
-}
-
-    /**
- * @brief Set the Gs Guc Msg Type object
- *
- * @param  syncMode         My Param doc
- * @return true
- * @return false
- */
-bool SetGsGucMsgType(synchronous_standby_mode syncMode)
-{
-    char status_key[MAX_PATH_LEN] = {0};
-    char value[MAX_PATH_LEN] = {0};
-    int azIndex = findNeedDoAzForGsGuc(syncMode);
-    int rc;
-
-    cleanGsGucState();
-    cm_sleep(2); /* clean the effect of feedback */
-    rc = snprintf_s(status_key,
-        MAX_PATH_LEN,
-        MAX_PATH_LEN - 1,
-        "/%s/CMServer/status_key/gsguc/%d",
-        pw->pw_name,
-        GS_GUC_SYNCHRONOUS_STANDBY_MODE);
-    securec_check_intval(rc, (void)rc);
-    rc = snprintf_s(value, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%d", syncMode);
-    securec_check_intval(rc, (void)rc);
-    status_t st = CM_SUCCESS;
-    st = TrySetStatus2Ddb(status_key, MAX_PATH_LEN, value, MAX_PATH_LEN);
-    if (st != CM_SUCCESS) {
-        return false;
-    }
-    write_runlog(LOG, "ddb set status gs guc success, key=%s, value=%s.\n", status_key, value);
-    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        cm_instance_role_group *status = &g_instance_role_group_ptr[i];
-        cm_instance_group_report_status *report_status = &g_instance_group_report_status_ptr[i];
-        SetOneStatus(syncMode, azIndex, status, report_status);
-    }
-    return true;
-}
-
-static void GetOneStatus(const synchronous_standby_mode mode,
-    const cm_instance_role_group *instanceRoleGroup,
-    cm_instance_group_report_status *instanceGroupReportStatus)
-{
-    for (int j = 0; j < instanceRoleGroup->count; j++) {
-        if (instanceRoleGroup->instanceMember[j].instanceType == INSTANCE_TYPE_DATANODE) {
-            uint32 priority = instanceRoleGroup->instanceMember[j].azPriority;
-
-            if ((mode == AnyAz1 || mode == FirstAz1) && (priority < g_az_slave || priority >= g_az_arbiter)) {
-                instanceGroupReportStatus->instance_status.data_node_member[j].sync_standby_mode =
-                    mode;
-                instanceGroupReportStatus->instance_status.data_node_member[j].send_gs_guc_time = 0;
-            } else if ((mode == AnyAz2 || mode == FirstAz2) && priority >= g_az_slave) {
-                instanceGroupReportStatus->instance_status.data_node_member[j].sync_standby_mode =
-                    mode;
-                instanceGroupReportStatus->instance_status.data_node_member[j].send_gs_guc_time = 0;
-            } else if (mode == FirstAz1 || mode == AnyAz1) {
-                instanceGroupReportStatus->instance_status.data_node_member[j].sync_standby_mode =
-                    mode;
-                instanceGroupReportStatus->instance_status.data_node_member[j].send_gs_guc_time = 0;
-            } else {
-                /* for AnyFirstNo */
-                write_runlog(WARNING,
-                    "unexpected priority mode(%d) for instance %u \n",
-                    mode,
-                    instanceRoleGroup->instanceMember[j].instanceId);
-            }
-        }
-    }
-}
-
-/**
- * @brief Get the Gs Guc Msg Type object
- *
- */
-void getGsGucMsgType()
-{
-    char status_key[MAX_PATH_LEN];
-    int rc;
-
-    rc = snprintf_s(status_key,
-        MAX_PATH_LEN,
-        MAX_PATH_LEN - 1,
-        "/%s/CMServer/status_key/gsguc/%d",
-        pw->pw_name,
-        GS_GUC_SYNCHRONOUS_STANDBY_MODE);
-    securec_check_intval(rc, (void)rc);
-    char *value = (char *)malloc(DDB_MIN_VALUE_LEN * sizeof(char));
-    if (value == NULL) {
-        write_runlog(FATAL, "malloc memory failed! size = %d\n", DDB_MIN_VALUE_LEN);
-        FreeNotifyMsg();
-        exit(1);
-    }
-    rc = memset_s(value, DDB_MIN_VALUE_LEN, 0, DDB_MIN_VALUE_LEN);
-    securec_check_errno(rc, (void)rc);
-    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
-    status_t st = GetKVFromDDb(status_key, MAX_PATH_LEN, value, DDB_MIN_VALUE_LEN, &dbResult);
-    if (st != CM_SUCCESS) {
-        write_runlog(ERROR, "get gs guc type failed, key is %s, error info is %d.\n", status_key, dbResult);
-        if (g_HA_status->local_role != CM_SERVER_PRIMARY || !IsDdbHealth(DDB_PRE_CONN)) {
-            FREE_AND_RESET(value);
-            return;
-        }
-    } else {
-        synchronous_standby_mode mode = (synchronous_standby_mode)strtol(value, NULL, 10);
-        for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-            cm_instance_role_group *instance_role_group = &g_instance_role_group_ptr[i];
-            cm_instance_group_report_status *instance_group_report_status = &g_instance_group_report_status_ptr[i];
-            GetOneStatus(mode, instance_role_group, instance_group_report_status);
-        }
-    }
-    FREE_AND_RESET(value);
-}
-
-static bool IsPrimaryInstanceInTargetAZ(const char *azName, uint32 i)
-{
-    for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-        if (g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_GTM &&
-            g_instance_group_report_status_ptr[i].instance_status.gtm_member[j].local_status.local_role ==
-                INSTANCE_ROLE_PRIMARY &&
-            strcmp(azName, g_instance_role_group_ptr[i].instanceMember[j].azName) == 0) {
-            return true;
-        } else if (g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_DATANODE &&
-                    g_instance_group_report_status_ptr[i]
-                            .instance_status.data_node_member[j]
-                            .local_status.local_role == INSTANCE_ROLE_PRIMARY &&
-                    strcmp(azName, g_instance_role_group_ptr[i].instanceMember[j].azName) == 0) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static void DoAZSwitch(const char *azName, uint32 i)
-{
-    bool switchedInstanceInTargetAZ = false;
-    int instanceType = 0;
-
-    for (int j = 0; j < g_instance_role_group_ptr[i].count && !switchedInstanceInTargetAZ; j++) {
-        if (strcmp(azName, g_instance_role_group_ptr[i].instanceMember[j].azName) == 0) {
-            instanceType = g_instance_role_group_ptr[i].instanceMember[j].instanceType;
-            switch (instanceType) {
-                case INSTANCE_TYPE_GTM:
-                    if (g_instance_group_report_status_ptr[i]
-                                .instance_status.gtm_member[j]
-                                .local_status.local_role == INSTANCE_ROLE_STANDBY &&
-                        g_instance_group_report_status_ptr[i]
-                                .instance_status.gtm_member[j]
-                                .local_status.connect_status == CON_OK) {
-                        SwitchOverSetting(SWITCHOVER_DEFAULT_WAIT, instanceType, i, j);
-                        switchedInstanceInTargetAZ = true;
-                    }
-                    break;
-                case INSTANCE_TYPE_DATANODE:
-                    if (g_instance_group_report_status_ptr[i]
-                                .instance_status.data_node_member[j]
-                                .local_status.local_role == INSTANCE_ROLE_STANDBY &&
-                        g_instance_group_report_status_ptr[i]
-                                .instance_status.data_node_member[j]
-                                .local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
-                        SwitchOverSetting(SWITCHOVER_DEFAULT_WAIT, instanceType, i, j);
-                        switchedInstanceInTargetAZ = true;
-                    }
-                    break;
-                default:
-                    break;
-            }
-        }
-    }
-}
-
-/**
- * @brief cm server process auto switchover az
- *
- * @param  azName           My Param doc
- */
-void process_auto_cm_switchover_az(const char *azName)
-{
-    if (enable_az_auto_switchover == 0) {
-        return;
-    }
-
-    /* check if another switchover -z is running */
-    (void)pthread_rwlock_wrlock(&(switchover_az_rwlock));
-    if (switchoverAZInProgress == true) {
-        (void)pthread_rwlock_unlock(&(switchover_az_rwlock));
-        return;
-    } else {
-        switchoverAZInProgress = true;
-        (void)pthread_rwlock_unlock(&(switchover_az_rwlock));
-    }
-
-    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        bool primaryInstanceInTargetAZ = false;
-
-        (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
-
-        /* if there is a primary instance in the target AZ, no more switchover will be needed. */
-        primaryInstanceInTargetAZ = IsPrimaryInstanceInTargetAZ(azName, i);
-        if (primaryInstanceInTargetAZ) {
-            (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
-            continue;
-        }
-
-        DoAZSwitch(azName, i);
-        (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
-    }
-    if (switchOverInstances.size() > 0) {
-        cmserver_switchover_timeout = SWITCHOVER_DEFAULT_WAIT;
-    }
-}
-
-/**
- * @brief Get the History Cluster State From ddb object
- *
- */
-void GetHistoryClusterStateFromDdb()
-{
-    char key[MAX_PATH_LEN] = {0};
-    char gsguc_key[MAX_PATH_LEN] = {0};
-    char value[DDB_MIN_VALUE_LEN] = {0};
-    errno_t rc;
-
-    rc = snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/sync_standby_mode", pw->pw_name);
-    securec_check_intval(rc, (void)rc);
-
-    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
-    status_t st = GetKVFromDDb(key, MAX_PATH_LEN, value, DDB_MIN_VALUE_LEN, &dbResult);
-    if (st != CM_SUCCESS) {
-        if (!IsDdbHealth(DDB_HEAL_COUNT)) {
-            write_runlog(ERROR,
-                "Less than half of the DDB are healthy while getting key %s, "
-                "error info is %d.\n",
-                key,
-                dbResult);
-            return;
-        }
-    }
-
-    current_cluster_az_status = (synchronous_standby_mode)strtol(value, NULL, 10);
-    write_runlog(LOG, "restart: setting all current_az_status to %d.\n", current_cluster_az_status);
-
-    char gsguc_value[DDB_MIN_VALUE_LEN] = {0};
-
-    rc = snprintf_s(gsguc_key,
-        MAX_PATH_LEN,
-        MAX_PATH_LEN - 1,
-        "/%s/CMServer/status_key/gsguc/%d",
-        pw->pw_name,
-        GS_GUC_SYNCHRONOUS_STANDBY_MODE);
-    securec_check_intval(rc, (void)rc);
-    st = GetKVFromDDb(gsguc_key, MAX_PATH_LEN, gsguc_value, DDB_MIN_VALUE_LEN, &dbResult);
-    if (st != CM_SUCCESS) {
-        if (!IsDdbHealth(DDB_HEAL_COUNT)) {
-            write_runlog(ERROR,
-                "Less than half of the DDB are healthy while getting key %s, "
-                "error info is %d. \n",
-                gsguc_key,
-                dbResult);
-            return;
-        }
-    }
-
-    synchronous_standby_mode currentClusterGsGucValue = (synchronous_standby_mode)strtol(gsguc_value, NULL, 10);
-    (void)pthread_rwlock_wrlock(&(gsguc_feedback_rwlock));
-    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-            if (g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_DATANODE) {
-                g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].sync_standby_mode =
-                    currentClusterGsGucValue;
-            }
-        }
-    }
-    (void)pthread_rwlock_unlock(&(gsguc_feedback_rwlock));
-    write_runlog(LOG, "setting all DN sync_standby_mode to %d.\n", currentClusterGsGucValue);
-}
-
-using AutoSwitchAZCtx = struct St_AutoSwitchAZCtx {
-    const int *statusOnline;
-    const int *statusPrimary;
-    const int *statusDnFail;
-    bool hasDoAutoSwitchoverAz;
-    int delayTimeoutForAutoSwitchover;
-};
-
-static void AutoSwitchAZ(const char azArray[AZ_MEMBER_MAX_COUNT][CM_AZ_NAME], AutoSwitchAZCtx* ctx)
-{
-    const int percent = 100;
-    /* do auto switchover az */
-    if (ctx->statusOnline[AZ1_INDEX] > ctx->statusOnline[AZ2_INDEX] &&
-        ((ctx->statusPrimary[AZ2_INDEX] + ctx->statusPrimary[AZ3_INDEX]) > 0) &&
-        ((ctx->statusDnFail[AZ2_INDEX] * percent) / ((int)g_datanode_instance_count)) >= az_switchover_threshold) {
-        /* do switchover to az1 */
-        if (!switchoverAZInProgress && !ctx->hasDoAutoSwitchoverAz && ctx->delayTimeoutForAutoSwitchover <= 0) {
-            ctx->hasDoAutoSwitchoverAz = true;
-            write_runlog(LOG, "auto switchover to az1 for over threshold.\n");
-            process_auto_cm_switchover_az(azArray[AZ1_INDEX]);
-        }
-        if (ctx->hasDoAutoSwitchoverAz) {
-            ctx->hasDoAutoSwitchoverAz = process_auto_switchover_full_check();
-        }
-        ctx->delayTimeoutForAutoSwitchover--;
-    } else if (ctx->statusOnline[AZ1_INDEX] < ctx->statusOnline[AZ2_INDEX] &&
-               ((ctx->statusPrimary[AZ1_INDEX] + ctx->statusPrimary[AZ3_INDEX]) > 0) &&
-               ((ctx->statusDnFail[AZ1_INDEX] * percent) / ((int)g_datanode_instance_count)) >=
-               az_switchover_threshold) {
-        /* do switchover to az2 */
-        if (!switchoverAZInProgress && !ctx->hasDoAutoSwitchoverAz && ctx->delayTimeoutForAutoSwitchover <= 0) {
-            ctx->hasDoAutoSwitchoverAz = true;
-            write_runlog(LOG, "auto switchover to az2 for over threshold.\n");
-            process_auto_cm_switchover_az(azArray[AZ2_INDEX]);
-        }
-        if (ctx->hasDoAutoSwitchoverAz) {
-            ctx->hasDoAutoSwitchoverAz = process_auto_switchover_full_check();
-        }
-        ctx->delayTimeoutForAutoSwitchover--;
-    } else if ((ctx->statusOnline[AZ1_INDEX] != ctx->statusOnline[AZ2_INDEX]) && ctx->hasDoAutoSwitchoverAz &&
-               switchoverAZInProgress) {
-        ctx->hasDoAutoSwitchoverAz = process_auto_switchover_full_check();
-    } else {
-        ctx->delayTimeoutForAutoSwitchover = DELAY_TIME_TO_AUTO_SWITCHOVER;
-    }
-}
-
-static bool SetGucMsgType1(cluster_mode clusterMode)
-{
-    bool doResult = true;
-    switch (clusterMode) {
-        case ONE_MASTER_5_SLAVE:
-        case ONE_MASTER_4_SLAVE:
-            doResult = SetGsGucMsgType(FirstAz2);
-            break;
-        case ONE_MASTER_3_SLAVE:
-        case ONE_MASTER_2_SLAVE:
-        case ONE_MASTER_1_SLAVE:
-            doResult = SetGsGucMsgType(AnyAz2);
-            break;
-        default:
-            break;
-    }
-
-    return doResult;
-}
-
-static bool SetGucMsgType2(cluster_mode clusterMode)
-{
-    bool doResult = true;
-    switch (clusterMode) {
-        case ONE_MASTER_5_SLAVE:
-        case ONE_MASTER_4_SLAVE:
-            doResult = SetGsGucMsgType(FirstAz1);
-            break;
-        case ONE_MASTER_3_SLAVE:
-        case ONE_MASTER_2_SLAVE:
-        case ONE_MASTER_1_SLAVE:
-            doResult = SetGsGucMsgType(AnyAz1);
-            break;
-        default:
-            break;
-    }
-    return doResult;
-}
-
-static bool SetGucMsgType3(cluster_mode clusterMode)
-{
-    bool doResult = true;
-    switch (clusterMode) {
-        case ONE_MASTER_5_SLAVE:
-            doResult = SetGsGucMsgType(First3Az1Az2);
-            break;
-        case ONE_MASTER_4_SLAVE:
-            doResult = SetGsGucMsgType(First2Az1Az2);
-            break;
-        case ONE_MASTER_3_SLAVE:
-        case ONE_MASTER_2_SLAVE:
-        case ONE_MASTER_1_SLAVE:
-            doResult = SetGsGucMsgType(Any2Az1Az2);
-            break;
-        default:
-            break;
-    }
-    return doResult;
-}
-
-#define RECORD_STATUS_HISTORY(history,online) \
-do { \
-    (history)[AZ1_INDEX] = (online)[AZ1_INDEX]; \
-    (history)[AZ2_INDEX] = (online)[AZ2_INDEX]; \
-    (history)[AZ3_INDEX] = (online)[AZ3_INDEX]; \
-}while(0)
-
-/**
- * @brief
- *
- * @param  arg              My Param doc
- * @return void*
- */
-void *AZStatusCheckAndArbitrate(void *arg)
-{
-    if (GetAzDeploymentType(false) != TWO_AZ_DEPLOYMENT) {
-        write_runlog(LOG, "AZStatusCheckAndArbitrate exit.\n");
-        return NULL;
-    }
-
-    char azArray[AZ_MEMBER_MAX_COUNT][CM_AZ_NAME] = {{0}};
-    int statusOnline[AZ_MEMBER_MAX_COUNT] = {0};  /* for segment */
-    int statusPrimary[AZ_MEMBER_MAX_COUNT] = {0}; /* for segment */
-    int statusFail[AZ_MEMBER_MAX_COUNT] = {0};    /* for segment */
-    int statusDnFail[AZ_MEMBER_MAX_COUNT] = {0};  /* for DN */
-    initazArray(azArray);
-    AutoSwitchAZCtx ctx;
-    ctx.hasDoAutoSwitchoverAz = false;
-    ctx.delayTimeoutForAutoSwitchover = DELAY_TIME_TO_AUTO_SWITCHOVER;
-    ctx.statusOnline = statusOnline;
-    ctx.statusPrimary = statusPrimary;
-    ctx.statusDnFail = statusDnFail;
-
-    int statusHistoryOnline[AZ_MEMBER_MAX_COUNT] = {0};
-    int statusHistoryDnFail[AZ_MEMBER_MAX_COUNT] = {0};
-    int tryTimesForGetOnlineFromDdb = TRY_TIME_GET_STATUSONLINE_FROM_DDB;
-    const int DELAY_TIME_TO_SINGLE_AZ = 3;
-    const int DELAY_TIME_TO_MULTI_AZ = 30;
-    int auto_gsguc_to_single_az = DELAY_TIME_TO_SINGLE_AZ;
-    int auto_gsguc_to_multi_az = DELAY_TIME_TO_MULTI_AZ;
-    bool getOnlineHistory = false;
-    bool getDnFailHistory = false;
-    bool hasHistory = false;
-    for (;;) {
-        if (got_stop) {
-            write_runlog(LOG, "receive exit request in AZStatusCheckAndArbitrate.\n");
-            cm_sleep(1);
-            continue;
-        }
-
-        if (g_HA_status->local_role != CM_SERVER_PRIMARY || !IsDdbHealth(DDB_HEAL_COUNT) ||
-            cm_switchover_az_mode == NON_AUTOSWITCHOVER_AZ) {
-            getOnlineHistory = false;
-            getDnFailHistory = false;
-            cm_sleep(2);
-            continue;
-        }
-
-        if (!hasHistory) {
-            GetHistoryClusterStateFromDdb();
-            hasHistory = true;
-        }
-        statusOnline[0] = 0;  /* for segment */
-        statusPrimary[0] = 0; /* for segment */
-        statusFail[0] = 0;    /* for segment */
-        statusDnFail[0] = 0;  /* for DN */
-        getAZDyanmicStatus(AZ_MEMBER_MAX_COUNT, statusOnline, statusPrimary, statusFail, statusDnFail, azArray);
-        if ((statusPrimary[0] + statusPrimary[1] + statusPrimary[2]) != (int)g_datanode_instance_count) {
-            /* all dn must has primary */
-            cm_sleep(2);
-            continue;
-        }
-
-        write_runlog(DEBUG1, "check az status of online, az1:%d, az2:%d.\n", statusOnline[0], statusOnline[1]);
-        write_runlog(DEBUG1, "check az status of primary, az1:%d, az2:%d.\n", statusPrimary[0], statusPrimary[1]);
-        write_runlog(DEBUG1, "check az status of fail, az1:%d, az2:%d.\n", statusFail[0], statusFail[1]);
-        write_runlog(DEBUG1, "check az status of dn fail, az1:%d, az2:%d.\n", statusDnFail[0], statusDnFail[1]);
-        write_runlog(DEBUG1, "check az status of try times, auto switchover:%d.\n", ctx.delayTimeoutForAutoSwitchover);
-
-        AutoSwitchAZ(azArray, &ctx);
-
-        /* after do synchronous_standby_names check */
-        if (!getOnlineHistory) {
-            bool getRes = GetOnlineStatusFromDdb((int *)statusHistoryOnline, AZ_MEMBER_MAX_COUNT);
-            if (tryTimesForGetOnlineFromDdb >= 0 && !getRes) {
-                /* if don't get statusOnline from ddb for 3 time, then will get from report msg. */
-                write_runlog(ERROR, "get online status of az from ddb failed.\n");
-                tryTimesForGetOnlineFromDdb--;
-                cm_sleep(2);
-                continue;
-            }
-            if (getRes) {
-                getGsGucMsgType();
-                write_runlog(LOG,
-                    "get online status of az from ddb, az1:%d, az2:%d, az3:%d.\n",
-                    statusHistoryOnline[AZ1_INDEX],
-                    statusHistoryOnline[AZ2_INDEX],
-                    statusHistoryOnline[AZ3_INDEX]);
-                getOnlineHistory = true;
-            }
-
-            if (!getRes && SetOnlineStatusToDdb((int *)statusOnline, AZ_MEMBER_MAX_COUNT)) {
-                tryTimesForGetOnlineFromDdb = TRY_TIME_GET_STATUSONLINE_FROM_DDB;
-                RECORD_STATUS_HISTORY(statusHistoryOnline, statusOnline);
-                getOnlineHistory = true;
-            }
-        }
-
-        if (!getDnFailHistory) {
-            bool getRes = GetDnFailStatusFromDdb((int *)statusHistoryDnFail, AZ_MEMBER_MAX_COUNT);
-            if (!getRes) {
-                /* if don't get statusOnline from ddb for 3 time, then will get from report msg. */
-                write_runlog(ERROR, "get dn fail status of az from ddb failed.\n");
-            }
-            if (getRes) {
-                getGsGucMsgType();
-                write_runlog(LOG,
-                    "get dn fail status of az from ddb, az1:%d, az2:%d, az3:%d.\n",
-                    statusHistoryDnFail[AZ1_INDEX],
-                    statusHistoryDnFail[AZ2_INDEX],
-                    statusHistoryDnFail[AZ3_INDEX]);
-                getDnFailHistory = true;
-            }
-
-            if (!getRes && SetDnFailStatusToDdb((int *)statusDnFail, AZ_MEMBER_MAX_COUNT)) {
-                RECORD_STATUS_HISTORY(statusHistoryDnFail, statusDnFail);
-                getDnFailHistory = true;
-            }
-        }
-
-        if (getOnlineHistory && getDnFailHistory) {
-            bool doResult = true;
-            cluster_mode clusterMode = (cluster_mode)(g_dn_replication_num - 1);
-            if ((statusHistoryOnline[AZ1_INDEX] > 0 && statusOnline[AZ1_INDEX] == 0) ||
-                (((statusDnFail[AZ1_INDEX] * 100) / ((int)g_datanode_instance_count)) >= az_switchover_threshold &&
-                    ((statusHistoryDnFail[AZ1_INDEX] * 100) / ((int)g_datanode_instance_count)) <
-                        az_switchover_threshold)) {
-                if ((auto_gsguc_to_single_az--) > 0) {
-                    cm_sleep((uint32)az_check_and_arbitrate_interval);
-                    continue;
-                }
-
-                doResult = SetGucMsgType1(clusterMode);
-                doResult = doResult ? (SetOnlineStatusToDdb((int *)statusOnline, AZ_MEMBER_MAX_COUNT)) : doResult;
-                doResult = doResult ? (SetDnFailStatusToDdb((int *)statusDnFail, AZ_MEMBER_MAX_COUNT)) : doResult;
-            } else if ((statusHistoryOnline[AZ2_INDEX] > 0 && statusOnline[AZ2_INDEX] == 0) ||
-                       (((statusDnFail[AZ2_INDEX] * 100) / ((int)g_datanode_instance_count)) >=
-                               az_switchover_threshold &&
-                           ((statusHistoryDnFail[AZ2_INDEX] * 100) / ((int)g_datanode_instance_count)) <
-                               az_switchover_threshold)) {
-                if ((auto_gsguc_to_single_az--) > 0) {
-                    cm_sleep((uint32)az_check_and_arbitrate_interval);
-                    continue;
-                }
-                doResult = SetGucMsgType2(clusterMode);
-                doResult = doResult ? (SetOnlineStatusToDdb((int *)statusOnline, AZ_MEMBER_MAX_COUNT)) : doResult;
-                doResult = doResult ? (SetDnFailStatusToDdb((int *)statusDnFail, AZ_MEMBER_MAX_COUNT)) : doResult;
-            } else if ((statusHistoryOnline[AZ1_INDEX] == 0 && statusOnline[AZ1_INDEX] > 0) ||
-                       (statusHistoryOnline[AZ2_INDEX] == 0 && statusOnline[AZ2_INDEX] > 0) ||
-                       (((statusDnFail[AZ1_INDEX] * 100) / ((int)g_datanode_instance_count)) <
-                               az_switchover_threshold &&
-                           ((statusHistoryDnFail[AZ1_INDEX] * 100) / ((int)g_datanode_instance_count)) >=
-                               az_switchover_threshold) ||
-                       (((statusDnFail[AZ2_INDEX] * 100) / ((int)g_datanode_instance_count)) <
-                               az_switchover_threshold &&
-                           ((statusHistoryDnFail[AZ2_INDEX] * 100) / ((int)g_datanode_instance_count)) >=
-                               az_switchover_threshold) ||
-                       (statusDnFail[AZ1_INDEX] == 0 && statusDnFail[AZ2_INDEX] == 0 &&
-                           current_cluster_az_status >= AnyAz1 && current_cluster_az_status <= FirstAz2)) {
-                if ((auto_gsguc_to_multi_az--) > 0) {
-                    cm_sleep((uint32)az_check_and_arbitrate_interval);
-                    continue;
-                }
-                doResult = SetGucMsgType3(clusterMode);
-                doResult = doResult ? (SetOnlineStatusToDdb((int *)statusOnline, AZ_MEMBER_MAX_COUNT)) : doResult;
-                doResult = doResult ? (SetDnFailStatusToDdb((int *)statusDnFail, AZ_MEMBER_MAX_COUNT)) : doResult;
-            } else {
-                auto_gsguc_to_single_az = DELAY_TIME_TO_SINGLE_AZ;
-                auto_gsguc_to_multi_az = DELAY_TIME_TO_MULTI_AZ;
-            }
-            if (doResult) {
-                RECORD_STATUS_HISTORY(statusHistoryOnline, statusOnline);
-                RECORD_STATUS_HISTORY(statusHistoryDnFail, statusDnFail);
-                auto_gsguc_to_single_az = DELAY_TIME_TO_SINGLE_AZ;
-                auto_gsguc_to_multi_az = DELAY_TIME_TO_MULTI_AZ;
-            }
-        }
-
-        cm_sleep((uint32)az_check_and_arbitrate_interval);
-    }
 }

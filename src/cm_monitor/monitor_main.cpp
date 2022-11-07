@@ -46,29 +46,19 @@
 #include <mntent.h>
 #include "utils/syscall_lock.h"
 #include "alarm/alarm_log.h"
-
-#include "cm/etcdapi.h"
-
 #include "config.h"
 #include "cm/cm_c.h"
-
-#define PROCESS_NOT_EXIST 0
-#define PROCESS_CORPSE 1
-#define PROCESS_RUNNING 2
 
 pid_t g_cmAgentPid = 0;
 
 #define LOGIC_CLUSTER_LIST "logic_cluster_name.txt"
 
-#define MAX_PATH_LEN 1024
 #define MAX_PORT_LEN (8)
-#define TRY_TIME_FOR_CHECK_ETCD_FOR_FIRE_WALL (15)
 #define TRY_COUNT_FOR_KILL_ETCD_REPLACE (5)
 
 /* year(4) + -(1) + month(2) -(1) + day (2) +(1) + hour(2) + minute(2) + second(2) + \0 */
-#define LEN_TIMESTAMP (18) 
+#define LEN_TIMESTAMP (18)
 
-#define CM_AGENT_BIN_NAME   "cm_agent"
 #define CM_AGENT_PID_FILE   "cm_agent.pid"
 #define CM_AGENT_CONFIG     "cm_agent.conf"
 /* sleep time between two om_monitor detections */
@@ -91,7 +81,7 @@ static char g_etcdManualStartPath[MAX_PATH_LEN];
 char g_ltranManualStartPath[MAX_PATH_LEN];
 char g_libnetManualStartFile[MAX_PATH_LEN];
 #endif
-static char g_etcdReplacedPath[MAX_PATH_LEN];  /* etcd_replaced file path. */
+static char g_etcdReplacedPath[MAX_PATH_LEN]; /* etcd_replaced file path. */
 static char g_cmUpgradeManualStartPath[MAX_PATH_LEN];
 static char g_cmRollbackManualStartPath[MAX_PATH_LEN];
 static char g_cmStaticConfigChangeFlagFilePath[MAX_PATH_LEN];
@@ -101,7 +91,7 @@ static char g_noCgroupFlag[MAX_PATH_LEN];
 static char g_agentConfigPath[MAXPGPATH];
 
 static char g_alarmConfigPath[MAX_PATH_LEN];
-Alarm* g_startupAlarmList = NULL;
+Alarm *g_startupAlarmList = NULL;
 int g_startupAlarmListSize = 0;
 bool g_isStart = false;
 static bool g_isAttachToCgroup = false;
@@ -117,18 +107,16 @@ static int g_agentFaultCount = 0;
 static char g_monitorLockfile[MAX_PATH_LEN] = {0};
 FILE *g_lockfile = NULL;
 
-const char* g_progname;
+const char *g_progname;
 
 extern char g_curLogFileName[MAXPGPATH];
 extern char sys_log_path[MAX_PATH_LEN];
-extern FILE* syslogFile;
+extern FILE *syslogFile;
 
 extern volatile int maxLogFileSize;
-extern volatile int curLogFileNum;
-extern volatile bool logInitFlag;
 extern bool g_logFileSet;
 extern char system_alarm_log[MAXPGPATH];
-char* g_logFile;
+char *g_logFile;
 
 EtcdTlsAuthPath g_tlsPath = {0};
 static char g_curEtcdLogFile[MAXPGPATH] = {0};
@@ -137,8 +125,9 @@ static char g_etcdLogPath[MAX_PATH_LEN] = {0};
 static int g_startEtcdCount = 0;
 static int g_replaceEtcdCount = 0;
 
-static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, const char *userName);
-static int MonitorLock(void);
+static void check_ETCD_process_status(AlarmAdditionalParam *additionalParam, const char *userName);
+int check_process_status(ProcessKind type, pid_t parentPid, bool *isKillProcess = NULL);
+static int MonitorLock(bool isKillProcess);
 static int MonitorUnlock(void);
 
 /**
@@ -150,21 +139,17 @@ static int MonitorUnlock(void);
  */
 static bool check_start_request();
 
-int cmmonitor_getenv(const char* env_var, char* output_env_value, uint32 env_value_len)
+int cmmonitor_getenv(const char *env_var, char *output_env_value, uint32 env_value_len)
 {
-    char* env_value = NULL;
-    int rc = 0;
-
-    if (NULL == env_var) {
-        fprintf(stderr, "cmmonitor_getenv: invalid env_var !\n");
+    if (env_var == NULL) {
+        (void)fprintf(stderr, "cmmonitor_getenv: invalid env_var !\n");
         return -1;
     }
 
     (void)syscalllockAcquire(&g_cmEnvLock);
-    env_value = getenv(env_var);
-
-    if (NULL == env_value || env_value[0] == '\0') {
-        fprintf(stderr,
+    char *env_value = getenv(env_var);
+    if (env_value == NULL || env_value[0] == '\0') {
+        (void)fprintf(stderr,
             "cmmonitor_getenv: failed to get environment variable:%s. Please check and make sure it is configured!\n",
             env_var);
         (void)syscalllockRelease(&g_cmEnvLock);
@@ -172,9 +157,9 @@ int cmmonitor_getenv(const char* env_var, char* output_env_value, uint32 env_val
     }
     CheckEnvValue(env_value);
 
-    rc = strcpy_s(output_env_value, env_value_len, env_value);
-    if (EOK != rc) {
-        fprintf(stderr,
+    int rc = strcpy_s(output_env_value, env_value_len, env_value);
+    if (rc != EOK) {
+        (void)fprintf(stderr,
             "cmmonitor_getenv: failed to get environment variable:%s, variable length:%lu.\n",
             env_var,
             strlen(env_value));
@@ -187,23 +172,21 @@ int cmmonitor_getenv(const char* env_var, char* output_env_value, uint32 env_val
     return EOK;
 }
 
-void StartupAlarmItemInitialize(const staticNodeConfig* currentNode)
+void StartupAlarmItemInitialize(const staticNodeConfig *currentNode)
 {
-    int alarmIndex = 0;
     g_startupAlarmListSize = 1;
 
     if (currentNode->etcd) {
         g_startupAlarmListSize += 1;
     }
 
-    g_startupAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_startupAlarmListSize);
-
-    if (NULL == g_startupAlarmList) {
+    g_startupAlarmList = (Alarm *)malloc(sizeof(Alarm) * (size_t)g_startupAlarmListSize);
+    if (g_startupAlarmList == NULL) {
         AlarmLog(ALM_LOG, "Out of memory: StartupAlarmItemInitialize failed.\n");
         exit(1);
     }
 
-    alarmIndex = g_startupAlarmListSize - 1;
+    int alarmIndex = g_startupAlarmListSize - 1;
 
     /* ALM_AI_AbnormalCMAProcess. */
     AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalCMAProcess, ALM_AS_Normal, NULL);
@@ -216,7 +199,7 @@ void StartupAlarmItemInitialize(const staticNodeConfig* currentNode)
     }
 }
 
-void GetCmdlineOpt(int argc, char* const argv[])
+void GetCmdlineOpt(int argc, char *const argv[])
 {
     long logChoice = 0;
     const int base = 10;
@@ -251,7 +234,7 @@ void GetCmdlineOpt(int argc, char* const argv[])
     }
 }
 
-static char* GetProcessName(ProcessKind type)
+static const char *GetProcessName(ProcessKind type)
 {
     switch (type) {
         case PROCKIND_ETCD:
@@ -288,14 +271,14 @@ static bool IsNeedKillProcess(const char *processName, int pid, int ppid)
     int rcs = snprintf_s(cmdPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/proc/%d/cmdline", pid);
     securec_check_intval(rcs, (void)rcs);
 
-    FILE* fp = fopen(cmdPath, "r");
+    FILE *fp = fopen(cmdPath, "r");
     if (fp == NULL) {
         return true;
     }
 
     bool isNeedKillProcess = true;
     if (fgets(getBuff, MAX_PATH_LEN - 1, fp) != NULL) {
-        char* temp = getBuff + strlen(getBuff) + 1;
+        char *temp = getBuff + strlen(getBuff) + 1;
         for (int i = 0; parameter[i] != NULL; i++) {
             if (strcmp(temp, parameter[i]) == 0) {
                 isNeedKillProcess = false;
@@ -303,15 +286,22 @@ static bool IsNeedKillProcess(const char *processName, int pid, int ppid)
             }
         }
     }
-    fclose(fp);
+    (void)fclose(fp);
     return isNeedKillProcess;
 }
-int check_process_status(ProcessKind type, pid_t parentPid)
+
+static void SetKillProcessValue(bool *isKillProcess)
 {
-    DIR* dir = NULL;
-    struct dirent* de = NULL;
+    if (isKillProcess != NULL) {
+        *isKillProcess = true;
+    }
+}
+
+int check_process_status(ProcessKind type, pid_t parentPid, bool *isKillProcess)
+{
+    struct dirent *de;
     char pid_path[MAX_PATH_LEN];
-    FILE* fp = NULL;
+    FILE *fp = NULL;
     char getBuff[MAX_PATH_LEN];
     char paraName[MAX_PATH_LEN];
     char paraValue[MAX_PATH_LEN];
@@ -334,10 +324,11 @@ int check_process_status(ProcessKind type, pid_t parentPid)
     bool uidGet = false;
     errno_t rc;
     int rcs;
-    char* processName = GetProcessName(type);
+    const char *processName = GetProcessName(type);
     bool isProcessFile = false;
 
-    if ((dir = opendir("/proc")) == NULL) {
+    DIR *dir = opendir("/proc");
+    if (dir == NULL) {
         write_runlog(ERROR, "opendir(/proc) failed! \n ");
         return -1;
     }
@@ -348,14 +339,14 @@ int check_process_status(ProcessKind type, pid_t parentPid)
          * check whether there are files under the directory , these files includes
          * all detailed information about the process.
          */
-        if (0 != CM_is_str_all_digit(de->d_name)) {
+        if (CM_is_str_all_digit(de->d_name) != 0) {
             continue;
         }
         isProcessFile = true;
 
     MONITOR_RETRIES:
         rc = memset_s(pid_path, MAX_PATH_LEN, 0, MAX_PATH_LEN);
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
         pid = (int)strtol(de->d_name, NULL, 10);
         {
             rcs = snprintf_s(pid_path, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/proc/%d/status", pid);
@@ -364,7 +355,7 @@ int check_process_status(ProcessKind type, pid_t parentPid)
 
         /* maybe fail because of privilege */
         fp = fopen(pid_path, "r");
-        if (NULL == fp) {
+        if (fp == NULL) {
             continue;
         }
 
@@ -375,20 +366,20 @@ int check_process_status(ProcessKind type, pid_t parentPid)
         stateGet = false;
         uidGet = false;
         rc = memset_s(paraValue, MAX_PATH_LEN, 0, MAX_PATH_LEN);
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
         tgid = 0;
         spid = 0;
         ppid = 0;
         state = '0';
         uid = 0;
         rc = memset_s(getBuff, MAX_PATH_LEN, 0, MAX_PATH_LEN);
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
         nameFound = false;
 
         /* parse process's status file */
         while (fgets(getBuff, MAX_PATH_LEN - 1, fp) != NULL) {
             rc = memset_s(paraName, MAX_PATH_LEN, 0, MAX_PATH_LEN);
-            securec_check_errno(rc, );
+            securec_check_errno(rc, (void)rc);
 
             if (!nameGet && (strstr(getBuff, "Name:") != NULL)) {
                 nameGet = true;
@@ -396,7 +387,7 @@ int check_process_status(ProcessKind type, pid_t parentPid)
                 check_sscanf_s_result(rcs, 2);
                 securec_check_intval(rcs, (void)rcs);
 
-                if (0 == strcmp(processName, paraValue)) {
+                if (strcmp(processName, paraValue) == 0) {
                     nameFound = true;
                 } else {
                     break;
@@ -433,8 +424,8 @@ int check_process_status(ProcessKind type, pid_t parentPid)
 
             if (!uidGet && (strstr(getBuff, "Uid:") != NULL)) {
                 uidGet = true;
-                rcs = sscanf_s(
-                    getBuff, "%s    %u    %u    %u    %u", paraName, MAX_PATH_LEN, &uid, &uid1, &uid2, &uid3);
+                rcs =
+                    sscanf_s(getBuff, "%s    %u    %u    %u    %u", paraName, MAX_PATH_LEN, &uid, &uid1, &uid2, &uid3);
                 check_sscanf_s_result(rcs, 5);
                 securec_check_intval(rcs, (void)rcs);
             }
@@ -444,7 +435,7 @@ int check_process_status(ProcessKind type, pid_t parentPid)
                 break;
             }
         }
-        fclose(fp);
+        (void)fclose(fp);
 
         /*
          * Skip following four kinds of process:
@@ -483,6 +474,8 @@ int check_process_status(ProcessKind type, pid_t parentPid)
                             spid);
                         if (kill(spid, SIGKILL) < 0) {
                             write_runlog(LOG, "failed to kill process (%s:%d)\n", processName, spid);
+                        } else {
+                            SetKillProcessValue(isKillProcess);
                         }
                     } else if (type == PROCKIND_MONITOR) {
                         /* kill monitor if it is in T status during 3 seconds */
@@ -522,13 +515,11 @@ int check_process_status(ProcessKind type, pid_t parentPid)
     return haveFound ? PROCESS_RUNNING : PROCESS_NOT_EXIST;
 }
 
-int get_prog_path(int argc, char** argv)
+int get_prog_path()
 {
     char execPath[MAX_PATH_LEN] = {0};
-    errno_t rc = 0;
-    int rcs = 0;
 
-    rc = memset_s(g_cmManualStartPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    errno_t rc = memset_s(g_cmManualStartPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
     rc = memset_s(g_etcdManualStartPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
@@ -565,22 +556,21 @@ int get_prog_path(int argc, char** argv)
     rc = memset_s(g_monitorLockfile, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
 
-    rcs = GetHomePath(execPath, sizeof(execPath));
-    if (EOK != rcs) {
-        fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
+    int rcs = GetHomePath(execPath, sizeof(execPath));
+    if (rcs != EOK) {
+        (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
     } else {
         canonicalize_path(execPath);
-        rcs =
-            snprintf_s(g_cmManualStartPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/cluster_manual_start", execPath);
+        rcs = snprintf_s(g_cmManualStartPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/cluster_manual_start", execPath);
         securec_check_intval(rcs, (void)rcs);
         rcs = snprintf_s(g_etcdManualStartPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/etcd_manual_start", execPath);
         securec_check_intval(rcs, (void)rcs);
 #ifndef ENABLE_MULTIPLE_NODES
         rcs = snprintf_s(g_ltranManualStartPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/ltran_manual_start", execPath);
         securec_check_intval(rcs, (void)rcs);
-        rcs = snprintf_s(
-            g_libnetManualStartFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/libnet_manual_start", execPath);
+        rcs =
+            snprintf_s(g_libnetManualStartFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/libnet_manual_start", execPath);
         securec_check_intval(rcs, (void)rcs);
 #endif
         rcs = snprintf_s(g_etcdReplacedPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/etcd_replaced", execPath);
@@ -615,15 +605,18 @@ int get_prog_path(int argc, char** argv)
             "%s/bin/cluster_upgrade_manual_start",
             execPath);
         securec_check_intval(rcs, (void)rcs);
-        rcs = snprintf_s(g_cmRollbackManualStartPath, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-            "%s/bin/cluster_rollback_manual_start", execPath);
+        rcs = snprintf_s(g_cmRollbackManualStartPath,
+            MAX_PATH_LEN,
+            MAX_PATH_LEN - 1,
+            "%s/bin/cluster_rollback_manual_start",
+            execPath);
         securec_check_intval(rcs, (void)rcs);
         rcs = snprintf_s(g_noCgroupFlag, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/no_cm_cgroup", execPath);
         securec_check_intval(rcs, (void)rcs);
         rcs = snprintf_s(
             g_logicClusterListPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", execPath, LOGIC_CLUSTER_LIST);
         securec_check_intval(rcs, (void)rcs);
-        rc = snprintf_s(g_monitorLockfile, MAX_PATH_LEN, MAX_PATH_LEN-1, "%s/bin/om_monitor.lock", execPath);
+        rc = snprintf_s(g_monitorLockfile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/om_monitor.lock", execPath);
         securec_check_intval(rc, (void)rcs);
         check_input_for_security(g_monitorLockfile);
         canonicalize_path(g_monitorLockfile);
@@ -648,31 +641,34 @@ bool CheckOfflineNode()
     return false;
 }
 
-
 void CreateEtcdLogPath()
 {
     char gausslog[MAXPGPATH] = {0};
-    errno_t rc = 0;
-    int rcs = 0;
- 
-    rc = memset_s(gausslog, sizeof(gausslog), 0, MAXPGPATH);
-    securec_check_errno(rc, );
-    rc = memset_s(g_etcdLogPath, MAXPGPATH, 0, MAXPGPATH);     
-    securec_check_errno(rc, );
 
-    rcs = cmmonitor_getenv("GAUSSLOG", gausslog, sizeof(gausslog));
-    if (EOK != rcs) {
-        fprintf(stderr, "The environment variable 'GAUSSLOG' was not specified.\n");
+    errno_t rc = memset_s(gausslog, sizeof(gausslog), 0, MAXPGPATH);
+    securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_etcdLogPath, MAXPGPATH, 0, MAXPGPATH);
+    securec_check_errno(rc, (void)rc);
+
+    int rcs = cmmonitor_getenv("GAUSSLOG", gausslog, sizeof(gausslog));
+    if (rcs != EOK) {
+        (void)fprintf(stderr, "FATAL The environment variable 'GAUSSLOG' was not specified.\n");
         exit(-1);
     }
     CheckEnvValue(gausslog);
 
     if (CheckOfflineNode()) {
+        uint32 nodeIndex = 0;
+        int ret = find_node_index_by_nodeid(g_nodeHeader.node, &nodeIndex);
+        if (ret != 0) {
+            write_runlog(ERROR, "create etcd directory get node index failed!\n");
+            return;
+        }
         rcs = snprintf_s(g_etcdLogPath,
             sizeof(g_etcdLogPath),
             MAX_PATH_LEN - 1,
             "%s/etcdlog/",
-            g_node[g_nodeHeader.node - 1].etcdDataPath);
+            g_node[nodeIndex].etcdDataPath);
         securec_check_intval(rcs, (void)rcs);
         if (mkdir(g_etcdLogPath, S_IRWXU) != 0) {
             write_runlog(ERROR, "create directory(%s) failed, errno: %d.\n", g_etcdLogPath, errno);
@@ -708,11 +704,9 @@ int start_cm_agent(void)
 
     pid = fork();
     /* If current process is child process. */
-    if (0 == pid) {
-        int fd = 0;
-
-        fd = open(g_curLogFileName, O_RDWR | O_APPEND | O_CREAT, 0600);
-        if (-1 == fd) {
+    if (pid == 0) {
+        int fd = open(g_curLogFileName, O_RDWR | O_APPEND | O_CREAT, 0600);
+        if (fd == -1) {
             char errBuffer[ERROR_LIMIT_LEN];
             write_runlog(ERROR,
                 "can not open execl call log file: %s %s\n",
@@ -721,7 +715,7 @@ int start_cm_agent(void)
         } else {
             (void)dup2(fd, STDOUT_FILENO);
             (void)dup2(fd, STDERR_FILENO);
-            close(fd);
+            (void)close(fd);
         }
 
         /* check cluster_upgrade_manual_start file. */
@@ -736,16 +730,16 @@ int start_cm_agent(void)
             inRollback = true;
         }
 
-        if ((true == g_isStart) || (true == inUpgrade) || true == inRollback) {
+        if (g_isStart || inUpgrade || inRollback) {
             /* the cm_agent is started normally. */
-            status = execl(g_cmAgentBinPath, g_cmAgentBinPath, "normal", (char*)0);
+            status = execl(g_cmAgentBinPath, g_cmAgentBinPath, "normal", (char *)0);
         } else {
             /* the cm_agent is started by killed. */
-            status = execl(g_cmAgentBinPath, g_cmAgentBinPath, "abnormal", (char*)0);
+            status = execl(g_cmAgentBinPath, g_cmAgentBinPath, "abnormal", (char *)0);
         }
 
         if (status < 0) {
-            write_runlog(ERROR, "execl cm_agent faild! path is %s\n", g_cmAgentBinPath);
+            write_runlog(FATAL, "execl cm_agent faild! path is %s\n", g_cmAgentBinPath);
             _exit(1);
         }
 
@@ -761,11 +755,10 @@ extern void HLLT_Coverage_SaveCoverageData();
 }
 #endif
 
-static int get_current_timestamp(char* timestamp, size_t len)
+static int get_current_timestamp(char *timestamp, size_t len)
 {
-    struct tm *t = NULL;
     pg_time_t currentTime = time(NULL);
-    t = localtime(&currentTime);
+    struct tm *t = localtime(&currentTime);
     if (t != NULL) {
         (void)strftime(timestamp, len, "%Y-%m-%d_%H%M%S", t);
         return 0;
@@ -780,7 +773,6 @@ static void CreateEtcdLog()
         return;
     }
 
-    FILE* etcdLogFile = NULL;
     char createTime[LEN_TIMESTAMP] = {0};
     char buff[LOG_MAX_TIMELEN];
     size_t counter;
@@ -793,9 +785,9 @@ static void CreateEtcdLog()
     }
 
     rcs = snprintf_s(buff, LOG_MAX_TIMELEN, LOG_MAX_TIMELEN - 1, "log_file_create_time=%s\n", createTime);
-    securec_check_intval(rcs,);
+    securec_check_intval(rcs, (void)rcs);
     oumask = umask((mode_t)((~(mode_t)(S_IRUSR | S_IWUSR | S_IXUSR)) & (S_IRWXU | S_IRWXG | S_IRWXO)));
-    etcdLogFile = fopen(g_curEtcdLogFile, "w+");
+    FILE *etcdLogFile = fopen(g_curEtcdLogFile, "w+");
     (void)umask(oumask);
     if (etcdLogFile == NULL) {
         write_runlog(ERROR, "create etcd log file failed! errno is %s\n", strerror(errno));
@@ -821,20 +813,25 @@ static void switch_ETCD_logfile()
             return;
         }
 
-        rcs = snprintf_s(hstEtcdLogFile, MAXPGPATH, MAXPGPATH - 1,
-            "%s/%s-%s.log", g_etcdLogPath, "etcd", createTime);
+        rcs = snprintf_s(hstEtcdLogFile, MAXPGPATH, MAXPGPATH - 1, "%s/%s-%s.log", g_etcdLogPath, "etcd", createTime);
         securec_check_intval(rcs, (void)rcs);
 
         /* copy current to history and clean current file. (sed -c -i not supported on some systems) */
-        rcs = snprintf_s(command, 4 * MAXPGPATH, (4 * MAXPGPATH) - 1,
+        rcs = snprintf_s(command,
+            4 * MAXPGPATH,
+            (4 * MAXPGPATH) - 1,
             "cp %s %s;echo \"log_file_create_time=%s\" > %s;",
             g_curEtcdLogFile, hstEtcdLogFile, createTime, g_curEtcdLogFile);
-        securec_check_intval(rcs,);
+        securec_check_intval(rcs, (void)rcs);
 
         rcs = system(command);
         if (rcs != 0) {
-            write_runlog(ERROR, "failed to switch ETCD logfile. cmd:%s. return:(%d,%d), errno=%d.\n",
-                command, rcs, WEXITSTATUS(rcs), errno);
+            write_runlog(ERROR,
+                "failed to switch ETCD logfile. cmd:%s. return:(%d,%d), errno=%d.\n",
+                command,
+                rcs,
+                WEXITSTATUS(rcs),
+                errno);
         } else {
             write_runlog(LOG, "switch ETCD logfile successfully. cmd:%s.\n", command);
         }
@@ -850,7 +847,7 @@ static void KillLtranProcess()
         2 * MAXPGPATH - 1,
         SYSTEMQUOTE "killall ltran >> \"%s\" 2>&1 &" SYSTEMQUOTE,
         g_curLogFileName);
-    securec_check_ss_c(ret, "\0", "\0");
+    securec_check_ss_c(ret, "", "");
     write_runlog(LOG, "kill ltran! command=%s \n", command);
     ret = system(command);
     if (ret != 0) {
@@ -892,18 +889,16 @@ int server_loop(void)
 {
     int status;
     int pid; /* process id of dead child process */
-    errno_t rc = 0;
     struct stat stat_buf = {0};
     char agentPidFile[MAXPGPATH] = {0};
     int startCMACount = 0;
     int startRetryTimes = 3;
     AlarmAdditionalParam tempAdditionalParam;
 
-    struct passwd* pw = getpwuid(getuid());
+    struct passwd *pw = getpwuid(getuid());
 
-    rc = snprintf_s(agentPidFile, MAXPGPATH, MAXPGPATH - 1, "%s/%s",
-                    g_agentConfigPath, CM_AGENT_PID_FILE);
-    securec_check_intval(rc,);
+    errno_t rc = snprintf_s(agentPidFile, MAXPGPATH, MAXPGPATH - 1, "%s/%s", g_agentConfigPath, CM_AGENT_PID_FILE);
+    securec_check_intval(rc, (void)rc);
     check_input_for_security(agentPidFile);
     canonicalize_path(agentPidFile);
 
@@ -914,7 +909,6 @@ int server_loop(void)
 
     for (;;) {
         pid = waitpid(-1, &status, WNOHANG);
-
         if (pid > 0) {
             write_runlog(LOG, "child process cm_agent have die! pid is %d, exit status is %d\n ", pid, status);
             /* If the exit code is not 0, we will record the last exit code of the CM Agent. */
@@ -936,8 +930,7 @@ int server_loop(void)
             delete_lock_file(agentPidFile);
         }
 
-        if (stat(g_monitorLockfile, &stat_buf) != 0)
-        {
+        if (stat(g_monitorLockfile, &stat_buf) != 0) {
             write_runlog(LOG, "The monitor lock file doesn't exist, process exit.\n");
             return 1;
         }
@@ -954,17 +947,22 @@ int server_loop(void)
             if (access(g_cmManualStartPath, 0) != 0) {
                 ++startCMACount;
             }
-            
+
             /* If start cm_agent more than 3 times, then report the cm_agent process abnormal alarm. */
             if (startCMACount >= startRetryTimes) {
                 /* Report the alarm. */
                 if (g_startupAlarmList != NULL) {
                     /* Fill the alarm message. */
-                    WriteAlarmAdditionalInfo(&tempAdditionalParam, "cma", "", "", 
-                        &(g_startupAlarmList[g_startupAlarmListSize - 1]), ALM_AT_Fault);
+                    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                        "cma",
+                        "",
+                        "",
+                        "",
+                        &(g_startupAlarmList[g_startupAlarmListSize - 1]),
+                        ALM_AT_Fault);
                     /* Report the alarm. */
                     AlarmReporter(
-                            &(g_startupAlarmList[g_startupAlarmListSize - 1]), ALM_AT_Fault, &tempAdditionalParam);
+                        &(g_startupAlarmList[g_startupAlarmListSize - 1]), ALM_AT_Fault, &tempAdditionalParam);
                 }
             }
 
@@ -977,21 +975,20 @@ int server_loop(void)
                 }
 
                 if (startCMACount % 20 == 0) {
-                    status = get_prog_path(0, NULL);
+                    status = get_prog_path();
                     if (status < 0) {
-                        fprintf(stderr, "get_prog_path failed!\n");
+                        (void)fprintf(stderr, "FATAL get_prog_path failed!\n");
                         exit(status);
                     } else {
                         write_runlog(LOG, "Reload env, agent path is %s.\n", g_cmAgentBinPath);
                     }
                 }
                 if (startCMACount == 100) {
-                    write_runlog(
-                        LOG, "Monitor has started agent for 5 minutes, agent path is %s.\n", g_cmAgentBinPath);
+                    write_runlog(LOG, "Monitor has started agent for 5 minutes, agent path is %s.\n", g_cmAgentBinPath);
                     char execPath[MAX_PATH_LEN] = {0};
                     int rcs = GetHomePath(execPath, sizeof(execPath));
-                    if (EOK != rcs) {
-                        fprintf(stderr, "The environment variable 'GAUSSHOME' was not specified.\n");
+                    if (rcs != EOK) {
+                        (void)fprintf(stderr, "FATAL The environment variable 'GAUSSHOME' was not specified.\n");
                         exit(-1);
                     }
                     write_runlog(LOG, "env is %s.\n", execPath);
@@ -1005,16 +1002,20 @@ int server_loop(void)
             startCMACount = 0;
             if (g_startupAlarmList != NULL) {
                 /* fill the alarm message */
-                WriteAlarmAdditionalInfo(
-                    &tempAdditionalParam, "cma", "", "",
-                    &(g_startupAlarmList[g_startupAlarmListSize - 1]), ALM_AT_Resume);
+                WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                    "cma",
+                    "",
+                    "",
+                    "",
+                    &(g_startupAlarmList[g_startupAlarmListSize - 1]),
+                    ALM_AT_Resume);
                 /* report the alarm */
                 AlarmReporter(&(g_startupAlarmList[g_startupAlarmListSize - 1]), ALM_AT_Resume, &tempAdditionalParam);
             }
         }
 
         /* check etcd process */
-        (void)check_ETCD_process_status(&tempAdditionalParam, pw->pw_name);
+        check_ETCD_process_status(&tempAdditionalParam, pw->pw_name);
 
         switch_ETCD_logfile();
 #ifndef ENABLE_MULTIPLE_NODES
@@ -1042,8 +1043,8 @@ int GetEtcdLogOutputCmd(char *logOutPutCmd, uint32 len)
     char command[MAXPGPATH * 2] = {0};
     int rcs;
     int ret;
-    rcs = snprintf_s(command, sizeof(command), sizeof(command) - 1, "%s --help | grep \"\\-\\-log-outputs\"",
-        g_etcdBinPath);
+    rcs = snprintf_s(
+        command, sizeof(command), sizeof(command) - 1, "%s --help | grep \"\\-\\-log-outputs\"", g_etcdBinPath);
     securec_check_intval(rcs, (void)rcs);
     ret = system(command);
     if (ret == 0) {
@@ -1052,10 +1053,9 @@ int GetEtcdLogOutputCmd(char *logOutPutCmd, uint32 len)
         securec_check_intval(rcs, (void)rcs);
         return 0;
     }
-    write_runlog(LOG, "run check etcd log-outputs command %s failed,try to check log-output command!\n",
-        command);
-    rcs = snprintf_s(command, sizeof(command), sizeof(command) - 1, "%s --help | grep \"\\-\\-log-output\"",
-        g_etcdBinPath);
+    write_runlog(LOG, "run check etcd log-outputs command %s failed,try to check log-output command!\n", command);
+    rcs = snprintf_s(
+        command, sizeof(command), sizeof(command) - 1, "%s --help | grep \"\\-\\-log-output\"", g_etcdBinPath);
     securec_check_intval(rcs, (void)rcs);
     ret = system(command);
     if (ret == 0) {
@@ -1073,14 +1073,14 @@ void CheckStartEtcdCount(AlarmAdditionalParam *additionalParam)
     int rcs;
     if (g_startEtcdCount >= 3) {
         if (g_startupAlarmList != NULL) {
-            WriteAlarmAdditionalInfo(additionalParam, "etcd", "", "", &(g_startupAlarmList[0]), ALM_AT_Fault);
+            WriteAlarmAdditionalInfo(additionalParam, "etcd", "", "", "", &(g_startupAlarmList[0]), ALM_AT_Fault);
             AlarmReporter(&(g_startupAlarmList[0]), ALM_AT_Fault, additionalParam);
         }
     }
     if (g_startEtcdCount % 20 == 0) {
-        status = get_prog_path(0, NULL);
+        status = get_prog_path();
         if (status < 0) {
-            fprintf(stderr, "get_prog_path failed!\n");
+            (void)fprintf(stderr, "FATAL get_prog_path failed!\n");
             exit(status);
         } else {
             write_runlog(LOG, "Reload env, ETCD path is %s.\n", g_etcdBinPath);
@@ -1091,13 +1091,13 @@ void CheckStartEtcdCount(AlarmAdditionalParam *additionalParam)
         char execPath[MAX_PATH_LEN] = {0};
         rcs = GetHomePath(execPath, sizeof(execPath));
         if (rcs != EOK) {
-            fprintf(stderr, "The environment variable 'GAUSSHOME' was not specified.\n");
+            (void)fprintf(stderr, "FATAL The environment variable 'GAUSSHOME' was not specified.\n");
             exit(-1);
         }
         write_runlog(LOG, "env is %s.\n", execPath);
     }
 }
-static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, const char *userName)
+static void check_ETCD_process_status(AlarmAdditionalParam *additionalParam, const char *userName)
 {
     int status = 0;
 
@@ -1114,40 +1114,46 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
 
         if (access(g_etcdManualStartPath, 0) != 0) {
             status = check_process_status(PROCKIND_ETCD, 0);
-            if (PROCESS_NOT_EXIST == status) {
+            if (status == PROCESS_NOT_EXIST) {
+                uint32 currNodeIndex = 0;
+                ret = find_node_index_by_nodeid(g_nodeHeader.node, &currNodeIndex);
+                if (ret != 0) {
+                    write_runlog(ERROR, "check ETCD process get node index failed!\n");
+                    return;
+                }
                 char logOutPutCmd[MAXPGPATH] = {0};
                 if (GetEtcdLogOutputCmd(logOutPutCmd, MAXPGPATH) != 0) {
-                    write_runlog(ERROR, "get etcd log-output command failed, please check etcd bin file %s!\n",
-                        g_etcdBinPath);
+                    write_runlog(
+                        ERROR, "get etcd log-output command failed, please check etcd bin file %s!\n", g_etcdBinPath);
                     ++g_startEtcdCount;
                     CheckStartEtcdCount(additionalParam);
                     return;
                 }
                 char clientUrls[CM_IP_LENGTH * CM_IP_NUM] = {0};
                 for (uint32 ipnum = 0; ipnum < CM_IP_NUM; ipnum++) {
-                    if (strlen(g_node[g_nodeHeader.node - 1].etcdClientListenIPs[ipnum]) == 0) {
+                    if (strlen(g_node[currNodeIndex].etcdClientListenIPs[ipnum]) == 0) {
                         break;
                     }
 
                     char single_url[CM_IP_LENGTH] = {0};
                     rcs = snprintf_s(single_url, CM_IP_LENGTH, CM_IP_LENGTH - 1,
                         SYSTEMQUOTE "https://%s:%u" SYSTEMQUOTE,
-                        g_node[g_nodeHeader.node - 1].etcdClientListenIPs[ipnum],
-                        g_node[g_nodeHeader.node - 1].etcdClientListenPort);
+                        g_node[currNodeIndex].etcdClientListenIPs[ipnum], g_node[currNodeIndex].etcdClientListenPort);
                     securec_check_intval(rcs, (void)rcs);
 
-                    if ((ipnum + 1) < g_node[g_nodeHeader.node - 1].etcdClientListenIPCount) {
+                    if ((ipnum + 1) < g_node[currNodeIndex].etcdClientListenIPCount) {
                         rcs = strncat_s(single_url, CM_IP_LENGTH, ",", strlen(","));
-                        securec_check_errno(rcs, );
+                        securec_check_errno(rcs, (void)rcs);
                     }
 
                     rcs = strncat_s(clientUrls, CM_IP_LENGTH * CM_IP_NUM, single_url, strlen(single_url));
-                    securec_check_errno(rcs, );
+                    securec_check_errno(rcs, (void)rcs);
                 }
 
-                rcs = snprintf_s(command, 2 * MAXPGPATH, (2 * MAXPGPATH) - 1,
-                    SYSTEMQUOTE
-                    "umask=`umask`;umask 0077;%s  -name %s --data-dir %s "
+                rcs = snprintf_s(command,
+                    2 * MAXPGPATH,
+                    (2 * MAXPGPATH) - 1,
+                    SYSTEMQUOTE "umask=`umask`;umask 0077;%s  -name %s --data-dir %s "
                     "--client-cert-auth --trusted-ca-file %s --cert-file %s/etcd.crt --key-file %s/etcd.key  "
                     "--peer-client-cert-auth --peer-trusted-ca-file %s --peer-cert-file %s/etcd.crt --peer-key-file "
                     "%s/etcd.key "
@@ -1157,19 +1163,22 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                     "--auto-compaction-mode 'periodic' --auto-compaction-retention '1h' "
                     "-initial-cluster-token etcd-cluster-%s --enable-v2=false -initial-cluster " SYSTEMQUOTE,
                     g_etcdBinPath,
-                    g_node[g_nodeHeader.node - 1].etcdName,
-                    g_node[g_nodeHeader.node - 1].etcdDataPath,
+                    g_node[currNodeIndex].etcdName,
+                    g_node[currNodeIndex].etcdDataPath,
                     g_tlsPath.etcd_ca_path,
-                    g_node[g_nodeHeader.node - 1].etcdDataPath,
-                    g_node[g_nodeHeader.node - 1].etcdDataPath,
+                    g_node[currNodeIndex].etcdDataPath,
+                    g_node[currNodeIndex].etcdDataPath,
                     g_tlsPath.etcd_ca_path,
-                    g_node[g_nodeHeader.node - 1].etcdDataPath,
-                    g_node[g_nodeHeader.node - 1].etcdDataPath,
-                    g_node[g_nodeHeader.node - 1].etcdHAListenIPs[0],
-                    g_node[g_nodeHeader.node - 1].etcdHAListenPort,
-                    g_node[g_nodeHeader.node - 1].etcdHAListenIPs[0],
-                    g_node[g_nodeHeader.node - 1].etcdHAListenPort,
-                    clientUrls, clientUrls, logOutPutCmd, userName);
+                    g_node[currNodeIndex].etcdDataPath,
+                    g_node[currNodeIndex].etcdDataPath,
+                    g_node[currNodeIndex].etcdHAListenIPs[0],
+                    g_node[currNodeIndex].etcdHAListenPort,
+                    g_node[currNodeIndex].etcdHAListenIPs[0],
+                    g_node[currNodeIndex].etcdHAListenPort,
+                    clientUrls,
+                    clientUrls,
+                    logOutPutCmd,
+                    userName);
                 securec_check_intval(rcs, (void)rcs);
 
                 uint32 j = 0;
@@ -1178,21 +1187,21 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                         char port[MAX_PORT_LEN];
                         if (j++ > 0) {
                             rcs = strncat_s(command, 2 * MAXPGPATH, ",", strlen(","));
-                            securec_check_errno(rcs, );
+                            securec_check_errno(rcs, (void)rcs);
                         }
                         rcs = strncat_s(command, 2 * MAXPGPATH, g_node[i].etcdName, strlen(g_node[i].etcdName));
-                        securec_check_errno(rcs, );
+                        securec_check_errno(rcs, (void)rcs);
                         rcs = strncat_s(command, 2 * MAXPGPATH, "=https://", strlen("=https://"));
-                        securec_check_errno(rcs, );
+                        securec_check_errno(rcs, (void)rcs);
                         rcs = strncat_s(
                             command, 2 * MAXPGPATH, g_node[i].etcdHAListenIPs[0], strlen(g_node[i].etcdHAListenIPs[0]));
-                        securec_check_errno(rcs, );
+                        securec_check_errno(rcs, (void)rcs);
                         rcs = strncat_s(command, 2 * MAXPGPATH, ":", strlen(":"));
-                        securec_check_errno(rcs, );
+                        securec_check_errno(rcs, (void)rcs);
                         rcs = snprintf_s(port, MAX_PORT_LEN, MAX_PORT_LEN - 1, "%u", g_node[i].etcdHAListenPort);
                         securec_check_intval(rcs, (void)rcs);
                         rcs = strncat_s(command, 2 * MAXPGPATH, port, strlen(port));
-                        securec_check_errno(rcs, );
+                        securec_check_errno(rcs, (void)rcs);
                     }
                 }
                 /*
@@ -1200,27 +1209,31 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                  * new node can sync data from other members.
                  */
                 if (access(g_etcdReplacedPath, 0) != 0) {
-                    rcs = strncat_s(command, 2 * MAXPGPATH,
-                        " -initial-cluster-state new >> \"", strlen(" -initial-cluster-state new >> \""));
-                    securec_check_errno(rcs, );
+                    rcs = strncat_s(command,
+                        2 * MAXPGPATH,
+                        " -initial-cluster-state new >> \"",
+                        strlen(" -initial-cluster-state new >> \""));
+                    securec_check_errno(rcs, (void)rcs);
                 } else {
-                    rcs = strncat_s(command, 2 * MAXPGPATH,
-                        " -initial-cluster-state existing >> \"", strlen(" -initial-cluster-state existing >> \""));
+                    rcs = strncat_s(command,
+                        2 * MAXPGPATH,
+                        " -initial-cluster-state existing >> \"",
+                        strlen(" -initial-cluster-state existing >> \""));
 
-                    securec_check_errno(rcs, );
+                    securec_check_errno(rcs, (void)rcs);
 
                     ret = unlink(g_etcdReplacedPath);
-                    if (0 != ret) {
-                        write_runlog(ERROR, "could not remove etcd_replaced file: %m.\n");
+                    if (ret != 0) {
+                        write_runlog(ERROR, "could not remove etcd_replaced file: %d.\n", errno);
                     }
                 }
                 rcs = strncat_s(command, 2 * MAXPGPATH, g_curEtcdLogFile, strlen(g_curEtcdLogFile));
-                securec_check_errno(rcs, );
+                securec_check_errno(rcs, (void)rcs);
                 rcs = strncat_s(command, 2 * MAXPGPATH, "\" 2>&1 & umask $umask", strlen("\" 2>&1 & umask $umask"));
-                securec_check_errno(rcs, );
+                securec_check_errno(rcs, (void)rcs);
                 ret = system(command);
                 write_runlog(LOG, "run etcd command: %s \n", command);
-                if (0 != ret) {
+                if (ret != 0) {
                     write_runlog(ERROR, "run system command failed %d! %s, errno=%d.\n", ret, command, errno);
                 }
 
@@ -1231,12 +1244,13 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                 /* if start etcd more than 3 times, then report the etcd process abnormal alarm. */
                 ++g_startEtcdCount;
                 CheckStartEtcdCount(additionalParam);
-            } else if (PROCESS_RUNNING == status) {
+            } else if (status == PROCESS_RUNNING) {
                 /* if the etcd process is running, then report the etcd process abnormal resume. */
                 g_startEtcdCount = 0;
                 if (g_startupAlarmList != NULL) {
                     /* fill the alarm message. */
-                    WriteAlarmAdditionalInfo(additionalParam, "etcd", "", "", &(g_startupAlarmList[0]), ALM_AT_Resume);
+                    WriteAlarmAdditionalInfo(additionalParam, "etcd", "", "", "", &(g_startupAlarmList[0]),
+                        ALM_AT_Resume);
                     /* report the alarm. */
                     AlarmReporter(&(g_startupAlarmList[0]), ALM_AT_Resume, additionalParam);
                 }
@@ -1245,19 +1259,20 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                 /* g_noCgroupFlag is temporarily used for debug, delete it when commit to main branch */
                 struct stat stat_buf1 = {0};
                 int retStat = stat(g_noCgroupFlag, &stat_buf1);
-
                 if (!g_isAttachToCgroup && retStat != 0) {
                     char buf[64] = {0};
                     int etcd_pid = 0;
 
-                    rcs = snprintf_s(command, 2 * MAXPGPATH, 2 * MAXPGPATH - 1,
+                    rcs = snprintf_s(command,
+                        2 * MAXPGPATH,
+                        2 * MAXPGPATH - 1,
                         "status=`ps x|grep '%s' |grep -v 'grep' | awk '{print $1}'`;echo \"$status\"",
                         g_etcdBinPath);
                     securec_check_intval(rcs, (void)rcs);
 
                     write_runlog(LOG, "get etcd processid.  command=%s.\n", command);
 
-                    FILE* fp = popen(command, "r");
+                    FILE *fp = popen(command, "r");
                     if (fp == NULL) {
                         write_runlog(ERROR, "get etcd processid failed. command=%s.\n", command);
                         return;
@@ -1266,7 +1281,7 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                             write_runlog(LOG, "etcd processid is %s.\n", buf);
                             etcd_pid = (int)strtol(buf, NULL, 10);
                             /* initialize cm cgroup and attach it if the relative path is not NULL. */
-                            char* cmcgroup_relpath = gscgroup_cm_init();
+                            char *cmcgroup_relpath = gscgroup_cm_init();
                             if (cmcgroup_relpath != NULL) {
                                 gscgroup_cm_attach_task_pid(cmcgroup_relpath, etcd_pid);
                                 free(cmcgroup_relpath);
@@ -1279,21 +1294,23 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
 #endif
             }
         } else {
-            if (PROCESS_RUNNING == check_process_status(PROCKIND_ETCD, 0)) {
+            if (check_process_status(PROCKIND_ETCD, 0) == PROCESS_RUNNING) {
                 if (access(g_etcdReplacedPath, 0) == 0) {
                     g_replaceEtcdCount++;
                 } else {
                     g_replaceEtcdCount = 0;
                 }
                 haveKillEtcdCount++;
-                if (g_replaceEtcdCount > TRY_COUNT_FOR_KILL_ETCD_REPLACE || 0 == g_replaceEtcdCount) {
+                if (g_replaceEtcdCount > TRY_COUNT_FOR_KILL_ETCD_REPLACE || g_replaceEtcdCount == 0) {
                     g_replaceEtcdCount = 0;
-                    rcs = snprintf_s(command, 2 * MAXPGPATH, 2 * MAXPGPATH - 1,
+                    rcs = snprintf_s(command,
+                        2 * MAXPGPATH,
+                        2 * MAXPGPATH - 1,
                         SYSTEMQUOTE "killall %s etcd" SYSTEMQUOTE,
                         (haveKillEtcdCount >= forceKillEtcd) ? "-s 9" : "");
                     securec_check_intval(rcs, (void)rcs);
 
-                    struct stat statBuf = { 0 };
+                    struct stat statBuf = {0};
                     if (stat(g_curLogFileName, &statBuf) == 0) {
                         rcs = strncat_s(command, 2 * MAXPGPATH, " >> ", strlen(" >> "));
                         securec_check_errno(rcs, (void)rcs);
@@ -1302,10 +1319,10 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
                         rcs = strncat_s(command, 2 * MAXPGPATH, " 2>&1", strlen(" 2>&1"));
                         securec_check_errno(rcs, (void)rcs);
                     }
-                    
+
                     write_runlog(LOG, "kill etcd! command=%s \n", command);
                     ret = system(command);
-                    if (0 != ret) {
+                    if (ret != 0) {
                         write_runlog(ERROR, "run system command failed %d! %s, errno=%d.\n", ret, command, errno);
                     }
                 }
@@ -1325,28 +1342,27 @@ static void check_ETCD_process_status(AlarmAdditionalParam* additionalParam, con
 #define MOUNT_CPUSET_NAME "cpuset"
 
 #define GSCGROUP_TOP_DATABASE "Gaussdb"
-#define GSCGROUP_TOP_BACKEND "Backend"
 #define GSCGROUP_TOP_CLASS "Class"
 
 static char g_mpoints[MOUNT_SUBSYS_KINDS][MAXPGPATH]; /* subsys mount points */
 
 int OmGetMountPoints(void)
 {
-    struct mntent* ent = NULL;
+    struct mntent *ent;
     char mntentBuffer[2 * FILENAME_MAX];
 
     struct mntent tempEnt;
     int i;
-    char* subsysTable[] = {MOUNT_CPU_NAME, MOUNT_CPUSET_NAME};
+    const char *subsysTable[] = {MOUNT_CPU_NAME, MOUNT_CPUSET_NAME};
 
     errno_t rc;
 
     /* reset mount points */
     rc = memset_s(g_mpoints, MOUNT_SUBSYS_KINDS * MAXPGPATH, 0, MOUNT_SUBSYS_KINDS * MAXPGPATH);
-    securec_check_errno(rc,);
+    securec_check_errno(rc, (void)rc);
 
     /* open '/proc/mounts' to load mount points */
-    FILE* procMount = fopen("/proc/mounts", "re");
+    FILE *procMount = fopen("/proc/mounts", "re");
 
     if (procMount == NULL) {
         return -1;
@@ -1364,12 +1380,12 @@ int OmGetMountPoints(void)
             }
 
             /* get mount point */
-            rc = snprintf_s(g_mpoints[i], sizeof(g_mpoints[i]), sizeof(g_mpoints[i]) - 1, "%s", ent->mnt_dir);
-            securec_check_intval(rc, fclose(procMount));
+            rc = snprintf_s(g_mpoints[i], MAXPGPATH, MAXPGPATH - 1, "%s", ent->mnt_dir);
+            securec_check_intval(rc, (void)fclose(procMount));
         }
     }
 
-    fclose(procMount);
+    (void)fclose(procMount);
 
     return 0;
 }
@@ -1381,11 +1397,10 @@ void CheckCgroupInstallation(void)
     int ret = 0;
 
     /* variable to indicate the user of Cgroup configuration file */
-    struct passwd* passwdUser = NULL;
     errno_t rc;
 
     /* save current user info */
-    passwdUser = getpwuid(geteuid());
+    struct passwd *passwdUser = getpwuid(geteuid());
     if (passwdUser == NULL) {
         write_runlog(ERROR,
             "can't get the passwdUser. "
@@ -1400,9 +1415,9 @@ void CheckCgroupInstallation(void)
     /* if the mount point doesn't exist, retrieve them */
     if (*g_mpoints[0] == '\0' || *g_mpoints[1] == '\0') {
         ret = OmGetMountPoints();
-
         if (ret == -1 || *g_mpoints[0] == '\0' || *g_mpoints[1] == '\0') {
-            write_runlog(ERROR, "can't get the mount points\n"
+            write_runlog(ERROR,
+                "can't get the mount points\n"
                 "Please check if cgroup has been mounted and user's cgroup data has been created!\n");
             return;
         }
@@ -1414,19 +1429,14 @@ void CheckCgroupInstallation(void)
 
         ret = 0;
 
-        for (int i = 0; i < MOUNT_SUBSYS_KINDS && 0 == ret; ++i) {
+        for (int i = 0; i < MOUNT_SUBSYS_KINDS && ret == 0; ++i) {
             /* begin to check if Gaussdb:user has been created */
-            rc = snprintf_s(cgpath,
-                MAXPGPATH,
-                MAXPGPATH - 1,
-                "%s/%s:%s",
-                g_mpoints[i],
-                GSCGROUP_TOP_DATABASE,
-                passwdUser->pw_name);
-            securec_check_intval(rc, );
+            rc = snprintf_s(
+                cgpath, MAXPGPATH, MAXPGPATH - 1, "%s/%s:%s", g_mpoints[i], GSCGROUP_TOP_DATABASE, passwdUser->pw_name);
+            securec_check_intval(rc, (void)rc);
 
             ret = stat(cgpath, &buf);
-            if (0 == ret) {
+            if (ret == 0) {
                 /* begin to check if Gaussdb:user/Class has been created */
                 rc = snprintf_s(cgpath,
                     MAXPGPATH,
@@ -1436,16 +1446,20 @@ void CheckCgroupInstallation(void)
                     GSCGROUP_TOP_DATABASE,
                     passwdUser->pw_name,
                     GSCGROUP_TOP_CLASS);
-                securec_check_intval(rc, );
+                securec_check_intval(rc, (void)rc);
 
                 ret = stat(cgpath, &buf);
-                if (0 != ret) {
-                    write_runlog(ERROR, "can't get the %s,\n"
-                        "Please check if cgroup has been mounted and user's cgroup data has been created!\n", cgpath);
+                if (ret != 0) {
+                    write_runlog(ERROR,
+                        "can't get the %s,\n"
+                        "Please check if cgroup has been mounted and user's cgroup data has been created!\n",
+                        cgpath);
                 }
             } else {
-                write_runlog(ERROR, "can't get the %s,\n"
-                    "Please check if cgroup has been mounted and user's cgroup data has been created!\n", cgpath);
+                write_runlog(ERROR,
+                    "can't get the %s,\n"
+                    "Please check if cgroup has been mounted and user's cgroup data has been created!\n",
+                    cgpath);
             }
         }
     }
@@ -1453,50 +1467,49 @@ void CheckCgroupInstallation(void)
 
 static void DoAdvice(void)
 {
-    fprintf(stderr, "Try \"%s --help\" for more information.\n", g_progname);
+    (void)fprintf(stderr, "Try \"%s --help\" for more information.\n", g_progname);
 }
 
 static void DoHelp(void)
 {
-    printf(_("%s is a utility to start an agent or a WMP.\n\n"), g_progname);
+    (void)printf(_("%s is a utility to start an agent or a WMP.\n\n"), g_progname);
 
-    printf(_("Usage:\n"));
-    printf(_("  %s 0  -L FILENAME\n"), g_progname);
-    printf(_("  %s 1\n"), g_progname);
-    printf(_("  %s 2  -L FILENAME\n"), g_progname);
-    printf(_("  %s 3\n"), g_progname);
-    printf(_("  %s -L FILENAME\n"), g_progname);
+    (void)printf(_("Usage:\n"));
+    (void)printf(_("  %s 0  -L FILENAME\n"), g_progname);
+    (void)printf(_("  %s 1\n"), g_progname);
+    (void)printf(_("  %s 2  -L FILENAME\n"), g_progname);
+    (void)printf(_("  %s 3\n"), g_progname);
+    (void)printf(_("  %s -L FILENAME\n"), g_progname);
 
-    printf(_("\nCommon options:\n"));
-    printf(_("  -?, --help             show this help, then exit\n"));
-    printf(_("  -V, --version          output version information, then exit\n"));
+    (void)printf(_("\nCommon options:\n"));
+    (void)printf(_("  -?, --help             show this help, then exit\n"));
+    (void)printf(_("  -V, --version          output version information, then exit\n"));
 }
 
 void InitLogFiles()
 {
-    errno_t rc = 0;
     int rcs = 0;
 
-    rc = memset_s(g_curLogFileName, MAXPGPATH, 0, MAXPGPATH);
+    errno_t rc = memset_s(g_curLogFileName, MAXPGPATH, 0, MAXPGPATH);
     securec_check_errno(rc, (void)rc);
     rc = memset_s(sys_log_path, MAXPGPATH, 0, MAXPGPATH);
     securec_check_errno(rc, (void)rc);
     canonicalize_path(g_alarmConfigPath);
     GetAlarmConfig(g_alarmConfigPath);
     /* user specify log path. */
-    if (g_logFileSet == true) {
+    if (g_logFileSet) {
         (void)logfile_init();
 
         rcs = snprintf_s(
             g_curLogFileName, MAXPGPATH, MAXPGPATH - 1, "%s/%s%s.log", g_logFile, g_progname, curLogFileMark);
         securec_check_intval(rcs, (void)rcs);
         rc = strncpy_s(sys_log_path, MAX_PATH_LEN, g_logFile, strlen(g_logFile));
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
     } else {
         char exec_path[MAX_PATH_LEN] = {0};
         rcs = GetHomePath(exec_path, sizeof(exec_path));
-        if (EOK != rcs) {
-            fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
+        if (rcs != EOK) {
+            (void)fprintf(stderr, "FATAL Get GAUSSHOME failed, please check.\n");
             exit(-1);
         } else {
             rcs = snprintf_s(sys_log_path, sizeof(sys_log_path), MAX_PATH_LEN - 1, "%s/bin", exec_path);
@@ -1513,7 +1526,7 @@ void InitLogFiles()
     (void)mkdir(sys_log_path, S_IRWXU);
     syslogFile = logfile_open(sys_log_path, "a");
     if (syslogFile == NULL) {
-        printf("monitor_main,open log file failed\n");
+        (void)printf("monitor_main,open log file failed\n");
     }
 }
 
@@ -1526,11 +1539,11 @@ static void CheckDirExist()
     char agentlog[MAXPGPATH] = {0};
     int rcs = cmmonitor_getenv("GAUSSLOG", gausslog, sizeof(gausslog));
     if (rcs != EOK) {
-        (void)fprintf(stderr, "The environment variable 'GAUSSLOG' was not specified.\n");
+        (void)fprintf(stderr, "FATAL The environment variable 'GAUSSLOG' was not specified.\n");
         exit(-1);
     }
     if (access(gausslog, F_OK) != 0) {
-        write_runlog(ERROR, "access %s return error %d \n", gausslog, errno);
+        write_runlog(ERROR, "FATAL access %s return error %d \n", gausslog, errno);
         exit(-1);
     }
     rcs = snprintf_s(cmlog, MAXPGPATH, MAXPGPATH - 1, "%s/cm", gausslog);
@@ -1538,14 +1551,14 @@ static void CheckDirExist()
     if (access(cmlog, F_OK) != 0) {
         rcs = mkdir(cmlog, S_IRWXU);
         if (rcs != 0) {
-            write_runlog(ERROR, "mkdir %s return error %d \n", cmlog, errno);
+            write_runlog(ERROR, "FATAL mkdir %s return error %d \n", cmlog, errno);
             exit(-1);
         }
         rcs = snprintf_s(monitorlog, MAXPGPATH, MAXPGPATH - 1, "%s/om_monitor", cmlog);
         securec_check_intval(rcs, (void)rcs);
         rcs = mkdir(monitorlog, S_IRWXU);
         if (rcs != 0) {
-            write_runlog(ERROR, "mkdir %s return error %d \n", monitorlog, errno);
+            write_runlog(ERROR, "FATAL mkdir %s return error %d \n", monitorlog, errno);
             exit(-1);
         }
         rcs = snprintf_s(serverlog, MAXPGPATH, MAXPGPATH - 1, "%s/cm_server", cmlog);
@@ -1553,21 +1566,21 @@ static void CheckDirExist()
         securec_check_intval(rcs, (void)rcs);
         rcs = mkdir(serverlog, S_IRWXU);
         if (rcs != 0) {
-            write_runlog(ERROR, "mkdir %s return error %d \n", serverlog, errno);
+            write_runlog(ERROR, "FATAL mkdir %s return error %d \n", serverlog, errno);
             exit(-1);
         }
         rcs = snprintf_s(agentlog, MAXPGPATH, MAXPGPATH - 1, "%s/cm_agent", cmlog);
         securec_check_intval(rcs, (void)rcs);
         rcs = mkdir(agentlog, S_IRWXU);
         if (rcs != 0) {
-            write_runlog(ERROR, "mkdir %s return error %d \n", agentlog, errno);
+            write_runlog(ERROR, "FATAL mkdir %s return error %d \n", agentlog, errno);
             exit(-1);
         }
     }
     return;
 }
 
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
 #define LIMIT_OPEN_FILE 640000
     static struct option longOptions[] = {{"location", required_argument, NULL, 'L'}, {NULL, 0, NULL, 0}};
@@ -1598,7 +1611,7 @@ int main(int argc, char** argv)
             DoHelp();
             _exit(0);
         } else if (strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0) {
-            puts("om_monitor " DEF_CM_VERSION);
+            (void)puts("om_monitor " DEF_CM_VERSION);
             _exit(0);
         }
     }
@@ -1611,7 +1624,7 @@ int main(int argc, char** argv)
                 FREE_AND_RESET(g_logFile);
                 g_logFile = strdup(optarg);
                 if (g_logFile == NULL) {
-                    fprintf(stderr, "%s: -L file is needed.\n", g_progname);
+                    (void)fprintf(stderr, "%s: -L file is needed.\n", g_progname);
                     DoAdvice();
                     _exit(1);
                 }
@@ -1625,28 +1638,27 @@ int main(int argc, char** argv)
         optind++;
     }
 
-    if (g_logFileSet && (log_destion_choice == 1 || log_destion_choice == 3)) {
-        fprintf(stderr, "%s: -L option is not needed.\n", g_progname);
+    if (g_logFileSet && (log_destion_choice == LOG_DESTION_SYSLOG || log_destion_choice == LOG_DESTION_DEV_NULL)) {
+        (void)fprintf(stderr, "%s: -L option is not needed.\n", g_progname);
         DoAdvice();
         _exit(1);
     }
 
-    status = get_prog_path(argc, argv);
+    status = get_prog_path();
     if (status < 0) {
-        fprintf(stderr, "get_prog_path failed!\n");
+        (void)fprintf(stderr, "get_prog_path failed!\n");
         _exit(status);
     }
 
     InitLogFiles();
-
-    status = check_process_status(PROCKIND_MONITOR, 0);
-
-    if (PROCESS_RUNNING == status) {
+    bool isKillProcess = false;
+    status = check_process_status(PROCKIND_MONITOR, 0, &isKillProcess);
+    if (status == PROCESS_RUNNING) {
         write_runlog(DEBUG5, "monitor exit\n");
         _exit(0);
     }
 
-    if (MonitorLock() == -1) {
+    if (MonitorLock(isKillProcess) == -1) {
         write_runlog(DEBUG1, "Another om_monitor command is still running, start failed !\n");
         _exit(-1);
     }
@@ -1656,14 +1668,14 @@ int main(int argc, char** argv)
     /* Check max open files */
     if (getrlimit(RLIMIT_NOFILE, &r) == 0) {
         if (r.rlim_cur < LIMIT_OPEN_FILE) {
-            write_runlog(ERROR,
+            write_runlog(FATAL,
                 "max number of open files limit %lu less than %d, monitor start failed.\n",
                 r.rlim_cur,
                 LIMIT_OPEN_FILE);
             _exit(1);
         }
     } else {
-        write_runlog(ERROR, "failed to getrlimit number of files\n");
+        write_runlog(FATAL, "failed to getrlimit number of files\n");
         _exit(1);
     }
 
@@ -1676,14 +1688,15 @@ int main(int argc, char** argv)
     char errBuffer[ERROR_LIMIT_LEN] = {0};
     switch (status) {
         case OPEN_FILE_ERROR: {
-            write_runlog(ERROR, "%s: could not open the static config file \"%s\": %s\n",
+            write_runlog(FATAL,
+                "%s: could not open the static config file \"%s\": %s\n",
                 g_progname,
                 g_cmStaticConfigurePath,
                 strerror_r(err_no, errBuffer, ERROR_LIMIT_LEN));
             _exit(1);
         }
         case READ_FILE_ERROR: {
-            write_runlog(ERROR,
+            write_runlog(FATAL,
                 "%s: could not read static config file \"%s\": %s\n",
                 g_progname,
                 g_cmStaticConfigurePath,
@@ -1691,7 +1704,7 @@ int main(int argc, char** argv)
             _exit(1);
         }
         case OUT_OF_MEMORY:
-            write_runlog(ERROR, "%s: out of memory\n", g_progname);
+            write_runlog(FATAL, "%s: out of memory\n", g_progname);
             _exit(1);
         default:
             break;
@@ -1702,7 +1715,7 @@ int main(int argc, char** argv)
         char errBuf[ERROR_LIMIT_LEN] = {0};
         switch (status) {
             case OPEN_FILE_ERROR: {
-                write_runlog(ERROR,
+                write_runlog(FATAL,
                     "%s: could not open logic cluster static config files: %s\n",
                     g_progname,
                     strerror_r(err_no, errBuf, ERROR_LIMIT_LEN));
@@ -1710,34 +1723,34 @@ int main(int argc, char** argv)
             }
             case READ_FILE_ERROR: {
                 char errBuff[ERROR_LIMIT_LEN];
-                write_runlog(ERROR,
+                write_runlog(FATAL,
                     "%s: could not read logic cluster static config files: %s\n",
                     g_progname,
                     strerror_r(err_no, errBuff, ERROR_LIMIT_LEN));
                 _exit(1);
             }
             case OUT_OF_MEMORY:
-                write_runlog(ERROR, "%s: out of memory\n", g_progname);
+                write_runlog(FATAL, "%s: out of memory\n", g_progname);
                 _exit(1);
             default:
                 break;
         }
     }
 
-    max_logic_cluster_name_len = (max_logic_cluster_name_len < strlen("logiccluster_name")) ? 
-        (uint32)strlen("logiccluster_name") : max_logic_cluster_name_len;
+    max_logic_cluster_name_len = (max_logic_cluster_name_len < strlen("logiccluster_name"))
+                                     ? (uint32)strlen("logiccluster_name")
+                                     : max_logic_cluster_name_len;
 
-    int ret = find_current_node_by_nodeid(g_nodeHeader.node);
+    int ret = find_current_node_by_nodeid();
     if (ret != 0) {
-        write_runlog(ERROR, "find_current_node_by_nodeid failed, nodeId=%u.\n", g_nodeHeader.node);
+        write_runlog(FATAL, "find_current_node_by_nodeid failed, nodeId=%u.\n", g_nodeHeader.node);
         _exit(1);
     }
 
     rc = memset_s(g_agentConfigPath, MAXPGPATH, 0, MAXPGPATH);
-    securec_check_errno(rc,);
-    rc = snprintf_s(g_agentConfigPath, MAXPGPATH, MAXPGPATH - 1, "%s/%s", g_currentNode->cmDataPath,
-                    CM_AGENT_BIN_NAME);
-    securec_check_intval(rc,);
+    securec_check_errno(rc, (void)rc);
+    rc = snprintf_s(g_agentConfigPath, MAXPGPATH, MAXPGPATH - 1, "%s/%s", g_currentNode->cmDataPath, CM_AGENT_BIN_NAME);
+    securec_check_intval(rc, (void)rc);
 #ifdef ENABLE_MULTIPLE_NODES
     /* check Cgroup installation */
     CheckCgroupInstallation();
@@ -1752,7 +1765,7 @@ int main(int argc, char** argv)
     if (retStat != 0) {
         write_runlog(LOG, "om_monitor gscgroup_cm_attach_task.\n");
         /* initialize cm cgroup and attach it if the relative path is not NULL. */
-        char* cmcgroup_relpath = gscgroup_cm_init();
+        char *cmcgroup_relpath = gscgroup_cm_init();
         if (cmcgroup_relpath != NULL) {
             gscgroup_cm_attach_task(cmcgroup_relpath);
             free(cmcgroup_relpath);
@@ -1771,7 +1784,6 @@ int main(int argc, char** argv)
 
     _exit(status);
 }
-
 
 /**
  * @brief
@@ -1797,12 +1809,11 @@ static bool check_start_request()
 {
     bool startRequest = false;
     static int agentRestartCount = 0;
-    char agentConfigFile[MAXPGPATH] = { 0 };
+    char agentConfigFile[MAXPGPATH] = {0};
     int retryTimes = 3;
 
-    int rc = snprintf_s(agentConfigFile, MAXPGPATH, MAXPGPATH - 1, "%s/%s",
-                        g_agentConfigPath, CM_AGENT_CONFIG);
-    securec_check_intval(rc, );
+    int rc = snprintf_s(agentConfigFile, MAXPGPATH, MAXPGPATH - 1, "%s/%s", g_agentConfigPath, CM_AGENT_CONFIG);
+    securec_check_intval(rc, (void)rc);
 
     /* If the cluster manual start file exist, the CM Agent will not be started. */
     const bool disableManualStart = (access(g_cmManualStartPath, F_OK) == 0);
@@ -1812,7 +1823,6 @@ static bool check_start_request()
     const bool isBinaryExist = (access(g_cmAgentBinPath, X_OK) == 0);
     /* If the config change file exist, the CM Agent will not be started. */
     const bool isConfigChange = (access(g_cmStaticConfigChangeFlagFilePath, F_OK) == 0);
-
     /* Normal Scenario. */
     if (!disableManualStart && isBinaryExist && isConfigExist && !isConfigChange) {
         startRequest = true;
@@ -1821,73 +1831,86 @@ static bool check_start_request()
     /**
      * Need to restart the CM Agent even if the cluster manual start file exists.
      */
-    if (disableManualStart && isBinaryExist && isConfigExist && !isConfigChange && g_previousStatus != 0 
-        && agentRestartCount < retryTimes) {
-        write_runlog(LOG, "The CM Agent did not exit correctly last time. Restart the CM Agent"
-                          " to complete the unfinished stop operation: start_times=%d.\n", g_agentFaultCount);
+    if (disableManualStart && isBinaryExist && isConfigExist && !isConfigChange && g_previousStatus != 0 &&
+        agentRestartCount < retryTimes) {
+        write_runlog(LOG,
+            "The CM Agent did not exit correctly last time. Restart the CM Agent"
+            " to complete the unfinished stop operation: start_times=%d.\n",
+            g_agentFaultCount);
         startRequest = true;
         agentRestartCount++;
     }
 
-    write_runlog(LOG, "The CM Agent startup check is complete: cluster_manual_start=%d,"
-                      " agent_config_file_r=%d, agent_binary_file_x=%d, config_change_flag=%d, previous_status=%d,"
-                      " start_count=%d.\n", disableManualStart, isConfigExist, isBinaryExist, isConfigChange,
-                 g_previousStatus, g_agentFaultCount);
+    write_runlog(LOG,
+        "The CM Agent startup check is complete: cluster_manual_start=%d,"
+        " agent_config_file_r=%d, agent_binary_file_x=%d, config_change_flag=%d, previous_status=%d,"
+        " start_count=%d.\n",
+        disableManualStart,
+        isConfigExist,
+        isBinaryExist,
+        isConfigChange,
+        g_previousStatus,
+        g_agentFaultCount);
 
     return startRequest;
 }
 
-static int MonitorLock(void)
+static int MonitorLock(bool isKillProcess)
 {
-    int ret = -1;
     struct stat statbuf = {0};
 
     /* If gtm_ctl.lock dose not exist,create it */
-    if (stat(g_monitorLockfile, &statbuf) != 0)
-    {
+    if (stat(g_monitorLockfile, &statbuf) != 0) {
         char content[MAX_PATH_LEN] = {0};
         g_lockfile = fopen(g_monitorLockfile, PG_BINARY_W);
         if (g_lockfile == NULL) {
-            write_runlog(DEBUG1, "%s: can't open lock file \"%s\" : %s\n",
-                        g_progname, g_monitorLockfile, strerror(errno));
+            write_runlog(
+                DEBUG1, "%s: can't open lock file \"%s\" : %s\n", g_progname, g_monitorLockfile, strerror(errno));
             exit(1);
         } else {
-            if (fwrite(content,MAX_PATH_LEN,1,g_lockfile) != 1)
-            {
-                fclose(g_lockfile);
+            if (fwrite(content, MAX_PATH_LEN, 1, g_lockfile) != 1) {
+                (void)fclose(g_lockfile);
                 g_lockfile = NULL;
-                write_runlog(DEBUG1, "%s: can't write lock file \"%s\" : %s\n",
-                        g_progname, g_monitorLockfile, strerror(errno));
+                write_runlog(
+                    DEBUG1, "%s: can't write lock file \"%s\" : %s\n", g_progname, g_monitorLockfile, strerror(errno));
                 exit(1);
             }
-            fclose(g_lockfile);
+            (void)fclose(g_lockfile);
             (void)chmod(g_monitorLockfile, 0600);
             g_lockfile = NULL;
         }
     }
-    if ((g_lockfile = fopen(g_monitorLockfile, PG_BINARY_W)) == NULL)
-    {
-        write_runlog(DEBUG1, "%s: could not open lock file \"%s\" : %s\n",
-                g_progname, g_monitorLockfile, strerror(errno));
+    if ((g_lockfile = fopen(g_monitorLockfile, PG_BINARY_W)) == NULL) {
+        write_runlog(
+            DEBUG1, "%s: could not open lock file \"%s\" : %s\n", g_progname, g_monitorLockfile, strerror(errno));
         exit(1);
     }
 
     if (SetFdCloseExecFlag(g_lockfile) < 0) {
-        write_runlog(DEBUG1, "%s: can't set file flag\"%s\" : %s\n",
-                g_progname, g_monitorLockfile, strerror(errno));
+        write_runlog(DEBUG1, "%s: can't set file flag\"%s\" : %s\n", g_progname, g_monitorLockfile, strerror(errno));
     }
 
-    ret = flock(fileno(g_lockfile), LOCK_EX | LOCK_NB);
+    // in order to avoid restarting monitor as soon as prossible
+    const int32 tryTotalTime = 10;
+    int32 tryTime = tryTotalTime;
+    int32 ret;
+    do {
+        ret = flock(fileno(g_lockfile), LOCK_EX | LOCK_NB);
+        if (ret == 0 || !isKillProcess) {
+            break;
+        }
+        --tryTime;
+        cm_sleep(1);
+    } while (tryTime > 0);
 
     return ret;
 }
 
 static int MonitorUnlock(void)
 {
-    int ret = -1;
-    ret = flock(fileno(g_lockfile), LOCK_UN);
+    int ret = flock(fileno(g_lockfile), LOCK_UN);
     if (g_lockfile != NULL) {
-        fclose(g_lockfile);
+        (void)fclose(g_lockfile);
         g_lockfile = NULL;
     }
     return ret;

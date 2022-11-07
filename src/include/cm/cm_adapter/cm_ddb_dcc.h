@@ -29,10 +29,4 @@
 
 DdbDriver *DrvDccGet(void);
 
-#define LEVEL_ERROR (0)
-#define LEVEL_WARN (1)
-#define LEVEL_INFO (2)
-
-#define CANN_NOT_FIND_KV (1)
-
 #endif

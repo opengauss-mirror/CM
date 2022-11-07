@@ -25,6 +25,5 @@
 #ifndef CMS_ARBITRATE_CMS_H
 #define CMS_ARBITRATE_CMS_H
 
-extern void CloseHAConnection(CM_Connection* con);
 extern void* CM_ThreadHAMain(void* argp);
 #endif

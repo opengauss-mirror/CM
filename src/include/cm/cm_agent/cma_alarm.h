@@ -40,7 +40,7 @@ extern Alarm* g_abnormalDataInstDiskAlarmList;
 extern int g_datanodeAbnormalAlarmListSize;
 
 extern void StorageScalingAlarmItemInitialize(void);
-extern void ReportStorageScalingAlarm(AlarmType alarmType, const char* instanceName, int alarmIndex);
+extern void ReportStorageScalingAlarm(AlarmType alarmType, const char* instanceName, int alarmIndex, const char *info);
 extern void StartupAlarmItemInitialize(const staticNodeConfig* currentNode);
 extern void AbnormalAlarmItemInitialize(const staticNodeConfig* currentNode);
 extern void AbnormalCmaConnAlarmItemInitialize(const staticNodeConfig* currentNode);

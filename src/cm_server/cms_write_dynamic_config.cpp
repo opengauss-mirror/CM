@@ -32,9 +32,9 @@
  *
  * @note
  *  if not WriteDynamicCfgMain thread call this function, isRealWriteDynamic input can be false
- *   
+ *
  * @param  isRealWriteDynamic .
- * @return Return the write result. 
+ * @return Return the write result.
  */
 int WriteDynamicConfigFile(bool isRealWriteDynamic)
 {
@@ -67,7 +67,7 @@ int WriteDynamicConfigFile(bool isRealWriteDynamic)
         char errBuffer[ERROR_LIMIT_LEN];
         write_runlog(ERROR, "WriteDynamicConfigFile write file with dynamic instance role group "
             "configuration info failed, errno=%d, errmsg=%s\n", errno, strerror_r(errno, errBuffer, ERROR_LIMIT_LEN));
-        close(fd);
+        (void)close(fd);
         (void)pthread_rwlock_unlock(&dynamic_file_rwlock);
         return -1;
     }
@@ -76,11 +76,11 @@ int WriteDynamicConfigFile(bool isRealWriteDynamic)
         char errBuffer[ERROR_LIMIT_LEN];
         write_runlog(ERROR, "WriteDynamicConfigFile fsync file failed, errno=%d, errmsg=%s\n",
             errno, strerror_r(errno, errBuffer, ERROR_LIMIT_LEN));
-        close(fd);
+        (void)close(fd);
         (void)pthread_rwlock_unlock(&dynamic_file_rwlock);
         return -1;
     }
-    close(fd);
+    (void)close(fd);
     (void)pthread_rwlock_unlock(&dynamic_file_rwlock);
     return 0;
 }
@@ -95,7 +95,7 @@ void* WriteDynamicCfgMain(void* arg)
     static uint32 lastRefreshDynamicCfgNum = 0;
 
     while (true) {
-        if (got_stop) {
+        if (got_stop == 1) {
             break;
         }
 

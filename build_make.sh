@@ -80,14 +80,14 @@ function update_dcc_dependency() {
     if [ "x${THIRD_BIN_PATH}" != "x" ]; then
         local dccHome="${THIRD_BIN_PATH}/kernel/component/dcc"
 
-        if [ -d "${dccHome}" ]; then
-            echo "We well get dcc lib from 3rd[${dccHome}]."
+        if [ -d "${dcc_home}" ]; then
+            echo "We well get dcc lib from 3rd[${dcc_home}]."
             clean_dcc_dependency
-            cp -rf ${dccHome}/include/* ${PROJECT_ROOT_PATH}/common_lib/dcc/include/
-            cp -rf ${dccHome}/lib/*.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
+            cp -rf ${dcc_home}/include/* ${PROJECT_ROOT_PATH}/common_lib/dcc/include/
+            cp -rf ${dcc_home}/lib/*.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
             return
         else
-            echo "***************** no dcc lib found in 3rd[${dccHome}]!!! *******************"
+            echo "***************** no dcc lib found in 3rd[${dcc_home}]!!! *******************"
         fi
     fi
 
@@ -161,15 +161,23 @@ function pkg() {
 }
 
 function seperate_symbols() {
+    local sep_path=${SCRIPT_PATH}/build
     local exclude_bin_objs="etcd etcdctl"
     local exclude_lib_objs="libgcc_s.so libstdc++.so"
+
+    local strip_mode=""
+    if [ "x${COMPONENT}" == "xV3" ]; then
+        strip_mode="--strip-all"
+    else
+        strip_mode="--strip-debug"
+    fi
+
     cd ${OUT_PATH}
     mkdir -p ${OUT_PATH}/symbols
-
-    sh ${SCRIPT_PATH}/build/seperate_symbol.sh "bin" "${OUT_PATH}/symbols" "${exclude_bin_objs}"
-    sh ${SCRIPT_PATH}/build/seperate_symbol.sh "lib" "${OUT_PATH}/symbols" "${exclude_lib_objs}"
+    sh ${sep_path}/seperate_symbol.sh "bin" "${OUT_PATH}/symbols" "${exclude_bin_objs}" "${strip_mode}"
+    sh ${sep_path}/seperate_symbol.sh "lib" "${OUT_PATH}/symbols" "${exclude_lib_objs}" "${strip_mode}"
     if [ "x${COMPONENT}" == "xV3" ]; then
-        sh ${SCRIPT_PATH}/build/seperate_symbol.sh "cm_tools/psutil" "${OUT_PATH}/symbols" ""
+        sh ${sep_path}/seperate_symbol.sh "cm_tools/psutil" "${OUT_PATH}/symbols" "" "${strip_mode}"
     fi
 }
 
@@ -191,21 +199,21 @@ function build_clean() {
 }
 
 function build_cm() {
-    export make_build_type="Release"
-    export make_def=""
+    export MAKE_BUILD_TYPE="Release"
+    export MAKE_DEF=""
     case "${VERSION_MODE}" in
         'debug')
-            make_build_type='Debug'
+            MAKE_BUILD_TYPE='Debug'
             ;;
         'release')
-            make_build_type='Release'
+            MAKE_BUILD_TYPE='Release'
             ;;
         'cov')
-            make_build_type='Debug'
+            MAKE_BUILD_TYPE='Debug'
             export GCOV="ON"
             ;;
         'memcheck')
-            make_build_type='Debug'
+            MAKE_BUILD_TYPE='Debug'
             export MEMCHECK="ON"
             ;;
         *)
@@ -215,8 +223,8 @@ function build_cm() {
     esac
 
     PKG_NAME="${PKG_NAME_PRE}_${VERSION_MODE}.tar.gz"
-    make_def="MAKE_INSTALL_PREFIX="${OUT_PATH}" ENABLE_PRIVATEGAUSS=${PRIVATEGAUSS} BUILD_TYPE=${make_build_type} ${make_def} ENABLE_MULTIPLE_NODES=${MULTIPLE_NODES} ENABLE_ETCD=${ETCD} ENABLE_HOTPATCH=${HOTPATCH} ENABLE_LIBPQ=${LIBPQ} ENABLE_KRB=${KRB} ENABLE_ALARM=${ALARM}"
-    export CM_VERSION_STR="(${PROJECT_NAME} build ${COMMIT_ID}) compiled at ${COMPILE_TIME} ${make_build_type}"
+    MAKE_DEF="MAKE_INSTALL_PREFIX="${OUT_PATH}" ENABLE_PRIVATEGAUSS=${PRIVATEGAUSS} BUILD_TYPE=${MAKE_BUILD_TYPE} ${MAKE_DEF} ENABLE_MULTIPLE_NODES=${MULTIPLE_NODES} ENABLE_ETCD=${ETCD} ENABLE_HOTPATCH=${HOTPATCH} ENABLE_LIBPQ=${LIBPQ} ENABLE_KRB=${KRB} ENABLE_ALARM=${ALARM}"
+    export CM_VERSION_STR="(${PROJECT_NAME} build ${COMMIT_ID}) compiled at ${COMPILE_TIME} ${MAKE_BUILD_TYPE}"
 
     echo "********************************************************************"
     echo "start build CM with <${VERSION_MODE}>
@@ -229,9 +237,10 @@ function build_cm() {
     libpq=[${LIBPQ}]
     krb=[${KRB}]
     multiple_nodes=[${MULTIPLE_NODES}]
-    make_def=[${make_def}]
+    make_def=[${MAKE_DEF}]
     tmp_build_dir=[${TMP_BUILD_DIR}]
     pkg_name=[${PKG_NAME}]
+    dcc=[${DCC}]
     output to [${OUT_PATH}]."
     echo "********************************************************************"
 
@@ -310,6 +319,14 @@ function main() {
                     exit 1
                 fi
                 GCC="$2"
+                shift 2
+                ;;
+            -dcc)
+                if [ "$2"X = X ]; then
+                    echo "no given DCC path values"
+                    exit 1
+                fi
+                DCC="$2"
                 shift 2
                 ;;
             --pkg)

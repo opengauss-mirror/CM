@@ -32,15 +32,13 @@
 extern "C" {
 #endif
 
-#define MAX_RES_NUM 16
-#define HEARTBEAT_TIMEOUT 5
+#define CM_TCP_TIMEOUT 5
 
-#define cm_close_socket    close
+#define CM_DEVNULL "/dev/null 2>&1"
 
 extern syscalllock g_cmEnvLock;
 
 extern void cm_sleep(unsigned int sec);
-extern void cm_usleep(unsigned int usec);
 
 extern void check_input_for_security(const char *input);
 extern void CheckEnvValue(const char *inputEnvValue);
@@ -54,9 +52,13 @@ extern int GetHomePath(char *outputEnvValue, uint32 envValueLen, int32 logLevel 
 }
 #endif
 
+extern void CmUsleep(unsigned int usec);
+
 bool IsSharedStorageMode();
 bool IsBoolCmParamTrue(const char *param);
-status_t TcpSendMsg(int socket, const char *buf, size_t remainSize);
-status_t TcpRecvMsg(int socket, char *buf, size_t remainSize);
+status_t TcpSendMsg(int socket, const char *buf, size_t remainSize, uint32 timeout = CM_TCP_TIMEOUT);
+status_t TcpRecvMsg(int socket, char *buf, size_t remainSize, uint32 timeout = CM_TCP_TIMEOUT);
+
+bool CmFileExist(const char *file_path);
 
 #endif // CM_MISC_API_H

@@ -44,9 +44,9 @@ void init_signal_mask(void)
 {
 #ifdef HAVE_SIGPROCMASK
 
-    sigemptyset(&unblock_sig);
+    (void)sigemptyset(&unblock_sig);
     /* First set all signals, then clear some. */
-    sigfillset(&block_sig);
+    (void)sigfillset(&block_sig);
 
     /*
      * Unmark those signals that should never be blocked. Some of these signal
@@ -121,16 +121,19 @@ void setup_signal_handle(int signo, sigfunc func)
     struct sigaction act, oact;
 
     act.sa_handler = func;
-    sigemptyset(&act.sa_mask);
+    (void)sigemptyset(&act.sa_mask);
     act.sa_flags = SA_ONSTACK;
-    if (signo != SIGALRM)
+    if (signo != SIGALRM) {
         act.sa_flags |= SA_RESTART;
+    }
 #ifdef SA_NOCLDSTOP
-    if (signo == SIGCHLD)
+    if (signo == SIGCHLD) {
         act.sa_flags |= SA_NOCLDSTOP;
+    }
 #endif
-    if (sigaction(signo, &act, &oact) < 0)
+    if (sigaction(signo, &act, &oact) < 0) {
         return;
+    }
     return;
 #endif /* !HAVE_POSIX_SIGNALS */
 }

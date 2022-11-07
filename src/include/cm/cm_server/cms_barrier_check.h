@@ -25,5 +25,6 @@
 #define CMS_BARRIER_CHECK_H
 
 extern void *DealGlobalBarrier(void *arg);
+extern void *DealBackupOpenStatus(void *arg);
 
 #endif

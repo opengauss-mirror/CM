@@ -81,8 +81,8 @@ static bool is_etcd_stopping(void);
 static bool IsLtranStopping(void);
 #endif
 static bool is_instance_stopping(const char* dataPath);
-static int do_hotpatch_cmserver(const char* command, const char* path, int nodeid);
-static int checkManualStartFile(const char* binaryName, const char* dataPath);
+static int do_hotpatch_cmserver(const char* command, const char* path, uint32 nodeid);
+static bool checkManualStartFile(const char* binaryName, const char* dataPath);
 static status_t DoSetCmsPromoteMode();
 
 const int BUILD_CMS_TIMEOUT = 120;
@@ -124,7 +124,7 @@ int do_set(void)
 
     write_runlog(LOG, "send set msg to cm_server.\n");
 
-    cm_ctl_cm_set_content.msg_type = MSG_CTL_CM_SET;
+    cm_ctl_cm_set_content.msg_type = (int)MSG_CTL_CM_SET;
     cm_ctl_cm_set_content.log_level = UNKNOWN_LEVEL;
     cm_ctl_cm_set_content.cm_arbitration_mode = UNKNOWN_ARBITRATION;
     cm_ctl_cm_set_content.cm_switchover_az_mode = UNKNOWN_SWITCHOVER_AZ;
@@ -198,7 +198,7 @@ int do_set(void)
         receive_msg = recv_cm_server_cmd(CmServer_conn);
         if (receive_msg != NULL) {
             cm_msg_type_ptr = (cm_msg_type *)receive_msg;
-            if (cm_msg_type_ptr->msg_type == MSG_CM_CTL_SET_ACK) {
+            if (cm_msg_type_ptr->msg_type == (int)MSG_CM_CTL_SET_ACK) {
                 write_runlog(LOG, "cm server has been set.\n");
                 success = true;
             } else {
@@ -221,10 +221,10 @@ int do_set(void)
 
     if (time_pass >= g_waitSeconds) {
         write_runlog(ERROR,
-                "set command timeout!\n\n"
-                "HINT: Maybe the set action is continually running in the background.\n"
-                "You can wait for a while and check the value of item has been set using "
-                "\"cm_ctl get <item>\".\n");
+            "set command timeout!\n\n"
+            "HINT: Maybe the set action is continually running in the background.\n"
+            "You can wait for a while and check the value of item has been set using "
+            "\"cm_ctl get <item>\".\n");
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
         return -3;
@@ -253,7 +253,7 @@ int do_get(void)
 
     write_runlog(LOG, "send get msg to cm_server.\n");
 
-    cm_msg.msg_type = MSG_CTL_CM_GET;
+    cm_msg.msg_type = (int)MSG_CTL_CM_GET;
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&cm_msg, sizeof(cm_msg));
     if (ret != 0) {
         FINISH_CONNECTION();
@@ -267,9 +267,7 @@ int do_get(void)
 
         receive_msg = recv_cm_server_cmd(CmServer_conn);
         if (receive_msg != NULL) {
-            cm_to_ctl_get* cm_to_ctl_get_ptr = NULL;
-
-            cm_to_ctl_get_ptr = (cm_to_ctl_get*)receive_msg;
+            cm_to_ctl_get *cm_to_ctl_get_ptr = (cm_to_ctl_get*)receive_msg;
             switch (cm_to_ctl_get_ptr->msg_type) {
                 case MSG_CM_CTL_GET_ACK:
                     write_runlog(WARNING, "cm server has been get.\n");
@@ -350,8 +348,6 @@ int do_check(void)
 
 int CheckInstanceStatus(const char* processName, const char* cmdLine)
 {
-    DIR* dir = NULL;
-    struct dirent* de = NULL;
     char pid_path[MAX_PATH_LEN];
     char cmd_path[MAX_PATH_LEN];
     FILE* fp = NULL;
@@ -390,7 +386,8 @@ int CheckInstanceStatus(const char* processName, const char* cmdLine)
         pid_post = get_instances_pid(pid_post_path);
     }
 
-    if ((dir = opendir(procPath)) == NULL) {
+    DIR *dir = opendir(procPath);
+    if (dir == NULL) {
         char errBuffer[ERROR_LIMIT_LEN];
         write_runlog(ERROR,
             "failed to open the directory: dir=\"%s\", errno=%d, errMessage=\"%s\".\n",
@@ -400,12 +397,12 @@ int CheckInstanceStatus(const char* processName, const char* cmdLine)
 
         return -1;
     }
-
+    struct dirent *de;
     while ((de = readdir(dir)) != NULL) {
         /* judging whether the directory name is composed by digitals,if so,we will
         check whether there are files under the directory ,these files includes
         all detailed information about the process */
-        if (0 != CM_is_str_all_digit(de->d_name)) {
+        if (CM_is_str_all_digit(de->d_name) != 0) {
             continue;
         }
 
@@ -446,7 +443,7 @@ int CheckInstanceStatus(const char* processName, const char* cmdLine)
                 check_sscanf_s_result(ret, 2);
                 securec_check_intval(ret, (void)ret);
 
-                if (0 == strcmp(processName, paraValue)) {
+                if (strcmp(processName, paraValue) == 0) {
                     nameFound = true;
                 } else {
                     break;
@@ -480,7 +477,7 @@ int CheckInstanceStatus(const char* processName, const char* cmdLine)
             }
         }
 
-        fclose(fp);
+        (void)fclose(fp);
 
         if (!nameFound) {
             continue;
@@ -537,7 +534,7 @@ int CheckInstanceStatus(const char* processName, const char* cmdLine)
             tnRet = memset_s(getBuff, MAX_PATH_LEN, 0, MAX_PATH_LEN);
             securec_check_errno(tnRet, (void)tnRet);
         }
-        fclose(fp);
+        (void)fclose(fp);
         if (haveFound) {
             break;
         }
@@ -573,10 +570,9 @@ int CheckInstanceStatus(const char* processName, const char* cmdLine)
 
 static pid_t get_instances_pid(const char* pid_path)
 {
-    FILE* pidf = NULL;
     pid_t pid;
 
-    pidf = fopen(pid_path, "r");
+    FILE *pidf = fopen(pid_path, "r");
     if (pidf == NULL) {
         /* No pid file, not an error on startup */
         char errBuffer[ERROR_LIMIT_LEN];
@@ -595,10 +591,10 @@ static pid_t get_instances_pid(const char* pid_path)
     }
     if (fscanf_s(pidf, "%d", &pid) != 1) {
         write_runlog(DEBUG1, "invalid data in PID file \"%s\"\n", pid_path);
-        fclose(pidf);
+        (void)fclose(pidf);
         return 0;
     }
-    fclose(pidf);
+    (void)fclose(pidf);
     return pid;
 }
 
@@ -612,7 +608,7 @@ static pid_t get_instances_pid(const char* pid_path)
  * @return true: if the instance is manual stopped.
  * @return false: if the instance is not manual stopped.
  */
-static int checkManualStartFile(const char* binaryName, const char* dataPath)
+static bool checkManualStartFile(const char* binaryName, const char* dataPath)
 {
     /* If the input binary name is NULL, exit. */
     if (binaryName == NULL) {
@@ -659,7 +655,7 @@ static bool is_etcd_stopping(void)
     securec_check_intval(ret, (void)ret);
     exec_system(command, &result, result_path);
 
-    return (result == 0) ? true : false;
+    return (result == 0);
 }
 #ifndef ENABLE_MULTIPLE_NODES
 static bool IsLtranStopping(void)
@@ -674,12 +670,12 @@ static bool IsLtranStopping(void)
         "ls %s > /dev/null 2>&1 \n echo  -e  $? > %s",
         g_ltranManualStartFile,
         result_path);
-    securec_check_ss_c(ret, "\0", "\0");
+    securec_check_ss_c(ret, "", "");
     exec_system(command, &result, result_path);
     return (result == 0) ? true : false;
 }
 #endif
-bool is_instance_stopping(const char* dataPath)
+static bool is_instance_stopping(const char* dataPath)
 {
     int result = -1;
     char command[MAX_PATH_LEN] = {0};
@@ -687,7 +683,7 @@ bool is_instance_stopping(const char* dataPath)
     uint32 instanceId = 0;
     int instanceType = 0;
 
-    ret = FindInstanceIdAndType(g_currentNode->node, const_cast<char *>(dataPath), &instanceId, &instanceType);
+    ret = FindInstanceIdAndType(g_currentNode->node, dataPath, &instanceId, &instanceType);
     if (ret != 0) {
         write_runlog(FATAL, "can't find the node_id:%u, data_path:%s.\n", g_currentNode->node, dataPath);
         exit(-1);
@@ -698,7 +694,7 @@ bool is_instance_stopping(const char* dataPath)
     securec_check_intval(ret, (void)ret);
     exec_system(command, &result, result_path);
 
-    return (result == 0) ? true : false;
+    return (result == 0);
 }
 
 int do_disable_cn()
@@ -728,7 +724,7 @@ int do_disable_cn()
         return -1;
     }
 
-    if (INSTANCE_TYPE_COORDINATE != instance_type) {
+    if (instance_type != INSTANCE_TYPE_COORDINATE) {
         write_stderr(_("%s: the instance is not coordinator, only coordinator can be disabled.\n"), g_progname);
         return -1;
     }
@@ -742,7 +738,7 @@ int do_disable_cn()
         return -1;
     }
 
-    ctl_to_cm_disable_cn_content.msg_type = MSG_CTL_CM_DISABLE_CN;
+    ctl_to_cm_disable_cn_content.msg_type = (int)MSG_CTL_CM_DISABLE_CN;
     ctl_to_cm_disable_cn_content.instanceId = instanceId;
     if (wait_seconds_set) {
         ctl_to_cm_disable_cn_content.wait_seconds = g_waitSeconds;
@@ -835,7 +831,7 @@ int do_disable_cn()
             break;
         }
 
-        cm_ctl_cm_query_content.msg_type = MSG_CTL_CM_QUERY;
+        cm_ctl_cm_query_content.msg_type = (int)MSG_CTL_CM_QUERY;
         cm_ctl_cm_query_content.node = g_commandOperationNodeId;
         cm_ctl_cm_query_content.instanceId = instanceId;
         cm_ctl_cm_query_content.instance_type = instance_type;
@@ -986,10 +982,11 @@ static status_t DoCmsBuild(ctl_to_cm_build &buildMsg)
     return CM_ERROR;
 }
 
-void SendQuery(uint32 instanceId, int instanceType){
+void SendQuery(uint32 instanceId, int instanceType)
+{
     ctl_to_cm_query queryMsg = {0};
 
-    queryMsg.msg_type = MSG_CTL_CM_QUERY;
+    queryMsg.msg_type = (int)MSG_CTL_CM_QUERY;
     queryMsg.node = g_commandOperationNodeId;
     queryMsg.instanceId = instanceId;
     queryMsg.instance_type = instanceType;
@@ -1010,6 +1007,12 @@ static bool CheckBuildCond(int32 localRole)
 
 int DoBuild(const CtlOption *ctx)
 {
+    CtlGetCmJsonConf();
+    if (g_enableSharedStorage) {
+        write_runlog(LOG, "in shared storage mode, can't do cm_ctl build.\n");
+        return 0;
+    }
+
     int waitTime = BUILD_DN_TIMEOUT;
     int instanceType = 0;
     int getQueryCount = 0;
@@ -1017,7 +1020,7 @@ int DoBuild(const CtlOption *ctx)
     int sendQueryCount = 0;
     int checkSendBuildTime = 3;
     bool tryFlag = false;
-    bool success = false;
+    bool success;
     bool sendBuildFlag = false;
     char *receiveMsg = NULL;
     uint32 instanceId = 0;
@@ -1028,7 +1031,7 @@ int DoBuild(const CtlOption *ctx)
 
     do_conn_cmserver(false, 0);
     if (CmServer_conn == NULL) {
-        write_runlog(ERROR,"send build msg to cm_server, connect fail, node_id:%u, data_path:%s.\n",
+        write_runlog(ERROR, "send build msg to cm_server, connect fail, node_id:%u, data_path:%s.\n",
             ctx->comm.nodeId,
             g_cmData);
         return -1;
@@ -1043,14 +1046,14 @@ int DoBuild(const CtlOption *ctx)
         FINISH_CONNECTION0();
     }
 
-    write_runlog(DEBUG1, "send build msg to cm_server, node_id:%d, data_path:%s.\n", ctx->comm.nodeId, g_cmData);
+    write_runlog(DEBUG1, "send build msg to cm_server, node_id:%u, data_path:%s.\n", ctx->comm.nodeId, g_cmData);
 
     if (FindInstanceIdAndType(ctx->comm.nodeId, g_cmData, &instanceId, &instanceType) != 0) {
-        write_runlog(ERROR, "can't find the node_id:%d, data_path:%s.\n", ctx->comm.nodeId, g_cmData);
+        write_runlog(ERROR, "can't find the node_id:%u, data_path:%s.\n", ctx->comm.nodeId, g_cmData);
         return -1;
     }
 
-    buildMsg.msg_type = MSG_CTL_CM_BUILD;
+    buildMsg.msg_type = (int)MSG_CTL_CM_BUILD;
     buildMsg.node = ctx->comm.nodeId;
     buildMsg.instanceId = instanceId;
     buildMsg.full_build = ctx->build.doFullBuild;
@@ -1064,7 +1067,7 @@ int DoBuild(const CtlOption *ctx)
         waitTime = DEFAULT_WAIT * 60 * 2;
     }
 
-    if (1 == do_force) {
+    if (do_force == 1) {
         buildMsg.force_build = CM_CTL_FORCE_BUILD;
     } else {
         buildMsg.force_build = CM_CTL_UNFORCE_BUILD;
@@ -1198,10 +1201,10 @@ int DoBuild(const CtlOption *ctx)
 
     if (waitTime <= 0) {
         write_runlog(ERROR,
-                     "build command timeout!\n\n"
-                     "HINT: Maybe the build action is continually running in the background.\n"
-                     "You can wait for a while and check the status of current cluster using "
-                     "\"cm_ctl query -Cv\".\n");
+            "build command timeout!\n\n"
+            "HINT: Maybe the build action is continually running in the background.\n"
+            "You can wait for a while and check the status of current cluster using "
+            "\"cm_ctl query -Cv\".\n");
         FINISH_CONNECTION_WITHOUT_EXIT();
         return -3;
     }
@@ -1218,8 +1221,6 @@ int do_setmode()
 {
     cm_msg_type msgsetmode;
     int ret;
-    char* receive_msg = NULL;
-    cm_msg_type* cm_msg_type_ptr = NULL;
 
     // return conn to cm_server
     do_conn_cmserver(false, 0);
@@ -1230,7 +1231,7 @@ int do_setmode()
         return -1;
     }
 
-    msgsetmode.msg_type = MSG_CTL_CM_SETMODE;
+    msgsetmode.msg_type = (int)MSG_CTL_CM_SETMODE;
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&msgsetmode, sizeof(msgsetmode));
     if (ret != 0) {
         FINISH_CONNECTION();
@@ -1240,10 +1241,10 @@ int do_setmode()
     if (ret == TCP_SOCKET_ERROR_EPIPE) {
         FINISH_CONNECTION();
     }
-    receive_msg = recv_cm_server_cmd(CmServer_conn);
+    char *receive_msg = recv_cm_server_cmd(CmServer_conn);
     if (receive_msg != NULL) {
-        cm_msg_type_ptr = (cm_msg_type *)receive_msg;
-        if (cm_msg_type_ptr->msg_type == MSG_CM_CTL_SETMODE_ACK) {
+        cm_msg_type* cm_msg_type_ptr = (cm_msg_type *)receive_msg;
+        if (cm_msg_type_ptr->msg_type == (int)MSG_CM_CTL_SETMODE_ACK) {
             write_runlog(WARNING, "Postupgrade mode has been set.\n");
         } else {
             write_runlog(ERROR, "unknown the msg type is %d.\n", cm_msg_type_ptr->msg_type);
@@ -1257,7 +1258,7 @@ int do_setmode()
     return 0;
 }
 
-static int do_hotpatch_cmserver(const char* command, const char* path, int nodeid)
+static int do_hotpatch_cmserver(const char* command, const char* path, uint32 nodeid)
 {
     int wait_time;
     cm_hotpatch_msg msg_hotpatch;
@@ -1272,7 +1273,7 @@ static int do_hotpatch_cmserver(const char* command, const char* path, int nodei
         return -1;
     }
 
-    msg_hotpatch.msg_type = MSG_CTL_CM_HOTPATCH;
+    msg_hotpatch.msg_type = (int)MSG_CTL_CM_HOTPATCH;
     ret = snprintf_s(msg_hotpatch.command, MAX_LENGTH_HP_CMD, MAX_LENGTH_HP_CMD - 1, "%s", command);
     securec_check_intval(ret, (void)ret);
     ret = snprintf_s(msg_hotpatch.path, MAX_LENGTH_HP_PATH, MAX_LENGTH_HP_PATH - 1, "%s", path);
@@ -1315,8 +1316,7 @@ int do_hotpatch(const char* command, const char* path)
 {
     for (uint32 kk = 0; kk < g_cm_server_num; kk++) {
         uint32 cm_server_node_index = g_nodeIndexForCmServer[kk];
-
-        do_hotpatch_cmserver(command, path, cm_server_node_index);
+        (void)do_hotpatch_cmserver(command, path, cm_server_node_index);
     }
 
     return 0;
@@ -1407,7 +1407,7 @@ int DoSetRunMode(void)
 int DoGsCtlCommand(const char *commond, const char *cmdName)
 {
     uint32 i = 0;
-    int rc = 0;
+    int rc;
     char gausshomePath[CM_PATH_LENGTH] = {0};
     int result = 1;
     char cmd[CM_PATH_LENGTH] = {0};
@@ -1434,7 +1434,7 @@ int DoGsCtlCommand(const char *commond, const char *cmdName)
                 SYSTEMQUOTE "%s -D %s -t %d\" > /dev/null 2>&1; echo -e  $? > %s" SYSTEMQUOTE,
                 commond, g_cmData, g_waitSeconds, result_path);
             securec_check_intval(rc, (void)rc);
-            write_runlog(LOG, "execute %s on remote node: %s(%u).\n", 
+            write_runlog(LOG, "execute %s on remote node: %s(%u).\n",
                 cmdName, g_node[i].nodeName, g_commandOperationNodeId);
             exec_system_ssh(g_commandOperationNodeId - 1, cmd, &result, result_path, mpp_env_separate_file);
         } else {
@@ -1463,7 +1463,7 @@ int CalcDcfVoterNum(const cm_to_ctl_instance_status* cmToCtlInstanceStatusPtr, i
     }
 
     if (i >= g_node_num) {
-        write_runlog(ERROR, "can't find the node(%d).", cmToCtlInstanceStatusPtr->node);
+        write_runlog(ERROR, "can't find the node(%u).", cmToCtlInstanceStatusPtr->node);
         return -1;
     }
 
@@ -1480,7 +1480,7 @@ int CalcDcfVoterNum(const cm_to_ctl_instance_status* cmToCtlInstanceStatusPtr, i
         }
 
         if (j >= g_node[nodeIndex].datanodeCount) {
-            write_runlog(ERROR, "can't find the instance(%d).", cmToCtlInstanceStatusPtr->instanceId);
+            write_runlog(ERROR, "can't find the instance(%u).", cmToCtlInstanceStatusPtr->instanceId);
             return -1;
         }
 
@@ -1566,7 +1566,7 @@ int DoQueryInner(int *voterNum)
             "Maybe cm_server is not running, or timeout expired. Please try again.\n");
         return -1;
     }
-    cmCtlCmQueryContent.msg_type = MSG_CTL_CM_QUERY;
+    cmCtlCmQueryContent.msg_type = (int)MSG_CTL_CM_QUERY;
     cmCtlCmQueryContent.node = INVALID_NODE_NUM;
     cmCtlCmQueryContent.relation = 0;
     cmCtlCmQueryContent.instanceId = INVALID_INSTACNE_NUM;
@@ -1680,9 +1680,10 @@ char *DoConcatCmd(const CtlOption *ctx)
     }
     return cmd;
 }
+
 int DoChangeMember(const CtlOption *ctx)
-{   
-    int result = -1;
+{
+    int result;
     int errTimeout = 2;
     char command[CM_PATH_LENGTH] = {0};
     char cmdName[CM_PATH_LENGTH] = "changemember";
@@ -1723,7 +1724,7 @@ int DoChangeRole(const CtlOption *ctx)
     char cmdName[CM_PATH_LENGTH] = "changeRole";
 
     if (g_commandOperationNodeId == 0 || g_cmData[0] == '\0' || strlen(ctx->dcfOption.role) == 0) {
-        write_runlog(ERROR, "unexpected arg (node_id:%u) (data:%s) (role:%s).\n", 
+        write_runlog(ERROR, "unexpected arg (node_id:%u) (data:%s) (role:%s).\n",
             g_commandOperationNodeId, g_cmData, ctx->dcfOption.role);
         return 1;
     }
@@ -1758,7 +1759,6 @@ int DoChangeRole(const CtlOption *ctx)
 int DoReload()
 {
     int ret;
-    char* receive_msg = NULL;
     CtlToCMReload ctlToCMReloadContent = {0};
     cm_msg_type* cm_msg_type_ptr = NULL;
     CMToCtlReloadAck* reloadAckMsg = NULL;
@@ -1769,7 +1769,7 @@ int DoReload()
         write_runlog(ERROR, "send reload msg to cm_server, connect fail.\n");
         return -1;
     }
-    ctlToCMReloadContent.msgType = MSG_CTL_CM_RELOAD;
+    ctlToCMReloadContent.msgType = (int)MSG_CTL_CM_RELOAD;
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&ctlToCMReloadContent, sizeof(CtlToCMReload));
     if (ret != 0) {
         FINISH_CONNECTION();
@@ -1779,10 +1779,10 @@ int DoReload()
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
             FINISH_CONNECTION();
         }
-        receive_msg = recv_cm_server_cmd(CmServer_conn);
+        char *receive_msg = recv_cm_server_cmd(CmServer_conn);
         if (receive_msg != NULL) {
             cm_msg_type_ptr = (cm_msg_type*)receive_msg;
-            if (cm_msg_type_ptr->msg_type == MSG_CM_CTL_RELOAD_ACK) {
+            if (cm_msg_type_ptr->msg_type == (int)MSG_CM_CTL_RELOAD_ACK) {
                 reloadAckMsg = (CMToCtlReloadAck *)receive_msg;
                 if (reloadAckMsg->reloadOk && (KillAllCms(false) == CM_SUCCESS)) {
                     write_runlog(LOG, "cm_ctl reload success.\n");
@@ -1987,7 +1987,7 @@ static status_t SendDdbCmdMsgToCms(const char *cmd)
     errno_t rc;
     ExecDdbCmdMsg sendMsg;
 
-    write_runlog(DEBUG1, "Sending msg to cm_server to do dcc cmd.\n");
+    write_runlog(DEBUG1, "Sending msg to cm_server to do ddb cmd.\n");
 
     rc = memset_s(sendMsg.cmdLine, DCC_CMD_MAX_LEN, 0, DCC_CMD_MAX_LEN);
     securec_check_errno(rc, (void)rc);
@@ -1996,66 +1996,14 @@ static status_t SendDdbCmdMsgToCms(const char *cmd)
     rc = strcpy_s(sendMsg.cmdLine, DCC_CMD_MAX_LEN, cmd);
     securec_check_errno(rc, (void)rc);
 
-    if (cm_client_send_msg(CmServer_conn, 'C', reinterpret_cast<char*>(&sendMsg), sizeof(ExecDdbCmdMsg)) != 0) {
-        FINISH_CONNECTION_WITHOUT_EXIT();;
-        write_runlog(ERROR, "ctl send exec dcc cmd msg to cms failed.\n");
-        (void)printf(_("exec dcc cmd fail.\n"));
+    if (cm_client_send_msg(CmServer_conn, 'C', (char*)(&sendMsg), sizeof(ExecDdbCmdMsg)) != 0) {
+        FINISH_CONNECTION_WITHOUT_EXIT();
+        write_runlog(ERROR, "ctl send exec ddb cmd msg to cms failed.\n");
+        (void)printf(_("exec ddb cmd fail.\n"));
         return CM_ERROR;
     }
 
     return CM_SUCCESS;
-}
-
-static void OutPutCmdResult(const char *option, const ExecDdbCmdAckMsg *ackPtr)
-{
-    if (ackPtr->isSuccess) {
-        if (ackPtr->outputLen < DCC_CMD_MAX_OUTPUT_LEN) {
-            write_runlog(LOG, "exec dcc %s command success.\n", option);
-            write_runlog(LOG, "%s\n", ackPtr->output);
-        } else {
-            write_runlog(LOG, "exec dcc %s command failed, error msg's buf is smaller(%d/%d).\n",
-                option, DCC_CMD_MAX_OUTPUT_LEN, ackPtr->outputLen);
-            write_runlog(LOG, "part result is:\n %s\n", ackPtr->output);
-        }
-    } else {
-        write_runlog(LOG, "exec dcc %s command failed, err msg:\n%s\n", option, ackPtr->errMsg);
-    }
-}
-
-static void GetExecCmdResult(const char *option)
-{
-    int ret;
-    int recvTimeOut = EXEC_DDC_CMD_TIMEOUT;
-    char *receiveMsg = NULL;
-    ExecDdbCmdAckMsg *ackPtr = NULL;
-
-    for (;;) {
-        ret = cm_client_flush_msg(CmServer_conn);
-        if (ret == TCP_SOCKET_ERROR_EPIPE) {
-            FINISH_CONNECTION_WITHOUT_EXIT();
-        }
-
-        receiveMsg = recv_cm_server_cmd(CmServer_conn);
-        if (receiveMsg != NULL) {
-            const cm_msg_type *type = reinterpret_cast<const cm_msg_type*>(reinterpret_cast<const void*>(receiveMsg));
-            if (type->msg_type == EXEC_DDB_COMMAND_ACK) {
-                ackPtr = reinterpret_cast<ExecDdbCmdAckMsg*>(reinterpret_cast<void*>(receiveMsg));
-                OutPutCmdResult(option, ackPtr);
-            }
-        }
-        recvTimeOut--;
-        if (recvTimeOut <= 0 || ackPtr != NULL) {
-            break;
-        }
-        cm_sleep(1);
-    }
-
-    if (ackPtr == NULL) {
-        write_runlog(LOG, "exec dcc command timeout.\n");
-        return;
-    }
-
-    return;
 }
 
 void DoDccCmd(int argc, char **argv)
@@ -2065,7 +2013,7 @@ void DoDccCmd(int argc, char **argv)
     char cmd[DCC_CMD_MAX_LEN];
 
     if (argc <= OPTION_POS) {
-        write_runlog(ERROR, "exec dcc command without param.\n");
+        write_runlog(ERROR, "exec ddb command without param.\n");
         return;
     }
     for (int i = OPTION_POS; i < argc; ++i) {
@@ -2079,7 +2027,7 @@ void DoDccCmd(int argc, char **argv)
             write_runlog(ERROR, "The cmd len is longer than %d, can't exec the cmd.\n", DCC_CMD_MAX_LEN);
             return;
         }
-        ret = snprintf_s((cmd + curLen), (sizeof(cmd) - curLen), (sizeof(cmd) - curLen - 1),
+        ret = snprintf_s((cmd + curLen), (sizeof(cmd) - curLen), ((sizeof(cmd) - curLen) - 1),
             " %s", argv[i]);
         securec_check_intval(ret, (void)ret);
         curLen += optionLen;
@@ -2087,7 +2035,7 @@ void DoDccCmd(int argc, char **argv)
 
     do_conn_cmserver(false, 0);
     if (CmServer_conn == NULL) {
-        write_runlog(LOG, "exec dcc cmd fail, can't connect to cmserver.\n");
+        write_runlog(LOG, "exec ddb cmd fail, can't connect to cmserver.\n");
         return;
     }
 
@@ -2095,7 +2043,7 @@ void DoDccCmd(int argc, char **argv)
         return;
     }
 
-    GetExecCmdResult(argv[OPTION_POS]);
+    GetExecCmdResult(argv[OPTION_POS], (int)EXEC_DDB_COMMAND_ACK);
 
     // close conn
     FINISH_CONNECTION2(CmServer_conn);

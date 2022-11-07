@@ -26,14 +26,14 @@
 #include <sys/time.h>
 #include <sys/unistd.h>
 #include "securec.h"
-#include "cm_misc.h"
 #include "cm_msg.h"
 #include "cm_defs.h"
 #include "cma_common.h"
-#include "cma_connect_client.h"
 #include "cma_global_params.h"
+#include "cma_instance_check.h"
+#include "cma_connect_client.h"
 
-ClientConn g_clientConnect[MAX_RES_NUM];
+ClientConn g_clientConnect[CM_MAX_RES_COUNT];
 
 ClientConn *GetClientConnect()
 {
@@ -63,7 +63,7 @@ static status_t EpollEventAdd(int epollfd, int sock)
     ev.data.fd = sock;
 
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, sock, &ev) < 0) {
-        write_runlog(LOG, "[CLIENT] Event Add failed [fd=%d], eventType[%04X]: errno=%d.\n", sock, EPOLLIN, errno);
+        write_runlog(LOG, "[CLIENT] Event Add failed [fd=%d], eventType[%03X]: errno=%d.\n", sock, EPOLLIN, errno);
         return CM_ERROR;
     }
     return CM_SUCCESS;
@@ -81,7 +81,7 @@ static void EpollEventDel(int epollfd, int sock)
 
 static void ConnectInit()
 {
-    for (int i = 0; i < MAX_RES_NUM; ++i) {
+    for (int i = 0; i < CM_MAX_RES_COUNT; ++i) {
         g_clientConnect[i].sock = AGENT_INVALID_SOCKET;
         g_clientConnect[i].isClosed = true;
         g_clientConnect[i].recvTime = {0, 0};
@@ -127,7 +127,7 @@ static void CreateListenSocket(ListenPort *listenfd)
     securec_check_intval(rc, (void)rc)
 
     listenfd->sock = (int)socket(AF_UNIX, SOCK_STREAM, 0);
-    if (AGENT_INVALID_SOCKET == listenfd->sock) {
+    if (listenfd->sock == AGENT_INVALID_SOCKET) {
         write_runlog(ERROR, "[CLIENT] Create connect socket failed.\n");
         return;
     }
@@ -136,7 +136,8 @@ static void CreateListenSocket(ListenPort *listenfd)
     rc = memset_s(&listenfd->addr.addr, listenfd->addr.addrLen, 0, listenfd->addr.addrLen);
     securec_check_errno(rc, (void)rc);
     listenfd->addr.addr.sun_family = AF_UNIX;
-    rc = strcpy_s(listenfd->addr.addr.sun_path, MAX_PATH_LENGTH, socketPath);
+    const size_t unixPathMax = 108;
+    rc = strcpy_s(listenfd->addr.addr.sun_path, unixPathMax, socketPath);
     securec_check_errno(rc, (void)rc);
 
     (void)unlink(socketPath);
@@ -144,7 +145,7 @@ static void CreateListenSocket(ListenPort *listenfd)
     if (ret != 0) {
         write_runlog(ERROR, "[CLIENT] bind failed, socketPath=\'%s\', ret=%d.\n", socketPath, ret);
         (void)unlink(socketPath);
-        close(listenfd->sock);
+        (void)close(listenfd->sock);
         listenfd->sock = AGENT_INVALID_SOCKET;
         return;
     }
@@ -153,14 +154,12 @@ static void CreateListenSocket(ListenPort *listenfd)
     if (ret != 0) {
         write_runlog(ERROR, "[CLIENT] Create listen failed, sock=%d, ret=%d.\n", listenfd->sock, ret);
         (void)unlink(socketPath);
-        close(listenfd->sock);
+        (void)close(listenfd->sock);
         listenfd->sock = AGENT_INVALID_SOCKET;
         return;
     }
 
     (void)chmod(socketPath, DOMAIN_SOCKET_PERMISSION);
-
-    return;
 }
 
 static status_t RecvListenEvent(int listenSock, int epollfd)
@@ -174,7 +173,7 @@ static status_t RecvListenEvent(int listenSock, int epollfd)
     }
     (void)clock_gettime(CLOCK_MONOTONIC, &con.recvTime);
 
-    for (uint64 i = 0; i < MAX_RES_NUM; ++i) {
+    for (uint64 i = 0; i < CM_MAX_RES_COUNT; ++i) {
         if (g_clientConnect[i].isClosed) {
             rc = memcpy_s(&g_clientConnect[i], sizeof(ClientConn), &con, sizeof(ClientConn));
             securec_check_errno(rc, (void)rc);
@@ -189,13 +188,11 @@ static status_t RecvListenEvent(int listenSock, int epollfd)
 
 static void RecvHeartBeatProcess(const MsgHead &head, int epollfd)
 {
-    ClientHbMsg *recvMsg = (ClientHbMsg*) malloc(sizeof(ClientHbMsg));
-    if (recvMsg == NULL) {
-        write_runlog(ERROR, "[CLIENT] malloc failed, RecvHeartBeatProcess.\n");
-        return;
-    }
+    ClientHbMsg recvMsg;
+    errno_t rc = memset_s(&recvMsg, sizeof(ClientHbMsg), 0, sizeof(ClientHbMsg));
+    securec_check_errno(rc, (void)rc);
 
-    if (TcpRecvMsg(g_clientConnect[head.conId].sock, (char*)&recvMsg->version, sizeof(uint64)) != CM_SUCCESS) {
+    if (TcpRecvMsg(g_clientConnect[head.conId].sock, (char*)&recvMsg.version, sizeof(uint64)) != CM_SUCCESS) {
         write_runlog(LOG, "[CLIENT] Recv heartbeat Msg failed, close the connect.\n");
         EpollEventDel(epollfd, g_clientConnect[head.conId].sock);
         ConnectClose(&g_clientConnect[head.conId]);
@@ -203,20 +200,18 @@ static void RecvHeartBeatProcess(const MsgHead &head, int epollfd)
         return;
     }
 
-    errno_t rc = memcpy_s(&recvMsg->head, sizeof(MsgHead), &head, sizeof(MsgHead));
+    rc = memcpy_s(&recvMsg.head, sizeof(MsgHead), &head, sizeof(MsgHead));
     securec_check_errno(rc, (void)rc);
-    PushMsgToClientRecvQue((char*)recvMsg, sizeof(ClientHbMsg));
+    PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientHbMsg), head.conId);
 }
 
 static void RecvInitDataProcess(const MsgHead &head, int epollfd)
 {
-    ClientInitMsg *recvMsg = (ClientInitMsg*) malloc(sizeof(ClientInitMsg));
-    if (recvMsg == NULL) {
-        write_runlog(LOG, "[CLIENT] malloc failed, RecvInitDataProcess.\n");
-        return;
-    }
+    ClientInitMsg recvMsg;
+    errno_t rc = memset_s(&recvMsg, sizeof(ClientInitMsg), 0, sizeof(ClientInitMsg));
+    securec_check_errno(rc, (void)rc);
 
-    if (TcpRecvMsg(g_clientConnect[head.conId].sock, (char*)&recvMsg->resInfo, sizeof(ResInfo)) != CM_SUCCESS) {
+    if (TcpRecvMsg(g_clientConnect[head.conId].sock, (char*)&recvMsg.resInfo, sizeof(ResInfo)) != CM_SUCCESS) {
         write_runlog(LOG, "[CLIENT] Recv InitMsg failed, close the connect.\n");
         EpollEventDel(epollfd, g_clientConnect[head.conId].sock);
         ConnectClose(&g_clientConnect[head.conId]);
@@ -224,9 +219,27 @@ static void RecvInitDataProcess(const MsgHead &head, int epollfd)
         return;
     }
 
-    errno_t rc = memcpy_s(&recvMsg->head, sizeof(MsgHead), &head, sizeof(MsgHead));
+    rc = memcpy_s(&recvMsg.head, sizeof(MsgHead), &head, sizeof(MsgHead));
     securec_check_errno(rc, (void)rc);
-    PushMsgToClientRecvQue((char*)recvMsg, sizeof(ClientInitMsg));
+    PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientInitMsg), head.conId);
+}
+
+static void RecvCmResLockProcess(const MsgHead &head, int epollfd)
+{
+    ClientCmLockMsg recvMsg;
+    errno_t rc = memset_s(&recvMsg, sizeof(ClientCmLockMsg), 0, sizeof(ClientCmLockMsg));
+    securec_check_errno(rc, (void)rc);
+
+    if (TcpRecvMsg(g_clientConnect[head.conId].sock, (char*)&recvMsg.info, sizeof(LockInfo)) != CM_SUCCESS) {
+        write_runlog(LOG, "[CLIENT] Recv ClientCmLockMsg failed, close the connect.\n");
+        EpollEventDel(epollfd, g_clientConnect[head.conId].sock);
+        ConnectClose(&g_clientConnect[head.conId]);
+        return;
+    }
+
+    rc = memcpy_s(&recvMsg.head, sizeof(MsgHead), &head, sizeof(MsgHead));
+    securec_check_errno(rc, (void)rc);
+    PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientCmLockMsg), head.conId);
 }
 
 static void RecvClientMessage(const uint32 &conId, int epollfd)
@@ -247,6 +260,9 @@ static void RecvClientMessage(const uint32 &conId, int epollfd)
             break;
         case MSG_CLIENT_AGENT_HEARTBEAT:
             RecvHeartBeatProcess(head, epollfd);
+            break;
+        case MSG_CM_RES_LOCK:
+            RecvCmResLockProcess(head, epollfd);
             break;
         default:
             EpollEventDel(epollfd, g_clientConnect[conId].sock);
@@ -272,19 +288,19 @@ static void RecvClientMsgMain(int epollfd, int eventNums, const ListenPort *list
             }
             continue;
         }
-        for (conId = 0; conId < MAX_RES_NUM; ++conId) {
+        for (conId = 0; conId < CM_MAX_RES_COUNT; ++conId) {
             if (events[i].data.fd == g_clientConnect[conId].sock && !g_clientConnect[conId].isClosed) {
                 RecvClientMessage(conId, epollfd);
                 break;
             }
         }
-        if (conId == MAX_RES_NUM) {
+        if (conId == CM_MAX_RES_COUNT) {
             EpollEventDel(epollfd, events[i].data.fd);
         }
     }
 
     // Check whether the client loses heartbeat
-    for (uint64 i = 0; i < MAX_RES_NUM; ++i) {
+    for (uint64 i = 0; i < CM_MAX_RES_COUNT; ++i) {
         if (g_clientConnect[i].isClosed) {
             continue;
         }
@@ -309,24 +325,29 @@ void* RecvClientEventsMain(void * const arg)
 
     CreateListenSocket(&listenfd);
     if (listenfd.sock == AGENT_INVALID_SOCKET) {
-        write_runlog(ERROR, "[CLIENT] agent create listen socket failed.\n");
+        write_runlog(FATAL, "[CLIENT] agent create listen socket failed.\n");
         exit(1);
     }
 
     epollfd = epoll_create(MAX_EVENTS);
     if (epollfd < 0) {
-        write_runlog(ERROR, "[CLIENT] agent create epoll failed %d.\n", epollfd);
+        write_runlog(FATAL, "[CLIENT] agent create epoll failed %d.\n", epollfd);
         exit(1);
     }
 
     if (EpollEventAdd(epollfd, listenfd.sock) != CM_SUCCESS) {
-        write_runlog(ERROR, "[CLIENT] Agent add listen socket (fd=%d) failed.\n", listenfd.sock);
+        write_runlog(FATAL, "[CLIENT] Agent add listen socket (fd=%d) failed.\n", listenfd.sock);
         exit(1);
     }
     write_runlog(LOG, "[CLIENT] Agent add listen socket (fd=%d) success.\n", listenfd.sock);
 
     // agent recv client event loop
     for (;;) {
+        if (g_shutdownRequest || g_exitFlag) {
+            CleanAllClientRecvMsgQueue();
+            cm_sleep(SHUTDOWN_SLEEP_TIME);
+            continue;
+        }
         int eventNums = epoll_wait(epollfd, events, MAX_EVENTS, EPOLL_WAIT_TIMEOUT);
         if (eventNums < 0) {
             if (errno != EINTR && errno != EWOULDBLOCK) {
@@ -336,33 +357,41 @@ void* RecvClientEventsMain(void * const arg)
         }
         RecvClientMsgMain(epollfd, eventNums, &listenfd, events);
     }
-    close(epollfd);
+    (void)close(epollfd);
 
     return NULL;
 }
 
 void* SendMessageToClientMain(void * const arg)
 {
-    for (;;) {
-        (void)pthread_mutex_lock(&g_sendQueue.lock);
-        while (g_sendQueue.msg.empty()) {
-            (void)pthread_cond_wait(&g_sendQueue.cond, &g_sendQueue.lock);
-        }
-        AgentMsgPkg sendMsg = g_sendQueue.msg.front();
-        g_sendQueue.msg.pop();
-        (void)pthread_mutex_unlock(&g_sendQueue.lock);
+    thread_name = "SendClientMsg";
+    write_runlog(LOG, "send msg to client thread begin, threadId:%lu.\n", (unsigned long)pthread_self());
 
-        if (sendMsg.conId >= MAX_RES_NUM || g_clientConnect[sendMsg.conId].isClosed) {
+    for (;;) {
+        if (g_shutdownRequest || g_exitFlag) {
+            CleanAllClientSendMsgQueue();
+            cm_sleep(SHUTDOWN_SLEEP_TIME);
+            continue;
+        }
+        MsgQueue &sendQueue = GetClientSendQueue();
+        (void)pthread_mutex_lock(&sendQueue.lock);
+        while (sendQueue.msg.empty()) {
+            (void)pthread_cond_wait(&sendQueue.cond, &sendQueue.lock);
+        }
+        AgentMsgPkg sendMsg = sendQueue.msg.front();
+        sendQueue.msg.pop();
+        (void)pthread_mutex_unlock(&sendQueue.lock);
+
+        if (sendMsg.conId >= CM_MAX_RES_COUNT || g_clientConnect[sendMsg.conId].isClosed) {
             write_runlog(ERROR, "[CLIENT] invalid conId(%u).\n", sendMsg.conId);
-            FREE_AND_RESET(sendMsg.msgPtr);
+            FreeBufFromMsgPool(sendMsg.msgPtr);
             continue;
         }
 
         if (TcpSendMsg(g_clientConnect[sendMsg.conId].sock, sendMsg.msgPtr, sendMsg.msgLen) != CM_SUCCESS) {
-            ConnectClose(&g_clientConnect[sendMsg.conId]);
-            CleanClientMsgQueue(sendMsg.conId);
+            write_runlog(ERROR, "[CLIENT] send msg to res(%s) failed.\n", g_clientConnect[sendMsg.conId].resName);
         }
-        FREE_AND_RESET(sendMsg.msgPtr);
+        FreeBufFromMsgPool(sendMsg.msgPtr);
     }
 
     return NULL;

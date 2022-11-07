@@ -5,8 +5,6 @@ if (ENABLE_MULTIPLE_NODES)
     list(APPEND TGT_cmctl_SRC ${TGT_cmctlD_SRC})
 endif ()
 
-list(APPEND TGT_cmctl_SRC ${OPENCM_PROJECT_SOURCE_DIR}/src/lib/pq/port/cipher.cpp)
-
 set(CTL_LIB_PATHS
         ${PGPORT_HOME}
         ${CJSON_DIRECTORY_LIB}

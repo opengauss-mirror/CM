@@ -5,8 +5,6 @@ include $(BASE_BUILD_PATH)/Makefile.global
 subdir = src/lib/alarm
 DESTDIR = $(CM_TOP_BUILDDIR)/output
 
-include $(BASE_BUILD_PATH)/common.mk
-
 ifeq ($(ENABLE_ALARM), ON)
     OBJS = alarm.o alarm_log.o
 else
@@ -25,10 +23,3 @@ install:all
 
 clean:
 	rm -f $(OBJS) libalarmclient.a *.depend
-
-distclean: clean
-
-maintainer-clean: distclean
-
-
-

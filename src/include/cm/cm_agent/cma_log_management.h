@@ -36,7 +36,6 @@
 
 /* Initialize log pattern and log count when started */
 extern LogPattern* g_logPattern;
-extern uint32 len;
 
 int isLogFile(const char* fileName);
 int get_log_pattern();

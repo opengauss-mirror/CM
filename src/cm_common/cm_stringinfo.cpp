@@ -36,7 +36,7 @@ CM_StringInfo CM_makeStringInfo(void)
 
     res = (CM_StringInfo)malloc(sizeof(CM_StringInfoData));
     if (res == NULL) {
-        write_runlog(ERROR, "malloc CM_StringInfo failed, out of memory.\n");
+        write_runlog(FATAL, "malloc CM_StringInfo failed, out of memory.\n");
         exit(1);
     }
 
@@ -82,14 +82,14 @@ void CM_freeStringInfo(CM_StringInfo str)
  */
 void CM_initStringInfo(CM_StringInfo str)
 {
-    int size = 1024; /* initial default buffer size */
+    const uint32 size = 1024; /* initial default buffer size */
 
     str->data = (char*)malloc(size);
     if (str->data == NULL) {
-        write_runlog(ERROR, "malloc CM_StringInfo->data failed, out of memory.\n");
+        write_runlog(FATAL, "malloc CM_StringInfo->data failed, out of memory.\n");
         exit(1);
     }
-    str->maxlen = size;
+    str->maxlen = (int)size;
     CM_resetStringInfo(str);
 }
 
@@ -110,6 +110,8 @@ void CM_resetStringInfo(CM_StringInfo str)
     str->cursor = 0;
     str->qtype = 0;
     str->msglen = 0;
+    str->msgReadData[0] = '\0';
+    str->msgReadLen = 0;
 }
 
 /*
@@ -131,15 +133,11 @@ void CM_resetStringInfo(CM_StringInfo str)
  */
 int CM_enlargeStringInfo(CM_StringInfo str, int needed)
 {
-    int newlen;
-    char* newdata = NULL;
-
     /*
      * Guard against out-of-range "needed" values.	Without this, we can get
      * an overflow or infinite loop in the following.
      */
-    if (needed < 0) /* should not happen */
-    {
+    if (needed < 0) {
         write_runlog(ERROR, "invalid string enlargement request size: %d\n", needed);
         return -1;
     }
@@ -158,25 +156,24 @@ int CM_enlargeStringInfo(CM_StringInfo str, int needed)
         return 0; /* got enough space already */
     }
 
-    newlen = 2 * str->maxlen;
-    while (needed > newlen) {
+    size_t newlen = 2 * (size_t)str->maxlen;
+    while ((size_t)needed > newlen) {
         newlen = 2 * newlen;
     }
 
-    if (newlen > (int)CM_MaxAllocSize) {
-        newlen = (int)CM_MaxAllocSize;
+    if (newlen > (size_t)CM_MaxAllocSize) {
+        newlen = (size_t)CM_MaxAllocSize;
     }
 
-    newdata = (char*)malloc(newlen);
+    char *newdata = (char*)malloc(newlen);
     if (newdata != NULL) {
         if (str->data != NULL) {
-            errno_t rc;
-            rc = memcpy_s(newdata, newlen, str->data, str->maxlen);
-            securec_check_c(rc, "\0", "\0");
+            errno_t rc = memcpy_s(newdata, newlen, str->data, str->maxlen);
+            securec_check_errno(rc, (void)rc);
             FREE_AND_RESET(str->data);
         }
         str->data = newdata;
-        str->maxlen = newlen;
+        str->maxlen = (int)newlen;
     } else {
         if (str->data != NULL) {
             FREE_AND_RESET(str->data);
@@ -188,16 +185,11 @@ int CM_enlargeStringInfo(CM_StringInfo str, int needed)
 
 int CM_is_str_all_digit(const char* name)
 {
-    size_t size = 0;
-    size_t i = 0;
-
     if (name == NULL) {
         write_runlog(ERROR, "CM_is_str_all_digit input null\n");
         return -1;
     }
-
-    size = strlen(name);
-    for (i = 0; i < size; i++) {
+    for (size_t i = 0; i < strlen(name); i++) {
         if (name[i] < '0' || name[i] > '9') {
             return -1;
         }

@@ -80,13 +80,11 @@ void StartOrStopInstanceByCommand(OperateType operateType, uint32 nodeId, const 
 
 void StartOrStopNodeInstances(OperateType operateType)
 {
-    uint32 ii = 0 ;
-
     if (g_currentNode->coordinate == 1) {
         StartOrStopInstanceByCommand(operateType, g_currentNode->node, g_currentNode->DataPath);
     }
 
-    for (ii = 0; ii < g_currentNode->datanodeCount; ii++) {
+    for (uint32 ii = 0; ii < g_currentNode->datanodeCount; ii++) {
         StartOrStopInstanceByCommand(
             operateType, g_currentNode->node, g_currentNode->datanode[ii].datanodeLocalDataPath);
     }
@@ -127,7 +125,7 @@ static bool CmaDisconnectWithAllRemoteCmsInOtherAz()
         }
     }
     if (isSingleAz) {
-        write_runlog(DEBUG1, "CmaDisconnectWithAllRemoteCmsInOtherAz, isSingleAz=%d.\n", isSingleAz);
+        write_runlog(DEBUG1, "CmaDisconnectWithAllRemoteCmsInOtherAz, isSingleAz=%d.\n", (int32)isSingleAz);
         return false;
     }
 
@@ -149,7 +147,7 @@ bool isUpgradeCluster()
         write_runlog(ERROR, "get PGHOST failed!\n");
         return false;
     }
-    
+
     check_input_for_security(pg_host_path);
     rcs = snprintf_s(grayscale_upgrade_check, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/binary_upgrade", pg_host_path);
     securec_check_intval(rcs, (void)rcs);
@@ -175,7 +173,6 @@ bool isUpgradeCluster()
 
 /**
  * @brief get cluster upgrade mode.
- * 
  * @return int NOT_UPGRADED/GRAYSCALE_UPGRADED/INPLACE_UPGRADED
  */
 static int GetUpgradeMode()
@@ -226,11 +223,10 @@ static int GetUpgradeMode()
  */
 bool is_maintenance_instance(const char *file_path)
 {
-    FILE *fd = NULL;
     char current[INSTANCE_ID_LEN] = { 0 };
     bool instance_maintenance = false;
 
-    fd = fopen(file_path, "re");
+    FILE *fd = fopen(file_path, "re");
     if (!fd) {
         write_runlog(DEBUG1, "Can't open the maintenance instance flag file: file_path=\"%s\","
             "errno=\"[%d]\".\n", file_path, errno);
@@ -251,7 +247,7 @@ bool is_maintenance_instance(const char *file_path)
         }
     }
 
-    fclose(fd);
+    (void)fclose(fd);
     return instance_maintenance;
 }
 
@@ -263,7 +259,7 @@ maintenance_mode getMaintenanceMode()
     } else if (is_maintenance_instance(instance_maintance_path)) {
         mode = MAINTENANCE_MODE_DILATATION;
     }
-	return mode;
+    return mode;
 }
 
 static inline bool isDisableKillSelfInstances(const maintenance_mode &mode)
@@ -283,7 +279,7 @@ bool isMaintenanceModeDisableOperation(const cma_operation op)
     return isDisable;
 }
 
-bool isDisconnectTimeout(struct timespec last, int timeout)
+bool isDisconnectTimeout(const struct timespec last, int timeout)
 {
     struct timespec now = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &now);
@@ -297,7 +293,6 @@ bool isDisconnectTimeout(struct timespec last, int timeout)
 
 /**
  * @brief execute remote cmd function
- * 
  * @param  remoteNodeid     remoteNodeid in cluster
  * @param  cmd              command
  */
@@ -327,11 +322,9 @@ void ExecSsh(uint32 remoteNodeid, const char *cmd)
 
 /**
  * @brief check version between agent and cmserver primary, if version is not equal kill all instance
- * 
  */
 static void StopNodeSelfByVersionNum()
 {
-    FILE *fp = NULL;
     int rc;
     char upgradeVersionFile[MAX_PATH_LEN] = {0};
     char versonResultPath[MAX_PATH_LEN] = {0};
@@ -352,17 +345,17 @@ static void StopNodeSelfByVersionNum()
     securec_check_intval(rc, (void)rc);
 
     /* read local version number */
-    fp = fopen(upgradeVersionFile, "re");
+    FILE *fp = fopen(upgradeVersionFile, "re");
     if (fp == NULL) {
         write_runlog(ERROR, "failed to open File:%s\n", upgradeVersionFile);
         return;
     }
-    fgets(tmp, MAXPGPATH, fp);
+    (void)fgets(tmp, MAXPGPATH, fp);
     rc = memset_s(localVersion, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
 
     /* get version number */
-    fgets(tmp, MAXPGPATH, fp);
+    (void)fgets(tmp, MAXPGPATH, fp);
 
     rc = strncpy_s(localVersion, MAX_PATH_LEN, tmp, versionLength);
     securec_check_errno(rc, (void)rc);
@@ -373,33 +366,29 @@ static void StopNodeSelfByVersionNum()
                         upgradeVersionFile, localVersion, versonResultPath);
         securec_check_intval(rc, (void)rc);
         ExecSsh(g_serverNodeId - 1, command);
-        write_runlog(LOG, "try to touch file:%s, localVersion: %s, command: %s\n", 
+        write_runlog(LOG, "try to touch file:%s, localVersion: %s, command: %s\n",
             CHECK_VERSION_RESULT, localVersion, command);
     }
-    fclose(fp);
+    (void)fclose(fp);
 }
 
-uint64 GetTimeMinus(struct timeval checkEnd, struct timeval checkBegin)
+uint64 GetTimeMinus(const struct timeval checkEnd, const struct timeval checkBegin)
 {
     const int secTomicSec = 1000000;
     return (uint64)((checkEnd.tv_sec - checkBegin.tv_sec) * secTomicSec + (checkEnd.tv_usec - checkBegin.tv_usec));
 }
 
-void GetResStatusList()
+static void GetResStatusList()
 {
-    if (g_resStatus.empty()) {
+    if (!IsCusResExist()) {
         write_runlog(DEBUG1, "[CLIENT] no resource config, don't need get res status list.\n");
         return;
     }
 
     RequestResStatList sendMsg = {0};
-    sendMsg.msgType = MSG_AGENT_CM_REQUEST_RES_STATUS_LIST;
+    sendMsg.msgType = (int)MSG_AGENT_CM_REQUEST_RES_STATUS_LIST;
 
-    if (cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&sendMsg, sizeof(sendMsg)) != CM_SUCCESS) {
-        write_runlog(ERROR, "send cm_agent msg failed!\n");
-        CloseConnToCmserver();
-        return;
-    }
+    PushMsgToCmsSendQue((char *)&sendMsg, (uint32)sizeof(RequestResStatList), "get res status");
 }
 
 void* ConnCmsPMain(void* arg)
@@ -449,11 +438,11 @@ void* ConnCmsPMain(void* arg)
                  * and the operation of stopping instances will not be executed.
                  */
                 uint32 agentStopInstanceDelayTime = isToStopInstances ? DISABLE_TIMEOUT : agent_kill_instance_timeout;
-                if (isDisconnectTimeout(g_disconnectTime, agentStopInstanceDelayTime) && !have_killed_nodes) {
+                if (isDisconnectTimeout(g_disconnectTime, (int)agentStopInstanceDelayTime) && !have_killed_nodes) {
                     if ((undocumentedVersion == 0) && isMaintenanceModeDisableOperation(CMA_KILL_SELF_INSTANCES)) {
                         have_killed_nodes = false;
                         write_runlog(LOG, "%d Maintaining cluster: cm agent cannot stop self instances.\n", __LINE__);
-                    } else if (g_firstConnectFlag == false) {
+                    } else if (!g_firstConnectFlag) {
                         have_killed_nodes = false;
                         write_runlog(LOG, "Agent has never successfully connected to the server,"
                             " so can not stop instances of current node.\n");
@@ -472,7 +461,7 @@ void* ConnCmsPMain(void* arg)
                 (unsigned long long)GetTimeMinus(checkEndFunction, checkBeginFunction));
         }
 
-        cm_usleep(AGENT_RECV_CYCLE);
+        CmUsleep(AGENT_RECV_CYCLE);
     }
     return NULL;
 }
@@ -482,11 +471,11 @@ void* CheckUpgradeMode(void* arg)
     for (;;) {
         /* When the cm agent connect primary cm server and cluster is not in Upgraded. */
         if (g_agentConnCmsSuccess && GetUpgradeMode() ==  NOT_UPGRADED) {
-            /* If cmagent version number is not equals to cmserver version number stop itself*/
+            /* If cmagent version number is not equals to cmserver version number stop itself */
             StopNodeSelfByVersionNum();
             g_agentConnCmsSuccess = false;
         }
-        cm_usleep(AGENT_RECV_CYCLE);
+        CmUsleep(AGENT_RECV_CYCLE);
     }
     return NULL;
 }

@@ -23,6 +23,7 @@
  */
 #include "cms_arbitrate_datanode_pms_utils.h"
 #include  "cms_az.h"
+#include "cms_process_messages.h"
 
 /**
  * @brief
@@ -62,7 +63,7 @@ void GroupStatusShow(const char *str, const uint32 groupIndex, const uint32 inst
             ", double_restarting=%d, disconn_mode %u=%s, disconn_host=%s, disconn_port=%u, local_host=%s, local_port=%u"
             ", redo_finished=%d, peer_state=%d, sync_mode=%d, current_cluster_az_status=%d, validCount=%d"
             ", finishRedo=%d, group_term=%u, curSyncList is [%s], expectSyncList is [%s], voteAzList is [%s], "
-            "arbitrate_time is %u.\n",
+            "arbitrate_time is %u, sendFailoverTimes=%u.\n",
             str, __LINE__, instanceId, roleMember[i].node, roleMember[i].instanceId, roleMember[i].role,
             datanode_role_int_to_string(roleMember[i].role), dnReport[i].local_status.local_role,
             datanode_role_int_to_string(dnReport[i].local_status.local_role), dnReport[i].local_status.term,
@@ -76,9 +77,10 @@ void GroupStatusShow(const char *str, const uint32 groupIndex, const uint32 inst
             dnReport[i].local_status.disconn_host, dnReport[i].local_status.disconn_port,
             dnReport[i].local_status.local_host, dnReport[i].local_status.local_port,
             dnReport[i].local_status.redo_finished, dnReport[i].receive_status.peer_state,
-            dnReport[i].sync_standby_mode, current_cluster_az_status,
+            (int)dnReport[i].sync_standby_mode, (int)current_cluster_az_status,
             validCount, finishRedo, reportGrp->term,
-            instInfo.curSl, instInfo.expSl, instInfo.voteL, dnReport[i].arbiTime);
+            instInfo.curSl, instInfo.expSl, instInfo.voteL, dnReport[i].arbiTime,
+            dnReport[i].sendFailoverTimes);
     }
 }
 
@@ -104,7 +106,7 @@ bool IsSyncListEmpty(uint32 groupIndex, uint32 instanceId, maintenance_mode mode
     if (GetAzDeploymentType(isVoteAz) != TWO_AZ_DEPLOYMENT || mode == MAINTENANCE_NODE_UPGRADED_GRAYSCALE ||
         cm_arbitration_mode == MINORITY_ARBITRATION ||
         g_instance_role_group_ptr[groupIndex].count <= onePrimaryTowStandby ||
-        (g_isEnableUpdateSyncList != SYNCLIST_THREADS_IN_PROCESS && 
+        (g_isEnableUpdateSyncList != SYNCLIST_THREADS_IN_PROCESS &&
         g_isEnableUpdateSyncList != SYNCLIST_THREADS_IN_DDB_BAD)) {
         return false;
     }
@@ -153,9 +155,8 @@ bool IsInSyncList(uint32 groupIndex, int memberIndex, int reportMemberIndex)
     if (memberIndex == reportMemberIndex) {
         return true;
     }
-    bool isInSync = false;
     uint32 instanceId = g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex].instanceId;
-    isInSync = IsInstanceIdInSyncList(
+    bool isInSync = IsInstanceIdInSyncList(
         instanceId, &(g_instance_group_report_status_ptr[groupIndex].instance_status.currentSyncList));
     if (!isInSync) {
         return false;
@@ -229,17 +230,30 @@ cm_instance_role_status *GetRoleStatus(uint32 groupIndex, int32 memberIndex)
     return &(g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex]);
 }
 
-uint32 GetMaxTerm(uint32 groupIdx)
+void InitDnArbitInfo(DnArbitInfo *info)
+{
+    info->maxTerm = 0;
+    info->switchoverIdx = -1;
+    info->staRoleIndex = -1;
+}
+
+void GetDnArbitInfo(uint32 groupIdx, DnArbitInfo *info)
 {
     int32 count = GetInstanceCountsInGroup(groupIdx);
-    uint32 maxTerm = 0;
     cm_instance_datanode_report_status *dnReport = GetDnReportStatus(groupIdx);
+    cm_instance_role_status *role = g_instance_role_group_ptr[groupIdx].instanceMember;
+    cm_instance_command_status *cmd = g_instance_group_report_status_ptr[groupIdx].instance_status.command_member;
     for (int32 i = 0; i < count; ++i) {
-        if (dnReport[i].local_status.term > maxTerm) {
-            maxTerm = dnReport[i].local_status.term;
+        if (dnReport[i].local_status.term > info->maxTerm) {
+            info->maxTerm = dnReport[i].local_status.term;
+        }
+        if (role[i].role == INSTANCE_ROLE_PRIMARY) {
+            info->staRoleIndex = i;
+        }
+        if (cmd[i].pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER) {
+            info->switchoverIdx = i;
         }
     }
-    return maxTerm;
 }
 
 uint32 GetInstanceTerm(uint32 groupIndex, int memberIndex)
@@ -426,28 +440,53 @@ static int32 FindDnPeerIndex(const DnArbCtx *ctx)
 {
     int32 staPrimIdx = -1;
     int32 dynaPrimIdx = -1;
+    int32 promoteIdx = -1;
+    int32 demoteIdx = -1;
     cm_instance_role_status *role = ctx->roleGroup->instanceMember;
     cm_instance_datanode_report_status *report = ctx->repGroup->data_node_member;
     for (int32 i = 0; i < ctx->roleGroup->count; ++i) {
-        if (role->role == INSTANCE_ROLE_PRIMARY) {
+        if (i == ctx->memIdx) {
+            continue;
+        }
+        if (role[i].role == INSTANCE_ROLE_PRIMARY) {
             staPrimIdx = i;
         }
         if (report[i].local_status.local_role == INSTANCE_ROLE_PRIMARY) {
             dynaPrimIdx = i;
         }
+        if (report[i].local_status.db_state == INSTANCE_HA_STATE_PROMOTING) {
+            promoteIdx = i;
+        }
+        if (report[i].local_status.db_state == INSTANCE_HA_STATE_DEMOTING) {
+            demoteIdx = i;
+        }
     }
-    if (dynaPrimIdx != -1 && dynaPrimIdx != ctx->memIdx) {
+
+    if (dynaPrimIdx != -1) {
         return dynaPrimIdx;
     }
 
-    if (staPrimIdx != -1 && staPrimIdx != ctx->memIdx) {
+    if (staPrimIdx != -1) {
         return staPrimIdx;
     }
+
+    if (promoteIdx != -1) {
+        return promoteIdx;
+    }
+
+    if (demoteIdx != -1) {
+        return demoteIdx;
+    }
+
     return (ctx->memIdx + 1) % ctx->roleGroup->count;
 }
 
 void PrintCurAndPeerDnInfo(const DnArbCtx *ctx, const char *str)
 {
+    if (IsCurrentNodeDorado(ctx->node)) {
+        write_runlog(DEBUG5, "node %u is dorado, not need print cur and peer dn info.\n", ctx->node);
+        return;
+    }
     int32 peerIdx = FindDnPeerIndex(ctx);
     if (peerIdx == -1) {
         peerIdx = 0;
@@ -463,17 +502,20 @@ void PrintCurAndPeerDnInfo(const DnArbCtx *ctx, const char *str)
     GetSyncListStr(ctx->repGroup, &instInfo);
     write_runlog(LOG, "%s, current report instance is %u, node %u, "
         "instId[%u: %u], node[%u: %u], staticRole[%d=%s: %d=%s], dynamicRole[%d=%s: %d=%s], "
-        "term[%u: %u], lsn[%X/%X: %X/%X], dbState[%d: %d], buildReason[%d=%s: %d=%s], doubleRestarting[%d: %d], "
+        "term[%u: %u], lsn[%X/%X: %X/%X], dbState[%d=%s: %d=%s], buildReason[%d=%s: %d=%s], doubleRestarting[%d: %d], "
         "disconn_mode[%u=%s: %u=%s], disconn[%s:%u, %s:%u], local[%s:%u, %s:%u], redoFinished[%d: %d], "
-        "arbiTime[%u: %u], syncList[cur: (%s), exp: (%s), vote: (%s)], groupTerm[%u], sync_standby_mode[%d: %d: %d].\n",
+        "arbiTime[%u: %u], syncList[cur: (%s), exp: (%s), vote: (%s)], groupTerm[%u], sync_standby_mode[%d: %d: %d], "
+        "sendFailoverTimes[%u: %u].\n",
         str, role[memIdx].instanceId, role[memIdx].node, role[memIdx].instanceId, role[peerIdx].instanceId,
         role[memIdx].node, role[peerIdx].node, role[memIdx].role, datanode_role_int_to_string(role[memIdx].role),
         role[peerIdx].role, datanode_role_int_to_string(role[peerIdx].role), curInfo->local_role,
         datanode_role_int_to_string(curInfo->local_role), peerInfo->local_role,
         datanode_role_int_to_string(peerInfo->local_role), curInfo->term, peerInfo->term,
         (uint32)(curInfo->last_flush_lsn >> xlogOffset), (uint32)curInfo->last_flush_lsn,
-        (uint32)(peerInfo->last_flush_lsn >> xlogOffset), (uint32)peerInfo->last_flush_lsn, curInfo->db_state,
-        peerInfo->db_state, curInfo->buildReason, datanode_rebuild_reason_int_to_string(curInfo->buildReason),
+        (uint32)(peerInfo->last_flush_lsn >> xlogOffset), (uint32)peerInfo->last_flush_lsn,
+        curInfo->db_state, datanode_dbstate_int_to_string(curInfo->db_state),
+        peerInfo->db_state, datanode_dbstate_int_to_string(peerInfo->db_state),
+        curInfo->buildReason, datanode_rebuild_reason_int_to_string(curInfo->buildReason),
         peerInfo->buildReason, datanode_rebuild_reason_int_to_string(peerInfo->buildReason), dnArbi[memIdx].restarting,
         dnArbi[peerIdx].restarting, curInfo->disconn_mode, DatanodeLockmodeIntToString(curInfo->disconn_mode),
         peerInfo->disconn_mode, DatanodeLockmodeIntToString(peerInfo->disconn_mode),
@@ -481,5 +523,203 @@ void PrintCurAndPeerDnInfo(const DnArbCtx *ctx, const char *str)
         curInfo->local_host, curInfo->local_port, peerInfo->local_host, peerInfo->local_port,
         curInfo->redo_finished, peerInfo->redo_finished, dnRep[memIdx].arbiTime, dnRep[peerIdx].arbiTime,
         instInfo.curSl, instInfo.expSl, instInfo.voteL, ctx->repGroup->term, dnRep[memIdx].sync_standby_mode,
-        dnRep[peerIdx].sync_standby_mode, current_cluster_az_status);
+        (int)dnRep[peerIdx].sync_standby_mode, (int)current_cluster_az_status,
+        dnRep[memIdx].sendFailoverTimes, dnRep[peerIdx].sendFailoverTimes);
+}
+
+uint32 GetDnArbitateDelayTime(const DnArbCtx *ctx)
+{
+    const ArbiCond *cond = &(ctx->cond);
+    if (!g_clusterStarting || !CheckGroupAndMemIndex(ctx->groupIdx, cond->staticPriIdx, "[GetDnArbitateDelayTime]") ||
+        ctx->staPrim.count != 1) {
+        return cond->arbitInterval;
+    }
+    /* if static primary has finished redo, not need to wait for 180s */
+    cm_local_replconninfo *status = &(ctx->dnReport[cond->staticPriIdx].local_status);
+    if (status->local_role == INSTANCE_ROLE_STANDBY && status->disconn_mode == PROHIBIT_CONNECTION) {
+        return DATANODE_ARBITE_DELAY;
+    }
+    return cond->arbitInterval;
+}
+
+int32 GetMemIdxByInstanceId(uint32 groupIdx, uint32 instId)
+{
+    if (instId == 0) {
+        return -1;
+    }
+    cm_instance_role_status *role = g_instance_role_group_ptr[groupIdx].instanceMember;
+    for (int32 i = 0; i < g_instance_role_group_ptr[groupIdx].count; ++i) {
+        if (role[i].instanceId == instId) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void ChangeStaticRoleAndNotifyCn(uint32 groupIdx, int32 memIdx)
+{
+    ChangeDnPrimaryMemberIndex(groupIdx, memIdx);
+    /* to deal switchover fail, but notify cn success */
+    cm_pending_notify_broadcast_msg(groupIdx, GetInstanceIdInGroup(groupIdx, memIdx));
+}
+
+static void DnWillChangeStaticRole(const DnArbCtx *ctx, const char *str)
+{
+    int32 cmdPur = ctx->localCom->cmdPur;
+    int32 cmdSour = ctx->localCom->cmdSour;
+    write_runlog(LOG, "%s: instd(%u) static role is (%d: %s) cmdPur is (%d: %s), cmdSour is (%d: %s).\n",
+        str, ctx->instId, ctx->localRole->role, datanode_role_int_to_string(ctx->localRole->role),
+        cmdPur, datanode_role_int_to_string(cmdPur), cmdSour, datanode_role_int_to_string(cmdSour));
+    if (ctx->localRole->role != cmdSour) {
+        return;
+    }
+    if (cmdPur == INSTANCE_ROLE_PRIMARY) {
+        ChangeStaticRoleAndNotifyCn(ctx->groupIdx, ctx->memIdx);
+    } else {
+        ChangeDnMemberIndex(str, ctx->groupIdx, ctx->memIdx, cmdPur, cmdSour);
+    }
+}
+
+static void ClearSwitchoverCmd(const DnArbCtx *ctx)
+{
+    cm_instance_command_status *cmd = ctx->localCom;
+    int32 timeOut = cmd->time_out;
+    int32 cmdRealPur = cmd->cmdRealPur;
+    CleanCommand(ctx->groupIdx, ctx->memIdx);
+    if (cmdRealPur != INSTANCE_ROLE_INIT) {
+        SetSwitchoverPendingCmd(ctx->groupIdx, ctx->memIdx, timeOut, "[CleanSwitchoverCmd]", true);
+    }
+}
+
+status_t CheckSwitchOverDone(const DnArbCtx *ctx, int32 peerIdx)
+{
+    if (peerIdx == -1) {
+        return CM_ERROR;
+    }
+    cm_instance_command_status *instCmd = ctx->localCom;
+    int32 cmdPur = instCmd->cmdPur;
+    cm_local_replconninfo *dnStatus = &(ctx->dnReport[peerIdx].local_status);
+    cm_local_replconninfo *localSt = &(ctx->localRep->local_status);
+    if (localSt->local_role != cmdPur) {
+        return CM_ERROR;
+    }
+    if ((instCmd->command_status == INSTANCE_COMMAND_WAIT_EXEC_ACK) &&
+        (instCmd->pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER)) {
+        if (localSt->db_state == INSTANCE_HA_STATE_NORMAL) {
+            DnWillChangeStaticRole(ctx, "[CheckSwitchOverDone]");
+            if (dnStatus->local_role != cmdPur && dnStatus->local_role != INSTANCE_ROLE_UNKNOWN) {
+                ClearSwitchoverCmd(ctx);
+            }
+            return CM_SUCCESS;
+        }
+    }
+    return CM_ERROR;
+}
+
+static bool IsCleanSwitchover(const DnArbCtx *ctx)
+{
+    int32 count = GetInstanceCountsInGroup(ctx->groupIdx);
+    for (int32 i = 0; i < count; ++i) {
+        /* switchover instance may restart, clean flag */
+        if (ctx->dnReport[i].local_status.local_role == INSTANCE_ROLE_PENDING) {
+            if (g_instance_role_group_ptr[ctx->groupIdx].instanceMember[i].role == INSTANCE_ROLE_PRIMARY) {
+                write_runlog(LOG, "[CleanSwitchover] instance(%u) static primary is pending.\n",
+                    GetInstanceIdInGroup(ctx->groupIdx, i));
+                return true;
+            }
+
+            if (ctx->repGroup->command_member[i].pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER) {
+                write_runlog(LOG, "[CleanSwitchover] instance(%u) is pending, may be restart.\n",
+                    GetInstanceIdInGroup(ctx->groupIdx, i));
+                return true;
+            }
+        }
+
+        if (ctx->repGroup->command_member[i].pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER &&
+            !IsArchiveMaxSendTimes(ctx->groupIdx, i)) {
+            write_runlog(LOG, "[CleanSwitchover] instance(%u) send switchover times has archived the most(%d).\n",
+                GetInstanceIdInGroup(ctx->groupIdx, i), GetSendTimes(ctx->groupIdx, i, true));
+            return true;
+        }
+    }
+    return false;
+}
+
+static void CleanSwitchoverCommand(const DnArbCtx *ctx)
+{
+    int32 count = GetInstanceCountsInGroup(ctx->groupIdx);
+    for (int32 i = 0; i < count; ++i) {
+        if (ctx->repGroup->command_member[i].pengding_command != (int32)MSG_CM_AGENT_SWITCHOVER) {
+            continue;
+        }
+        write_runlog(LOG, "[CleanSwitchover] clean switchover(%u) command, command send num(%d/%d).\n",
+            GetInstanceIdInGroup(ctx->groupIdx, i), GetSendTimes(ctx->groupIdx, i, false),
+            GetSendTimes(ctx->groupIdx, i, true));
+        CleanCommand(ctx->groupIdx, i);
+    }
+}
+
+void CleanSwitchoverInfo(const DnArbCtx *ctx)
+{
+    int32 localRole = ctx->localRep->local_status.local_role;
+    int32 cmdPur = ctx->localCom->cmdPur;
+    int32 peerIdx = GetMemIdxByInstanceId(ctx->groupIdx, ctx->localCom->peerInstId);
+    status_t resStatus = CheckSwitchOverDone(ctx, peerIdx);
+    if (resStatus == CM_SUCCESS) {
+        return;
+    }
+    uint32 localTerm = ctx->info.term;
+    if (ctx->localCom->pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER && localRole == cmdPur &&
+        ctx->maxTerm == localTerm && ctx->repGroup->term <= localTerm && peerIdx != -1) {
+        int32 peerRole = ctx->dnReport[peerIdx].local_status.local_role;
+        if (peerRole != cmdPur && peerRole != INSTANCE_ROLE_UNKNOWN) {
+            /* update the static configure state */
+            write_runlog(LOG, "[cleanSwitchover] line %d: instanceId(%u) is doing switchover, "
+                "do change static primary.\n", __LINE__, ctx->instId);
+            GroupStatusShow("[cleanSwitchover]", ctx->groupIdx, ctx->instId, -1, false);
+            DnWillChangeStaticRole(ctx, "[cleanSwitchover]");
+            ClearSwitchoverCmd(ctx);
+        }
+    }
+    /* overtime and clean command */
+    bool needCleanSwitchover = IsCleanSwitchover(ctx);
+    if (needCleanSwitchover) {
+        CleanSwitchoverCommand(ctx);
+    }
+}
+
+static uint32 GetNormalPrimaryCnt(uint32 groupIdx)
+{
+    uint32 cnt = 0;
+
+    cm_instance_datanode_report_status *dnReport =
+        g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
+    for (int32 i = 0; i < g_instance_role_group_ptr[groupIdx].count; ++i) {
+        if (dnReport[i].local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+            dnReport[i].local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
+            ++cnt;
+        }
+    }
+    return cnt;
+}
+
+void ChangeStaticPrimaryByDynamicPrimary(const DnArbCtx *ctx)
+{
+    if (ctx->localRep->local_status.local_role != INSTANCE_ROLE_PRIMARY) {
+        return;
+    }
+    if (ctx->localRep->local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
+        if (ctx->localRole->role != INSTANCE_ROLE_PRIMARY) {
+            uint32 cnt = GetNormalPrimaryCnt(ctx->groupIdx);
+            if (cnt != 1) {
+                write_runlog(
+                    DEBUG1, "instId(%u) cannot change static role, because norPrimaryCnt is %u.\n", ctx->instId, cnt);
+                return;
+            }
+            write_runlog(LOG, "instId(%u) will change static role.\n", ctx->instId);
+            const char *str = "[ChangeStaticPrimaryByDynamicPrimary]";
+            GroupStatusShow(str, ctx->groupIdx, ctx->instId, -1, false);
+            ChangeStaticRoleAndNotifyCn(ctx->groupIdx, ctx->memIdx);
+        }
+    }
 }

@@ -13,7 +13,7 @@ ifeq ($(USE_BUILD_MAKE), ON)
     ENABLE_MEMCHECK=$(MEMCHECK)
     ENABLE_GCOV=$(GCOV)
     ENABLE_PRIVATEGAUSS=$(PRIVATEGAUSS)
-    BUILD_TYPE=$(make_build_type)
+    BUILD_TYPE=$(MAKE_BUILD_TYPE)
 else
     ifndef BUILD_TYPE
         BUILD_TYPE=Debug
@@ -90,7 +90,7 @@ ifeq ($(ENABLE_MULTIPLE_NODES)_$(ENABLE_PRIVATEGAUSS), OFF_OFF)
     ENABLE_HOTPATCH = OFF
 endif
 
-HOTPATCH_PLATFORM_LIST = suse11_sp1_x86_64 suse12_sp5_x86_64 euleros2.0_sp8_aarch64 euleros2.0_sp9_aarch64 euleros2.0_sp10_aarch64 euleros2.0_sp2_x86_64 euleros2.0_sp5_x86_64 euleros2.0_sp10_x86_64 kylinv10_sp1_aarch64 kylinv10_sp1_x86_64_intel
+HOTPATCH_PLATFORM_LIST = suse11_sp1_x86_64 suse12_sp5_x86_64 euleros2.0_sp8_aarch64 euleros2.0_sp9_aarch64 euleros2.0_sp10_aarch64 euleros2.0_sp2_x86_64 euleros2.0_sp5_x86_64 euleros2.0_sp10_x86_64 kylinv10_sp1_aarch64 kylinv10_sp1_x86_64
 HOTPATCH_ARM_LIST = euleros2.0_sp8_aarch64 euleros2.0_sp9_aarch64 euleros2.0_sp10_aarch64 kylinv10_sp1_aarch64
 RET_HOTPATCH = $(findstring $(PLAT_FORM_NAME),$(HOTPATCH_PLATFORM_LIST))
 RET_ARM_HOTPATCH = $(findstring $(PLAT_FORM_NAME),$(HOTPATCH_ARM_LIST))
@@ -109,7 +109,7 @@ endif
 
 SECURE_OPTIONS = -fno-common -fstack-protector-strong
 SECURE_LINK_OPTS = -Wl,-z,noexecstack -Wl,-z,relro,-z,now
-PROTECT_OPTIONS = -fwrapv -g -std=c++11 $(OPTIMIZE_LEVEL)
+PROTECT_OPTIONS = -fwrapv -std=c++11 $(OPTIMIZE_LEVEL)
 WARNING_OPTIONS = -Wall -Wendif-labels -Werror -Wformat-security
 OPTIMIZE_OPTIONS = -pipe -fno-aggressive-loop-optimizations -fno-expensive-optimizations -fno-omit-frame-pointer -fno-strict-aliasing -freg-struct-return
 CHECK_OPTIONS = -Wmissing-format-attribute -Wno-attributes -Wno-unused-but-set-variable -Wno-write-strings -Wpointer-arith
@@ -156,9 +156,9 @@ else
         3RD_PATH = $(PROJECT_SOURCE_DIR)/binarylibs
     endif
 
-    3RD_DEPENDENCY_ROOT = $(3RD_PATH)/dependency/$(PLAT_FORM_NAME)
-    3RD_PLATFORM_ROOT = $(3RD_PATH)/platform/$(PLAT_FORM_NAME)
-    3RD_BUILDTOOLS_ROOT = $(3RD_PATH)/buildtools/$(PLAT_FORM_NAME)
+    3RD_DEPENDENCY_ROOT = $(3RD_PATH)/kernel/dependency
+    3RD_PLATFORM_ROOT = $(3RD_PATH)/kernel/platform/
+    3RD_BUILDTOOLS_ROOT = $(3RD_PATH)/buildtools/
 endif
 
 ifeq ($(ENABLE_LIBPQ), OFF)
@@ -215,6 +215,16 @@ ETCD_DIRECTORY_LIB = $(3RD_DEPENDENCY_ROOT)/etcd/$(LIB_MODE_COMM)/lib
 ETCD_DIRECTORY_BIN = $(3RD_DEPENDENCY_ROOT)/etcd/$(LIB_MODE_COMM)/bin
 # ZSTD_DIRECTORY_INC = $(3RD_DEPENDENCY_ROOT)/zstd/include
 ZSTD_DIRECTORY_LIB = $(3RD_DEPENDENCY_ROOT)/zstd/lib
+CM_ADAPTER_PATH = $(PROJECT_SOURCE_DIR)/src/cm_adapter
+CM_ADAPTER_LIBS = libcmddbadapter.a libcmdccadapter.a libcmetcdadapter.a
+ifeq ($(ENABLE_ETCD), ON)
+    CM_ADAPTER_LIBS += libetcdapi.a
+endif
+CM_BASE_LIBS = libconfig.a libalarmclient.a libcmcommon.a libcmclient.a libcmpq.a libcmprotocol.a libhotpatchclient.a
+
+CM_LIB_PATH = $(PROJECT_SOURCE_DIR)/src/lib
+CM_COMMUNICATION_PATH = $(PROJECT_SOURCE_DIR)/src/cm_communication
+CM_COMMON_PATH = $(PROJECT_SOURCE_DIR)/src/cm_common
 
 DCC_ALL_LIBS = $(DCC_DIRECTORY_LIB) $(SSL_DIRECTORY_LIB) $(ZSTD_DIRECTORY_LIB) $(LZ4_DIRECTORY_LIB)
 3RD_LIB_PATH = $(CJSON_DIRECTORY_LIB) $(CGROUP_DIRECTORY_LIB) $(SSL_DIRECTORY_LIB) $(DCC_ALL_LIBS) $(PGPORT_HOME) $(SECURE_DIRECTORY_LIB)
@@ -244,7 +254,7 @@ ifeq ($(ENABLE_GCOV), ON)
     GCOV_FLAGS = -fprofile-arcs -ftest-coverage
     GCOV_LIBS = gcov
 
-    LDFLAGS += -l$(GCOV_LIBS)
+    LIBS += -l$(GCOV_LIBS)
     COMPILE_OPTIONS += $(GCOV_FLAGS)
     COMPILE_MACRO += -DENABLE_GCOV
 endif
@@ -271,8 +281,11 @@ COMPILE_OPTIONS += $(G_COMPILE_OPTIONS)
 CXXFLAGS += $(COMPILE_OPTIONS)
 CXXFLAGS += $(G_LINK_OPTIONS)
 
-CXXFLAGS += $(addprefix -L,$(3RD_LIB_PATH))
 LDFLAGS += $(addprefix -L,$(3RD_LIB_PATH))
+LDFLAGS += -L$(CM_COMMON_PATH)
+LDFLAGS += -L$(CM_ADAPTER_PATH)/cm_dcc_adapter -L$(CM_ADAPTER_PATH)/cm_ddb_adapter -L$(CM_ADAPTER_PATH)/cm_etcd_adapter -L$(CM_ADAPTER_PATH)/cm_etcdapi
+LDFLAGS += -L$(CM_LIB_PATH)/config -L$(CM_LIB_PATH)/alarm -L$(CM_LIB_PATH)/alarm -L$(CM_LIB_PATH)/hotpatch/client
+LDFLAGS += -L$(CM_COMMUNICATION_PATH)/cm_feconnect -L$(CM_COMMUNICATION_PATH)/cm_libpq -L$(CM_COMMUNICATION_PATH)/cm_protocol
 
 # libpq must need krb5
 ifneq ($(ENABLE_KRB)_$(ENABLE_LIBPQ), OFF_OFF)

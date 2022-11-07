@@ -24,8 +24,8 @@
 
 #include <sys/stat.h>
 #include <securec.h>
-#include "cm_util.h"
 #include "cm_misc_base.h"
+#include "cm_util.h"
 
 #ifndef THR_LOCAL
 #ifndef WIN32
@@ -63,11 +63,7 @@ int CmMkdirP(char *path, unsigned int omode)
         struct stat sb = {0};
         if (stat(path, &sb) == 0) {
             if (!S_ISDIR(sb.st_mode)) {
-                if (last) {
-                    errno = EEXIST;
-                } else {
-                    errno = ENOTDIR;
-                }
+                errno = last ? EEXIST : ENOTDIR;
                 retval = -1;
                 break;
             }
@@ -89,4 +85,80 @@ char *gs_getenv_r(const char *name)
     char *ret = getenv(name);
     (void)pthread_mutex_unlock(&g_cmEnvLock);
     return ret;
+}
+
+uint64 GetMonotonicTimeMs()
+{
+    static const uint32 CM_NSEC_COUNT_PER_MS = 1000000;
+    static const uint32 CM_MS_COUNT_PER_SEC = 1000;
+
+    struct timespec ts;
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64)ts.tv_sec * CM_MS_COUNT_PER_SEC + (uint64)ts.tv_nsec / CM_NSEC_COUNT_PER_MS;
+}
+
+void CMPrioMutexInit(CMPrioMutex &mutex)
+{
+    (void)pthread_mutex_init(&mutex.lock, NULL);
+    (void)pthread_mutex_init(&mutex.innerLock, NULL);
+    (void)pthread_cond_init(&mutex.cond, NULL);
+    mutex.highPrioCount = 0;
+    mutex.curPrio = CMMutexPrio::CM_MUTEX_PRIO_NONE;
+}
+
+int CMPrioMutexLock(CMPrioMutex &mutex, CMMutexPrio prio)
+{
+    if (prio == CMMutexPrio::CM_MUTEX_PRIO_HIGH) {
+        (void)pthread_mutex_lock(&mutex.innerLock);
+        mutex.highPrioCount++;
+        (void)pthread_mutex_unlock(&mutex.innerLock);
+        int ret = pthread_mutex_lock(&mutex.lock);
+        if (ret == 0) {
+            mutex.curPrio = CMMutexPrio::CM_MUTEX_PRIO_HIGH;
+        } else {
+            (void)pthread_mutex_lock(&mutex.innerLock);
+            mutex.highPrioCount--;
+            (void)pthread_mutex_unlock(&mutex.innerLock);
+            (void)pthread_cond_broadcast(&mutex.cond);
+        }
+
+        return ret;
+    }
+
+    while (true) {
+        if (mutex.highPrioCount == 0) {
+            int ret = pthread_mutex_trylock(&mutex.lock);
+            if (ret == 0) {
+                mutex.curPrio = CMMutexPrio::CM_MUTEX_PRIO_NORMAL;
+                return 0;
+            } else if (ret != EBUSY) {
+                return ret;
+            }
+        }
+
+        (void)pthread_mutex_lock(&mutex.innerLock);
+        (void)pthread_cond_wait(&mutex.cond, &mutex.innerLock);
+        (void)pthread_mutex_unlock(&mutex.innerLock);
+    }
+}
+
+void CMPrioMutexUnLock(CMPrioMutex &mutex)
+{
+    if (mutex.curPrio == CMMutexPrio::CM_MUTEX_PRIO_HIGH) {
+        (void)pthread_mutex_lock(&mutex.innerLock);
+        mutex.highPrioCount--;
+        (void)pthread_mutex_unlock(&mutex.innerLock);
+    }
+
+    mutex.curPrio = CMMutexPrio::CM_MUTEX_PRIO_NONE;
+    (void)pthread_mutex_unlock(&mutex.lock);
+    (void)pthread_cond_broadcast(&mutex.cond);
+}
+
+char *GetDynamicMem(char *dynamicPtr, size_t *curSize, size_t memSize)
+{
+    size_t tmpCurSize = (*curSize);
+    char *tmp = dynamicPtr + tmpCurSize;
+    (*curSize) = tmpCurSize + memSize;
+    return tmp;
 }

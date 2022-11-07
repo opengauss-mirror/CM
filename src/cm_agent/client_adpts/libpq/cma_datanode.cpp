@@ -25,29 +25,18 @@
 #include <signal.h>
 #include <math.h>
 #include "cma_global_params.h"
-#include "cma_libpq_api.h"
 #include "cma_datanode_utils.h"
-#include "cma_alarm.h"
 #include "cma_common.h"
-#include "cma_datanode_scaling.h"
 #include "cma_client.h"
 #include "cma_instance_management.h"
 #include "cma_process_messages.h"
+#include "cma_network_check.h"
 
 static cltPqConn_t* g_dnConnSend[CM_MAX_DATANODE_PER_NODE] = {NULL};
-extern Alarm* g_abnormalAlarmList;
-extern bool g_cmServerNeedReconnect;
 
 #define MAX_SQLCOMMAND_LENGTH 1024
-#define DN_RESTART_COUNT_CHECK_TIME 600
 
-#define CLEAR_AND_CLOSE_CONNECTION(node_result, con) \
-    do {                                             \
-        Clear(node_result);                        \
-        close_and_reset_connection(con);             \
-        assert(NULL == con);                         \
-        return -1;                                   \
-    } while (0)
+static int g_lastBuildRole = INSTANCE_ROLE_INIT;
 
 static int ProcessStatusFromStateFile(agent_to_cm_datanode_status_report *reportMsg, const GaussState *state)
 {
@@ -86,10 +75,9 @@ static int ProcessStatusFromStateFile(agent_to_cm_datanode_status_report *report
 
 static int getDNStatusFromStateFile(agent_to_cm_datanode_status_report* report_msg, const char* gaussdb_state_path)
 {
-    int rcs = 0;
     GaussState state;
 
-    rcs = memset_s(&state, sizeof(state), 0, sizeof(state));
+    int rcs = memset_s(&state, sizeof(state), 0, sizeof(state));
     securec_check_errno(rcs, (void)rcs);
     rcs = ReadDBStateFile(&state, gaussdb_state_path);
     if (rcs == 0) {
@@ -158,15 +146,13 @@ static void GetRebuildCmd(char *cmd, size_t maxLen, const char *dataPath)
 
 #ifdef ENABLE_MULTIPLE_NODES
     rc = snprintf_s(cmd,
-        maxLen, maxLen - 1, SYSTEMQUOTE "%s build -Z %s %s %s -D %s %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE,
+        maxLen, maxLen - 1, SYSTEMQUOTE "%s build -Z %s %s %s -D %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE,
         PG_CTL_NAME, g_only_dn_cluster ? "single_node" : "datanode",
-        buildModeStr, security_mode ? "-o \"--securitymode\"" : "", dataPath,
-        agent_backup_open == CLUSTER_STREAMING_STANDBY ? "-M cascade_standby" : "", waitSec, system_call_log);
+        buildModeStr, security_mode ? "-o \"--securitymode\"" : "", dataPath, waitSec, system_call_log);
 #else
     rc = snprintf_s(cmd,
-        maxLen, maxLen - 1, SYSTEMQUOTE "%s build %s %s -D %s %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE, PG_CTL_NAME,
-        buildModeStr, security_mode ? "-o \"--securitymode\"" : "", dataPath,
-        agent_backup_open == CLUSTER_STREAMING_STANDBY ? "-M cascade_standby" : "", waitSec, system_call_log);
+        maxLen, maxLen - 1, SYSTEMQUOTE "%s build %s %s -D %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE, PG_CTL_NAME,
+        buildModeStr, security_mode ? "-o \"--securitymode\"" : "", dataPath, waitSec, system_call_log);
 #endif
     securec_check_intval(rc, (void)rc);
 }
@@ -232,7 +218,6 @@ int DatanodeStatusCheck(
     static uint32 checkDnSql5Timer = g_check_dn_sql5_interval;
     checkDnSql5Timer++;
 
-    cltPqResult_t* node_result = NULL;
     int rcs = 0;
     char pid_path[MAXPGPATH] = {0};
     char gaussdbStatePath[MAXPGPATH] = {0};
@@ -256,10 +241,9 @@ int DatanodeStatusCheck(
         rcs = snprintf_s(pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", dataPath);
         securec_check_intval(rcs, (void)rcs);
 
-        g_dnConn[dataNodeIndex] = get_connection(pid_path, false, g_agentToDb);
+        g_dnConn[dataNodeIndex] = get_connection(pid_path, false, AGENT_CONN_DN_TIMEOUT);
         if (g_dnConn[dataNodeIndex] == NULL || (!IsConnOk(g_dnConn[dataNodeIndex]))) {
             char build_pid_path[MAXPGPATH];
-            pgpid_t pid = 0;
             GaussState state;
 
             reportMsg->connectStatus = AGENT_TO_INSTANCE_CONNECTION_BAD;
@@ -271,11 +255,11 @@ int DatanodeStatusCheck(
 
             rcs = snprintf_s(build_pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/gs_build.pid", dataPath);
             securec_check_intval(rcs, (void)rcs);
-            pid = get_pgpid(build_pid_path, MAXPGPATH);
+            pgpid_t pid = get_pgpid(build_pid_path, MAXPGPATH);
             if (pid > 0 && is_process_alive(pid)) {
                 rcs = memset_s(&state, sizeof(state), 0, sizeof(state));
                 securec_check_errno(rcs, (void)rcs);
-                check_parallel_redo_status_by_file(reportMsg, dataNodeIndex, redo_state_path);
+                check_parallel_redo_status_by_file(reportMsg, redo_state_path);
                 rcs = ReadDBStateFile(&state, gaussdbStatePath);
                 if (rcs == 0) {
                     reportMsg->connectStatus = AGENT_TO_INSTANCE_CONNECTION_OK;
@@ -296,7 +280,7 @@ int DatanodeStatusCheck(
             }
 
             if (dnProcess == PROCESS_RUNNING) {
-                check_parallel_redo_status_by_file(reportMsg, dataNodeIndex, redo_state_path);
+                check_parallel_redo_status_by_file(reportMsg, redo_state_path);
                 rcs = getDNStatusFromStateFile(reportMsg, gaussdbStatePath);
                 if (rcs != 0) {
                     report_conn_fail_alarm(ALM_AT_Fault, INSTANCE_DN, reportMsg->instanceId);
@@ -327,7 +311,7 @@ int DatanodeStatusCheck(
 
     report_conn_fail_alarm(ALM_AT_Resume, INSTANCE_DN, reportMsg->instanceId);
     /* set command time out. */
-    node_result = Exec(g_dnConn[dataNodeIndex], "SET statement_timeout = 10000000;");
+    cltPqResult_t *node_result = Exec(g_dnConn[dataNodeIndex], "SET statement_timeout = 10000000;");
     if (node_result == NULL) {
         write_runlog(ERROR, " datanode check set command time out return NULL!\n");
         CLOSE_CONNECTION(g_dnConn[dataNodeIndex]);
@@ -335,32 +319,36 @@ int DatanodeStatusCheck(
     if ((ResultStatus(node_result) != CLTPQRES_CMD_OK) && (ResultStatus(node_result) != CLTPQRES_TUPLES_OK)) {
         write_runlog(ERROR,
             " datanode(%u) check set command time out return FAIL! errmsg is %s\n",
-            dataNodeIndex,
-            ErrorMessage(g_dnConn[dataNodeIndex]));
+            dataNodeIndex, ErrorMessage(g_dnConn[dataNodeIndex]));
         CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[dataNodeIndex]);
     }
     Clear(node_result);
 
     /* SQL0 check */
-    if (check_datanode_status_by_SQL0(reportMsg, dataNodeIndex) != 0)
+    if (check_datanode_status_by_SQL0(reportMsg, dataNodeIndex) != 0) {
         return -1;
+    }
     /* SQL6 check */
     if (check_datanode_status_by_SQL6(reportMsg, dataNodeIndex, dataPath) != 0) {
         return -1;
     }
     /* SQL1 check The dn term can be checked only after the dn disconn mode has been checked. */
-    if (check_datanode_status_by_SQL1(reportMsg, dataNodeIndex) != 0)
+    if (check_datanode_status_by_SQL1(reportMsg, dataNodeIndex) != 0) {
         return -1;
-    if (!IsBoolCmParamTrue(g_agentEnableDcf)) {
-    /* SQL2 check */
-        if (check_datanode_status_by_SQL2(reportMsg, dataNodeIndex) != 0)
-        return -1;
-    /* SQL3 check */
-        if (check_datanode_status_by_SQL3(reportMsg, dataNodeIndex) != 0)
-        return -1;
-    /* SQL4 check */
-        if (check_datanode_status_by_SQL4(reportMsg, &(dnStatus->lpInfo.dnLpInfo), dataNodeIndex) != 0)
-        return -1;
+    }
+if (!IsBoolCmParamTrue(g_agentEnableDcf)) {
+        /* SQL2 check */
+        if (check_datanode_status_by_SQL2(reportMsg, dataNodeIndex) != 0) {
+            return -1;
+        }
+        /* SQL3 check */
+        if (check_datanode_status_by_SQL3(reportMsg, dataNodeIndex) != 0) {
+            return -1;
+        }
+        /* SQL4 check */
+        if (check_datanode_status_by_SQL4(reportMsg, &(dnStatus->lpInfo.dnLpInfo), dataNodeIndex) != 0) {
+            return -1;
+        }
     } else {
         if (CheckDatanodeStatusBySqL10(reportMsg, dataNodeIndex) != 0) {
             return -1;
@@ -368,7 +356,7 @@ int DatanodeStatusCheck(
     }
     /* SQL5 check */
     if (checkDnSql5Timer > g_check_dn_sql5_interval) {
-        (void)check_datanode_status_by_SQL5(reportMsg, dataNodeIndex, dataPath);
+        check_datanode_status_by_SQL5(reportMsg->instanceId, dataNodeIndex, dataPath);
         checkDnSql5Timer = 0;
     }
 
@@ -376,8 +364,9 @@ int DatanodeStatusCheck(
     if (CheckMostAvailableSync(dataNodeIndex)) {
         return -1;
     }
+    CheckTransactionReadOnly(g_dnConn[dataNodeIndex], dataNodeIndex, INSTANCE_TYPE_DATANODE);
 
-    if (g_dnNoFreeProc) {
+    if (g_dnNoFreeProc[dataNodeIndex]) {
         ShowPgThreadWaitStatus(g_dnConn[dataNodeIndex], dataNodeIndex, INSTANCE_TYPE_DATANODE);
     }
     g_dnPhonyDeadTimes[dataNodeIndex] = 0;
@@ -386,7 +375,6 @@ int DatanodeStatusCheck(
 
 int ProcessLockNoPrimaryCmd(uint32 instId)
 {
-    cltPqResult_t* node_result = NULL;
     int rcs = 0;
 
     char pid_path[MAXPGPATH] = {0};
@@ -408,7 +396,7 @@ int ProcessLockNoPrimaryCmd(uint32 instId)
     if (g_dnConnSend[ii] == NULL) {
         rcs = snprintf_s(pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", data_path);
         securec_check_intval(rcs, (void)rcs);
-        g_dnConnSend[ii] = get_connection(pid_path, false, g_agentToDb);
+        g_dnConnSend[ii] = get_connection(pid_path, false, AGENT_CONN_DN_TIMEOUT);
         if (g_dnConnSend[ii] == NULL || (!IsConnOk(g_dnConnSend[ii]))) {
             write_runlog(ERROR, "instId(%u) failed to connect to datanode:%s\n", instId, data_path);
             if (g_dnConnSend[ii] != NULL) {
@@ -422,9 +410,9 @@ int ProcessLockNoPrimaryCmd(uint32 instId)
     }
 
     /* set DN instance status */
-    const char* sqlCommands = "select * from disable_conn(\'prohibit_connection\', \'\', 0);";
+    const char* sqlCommands = "select * from pg_catalog.disable_conn(\'prohibit_connection\', \'\', 0);";
 
-    node_result = Exec(g_dnConnSend[ii], sqlCommands);
+    cltPqResult_t *node_result = Exec(g_dnConnSend[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "instId(%u) process_lock_no_primary_command(%s) fail return NULL!\n", instId, sqlCommands);
         CLOSE_CONNECTION(g_dnConnSend[ii]);
@@ -440,7 +428,6 @@ int ProcessLockNoPrimaryCmd(uint32 instId)
 
 int ProcessLockChosenPrimaryCmd(const cm_to_agent_lock2* msgTypeLock2Ptr)
 {
-    cltPqResult_t* node_result = NULL;
     int rcs = 0;
     char pid_path[MAXPGPATH] = {0};
     const char* tmp_host = msgTypeLock2Ptr->disconn_host;
@@ -451,7 +438,7 @@ int ProcessLockChosenPrimaryCmd(const cm_to_agent_lock2* msgTypeLock2Ptr)
     errno_t rc = snprintf_s(sqlCommands,
         MAX_SQLCOMMAND_LENGTH,
         MAX_SQLCOMMAND_LENGTH - 1,
-        "select * from disable_conn(\'specify_connection\', \'%s\', %d);",
+        "select * from pg_catalog.disable_conn(\'specify_connection\', \'%s\', %u);",
         tmp_host,
         tmp_port);
     securec_check_intval(rc, (void)rc);
@@ -475,7 +462,7 @@ int ProcessLockChosenPrimaryCmd(const cm_to_agent_lock2* msgTypeLock2Ptr)
     if (g_dnConnSend[ii] == NULL) {
         rcs = snprintf_s(pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", data_path);
         securec_check_intval(rcs, (void)rcs);
-        g_dnConnSend[ii] = get_connection(pid_path, false, g_agentToDb);
+        g_dnConnSend[ii] = get_connection(pid_path, false, AGENT_CONN_DN_TIMEOUT);
         if (g_dnConnSend[ii] == NULL || (!IsConnOk(g_dnConnSend[ii]))) {
             write_runlog(ERROR, "instId(%u) failed to connect to datanode:%s\n", instId, data_path);
             if (g_dnConnSend[ii] != NULL) {
@@ -486,7 +473,7 @@ int ProcessLockChosenPrimaryCmd(const cm_to_agent_lock2* msgTypeLock2Ptr)
         }
         write_runlog(LOG, "instId(%d: %u) successfully connect to datanode: %s.\n", ii, instId, data_path);
     }
-    node_result = Exec(g_dnConnSend[ii], sqlCommands);
+    cltPqResult_t *node_result = Exec(g_dnConnSend[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "instId(%u) process_lock_chosen_primary_command(%s) fail return NULL!\n",
             instId, sqlCommands);
@@ -504,11 +491,10 @@ int ProcessLockChosenPrimaryCmd(const cm_to_agent_lock2* msgTypeLock2Ptr)
 
 int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg)
 {
-    cltPqResult_t* node_result = NULL;
     int rcs = 0;
     char pid_path[MAXPGPATH] = {0};
     /* set DN instance status */
-    const char* sqlCommands = "select * from disable_conn(\'polling_connection\', \'\', 0);";
+    const char* sqlCommands = "select * from pg_catalog.disable_conn(\'polling_connection\', \'\', 0);";
     int ii = -1;
 
     for (uint32 i = 0; i < g_currentNode->datanodeCount; i++) {
@@ -528,7 +514,7 @@ int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg)
     if (g_dnConnSend[ii] == NULL) {
         rcs = snprintf_s(pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", data_path);
         securec_check_intval(rcs, (void)rcs);
-        g_dnConnSend[ii] = get_connection(pid_path, false, g_agentToDb);
+        g_dnConnSend[ii] = get_connection(pid_path, false, AGENT_CONN_DN_TIMEOUT);
         if (g_dnConnSend[ii] == NULL || (!IsConnOk(g_dnConnSend[ii]))) {
             write_runlog(ERROR, "instId(%u) failed to connect to datanode:%s\n", instId, data_path);
             if (g_dnConnSend[ii] != NULL) {
@@ -539,7 +525,7 @@ int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg)
         }
         write_runlog(LOG, "instId(%d: %u) successfully connect to datanode: %s.\n", ii, instId, data_path);
     }
-    node_result = Exec(g_dnConnSend[ii], sqlCommands);
+    cltPqResult_t *node_result = Exec(g_dnConnSend[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "instId(%u) process_unlock_no_primary_command(%s) fail return NULL!\n",
             instId, sqlCommands);
@@ -555,10 +541,8 @@ int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg)
     return 0;
 }
 
-int CheckDatanodeStatus(const char* dataDir, int* role)
+int CheckDatanodeStatus(const char *dataDir, int *role)
 {
-    cltPqConn_t* Conn = NULL;
-    cltPqResult_t* node_result = NULL;
     int maxRows = 0;
     int maxColums = 0;
     const char* sqlCommands = "select local_role from pg_stat_get_stream_replications();";
@@ -567,7 +551,7 @@ int CheckDatanodeStatus(const char* dataDir, int* role)
     int rc = snprintf_s(postmaster_pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", dataDir);
     securec_check_intval(rc, (void)rc);
 
-    Conn = get_connection(postmaster_pid_path);
+    cltPqConn_t *Conn = get_connection(postmaster_pid_path);
     if (Conn == NULL) {
         write_runlog(ERROR, "get connect failed!\n");
         return -1;
@@ -579,7 +563,7 @@ int CheckDatanodeStatus(const char* dataDir, int* role)
     }
 
     /* set command time out. */
-    node_result = Exec(Conn, "SET statement_timeout = 10000000 ;");
+    cltPqResult_t *node_result = Exec(Conn, "SET statement_timeout = 10000000 ;");
     if (node_result == NULL) {
         write_runlog(ERROR, " CheckDatanodeStatus: datanode set command time out fail return NULL!\n");
         CLOSE_CONNECTION(Conn);
@@ -596,23 +580,18 @@ int CheckDatanodeStatus(const char* dataDir, int* role)
         CLOSE_CONNECTION(Conn);
     }
     if ((ResultStatus(node_result) == CLTPQRES_CMD_OK) || (ResultStatus(node_result) == CLTPQRES_TUPLES_OK)) {
-
         maxRows = Ntuples(node_result);
         if (maxRows == 0) {
             write_runlog(LOG, "CheckDatanodeStatus: sqlCommands result is 0\n");
             CLEAR_AND_CLOSE_CONNECTION(node_result, Conn);
-
         } else {
             maxColums = Nfields(node_result);
-
             if (maxColums != 1) {
                 write_runlog(ERROR, "CheckDatanodeStatus: sqlCommands FAIL! col is %d\n", maxColums);
                 CLEAR_AND_CLOSE_CONNECTION(node_result, Conn);
             }
-
             *role = datanode_role_string_to_int(Getvalue(node_result, 0, 0));
         }
-
     } else {
         write_runlog(ERROR, "CheckDatanodeStatus: sqlCommands FAIL! Status=%d\n", ResultStatus(node_result));
         CLEAR_AND_CLOSE_CONNECTION(node_result, Conn);
@@ -625,11 +604,9 @@ int CheckDatanodeStatus(const char* dataDir, int* role)
 
 int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval)
 {
-    cltPqResult_t* node_result = NULL;
-    errno_t rc = 0;
     int agentConnectDb = 5;
     char pidPath[MAXPGPATH] = {0};
-    rc = snprintf_s(
+    errno_t rc = snprintf_s(
         pidPath, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", g_currentNode->datanode[dnId].datanodeLocalDataPath);
     securec_check_intval(rc, (void)rc);
     if (agentCheckTimeInterval < agentConnectDb) {
@@ -638,8 +615,7 @@ int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval)
     const char sqlCommands[] = {
         "select local_role,static_connections,db_state,detail_information from pg_stat_get_stream_replications();"};
 
-    cltPqConn_t* tmpDNConn = NULL;
-    tmpDNConn = get_connection(pidPath, false, agentConnectDb);
+    cltPqConn_t *tmpDNConn = get_connection(pidPath, false, agentConnectDb);
     if (tmpDNConn == NULL) {
         write_runlog(ERROR, "get connect failed for dn(%s) phony dead check, conn is null.\n", pidPath);
         return -1;
@@ -654,13 +630,14 @@ int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval)
             return 0;
         }
         if (strstr(ErrorMessage(tmpDNConn), "No free proc")) {
-            g_dnNoFreeProc = true;
+            PrintInstanceStack(g_currentNode->datanode[dnId].datanodeLocalDataPath, g_dnNoFreeProc[dnId]);
+            g_dnNoFreeProc[dnId] = true;
         }
         CLOSE_CONNECTION(tmpDNConn);
     }
-    g_dnNoFreeProc = false;
+    g_dnNoFreeProc[dnId] = false;
     /* set command time out. */
-    node_result = Exec(tmpDNConn, sqlCommands);
+    cltPqResult_t *node_result = Exec(tmpDNConn, sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR,
             "select pg_stat_get_stream_replications fail return NULL, when check dn(%s) phony dead.\n",
@@ -701,7 +678,6 @@ static void LtranStopCheck()
 static int GsctlBuildCheck(const char *dataPath)
 {
     char command[MAXPGPATH] = {0};
-    FILE *fd = NULL;
     char resultStr[MAX_BUF_LEN + 1] = {0};
     int bytesread;
     char mpprvFile[MAXPGPATH] = {0};
@@ -729,7 +705,7 @@ static int GsctlBuildCheck(const char *dataPath)
         return -1;
     }
 
-    fd = fopen(result_path, "re");
+    FILE *fd = fopen(result_path, "re");
     if (fd == NULL) {
         write_runlog(LOG, "fopen failed, errno[%d] !\n", errno);
         (void)unlink(result_path);
@@ -767,16 +743,18 @@ static void BuildStartCommand(uint32 instanceIndex, char *command, size_t maxLen
         startModeArg = "-M standby";
     }
 
-    if (DUMMY_STANDBY_DN == g_currentNode->datanode[instanceIndex].datanodeRole) {
+    if (g_currentNode->datanode[instanceIndex].datanodeRole == DUMMY_STANDBY_DN) {
         startModeArg = "-M standby -R";
     }
 
-    if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
+    if (agent_backup_open == CLUSTER_OBS_STANDBY) {
+        startModeArg = "-M standby";
+    } else if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
         startModeArg = "-M cascade_standby";
     }
 
-    if (g_dnCascade[instanceIndex]) {
-        startModeArg = "-M cascade_standby";
+    if (g_clusterType == SingleInstClusterCent) {
+        startModeArg = "-M primary";
     }
 
     if (undocumentedVersion) {
@@ -843,11 +821,9 @@ static void CheckDnDiskStatus(char *instanceManualStartPath, uint32 ii, int *ala
 
 static void CheckDnNicStatus(uint32 ii, int *alarmReason)
 {
-    bool cdt = ((!getnicstatus(
-        g_currentNode->datanode[ii].datanodeListenCount, g_currentNode->datanode[ii].datanodeListenIP)) ||
-        (!getnicstatus(g_currentNode->datanode[ii].datanodeLocalHAListenCount,
-            g_currentNode->datanode[ii].datanodeLocalHAIP)) ||
-        (!getnicstatus(g_currentNode->cmAgentListenCount, g_currentNode->cmAgentIP)));
+    bool cdt = ((!GetNicStatus(g_currentNode->datanode[ii].datanodeId, CM_INSTANCE_TYPE_DN)) ||
+        (!GetNicStatus(g_currentNode->datanode[ii].datanodeId, CM_INSTANCE_TYPE_DN, NETWORK_TYPE_HA)) ||
+        (!GetNicStatus(g_currentNode->cmAgentId, CM_INSTANCE_TYPE_CMA)));
     if (cdt) {
         write_runlog(
             WARNING, "nic related with datanode(%s) not up.\n", g_currentNode->datanode[ii].datanodeLocalDataPath);
@@ -861,8 +837,8 @@ static void CheckDnNicStatus(uint32 ii, int *alarmReason)
 static void CheckifSigleNodeCluster(uint32 ii)
 {
     if (g_single_node_cluster) {
-        bool cdt = ((STANDBY_DN == g_currentNode->datanode[ii].datanodeRole) ||
-            (DUMMY_STANDBY_DN == g_currentNode->datanode[ii].datanodeRole));
+        bool cdt = ((g_currentNode->datanode[ii].datanodeRole == STANDBY_DN) ||
+            (g_currentNode->datanode[ii].datanodeRole == DUMMY_STANDBY_DN));
         if (cdt) {
             g_dnDiskDamage[ii] = true;
         }
@@ -896,7 +872,7 @@ static void GaussdbRunningProcessCheckAlarm(AlarmAdditionalParam* tempAdditional
     g_startDnCount[ii] = 0;
     if (g_startupAlarmList != NULL) {
         /* fill the alarm message */
-        WriteAlarmAdditionalInfoForLC(tempAdditionalParam,
+        WriteAlarmAdditionalInfo(tempAdditionalParam,
             instanceName,
             "",
             "",
@@ -954,7 +930,7 @@ static void GaussdbRunningProcessRest(uint32 ii, GaussState *state, const char *
     if (cdt) {
         immediate_stop_one_instance(g_currentNode->datanode[ii].datanodeLocalDataPath, INSTANCE_DN);
     }
-    if (g_isCmaBuildingDn[ii] == true) {
+    if (g_isCmaBuildingDn[ii]) {
         g_isCmaBuildingDn[ii] = false;
         write_runlog(LOG,
             "Datanode %u is running, set g_isCmaBuildingDn to false.\n",
@@ -987,13 +963,13 @@ static void GaussdbNotExistProcessCheckPort(uint32 ii, int *alarmReason, bool *p
 static void GaussdbNotExistProcessCheckAlarm(AlarmAdditionalParam* tempAdditionalParam, const char* instanceName,
     const char* logicClusterName, uint32 ii, bool dnManualStop, int alarmReason)
 {
-    if (g_startDnCount[ii] < STARTUP_DN_CHECK_TIMES)
+    if (g_startDnCount[ii] < STARTUP_DN_CHECK_TIMES) {
         ++(g_startDnCount[ii]);
-    else {
+    } else {
         bool cdt = (g_startupAlarmList != NULL && !dnManualStop);
         if (cdt) {
             /* fill the alarm message. */
-            WriteAlarmAdditionalInfoForLC(tempAdditionalParam,
+            WriteAlarmAdditionalInfo(tempAdditionalParam,
                 instanceName,
                 "",
                 "",
@@ -1010,7 +986,7 @@ static void GaussdbNotExistProcessCheckAlarm(AlarmAdditionalParam* tempAdditiona
 
 static void GaussdbNotExistProcessBuildCheck(uint32 ii)
 {
-    if (PROCESS_RUNNING == GsctlBuildCheck(g_currentNode->datanode[ii].datanodeLocalDataPath)) {
+    if (GsctlBuildCheck(g_currentNode->datanode[ii].datanodeLocalDataPath) == PROCESS_RUNNING) {
         write_runlog(LOG, "gs_ctl build is running, sleep 2s and make sure the gs_build.pid is been create.\n");
         cm_sleep(2);
     }
@@ -1047,23 +1023,34 @@ static void GaussdbNotExistProcessBuildFailed(uint32 ii, GaussState *state, cons
             pid);
     }
     g_dnBuild[ii] = true;
+    g_dnStartCounts[ii]++;
+    if (g_dnStartCounts[ii] >= INSTANCE_BUILD_CYCLE) {
+        g_dnStartCounts[ii] = 0;
+    }
+    if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
+        if (g_lastBuildRole == INSTANCE_ROLE_INIT) {
+            write_runlog(WARNING, "cm_agent lost last build role, rebuild failed\n");
+            return;
+        }
+        if (g_lastBuildRole == INSTANCE_ROLE_CASCADE_STANDBY) {
+            ExecuteCascadeStandbyDnBuildCommand(g_currentNode->datanode[ii].datanodeLocalDataPath);
+        } else {
+            ProcessCrossClusterBuildCommand(INSTANCE_TYPE_DATANODE, g_currentNode->datanode[ii].datanodeLocalDataPath);
+        }
+        return;
+    }
     GetRebuildCmd(command, maxLen, g_currentNode->datanode[ii].datanodeLocalDataPath);
-    g_needUpdateSecboxConf = true;
 
     ret = system(command);
     if (ret != 0) {
         write_runlog(LOG, "exec command failed %d! command is %s, errno=%d.\n", ret, command, errno);
     } else {
-        if (g_isCmaBuildingDn[ii] == false) {
+        if (!g_isCmaBuildingDn[ii]) {
             g_isCmaBuildingDn[ii] = true;
             write_runlog(LOG,
                 "CMA is building %u, set g_isCmaBuildingDn to true.\n",
                 g_currentNode->datanode[ii].datanodeId);
         }
-    }
-    g_dnStartCounts[ii]++;
-    if (g_dnStartCounts[ii] >= INSTANCE_BUILD_CYCLE) {
-        g_dnStartCounts[ii] = 0;
     }
 }
 
@@ -1147,7 +1134,7 @@ static void GaussdbNotExistProcessRestartCmdSuccess(uint32 ii)
         g_primaryDnRestartCounts[ii],
         g_primaryDnRestartCountsInHour[ii]);
     record_pid(g_currentNode->datanode[ii].datanodeLocalDataPath);
-    if (g_isCmaBuildingDn[ii] == true) {
+    if (g_isCmaBuildingDn[ii]) {
         g_isCmaBuildingDn[ii] = false;
         write_runlog(LOG,
             "CMA is starting %u, set g_isCmaBuildingDn to false.\n",
@@ -1176,7 +1163,6 @@ void StartDatanodeCheck(void)
     for (ii = 0; ii < g_currentNode->datanodeCount; ii++) {
         char instanceName[CM_NODE_NAME] = {0};
         int alarmReason = UNKNOWN_BAD_REASON;
-        char *logicClusterName = NULL;
         AlarmAdditionalParam tempAdditionalParam;
 #ifdef __aarch64__
         bool datanode_is_primary = false;
@@ -1211,7 +1197,7 @@ void StartDatanodeCheck(void)
         ret = CheckifGaussdbRunning(
             gaussdbStatePath, sizeof(gaussdbStatePath), gaussdbPidPath, sizeof(gaussdbPidPath), ii);
 
-        logicClusterName = get_logicClusterName_by_dnInstanceId(g_currentNode->datanode[ii].datanodeId);
+        char *logicClusterName = get_logicClusterName_by_dnInstanceId(g_currentNode->datanode[ii].datanodeId);
 
         if (ret == PROCESS_RUNNING) {
             GaussdbRunningProcessCheckAlarm(&tempAdditionalParam, instanceName, logicClusterName, ii);
@@ -1223,7 +1209,6 @@ void StartDatanodeCheck(void)
             GaussdbRunningProcessRest(ii, &state, gaussdbStatePath);
         } else if (ret == PROCESS_NOT_EXIST) {
             char command[MAXPGPATH];
-            pgpid_t pid = 0;
 
             bool port_conflict = false;
             bool dn_manual_stop = false;
@@ -1240,7 +1225,7 @@ void StartDatanodeCheck(void)
                 "%s/gs_build.pid",
                 g_currentNode->datanode[ii].datanodeLocalDataPath);
             securec_check_intval(rcs, (void)rcs);
-            pid = get_pgpid(buildPidPath, MAXPGPATH);
+            pgpid_t pid = get_pgpid(buildPidPath, MAXPGPATH);
 
             rcs = snprintf_s(instanceManualStartPath,
                 MAX_PATH_LEN,
@@ -1389,7 +1374,7 @@ static void GetSyncListFromDn(AgentToCmserverDnSyncList *syncListMsg, uint32 idx
         errno_t rc = snprintf_s(pidPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/postmaster.pid",
             g_currentNode->datanode[idx].datanodeLocalDataPath);
         securec_check_intval(rc, (void)rc);
-        (*curDnConn) = get_connection(pidPath, false, (int32)g_agentToDb, rwTimeout);
+        (*curDnConn) = get_connection(pidPath, false, AGENT_CONN_DN_TIMEOUT, rwTimeout);
         if ((*curDnConn) == NULL || (!IsConnOk(*curDnConn))) {
             write_runlog(ERROR, "curDnConn is NULL, instd is %u, pidPath is %s.\n", instd, pidPath);
             return;
@@ -1429,7 +1414,7 @@ static void GetSyncListFromDn(AgentToCmserverDnSyncList *syncListMsg, uint32 idx
     }
 }
 
-void *DNSyncCheckMain(void * const arg)
+void *DNSyncCheckMain(void *arg)
 {
     AgentToCmserverDnSyncList dnSyncListMsg;
     uint32 idx = *(uint32 *)arg;
@@ -1464,18 +1449,18 @@ static int GetHadrUserInfoCiphertext(cltPqConn_t* &healthConn, char *cipherText,
     const char *sqlCommands = "select value from gs_global_config where name='hadr_user_info';";
     cltPqResult_t *nodeResult = Exec(healthConn, sqlCommands);
     if (nodeResult == NULL) {
-        write_runlog(ERROR, "sqlCommands[0] fail return NULL!\n");
+        write_runlog(ERROR, "[%s] sqlCommands fail return NULL!\n", __FUNCTION__);
         CLOSE_CONNECTION(healthConn);
     }
     if ((ResultStatus(nodeResult) == CLTPQRES_CMD_OK) || (ResultStatus(nodeResult) == CLTPQRES_TUPLES_OK)) {
         int maxRows = Ntuples(nodeResult);
         if (maxRows == 0) {
-            write_runlog(LOG, "sqlCommands[0] fail  is 0\n");
+            write_runlog(LOG, "[%s] sqlCommands fail is 0\n", __FUNCTION__);
             CLEAR_AND_CLOSE_CONNECTION(nodeResult, healthConn);
         } else {
             int maxColums = Nfields(nodeResult);
             if (maxColums != 1) {
-                write_runlog(ERROR, "sqlCommands[0] fail  FAIL! col is %d\n", maxColums);
+                write_runlog(ERROR, "[%s] sqlCommands fail FAIL! col is %d\n", __FUNCTION__, maxColums);
                 CLEAR_AND_CLOSE_CONNECTION(nodeResult, healthConn);
             }
             char *cipherTextTmp = Getvalue(nodeResult, 0, 0);
@@ -1486,7 +1471,7 @@ static int GetHadrUserInfoCiphertext(cltPqConn_t* &healthConn, char *cipherText,
             securec_check_errno(rc, (void)rc);
         }
     } else {
-        write_runlog(ERROR, "sqlCommands[0] fail  FAIL! Status=%d\n", ResultStatus(nodeResult));
+        write_runlog(ERROR, "[%s] sqlCommands fail FAIL! Status=%d\n", __FUNCTION__, ResultStatus(nodeResult));
         CLEAR_AND_CLOSE_CONNECTION(nodeResult, healthConn);
     }
     Clear(nodeResult);
@@ -1497,24 +1482,24 @@ static int GetHadrUserInfo(cltPqConn_t* &healthConn, const char *cipherText, con
 {
     char sqlCommands[CM_MAX_COMMAND_LEN];
     errno_t rc = snprintf_s(sqlCommands, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
-        "select gs_decrypt_aes128('%s','%s');", cipherText, plain);
+        "select pg_catalog.gs_decrypt_aes128('%s','%s');", cipherText, plain);
     securec_check_intval(rc, (void)rc);
     cltPqResult_t *nodeResult = Exec(healthConn, sqlCommands);
     rc = memset_s(sqlCommands, CM_MAX_COMMAND_LEN, 0, CM_MAX_COMMAND_LEN);
     securec_check_errno(rc, (void)rc);
     if (nodeResult == NULL) {
-        write_runlog(ERROR, "sqlCommands[0] fail return NULL!\n");
+        write_runlog(ERROR, "sqlCommands fail return NULL!\n");
         CLOSE_CONNECTION(healthConn);
     }
     if ((ResultStatus(nodeResult) == CLTPQRES_CMD_OK) || (ResultStatus(nodeResult) == CLTPQRES_TUPLES_OK)) {
         int maxRows = Ntuples(nodeResult);
         if (maxRows == 0) {
-            write_runlog(LOG, "sqlCommands[0] fail  is 0\n");
+            write_runlog(LOG, "sqlCommands fail is 0\n");
             CLEAR_AND_CLOSE_CONNECTION(nodeResult, healthConn);
         } else {
             int maxColums = Nfields(nodeResult);
             if (maxColums != 1) {
-                write_runlog(ERROR, "sqlCommands[0] fail  FAIL! col is %d\n", maxColums);
+                write_runlog(ERROR, "sqlCommands fail FAIL! col is %d\n", maxColums);
                 CLEAR_AND_CLOSE_CONNECTION(nodeResult, healthConn);
             }
             char *userInfoTmp = Getvalue(nodeResult, 0, 0);
@@ -1525,7 +1510,7 @@ static int GetHadrUserInfo(cltPqConn_t* &healthConn, const char *cipherText, con
             securec_check_errno(rc, (void)rc);
         }
     } else {
-        write_runlog(ERROR, "sqlCommands[0] fail  FAIL! Status=%d\n", ResultStatus(nodeResult));
+        write_runlog(ERROR, "sqlCommands fail FAIL! Status=%d\n", ResultStatus(nodeResult));
         CLEAR_AND_CLOSE_CONNECTION(nodeResult, healthConn);
     }
     Clear(nodeResult);
@@ -1560,13 +1545,14 @@ static void ExecuteCrossClusterDnBuildCommand(const char *dataDir, char *userInf
         write_runlog(ERROR, "ExecuteCrossClusterDnBuildCommand: exec command failed %d! errno=%d.\n", ret, errno);
         return;
     }
+    g_lastBuildRole = INSTANCE_ROLE_MAIN_STANDBY;
     /* Clear sensitive information */
     rc = memset_s(command, MAXPGPATH, 0, MAXPGPATH);
     securec_check_errno(rc, (void)rc);
     return;
 }
 
-static void ExecuteCascadeStandbyDnBuildCommand(const char *dataDir)
+void ExecuteCascadeStandbyDnBuildCommand(const char *dataDir)
 {
     char command[MAXPGPATH] = {0};
 
@@ -1587,6 +1573,7 @@ static void ExecuteCascadeStandbyDnBuildCommand(const char *dataDir)
             ret, command, errno);
         return;
     }
+    g_lastBuildRole = INSTANCE_ROLE_CASCADE_STANDBY;
     write_runlog(LOG, "ExecuteCascadeStandbyDnBuildCommand: exec command success! command is %s\n", command);
 }
 
@@ -1610,12 +1597,11 @@ static status_t GetRemoteHealthConnInfo(uint32 healthInstanceId, uint32 &remoteP
     return CM_ERROR;
 }
 
-static cltPqConn_t *GetHealthConnection(uint32 healthInstanceId, bool &isTmpConn)
+static cltPqConn_t *GetHealthConnection(uint32 healthInstanceId)
 {
     char connStr[MAXCONNINFO] = {0};
 
     write_runlog(LOG, "[GetHealthConnection] healthInstance is dn_%u\n", healthInstanceId);
-    isTmpConn = true;
     uint32 remotePort = 0;
     char *remoteListenIP = NULL;
     if (GetRemoteHealthConnInfo(healthInstanceId, remotePort, remoteListenIP) != CM_SUCCESS) {
@@ -1641,12 +1627,11 @@ static cltPqConn_t *GetHealthConnection(uint32 healthInstanceId, bool &isTmpConn
     return healthConn;
 }
 
-static void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir)
+void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir)
 {
     uint32 healthInstance = g_healthInstance;
-    bool isTmpConn = false;
     /* use healthConn to get UserInfo, prevent local instances is unavailable. */
-    cltPqConn_t *healthConn = GetHealthConnection(healthInstance, isTmpConn);
+    cltPqConn_t *healthConn = GetHealthConnection(healthInstance);
     if (healthConn == NULL) {
         write_runlog(ERROR, "[ProcessCrossClusterBuildCommand] Get health connection fail.\n");
         return;
@@ -1695,13 +1680,11 @@ static void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDi
     /* Clear sensitive information */
     rc = memset_s(userInfo, CM_MAX_COMMAND_LEN, 0, CM_MAX_COMMAND_LEN);
     securec_check_errno(rc, (void)rc);
-    if (isTmpConn) {
-        close_and_reset_connection(healthConn);
-    }
+    close_and_reset_connection(healthConn);
 }
 
-void ProcessStreamingStandbyClusterBuildCommand(int instanceType, const char *dataDir,
-    const cm_to_agent_build *buildMsg)
+void ProcessStreamingStandbyClusterBuildCommand(
+    int instanceType, const char *dataDir, const cm_to_agent_build *buildMsg)
 {
     if (instanceType == INSTANCE_TYPE_DATANODE && buildMsg->role == INSTANCE_ROLE_STANDBY) {
         ExecuteCascadeStandbyDnBuildCommand(dataDir);

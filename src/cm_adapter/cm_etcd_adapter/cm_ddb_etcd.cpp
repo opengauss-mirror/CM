@@ -23,7 +23,6 @@
  */
 
 #include "cm_ddb_etcd.h"
-#include "cm_etcdapi.h"
 #include "alarm.h"
 #include "cm/cm_elog.h"
 #include "cm/cm_c.h"
@@ -58,7 +57,7 @@ void CmsEtcdAbnormalAlarmItemInitialize(void)
     AlarmItemInitialize(&(g_etcdAlarmList[ETCD_NEAR_QUOTA]), ALM_AI_AbnormalEtcdNearQuota, ALM_AS_Normal, NULL);
 }
 
-static void PrintEtcdServerList(EtcdServerSocket *etcdServerList, uint32 len, int32 logLevel)
+static void PrintEtcdServerList(const EtcdServerSocket *etcdServerList, uint32 len, int32 logLevel)
 {
     char serverStr[DDB_MAX_KEY_VALUE_LEN] = {0};
     size_t serverSize = 0;
@@ -119,7 +118,7 @@ status_t InitEtcdServerSocket(EtcdServerSocket **etcdServerList, const DrvApiInf
     return st;
 }
 
-status_t CreateEtcdSession(DrvCon_t session, const DrvApiInfo *apiInfo)
+status_t CreateEtcdSession(EtcdSession *session, const DrvApiInfo *apiInfo)
 {
     int32 logLevel = (apiInfo->modId == MOD_CMCTL) ? DEBUG5 : ((apiInfo->modId == MOD_CMS) ? LOG : DEBUG1);
     EtcdServerSocket *etcdServerList = NULL;
@@ -131,18 +130,17 @@ status_t CreateEtcdSession(DrvCon_t session, const DrvApiInfo *apiInfo)
         write_runlog(logLevel, "line %s:%d, etcdServerList is NULL.\n", __FUNCTION__, __LINE__);
         return CM_ERROR;
     }
-    EtcdSession *etcdSession = (EtcdSession *)session;
-    int32 res = etcd_open(etcdSession, etcdServerList, &g_etcdTlsPath, apiInfo->timeOut);
+    int32 res = etcd_open(session, etcdServerList, &g_etcdTlsPath, apiInfo->timeOut);
     FREE_AND_RESET(etcdServerList);
-    if (res != ETCD_OK) {
+    if (res != (int32)ETCD_OK) {
         write_runlog(logLevel, "cannot open etcd conn, error is %s.\n", get_last_error());
         return CM_ERROR;
     }
-    write_runlog(logLevel, "etcdSession is %d\n", *etcdSession);
+    write_runlog(logLevel, "etcdSession is %d\n", *session);
     return CM_SUCCESS;
 }
 
-status_t DrvEtcdAllocConn(DrvCon_t *session, DrvApiInfo *apiInfo)
+status_t DrvEtcdAllocConn(DrvCon_t *session, const DrvApiInfo *apiInfo)
 {
     EtcdSession **etcdSession = (EtcdSession **)session;
     int32 logLevel = (apiInfo->modId == MOD_CMCTL) ? DEBUG1 : LOG;
@@ -153,7 +151,10 @@ status_t DrvEtcdAllocConn(DrvCon_t *session, DrvApiInfo *apiInfo)
     }
     errno_t rc = memset_s(*etcdSession, sizeof(EtcdSession), 0, sizeof(EtcdSession));
     securec_check_errno(rc, (void)rc);
-    status_t st = CreateEtcdSession((DrvCon_t)*etcdSession, apiInfo);
+    status_t st = CreateEtcdSession(*etcdSession, apiInfo);
+    if (st != CM_SUCCESS) {
+        FREE_AND_RESET(*session);
+    }
     return st;
 }
 
@@ -162,14 +163,14 @@ static status_t DrvEtcdFreeConn(DrvCon_t *session)
     EtcdSession **etcdSession = (EtcdSession **)session;
     int32 res = etcd_close(**etcdSession);
     FREE_AND_RESET(*session);
-    if (res != ETCD_OK) {
+    if (res != (int32)ETCD_OK) {
         write_runlog(ERROR, "Failed to close etcd, error is %s.\n", get_last_error());
         return CM_ERROR;
     }
     return CM_SUCCESS;
 }
 
-status_t DrvEtcdGetValue(const DrvCon_t session, DrvText *key, DrvText *value, DrvGetOption *option)
+status_t DrvEtcdGetValue(const DrvCon_t session, DrvText *key, DrvText *value, const DrvGetOption *option)
 {
     const EtcdSession *etcdSession = (const EtcdSession *)session;
     GetEtcdOption getOption = {false, false, true};
@@ -177,14 +178,14 @@ status_t DrvEtcdGetValue(const DrvCon_t session, DrvText *key, DrvText *value, D
         getOption.quorum = option->quorum;
     }
     int32 res = etcd_get(*etcdSession, key->data, value->data, (int32)value->len, &getOption);
-    if (res != ETCD_OK) {
+    if (res != (int32)ETCD_OK) {
         return CM_ERROR;
     }
     return CM_SUCCESS;
 }
 
 status_t DrvEtcdGetAllKV(
-    const DrvCon_t session, DrvText *key, DrvKeyValue *keyValue, uint32 length, DrvGetOption *option)
+    const DrvCon_t session, DrvText *key, DrvKeyValue *keyValue, uint32 length, const DrvGetOption *option)
 {
     const EtcdSession *etcdSession = (const EtcdSession *)session;
     GetEtcdOption getOption = {false, false, true};
@@ -193,17 +194,15 @@ status_t DrvEtcdGetAllKV(
     }
     char etcdKeyValue[DDB_MAX_KEY_VALUE_LEN] = {0};
     int32 res = EtcdGetAllValues(*etcdSession, key->data, etcdKeyValue, &getOption, DDB_MAX_KEY_VALUE_LEN);
-    if (res != ETCD_OK) {
+    if (res != (int32)ETCD_OK) {
         return CM_ERROR;
     }
     write_runlog(
         DEBUG1, "get all values by cgo, and key is [%s], result_key_value is [%s].\n", key->data, etcdKeyValue);
     errno_t rc = 0;
-    char *pKey = NULL;
     char *pLeft = NULL;
-    char *pValue = NULL;
-    pKey = strtok_r(etcdKeyValue, ",", &pLeft);
-    pValue = strtok_r(NULL, ",", &pLeft);
+    char *pKey = strtok_r(etcdKeyValue, ",", &pLeft);
+    char *pValue = strtok_r(NULL, ",", &pLeft);
     uint32 i = 0;
     while (pKey && pValue) {
         rc = snprintf_s(keyValue[i].key, DDB_KEY_LEN, DDB_KEY_LEN - 1, "%s", pKey);
@@ -252,20 +251,17 @@ static status_t SaveAllKV(const char *key, size_t keyLen, const char *value, siz
 
 status_t DrvEtcdSaveAllKV(const DrvCon_t session, const DrvText *key, DrvSaveOption *option)
 {
-    char *pKey = NULL;
     char *pLeft = NULL;
-    char *pValue = NULL;
     char etcdKeyValue[DDB_MAX_KEY_VALUE_LEN] = {0};
-    FILE *fp = NULL;
-    EtcdSession *etcdSession = (EtcdSession *)session;
+    const EtcdSession *etcdSession = (const EtcdSession *)session;
     GetEtcdOption getOption = {false, false, true};
 
-    if (EtcdGetAllValues(*etcdSession, key->data, etcdKeyValue, &getOption, DDB_MAX_KEY_VALUE_LEN) != ETCD_OK) {
+    if (EtcdGetAllValues(*etcdSession, key->data, etcdKeyValue, &getOption, DDB_MAX_KEY_VALUE_LEN) != (int32)ETCD_OK) {
         return CM_ERROR;
     }
     write_runlog(DEBUG1, "get all values by cgo, and key is \"\", result_key_value is [%s].\n", etcdKeyValue);
-    pKey = strtok_r(etcdKeyValue, ",", &pLeft);
-    pValue = strtok_r(NULL, ",", &pLeft);
+    char *pKey = strtok_r(etcdKeyValue, ",", &pLeft);
+    char *pValue = strtok_r(NULL, ",", &pLeft);
 
     if (option->kvFile == NULL) {
         write_runlog(ERROR, "open kvs file is null.\n");
@@ -273,7 +269,7 @@ status_t DrvEtcdSaveAllKV(const DrvCon_t session, const DrvText *key, DrvSaveOpt
     }
 
     canonicalize_path(option->kvFile);
-    fp = fopen(option->kvFile, "w+");
+    FILE *fp = fopen(option->kvFile, "w+");
     if (fp == NULL) {
         write_runlog(ERROR, "open kvs file \"%s\" failed.\n", option->kvFile);
         return CM_ERROR;
@@ -303,18 +299,17 @@ status_t DrvEtcdSetKV(const DrvCon_t session, DrvText *key, DrvText *value, DrvS
         setOption.prevValue = option->preValue;
         res = etcd_set(*etcdSession, key->data, value->data, &setOption);
     }
-    if (res != ETCD_OK) {
+    if (res != (int32)ETCD_OK) {
         return CM_ERROR;
     }
     return CM_SUCCESS;
 }
 
-status_t DrvEtcdDelKV(const DrvCon_t session, DrvText *key, DrvDelOption *option)
+status_t DrvEtcdDelKV(const DrvCon_t session, DrvText *key)
 {
     const EtcdSession *etcdSession = (const EtcdSession *)session;
-    int32 res = 0;
-    res = etcd_delete(*etcdSession, key->data, NULL);
-    if (res != ETCD_OK) {
+    int32 res = etcd_delete(*etcdSession, key->data, NULL);
+    if (res != (int32)ETCD_OK) {
         return CM_ERROR;
     }
     return CM_SUCCESS;
@@ -342,7 +337,7 @@ status_t DrvEtcdNodeState(DrvCon_t session, char *memberName, DdbNodeState *node
     EtcdSession *etcdSession = (EtcdSession *)session;
     char health[ETCD_STATE_LEN] = {0};
     int32 res = etcd_cluster_health(*etcdSession, memberName, health, ETCD_STATE_LEN);
-    if (res != ETCD_OK) {
+    if (res != (int32)ETCD_OK) {
         nodeState->health = DDB_STATE_DOWN;
         nodeState->role = DDB_ROLE_UNKNOWN;
         return CM_ERROR;
@@ -355,7 +350,7 @@ status_t DrvEtcdNodeState(DrvCon_t session, char *memberName, DdbNodeState *node
     nodeState->health = DDB_STATE_HEALTH;
     bool isLeader = false;
     res = etcd_cluster_state(*etcdSession, memberName, &isLeader);
-    if (res != ETCD_OK) {
+    if (res != (int32)ETCD_OK) {
         nodeState->role = DDB_ROLE_UNKNOWN;
         return CM_ERROR;
     }
@@ -396,7 +391,6 @@ static status_t GetEtcdNodeHealth(uint32 idx, DdbNodeState *nodeState, int timeO
 static status_t GetEtcdNodeState(uint32 idx, DdbNodeState *nodeState)
 {
     int logLevel = (g_modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-    status_t st = CM_SUCCESS;
     const uint32 serverLen = 2;
     EtcdServerSocket server[serverLen] = {{0}};
     server[0].host = g_etcdInfo[idx].host;
@@ -407,7 +401,7 @@ static status_t GetEtcdNodeState(uint32 idx, DdbNodeState *nodeState)
         write_runlog(logLevel, "open etcd server %s failed: %s.\n", server[0].host, get_last_error());
         return CM_TIMEDOUT;
     }
-    st = DrvEtcdNodeState((DrvCon_t)(&sess), g_etcdInfo[idx].nodeInfo.nodeName, nodeState);
+    status_t st = DrvEtcdNodeState((DrvCon_t)(&sess), g_etcdInfo[idx].nodeInfo.nodeName, nodeState);
     if (etcd_close(sess) != 0) {
         write_runlog(logLevel, "line %s %d: cannot free conn, error is %s.\n",
             __FUNCTION__, __LINE__, get_last_error());
@@ -431,7 +425,7 @@ static status_t EtcdNodeIsHealth(uint32 idx, int timeOut)
         return st;
     }
     write_runlog(DEBUG5, "line %s %d: nodeState heal is %d, role is %d.\n",
-        __FUNCTION__, __LINE__, nodeState.health, nodeState.role);
+        __FUNCTION__, __LINE__, (int32)nodeState.health, (int32)nodeState.role);
     if (nodeState.health != DDB_STATE_HEALTH) {
         write_runlog(logLevel, "line %s %d: node (%s)is unhealth.\n", __FUNCTION__, __LINE__,
             g_etcdInfo[idx].nodeInfo.nodeName);
@@ -542,8 +536,7 @@ static status_t InitEtcdTlsPath(const TlsAuthPath *tlsPath)
         return CM_ERROR;
     }
     write_runlog(logLevel, "init: ca: %s, crt: %s, key: %s.\n", tlsPath->caFile, tlsPath->crtFile, tlsPath->keyFile);
-    errno_t rc = 0;
-    rc = memcpy_s(g_etcdTlsPath.etcd_ca_path, ETCD_MAX_PATH_LEN - 1, tlsPath->caFile, DDB_MAX_PATH_LEN - 1);
+    errno_t rc = memcpy_s(g_etcdTlsPath.etcd_ca_path, ETCD_MAX_PATH_LEN - 1, tlsPath->caFile, DDB_MAX_PATH_LEN - 1);
     securec_check_errno(rc, (void)rc);
     rc = memcpy_s(g_etcdTlsPath.client_crt_path, ETCD_MAX_PATH_LEN - 1, tlsPath->crtFile, DDB_MAX_PATH_LEN - 1);
     securec_check_errno(rc, (void)rc);
@@ -595,8 +588,8 @@ static status_t InitEtcdInfoEx(const DrvApiInfo *apiInfo)
             break;
         }
         ServerSocket *server = &apiInfo->serverList[i];
-        if (server->host == NULL || server->port == 0 || server->nodeInfo.nodeName == NULL
-            || server->nodeInfo.len == 0) {
+        if (server->host == NULL || server->port == 0 || server->nodeInfo.nodeName == NULL ||
+            server->nodeInfo.len == 0) {
             continue;
         }
         g_etcdInfo[idx] = *server;
@@ -665,6 +658,12 @@ static status_t DrvEtcdSetParam(const char *key, const char *value)
     return CM_SUCCESS;
 }
 
+static status_t DrvEtcdStop(bool *ddbStop)
+{
+    *ddbStop = true;
+    return CM_SUCCESS;
+}
+
 static status_t EtcdLoadApi(const DrvApiInfo *apiInfo)
 {
     CmsEtcdAbnormalAlarmItemInitialize();
@@ -688,6 +687,7 @@ static status_t EtcdLoadApi(const DrvApiInfo *apiInfo)
     drv->leaderNodeId = DrvEtcdLeaderNodeId;
     drv->restConn = DrvEtcdRestConn;
     drv->setParam = DrvEtcdSetParam;
+    drv->stop = DrvEtcdStop;
     status_t st = InitEtcdInfo(apiInfo);
     if (st != CM_SUCCESS) {
         return CM_ERROR;

@@ -15,8 +15,6 @@ include $(BASE_BUILD_PATH)/Makefile.global
 
 OBJS = hotpatch_client.o
 
-include $(BASE_BUILD_PATH)/common.mk
-
 all: libhotpatchclient.a
 
 libhotpatchclient.a: $(OBJS)
@@ -26,7 +24,3 @@ clean:
 	rm -f $(OBJS) libhotpatchclient.a *.depend
 
 install:all
-
-distclean: clean
-
-maintainer-clean: distclean

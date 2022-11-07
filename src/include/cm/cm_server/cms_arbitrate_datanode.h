@@ -31,7 +31,7 @@
 typedef struct _db_state {
     uint32 node;
     int instance_id;
-    int local_dynamic_role; 
+    int local_dynamic_role;
     int local_db_state;
     int group_index;
     int member_index;
@@ -47,15 +47,15 @@ int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int me
 int find_auto_switchover_primary_node(uint32 group_index, int member_index);
 
 void datanode_instance_arbitrate_for_psd(
-    CM_Connection *con, agent_to_cm_datanode_status_report *agent_to_cm_datanode_status_ptr);
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *status_ptr);
 void datanode_instance_arbitrate_new(
-    CM_Connection* con, agent_to_cm_datanode_status_report* agent_to_cm_datanode_status_ptr,
+    MsgRecvInfo* recvMsgInfo, agent_to_cm_datanode_status_report* agent_to_cm_datanode_status_ptr,
     uint32 group_index, int member_index, maintenance_mode mode);
 void datanode_instance_arbitrate_single(
-    CM_Connection* con, agent_to_cm_datanode_status_report* agent_to_cm_datanode_status_ptr);
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report* agent_to_cm_datanode_status_ptr);
 
 void DealDataNodeDBStateChange(const uint32 &group, const int &member, const int &dbStatePrev);
-void NotifyDatanodeDynamicPrimary(CM_Connection *con, const uint32 &node, const uint32 &instanceId, const uint32 &group,
-    const int &member);
+void NotifyDatanodeDynamicPrimary(
+    MsgRecvInfo* recvMsgInfo, const uint32 &node, const uint32 &instanceId, const uint32 &group, const int &member);
 
 #endif

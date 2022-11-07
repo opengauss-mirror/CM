@@ -27,11 +27,11 @@ static void StartUsage(const char *projectName)
 {
 #ifdef ENABLE_MULTIPLE_NODES
     (void)printf(_("  %s start [[-z AVAILABILITY_ZONE [--cm_arbitration_mode=ARBITRATION_MODE]] | "
-                   "[-n NODEID [-D DATADIR [-R]]] | [-m resume]] [-t SECS] \n"),
+                   "[-n NODEID [-D DATADIR [-R] | -I RESOURCE_INSTANCE_ID]] | [-m resume]] [-t SECS] \n"),
         projectName);
 #else
     (void)printf(_("  %s start [-z AVAILABILITY_ZONE [--cm_arbitration_mode=ARBITRATION_MODE]] | "
-                   "[-n NODEID [-D DATADIR]] [-t SECS] \n"),
+                   "[-n NODEID [-D DATADIR | -I RESOURCE_INSTANCE_ID]] [-t SECS] \n"),
         projectName);
 #endif
 }
@@ -59,16 +59,16 @@ static void UsageHelp(const char *projectName)
     (void)printf(_("  %s build [-c] [-n NODEID] [-D DATADIR [-t SECS] [-f] [-b full] [-j NUM]]\n"), projectName);
     (void)printf(_("  %s check -B BINNAME -T DATAPATH\n"), projectName);
 #ifdef ENABLE_MULTIPLE_NODES
-    (void)printf(_("  %s stop [[-z AVAILABILITY_ZONE] | [-n NODEID [-D DATADIR [-R]]]] [-t SECS] [-m SHUTDOWN-MODE]\n"),
-        projectName);
+    (void)printf(_("  %s stop [[-z AVAILABILITY_ZONE] | [-n NODEID [-D DATADIR [-R] | -I RESOURCE_INSTANCE_ID]]] "
+        "[-t SECS] [-m SHUTDOWN-MODE]\n"), projectName);
     (void)printf(_("  %s query [-z ALL] [-n NODEID [-D DATADIR -R]] [-l FILENAME] [-v [-C [-s] [-S] [-d] [-i] [-F] "
         "[-L ALL] [-x] [-p]] | [-r]] [-t SECS] [--minorityAz=AZ_NAME]\n"), projectName);
     (void)printf(_("  %s restart [-L LCNAME]\n"), projectName);
     (void)printf(_("  %s view [-v | -N | -n NODEID | -c] [-l FILENAME]\n"), projectName);
     (void)printf(_("  %s disable -n NODEID -D DATADIR [-t SECS]\n"), projectName);
 #else
-    (void)printf(
-        _("  %s stop [[-z AVAILABILITY_ZONE] | [-n NODEID [-D DATADIR]]] [-t SECS] [-m SHUTDOWN-MODE]\n"), projectName);
+    (void)printf(_("  %s stop [[-z AVAILABILITY_ZONE] | [-n NODEID [-D DATADIR | -I RESOURCE_INSTANCE_ID]]] [-t SECS] "
+        "[-m SHUTDOWN-MODE]\n"), projectName);
     (void)printf(_("  %s query [-z ALL] [-l FILENAME] [-v [-C [-s] [-S] [-d] [-i] [-F] [-x] [-p]] | [-r]] [-t SECS] "
         "[--minorityAz=AZ_NAME]\n"), projectName);
     (void)printf(_("  %s view [-v | -N | -n NODEID] [-l FILENAME]\n"), projectName);
@@ -76,7 +76,7 @@ static void UsageHelp(const char *projectName)
     (void)printf(_("  %s set [--log_level=LOG_LEVEL] [--cm_arbitration_mode=ARBITRATION_MODE] "
                    "[--cm_switchover_az_mode=SWITCHOVER_AZ_MODE] [--cmsPromoteMode=CMS_PROMOTE_MODE -I INSTANCEID]\n"),
         projectName);
-    (void)printf(_("  %s set --param --agent | --server [-n [NODEID]] -k [PARAMETER]=\"[value]\"\n"), projectName);
+    (void)printf(_("  %s set --param --agent | --server [-n NODEID] -k [PARAMETER]=\"[value]\"\n"), projectName);
     (void)printf(_("  %s get [--log_level] [--cm_arbitration_mode] [--cm_switchover_az_mode]\n"), projectName);
 #if defined(ENABLE_MULTIPLE_NODES) || defined(ENABLE_PRIVATEGAUSS)
     (void)printf(_("  %s hotpatch -E PATCH_COMMAND -P PATCH_NAME\n"), projectName);
@@ -88,11 +88,14 @@ static void UsageHelp(const char *projectName)
     (void)printf(_("  %s changemember [--role=PASSIVE | --role=FOLLOWER] [--group=xx] [--priority=xx] "
         "-n NODEID -D DATADIR [-t SECS]\n"), projectName);
 #endif
-    (void)printf(_("  %s reload --param [--agent | --server]\n"), projectName);
+    (void)printf(_("  %s reload --param --agent | --server [-n NODEID]\n"), projectName);
     (void)printf(_("  %s list --param --agent | --server [-n NODEID]\n"), projectName);
     (void)printf(_("  %s encrypt [-M MODE] -D DATADIR\n"), projectName);
-    (void)printf(_("  %s ddb DCC_CMD\n"), projectName);
+    (void)printf(_("  %s ddb DDB_CMD\n"), projectName);
     (void)printf(_("  %s switch [--ddb_type=[DDB]] [--commit] [--rollback]\n"), projectName);
+    (void)printf(_("  %s res [--add | --edit | --del | --check] --res_name=\"NAME\" [--res_type=\"RES_TYPE\" "
+        "--res_attr=\"RES_INFO\" | --add_inst=\"INST_INFO\" | --del_inst=\"INST_INFO\"]\n"), projectName);
+    (void)printf(_("  %s show\n"), projectName);
 }
 
 static void CommonHelp()
@@ -154,16 +157,19 @@ static void CheckHelp()
 
 static void StartAndStopHelp()
 {
-#ifdef ENABLE_MULTIPLE_NODES
     (void)printf(_("\nOptions for start:\n"));
+#ifdef ENABLE_MULTIPLE_NODES
     (void)printf(_("  -m resume              enable resuming the fault CN\n"));
+#endif
+    (void)printf(_("  -I INSTANCE_ID         start one resource instance.\n"));
 
     (void)printf(_("\nOptions for stop:\n"));
+#ifdef ENABLE_MULTIPLE_NODES
     (void)printf(_("  -m MODE                MODE can be \"smart\" \"fast\" \"immediate\", or \"resume\"\n"));
 #else
-    (void)printf(_("\nOptions for stop:\n"));
     (void)printf(_("  -m MODE                MODE can be \"smart\" \"fast\" \"immediate\"\n"));
 #endif
+    (void)printf(_("  -I INSTANCE_ID         stop one resource instance.\n"));
 }
 
 static void QueryHelp()
@@ -217,6 +223,7 @@ static void SetAndGetHelp()
         _("  --cm_switchover_az_mode= SWITCHOVER_AZ_MODE     SWITCHOVER_AZ_MODE can be \"NON_AUTO\", \"AUTO\"\n"));
     (void)printf(
         _("  --cmsPromoteMode=CMS_PROMOTE_MODE -I INSTANCEID CMS_PROMOTE_MODE can be \"AUTO\", \"PRIMARY_F\"\n"));
+    (void)printf(_("  --param                set conf param\n"));
     (void)printf(_("  --agent                set cm agent conf\n"));
     (void)printf(_("  --server               set cm server conf\n"));
     (void)printf(_("  --k                    set parameter and value \n"));
@@ -330,6 +337,7 @@ static void ReloadHelp()
 {
     (void)printf(_("\nOptions for reload:\n"));
     (void)printf(_("  reload                 reload cluster static config online.\n"));
+    (void)printf(_("  --param                reload conf param\n"));
     (void)printf(_("  --agent                reload cm_agent conf.\n"));
     (void)printf(_("  --server               reload cm_server conf.\n"));
 }
@@ -337,6 +345,7 @@ static void ReloadHelp()
 static void ListHelp()
 {
     (void)printf(_("\nOptions for list:\n"));
+    (void)printf(_("  --param                list conf param\n"));
     (void)printf(_("  --agent                list the cm_agent parameter.\n"));
     (void)printf(_("  --server               list the cm_server parameter.\n"));
 }
@@ -358,15 +367,30 @@ static void SwitchDdbHelp()
 
 static void DccCmdHelp()
 {
-    (void)printf(_("\nOptions for dcc cmd:\n"));
-    (void)printf(_("  --help, -h             Shows help information of dcc cmd.\n"));
+    (void)printf(_("\nOptions for ddb cmd:\n"));
+    (void)printf(_("  --help, -h             Shows help information of ddb cmd.\n"));
     (void)printf(_("  --version, -v          Shows version information of dcc.\n"));
     (void)printf(_("  --get key              Queries the value of a specified key.\n"));
     (void)printf(_("  --put key val          Updates or insert the value of a specified key.\n"));
     (void)printf(_("  --delete key           Deletes the specified key.\n"));
     (void)printf(_("  --prefix               Prefix matching --get or --delete.\n"));
-    (void)printf(_("  --cluster_info         show cluster info.\n"));
-    (void)printf(_("  --leader_info          show leader nodeid.\n"));
+    (void)printf(_("  --cluster_info         show cluster info of dcc.\n"));
+    (void)printf(_("  --leader_info          show leader nodeid of dcc.\n"));
+}
+
+static void ResCmdHelp()
+{
+    (void)printf(_("\nOptions for res cmd:\n"));
+    (void)printf(_("  --add                  add one resource configuration information.\n"));
+    (void)printf(_("  --edit                 edit one resource or resource instances configuration information.\n"));
+    (void)printf(_("  --del                  delete one resource or resource instances configuration information.\n"));
+    (void)printf(_("  --check                check whether the resource configuration information regular.\n"));
+    (void)printf(_("  --res_name             specifies the name of the resource to be operated.\n"));
+    (void)printf(_("  --res_type             specifies the type of the resource to be operated, it can be \"APP\", "
+        "\"DN\".\n"));
+    (void)printf(_("  --res_attr             common resource configuration information.\n"));
+    (void)printf(_("  --add_inst             add instances configuration information of one resource.\n"));
+    (void)printf(_("  --del_inst             delete instances configuration information of one resource.\n"));
 }
 
 void DoHelp(const char *projectName)
@@ -402,4 +426,5 @@ void DoHelp(const char *projectName)
     ShutdownModeHelp();
     StatusHelp();
     DccCmdHelp();
+    ResCmdHelp();
 }

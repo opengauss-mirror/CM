@@ -79,6 +79,7 @@ typedef struct ArbiCond_t {
     int32 candiIdx;
     int32 onlineCount;
     int32 redoDone;
+    int32 failoverNum;
     int32 invalidMemIdx;
     int32 cascadeCount;
     int32 snameAzDnCount;
@@ -95,7 +96,7 @@ typedef struct ArbiCond_t {
 
 typedef struct DnArbCtx_t {
     pthread_rwlock_t *lock;
-    CM_Connection *con;
+    MsgRecvInfo* recvMsgInfo;
     uint32 node;
     int32 memIdx;
     uint32 groupIdx;
@@ -120,7 +121,7 @@ typedef struct DnArbCtx_t {
     ArbiCond cond;
 } DnArbCtx;
 
-typedef enum CAND_MODE {
+typedef enum CAND_MODE_E {
     COS4FAILOVER = 0,
     COS4SWITCHOVER,
 } CAND_MODE;
@@ -129,7 +130,7 @@ typedef struct CandicateCond_t {
     CAND_MODE mode;
 } CandicateCond;
 
-typedef enum INST_MODE {
+typedef enum INST_MODE_E {
     DN_ARBI_PMS = 0,
     DN_ARBI_NORMAL,
 } INST_MODE;
@@ -139,7 +140,7 @@ typedef struct GetInstType_t {
     INST_MODE instMode;
 } GetInstType;
 
-typedef struct SendMsg_t {
+typedef struct SendMsgT {
     const char *tyName;
     const char *sendMsg;
 } SendMsg_t;
@@ -152,5 +153,6 @@ typedef struct DnInstInfo_t {
     char stCasL[MAX_PATH_LEN]; // static cascade standby list
 } DnInstInfo;
 
-void DatanodeInstanceArbitrate(CM_Connection *con, const agent_to_cm_datanode_status_report *agentRep);
+void DatanodeInstanceArbitrate(MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentRep);
+bool IsCurrentNodeDorado(uint32 node);
 #endif

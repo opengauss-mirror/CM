@@ -29,11 +29,12 @@
 #define CM_IP_LENGTH 128
 #endif
 
-void* SendCmsMsgMain(void* arg);
 void immediate_stop_one_instance(const char* instance_data_path, InstanceTypes instance_type);
 void kill_instance_force(const char* data_path, InstanceTypes ins_type);
 char* get_logicClusterName_by_dnInstanceId(uint32 dnInstanceId);
 void CmServerCmdProcessorInit(void);
+void *ProcessSendCmsMsgMain(void *arg);
+void *ProcessRecvCmsMsgMain(void *arg);
 
 #ifdef ENABLE_UT
 extern void process_notify_command(const char* data_dir, int instance_type, int role, uint32 term);

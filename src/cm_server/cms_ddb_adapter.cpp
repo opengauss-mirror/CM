@@ -21,14 +21,11 @@
  *
  * -------------------------------------------------------------------------
  */
-
-#include "cms_ddb_adapter.h"
-#include "cm_ddb_adapter.h"
-#include "cms_global_params.h"
-#include "cms_ddb.h"
-#include "cms_common.h"
 #include "cm/cm_elog.h"
 #include "cm/cs_ssl.h"
+#include "cms_common.h"
+#include "cms_ddb.h"
+#include "cms_conn.h"
 
 static CM_ConnDdbInfo g_ddbSession = {0};
 
@@ -46,6 +43,19 @@ void RestDdbConn(DdbConn *ddbConn, status_t st, const DDB_RESULT *ddbResult)
         return;
     }
     (void)DdbRestConn(ddbConn);
+}
+
+void StopDdbByDrv()
+{
+    if (g_sess == NULL) {
+        return;
+    }
+    DdbConn *ddbConn = GetNextDdbConn();
+    if (ddbConn == NULL) {
+        (void)DdbStop(&(g_sess->ddbConn[0]));
+        return;
+    }
+    (void)DdbStop(ddbConn);
 }
 
 status_t GetKVFromDDb(char *key, uint32 keyLen, char *value, uint32 valueLen, DDB_RESULT *ddbResult)
@@ -117,7 +127,7 @@ status_t DelKeyInDdb(char *key, uint32 keyLen)
     DdbConn *ddbConn = GetNextDdbConn();
     CM_RETERR_IF_NULL(ddbConn);
     DrvText drvKey = {key, keyLen};
-    status_t delStatus = DdbDelKey(ddbConn, &drvKey, NULL);
+    status_t delStatus = DdbDelKey(ddbConn, &drvKey);
     RestDdbConn(ddbConn, delStatus, NULL);
     if (delStatus != CM_SUCCESS) {
         const char *errMsg = DdbGetLastError(ddbConn);
@@ -192,7 +202,7 @@ status_t DelKeyWithConn(DdbConn *ddbConn, char *key, uint32 keyLen)
 {
     CM_RETERR_IF_NULL(ddbConn);
     DrvText drvKey = {key, keyLen};
-    status_t delStatus = DdbDelKey(ddbConn, &drvKey, NULL);
+    status_t delStatus = DdbDelKey(ddbConn, &drvKey);
     if (delStatus != CM_SUCCESS) {
         const char *errMsg = DdbGetLastError(ddbConn);
         write_runlog(ERROR, "Failed to del key (%s) in ddb, error msg is %s.\n", key, errMsg);
@@ -233,13 +243,13 @@ status_t GetAllKVFromDDb(char *key, uint32 keyLen, DrvKeyValue *keyValue, uint32
     int32 logLevel = (g_HA_status->local_role == CM_SERVER_PRIMARY) ? ERROR : DEBUG1;
     if (getStatus != CM_SUCCESS) {
         const char *errMsg = DdbGetLastError(ddbConn);
-        write_runlog(logLevel, "Failed to get all value from DDb with key(%s), error msg is %s.\n", key, errMsg);
         if (strstr(errMsg, "can't find the key") != NULL) {
-            write_runlog(logLevel, "can not find the key(%s), error msg is %s.\n", key, errMsg);
+            write_runlog(DEBUG1, "can not find the key(%s), error msg is %s.\n", key, errMsg);
             if (ddbResult != NULL) {
                 *ddbResult = CAN_NOT_FIND_THE_KEY;
             }
         } else {
+            write_runlog(logLevel, "Failed to get all value from DDb with key(%s), error msg is %s.\n", key, errMsg);
             if (ddbResult != NULL) {
                 *ddbResult = FAILED_GET_VALUE;
             }
@@ -267,8 +277,8 @@ status_t SaveAllKVFromDDb(DDB_RESULT *ddbResult, DrvSaveOption *option)
     if (getStatus != CM_SUCCESS) {
         const char *errMsg = DdbGetLastError(ddbConn);
         write_runlog(logLevel, "Failed to save all value from DDb, error msg is %s.\n", errMsg);
-        if (strstr(errMsg, "can't find key") != NULL) {
-            write_runlog(logLevel, "can not find key, error msg is %s.\n", errMsg);
+        if (strstr(errMsg, "can't find the key") != NULL) {
+            write_runlog(logLevel, "can not find the key, error msg is %s.\n", errMsg);
             if (ddbResult != NULL) {
                 *ddbResult = CAN_NOT_FIND_THE_KEY;
             }
@@ -385,14 +395,16 @@ status_t InitDdbArbitrate(DrvApiInfo *drvApiInfo)
     if (g_dbType != DB_ETCD) {
         return CM_SUCCESS;
     }
-    g_ddbArbiCon.agentCon = &(g_preAgentCon);
+
+    g_ddbArbiCon.getPreConnCount = getPreConnCount;
+    g_ddbArbiCon.resetPreConn = resetPreConn;
     g_ddbArbiCon.arbiCfg = &(g_ddbArbicfg);
     g_ddbArbiCon.instInfo = g_cmsInstInfo;
     g_ddbArbiCon.instNum = g_cm_server_num;
     g_ddbArbiCon.userName = pw->pw_name;
     g_ddbArbiCon.curInfo.instd = g_currentNode->cmServerId;
     g_ddbArbiCon.curInfo.nodeId = g_currentNode->node;
-    uint32 i = 0;
+    uint32 i;
     for (i = 0; i < g_cm_server_num; ++i) {
         if (g_cmsInstInfo[i].instd == g_ddbArbiCon.curInfo.instd) {
             g_ddbArbiCon.curInfo.nodeIdx = g_cmsInstInfo[i].nodeIdx;
@@ -529,8 +541,7 @@ void EtcdIpPortInfoBalance(ServerSocket *server, const char *azNames)
 {
     uint32 j = 0;
     if (g_currentNode->cmServerId % 2 == 1) {
-        uint32 i = 0;
-        for (i = 0; i < g_node_num; i++) {
+        for (uint32 i = 0; i < g_node_num; i++) {
             if (!g_node[i].etcd) {
                 continue;
             }
@@ -615,12 +626,29 @@ static status_t InitDccServerList(DrvApiInfo *drvApiInfo)
     return CM_SUCCESS;
 }
 
+static status_t InitShareDisk(DrvApiInfo *drvApiInfo)
+{
+    int ret = strcpy_s(drvApiInfo->sdConfig.devPath, DDB_MAX_PATH_LEN, g_shareDiskPath);
+    if (ret != 0) {
+        write_runlog(ERROR, "Get share disk path failed!\n");
+        return CM_ERROR;
+    }
+    write_runlog(LOG, "InitShareDisk: get config share disk path %s!\n", g_shareDiskPath);
+    drvApiInfo->serverList = NULL;
+    drvApiInfo->sdConfig.offset = DDB_DISK_ORIGINAL_OFFSET;
+    drvApiInfo->sdConfig.instanceId = g_currentNode->cmServerId;
+    drvApiInfo->nodeNum = g_cm_server_num;
+    drvApiInfo->sdConfig.waitTime = (int64)((int32)g_cm_server_num * cmserver_demote_delay_on_conn_less);
+    return CM_SUCCESS;
+}
+
 static void InitDdbClientCfg(DDB_TYPE dbType, DrvApiInfo *drvApiInfo)
 {
     if (dbType != DB_ETCD) {
         return;
     }
     drvApiInfo->client_t.tlsPath = &g_tlsPath;
+    drvApiInfo->client_t.waitTime = (int64)((int32)g_cm_server_num * cmserver_demote_delay_on_conn_less);
 }
 
 int32 CmsNotifyStatus(DDB_ROLE roleType)
@@ -679,17 +707,17 @@ static status_t GetSslFilePath(SslConfig *sslcfg)
 
 static status_t CheckSslFileExit(const SslConfig *sslcfg)
 {
-    if (!cm_file_exist(sslcfg->sslPath.caFile)) {
+    if (!CmFileExist(sslcfg->sslPath.caFile)) {
         write_runlog(DEBUG5, "cms_init_ssl ca_file is not exist.\n");
         return CM_ERROR;
     }
 
-    if (!cm_file_exist(sslcfg->sslPath.keyFile)) {
+    if (!CmFileExist(sslcfg->sslPath.keyFile)) {
         write_runlog(DEBUG5, "cms_init_ssl key_file is not exist.\n");
         return CM_ERROR;
     }
 
-    if (!cm_file_exist(sslcfg->sslPath.crtFile)) {
+    if (!CmFileExist(sslcfg->sslPath.crtFile)) {
         write_runlog(DEBUG5, "cms_init_ssl Crt_File is not exist.\n");
         return CM_ERROR;
     }
@@ -730,6 +758,7 @@ static status_t InitDdbServerCfg(DDB_TYPE dbType, DrvApiInfo *drvApiInfo)
     drvApiInfo->server_t.curServer.host = g_currentNode->cmServerLocalHAIP[0];
     drvApiInfo->server_t.curServer.port = g_currentNode->cmServerLocalHAPort;
     drvApiInfo->server_t.dataPath = g_currentNode->cmDataPath;
+    drvApiInfo->server_t.waitTime = (int64)((int32)g_cm_server_num * cmserver_demote_delay_on_conn_less);
     GetServerLogPath(drvApiInfo);
     return GetSslConfig(drvApiInfo);
 }
@@ -746,7 +775,7 @@ void ClearDdbCfgApi(DrvApiInfo *drvApiInfo, DDB_TYPE dbType)
 
 status_t InitDdbCfgApi(DDB_TYPE dbType, DrvApiInfo *drvApiInfo, int32 timeOut, const char *azNames)
 {
-    status_t st = CM_SUCCESS;
+    status_t st;
     switch (dbType) {
         case DB_ETCD:
             st = InitEtcdServerList(drvApiInfo, azNames);
@@ -755,6 +784,9 @@ status_t InitDdbCfgApi(DDB_TYPE dbType, DrvApiInfo *drvApiInfo, int32 timeOut, c
             st = InitDccServerList(drvApiInfo);
             break;
         case DB_SHAREDISK:
+            st = InitShareDisk(drvApiInfo);
+            break;
+        case DB_UNKOWN:
         default:
             write_runlog(ERROR, "undefined ddbtype(%d).\n", dbType);
             return CM_ERROR;
@@ -806,6 +838,7 @@ status_t GetDdbSession(CM_ConnDdbInfo *session, int32 timeOut, const char *azNam
                 CloseDdbSession(&(session->ddbConn[j]));
             }
             ClearDdbCfgApi(&(config.drvApiInfo), g_dbType);
+            StopDdbByDrv();
             return CM_ERROR;
         }
     }
@@ -818,7 +851,10 @@ static status_t CreateGtm2etcdSession()
     if (g_gtm_num == 0 || g_etcd_num == 0 || g_dbType == DB_ETCD) {
         return CM_SUCCESS;
     }
-    DdbInitConfig config = {DB_ETCD};
+    DdbInitConfig config;
+    errno_t rc = memset_s(&config, sizeof(DdbInitConfig), 0, sizeof(DdbInitConfig));
+    securec_check_errno(rc, (void)rc);
+    config.type = DB_ETCD;
     status_t st = InitDdbCfgApi(config.type, &(config.drvApiInfo), DDB_DEFAULT_TIMEOUT, NULL);
     CM_RETURN_IFERR(st);
     st = InitDdbConn(&g_gtm2Etcd, &config);
@@ -881,15 +917,30 @@ DdbConn *GetNextDdbConn()
     return &(g_sess->ddbConn[idx]);
 }
 
+static void PrintDdbLog(DdbConn *ddbConn, status_t st, const char *str, const char *msg)
+{
+    if (ddbConn == NULL || ddbConn->drv == NULL) {
+        write_runlog(LOG, "%s: %s execute the result is %d.\n", str, msg, (int32)st);
+        return;
+    }
+
+    if (st != CM_SUCCESS) {
+        /* Only print error info */
+        const char *err = DdbGetLastError(ddbConn);
+        write_runlog(
+            WARNING, "%s: %s(%d: %s) failed, error is %s.\n", str, msg, ddbConn->drv->type, ddbConn->drv->msg, err);
+    } else {
+        write_runlog(LOG, "%s: %s(%d: %s) successfully.\n", str, msg, ddbConn->drv->type, ddbConn->drv->msg);
+    }
+}
+
 void CloseDdbSession(DdbConn *ddbConn)
 {
     if (DdbFreeConn(ddbConn) != CM_SUCCESS) {
-        /* Only print error info */
-        const char *err = DdbGetLastError(ddbConn);
-        write_runlog(WARNING, "ddb close conn(%d: %s) failed, error: %s\n", ddbConn->drv->type, ddbConn->drv->msg, err);
+        PrintDdbLog(ddbConn, CM_ERROR, "[CloseDdbSession]", "ddb close conn");
         return;
     }
-    write_runlog(LOG, "ddb close conn (%d: %s) successfully.\n", ddbConn->drv->type, ddbConn->drv->msg);
+    PrintDdbLog(ddbConn, CM_SUCCESS, "[CloseDdbSession]", "ddb close conn");
 }
 
 void CloseAllDdbSession()
@@ -901,6 +952,7 @@ void CloseAllDdbSession()
         for (uint i = 0; i < g_sess->count; i++) {
             CloseDdbSession(&(g_sess->ddbConn[i]));
         }
+        StopDdbByDrv();
     }
 }
 
@@ -915,7 +967,7 @@ DdbConn *GetDdbConnFromGtm()
 status_t DoDdbExecCmd(const char *cmd, char *output, int *outputLen, char *errMsg, uint32 maxBufLen)
 {
     errno_t rc;
-    if (g_dbType != DB_DCC) {
+    if (g_dbType != DB_DCC && g_dbType != DB_SHAREDISK) {
         const char *dbStr = GetDdbToString(g_dbType);
         rc = snprintf_s(errMsg, ERR_MSG_LENGTH, ERR_MSG_LENGTH - 1,
             "current ddbType is %s, don't support this operation", dbStr);

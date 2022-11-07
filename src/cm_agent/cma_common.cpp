@@ -21,28 +21,24 @@
  *
  * -------------------------------------------------------------------------
  */
-#include <limits.h>
-#include <netdb.h>
-#include <linux/if.h>
-#include <ifaddrs.h>
 #include <sys/stat.h>
 #include <sys/vfs.h>
-#include "cm/cm_c.h"
 #include <sys/wait.h>
+#include "cm/cm_c.h"
 #include "cm/cm_elog.h"
 #include "cm/pqsignal.h"
 #include "cm/libpq-fe.h"
 #include "cm/libpq-int.h"
 #include "cma_global_params.h"
 #include "cma_connect.h"
+#include "cma_network_check.h"
+#include "cma_instance_management_res.h"
 #include "cma_common.h"
-
-static const int CMA_SHARED_STORAGE_MODE_TIMEOUT = 60;
 
 void save_thread_id(pthread_t thrId)
 {
-    int i = 0;
     int length = (int)(sizeof(g_threadId) / sizeof(g_threadId[0]));
+    int32 i;
     for (i = 0; i < length; i++) {
         if (g_threadId[i] == 0) {
             g_threadId[i] = thrId;
@@ -56,16 +52,16 @@ void save_thread_id(pthread_t thrId)
 
 void set_thread_state(pthread_t thrId)
 {
-    if (thrId <= 0) {
+    if (thrId == 0) {
         return;
     }
-    int i = 0;
     int length = (int)(sizeof(g_threadId) / sizeof(g_threadId[0]));
-    for (i = 0; i < length; i++) {
+    for (int32 i = 0; i < length; i++) {
         if (g_threadId[i] == thrId) {
             struct timespec now = {0};
             (void)clock_gettime(CLOCK_MONOTONIC, &now);
             g_thread_state[i] = now.tv_sec;
+            g_threadName[i] = thread_name;
             break;
         }
     }
@@ -75,7 +71,7 @@ int cmagent_getenv(const char *env_var, char *output_env_value, uint32 env_value
     return cm_getenv(env_var, output_env_value, env_value_len);
 }
 
-char *type_int_to_str_name(InstanceTypes ins_type)
+const char *type_int_to_str_name(InstanceTypes ins_type)
 {
     switch (ins_type) {
         case INSTANCE_CN:
@@ -123,6 +119,16 @@ static void SigAlarmHandler(int arg)
 {
     ;
 }
+static int GetChildCmdResult(int status)
+{
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status) && WTERMSIG(status)) {
+        return CM_EXECUTE_CMD_TIME_OUT;
+    } else {
+        return -1;
+    }
+}
 
 int ExecuteCmd(const char *command, struct timeval timeout)
 {
@@ -135,7 +141,7 @@ int ExecuteCmd(const char *command, struct timeval timeout)
     sigset_t newsigblock, oldsigblock;
     struct itimerval write_timeout;
     errno_t rc;
-    int ret = -1;
+    int childStatus = 0;
 
     rc = memset_s(&ign, sizeof(struct sigaction), 0, sizeof(struct sigaction));
     securec_check_errno(rc, (void)rc);
@@ -159,7 +165,12 @@ int ExecuteCmd(const char *command, struct timeval timeout)
         case -1: /* error */
             break;
         case 0: /* child */
-
+            write_timeout.it_value.tv_sec = timeout.tv_sec;
+            write_timeout.it_value.tv_usec = timeout.tv_usec;
+            write_timeout.it_interval.tv_sec = 0;
+            write_timeout.it_interval.tv_usec = 0;
+            (void)setitimer(ITIMER_REAL, &write_timeout, NULL);
+            (void)signal(SIGALRM, SigAlarmHandler);
             /*
              * Restore original signal dispositions and exec the command.
              */
@@ -167,27 +178,21 @@ int ExecuteCmd(const char *command, struct timeval timeout)
             (void)sigaction(SIGQUIT, &quitact, NULL);
             (void)sigprocmask(SIG_SETMASK, &oldsigblock, NULL);
             (void)execl("/bin/sh", "sh", "-c", command, (char *)0);
+            (void)signal(SIGALRM, SIG_IGN);
             _exit(127);
         default:
+            child = pid;
             /* wait the child process end ,if timeout then kill the child process force */
             write_runlog(DEBUG1, "ExecuteCmd: %s, pid:%d. start!\n", command, pid);
-            write_timeout.it_value.tv_sec = timeout.tv_sec;
-            write_timeout.it_value.tv_usec = timeout.tv_usec;
-            write_timeout.it_interval.tv_sec = 0;
-            write_timeout.it_interval.tv_usec = 0;
-            child = pid;
-            (void)setitimer(ITIMER_REAL, &write_timeout, NULL);
-            (void)signal(SIGALRM, SigAlarmHandler);
-            if (pid != waitpid(pid, NULL, 0)) {
+            if (pid != waitpid(pid, &childStatus, 0)) {
                 /* kill child process */
                 (void)kill(child, SIGKILL);
                 pid = -1;
                 /* avoid the zombie process */
                 (void)wait(NULL);
-                ret = CM_EXECUTE_CMD_TIME_OUT;
                 write_runlog(ERROR, "ExecuteCmd: %s, child:%d will reset. end!\n", command, child);
             }
-            write_runlog(DEBUG1, "ExecuteCmd: %s, pid:%d. end!\n", command, pid);
+            write_runlog(DEBUG1, "ExecuteCmd: %s, pid:%d, childStatus %d end!\n", command, pid, childStatus);
             (void)signal(SIGALRM, SIG_IGN);
             break;
     }
@@ -198,7 +203,7 @@ int ExecuteCmd(const char *command, struct timeval timeout)
         write_runlog(ERROR, "ExecuteCmd: %s, failed errno:%d.\n", command, errno);
     }
 
-    return ((pid == -1) ? ret : 0);
+    return ((pid == -1) ? -1 : GetChildCmdResult(childStatus));
 #else
     return -1;
 #endif
@@ -210,7 +215,6 @@ int ExecuteCmd(const char *command, struct timeval timeout)
 int get_config_param(const char *config_file, const char *srcParam, char *destParam, int destLen)
 {
     char buf[MAXPGPATH] = {'\0'};
-    FILE *fd = NULL;
     char *subStr = NULL;
     char *saveptr1 = NULL;
     errno_t rc;
@@ -221,9 +225,9 @@ int get_config_param(const char *config_file, const char *srcParam, char *destPa
         return -1;
     }
 
-    fd = fopen(config_file, "re");
+    FILE *fd = fopen(config_file, "re");
     if (fd == NULL) {
-        write_runlog(ERROR, "Open configure file failed \n");
+        write_runlog(FATAL, "Open configure file failed \n");
         exit(1);
     }
     while (!feof(fd)) {
@@ -257,17 +261,17 @@ int get_config_param(const char *config_file, const char *srcParam, char *destPa
         char *trimStr = trim(subStr);
         if (trimStr == NULL || strlen(trimStr) + 1 > (size_t)destLen) {
 #ifdef ENABLE_UT
-            fclose(fd);
+            (void)fclose(fd);
             return -1;
 #endif
-            write_runlog(ERROR, "The value of parameter %s is invalid.\n", srcParam);
+            write_runlog(FATAL, "The value of parameter %s is invalid.\n", srcParam);
             exit(1);
         }
         rc = memcpy_s(destParam, strlen(trimStr) + 1, trimStr, strlen(trimStr) + 1);
         securec_check_errno(rc, (void)rc);
     }
 
-    fclose(fd);
+    (void)fclose(fd);
     return 0;
 }
 
@@ -283,11 +287,11 @@ void get_connection_mode(char *config_file)
         return;
     }
     if (strlen(dstStr) != 0) {
-        if (0 == strcasecmp(dstStr, "on") || 0 == strcasecmp(dstStr, "yes") || 0 == strcasecmp(dstStr, "true") ||
-            0 == strcasecmp(dstStr, "1")) {
+        if (strcasecmp(dstStr, "on") == 0 || strcasecmp(dstStr, "yes") == 0 || strcasecmp(dstStr, "true") == 0 ||
+            strcasecmp(dstStr, "1") == 0) {
             enable_xc_maintenance_mode = true;
-        } else if (0 == strcasecmp(dstStr, "off") || 0 == strcasecmp(dstStr, "no") ||
-                   0 == strcasecmp(dstStr, "false") || 0 == strcasecmp(dstStr, "0")) {
+        } else if (strcasecmp(dstStr, "off") == 0 || strcasecmp(dstStr, "no") == 0 ||
+                   strcasecmp(dstStr, "false") == 0 || strcasecmp(dstStr, "0") == 0) {
             enable_xc_maintenance_mode = false;
         } else {
             enable_xc_maintenance_mode = true;
@@ -340,7 +344,6 @@ void ReloadParametersFromConfig()
     agent_report_interval = (uint32)(get_int_value_from_config(configDir, "agent_report_interval", 1));
     agent_heartbeat_timeout = (uint32)(get_int_value_from_config(configDir, "agent_heartbeat_timeout", 8));
     agent_connect_timeout = (uint32)(get_int_value_from_config(configDir, "agent_connect_timeout", 1));
-    agent_backup_open = (ClusterRole)(get_int_value_from_config(configDir, "agent_backup_open", CLUSTER_PRIMARY));
     agent_connect_retries = (uint32)(get_int_value_from_config(configDir, "agent_connect_retries", 15));
     agent_check_interval = (uint32)(get_int_value_from_config(configDir, "agent_check_interval", 2));
     agent_kill_instance_timeout = (uint32)get_int_value_from_config(configDir, "agent_kill_instance_timeout", 0);
@@ -355,22 +358,26 @@ void ReloadParametersFromConfig()
     }
 
     log_threshold_check_interval =
-        (uint32)get_int_value_from_config(configDir, "log_threshold_check_interval", log_threshold_check_interval);
+        get_uint32_value_from_config(configDir, "log_threshold_check_interval", log_threshold_check_interval);
     undocumentedVersion = get_uint32_value_from_config(configDir, "upgrade_from", 0);
     dilatation_shard_count_for_disk_capacity_alarm = get_uint32_value_from_config(
         configDir, "dilatation_shard_count_for_disk_capacity_alarm", dilatation_shard_count_for_disk_capacity_alarm);
+    g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
 }
 
 void ReloadParametersFromConfigfile()
 {
     ReloadParametersFromConfig();
-    if (get_config_param(configDir, "enable_cn_auto_repair", g_enableCnAutoRepair, sizeof(g_enableCnAutoRepair)) <
-        0)
+    if (get_config_param(configDir, "enable_cn_auto_repair", g_enableCnAutoRepair, sizeof(g_enableCnAutoRepair)) < 0) {
         write_runlog(ERROR, "get_config_param() get enable_cn_auto_repair fail.\n");
-    if (get_config_param(configDir, "enable_log_compress", g_enableLogCompress, sizeof(g_enableLogCompress)) < 0)
+    }
+    if (get_config_param(configDir, "enable_log_compress", g_enableLogCompress, sizeof(g_enableLogCompress)) < 0) {
         write_runlog(ERROR, "get_config_param() get enable_log_compress fail.\n");
-    if (get_config_param(configDir, "security_mode", g_enableOnlineOrOffline, sizeof(g_enableOnlineOrOffline)) < 0)
+    }
+    if (get_config_param(configDir, "security_mode", g_enableOnlineOrOffline, sizeof(g_enableOnlineOrOffline)) < 0) {
         write_runlog(ERROR, "get_config_param() get security_mode fail.\n");
+    }
+
     if (get_config_param(configDir, "unix_socket_directory", g_unixSocketDirectory, sizeof(g_unixSocketDirectory)) <
         0) {
         write_runlog(ERROR, "get_config_param() get unix_socket_directory fail.\n");
@@ -381,8 +388,6 @@ void ReloadParametersFromConfigfile()
     log_max_size = get_int_value_from_config(configDir, "log_max_size", 10240);
     log_saved_days = (uint32)get_int_value_from_config(configDir, "log_saved_days", 90);
     log_max_count = (uint32)get_int_value_from_config(configDir, "log_max_count", 10000);
-    if (get_config_param(configDir, "enable_dcf", g_agentEnableDcf, sizeof(g_agentEnableDcf)) < 0)
-        write_runlog(ERROR, "get_config_param() get enable_dcf fail.\n");
 
     write_runlog(LOG,
         "reload cm_agent parameters:\n"
@@ -391,8 +396,7 @@ void ReloadParametersFromConfigfile()
         "  agent_heartbeat_timeout=%u, agent_report_interval=%u, agent_connect_timeout=%u, agent_connect_retries=%u, "
         "agent_check_interval=%u, agent_kill_instance_timeout=%u,\n"
         "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, upgrade_from=%u,\n"
-        "  enableLogCompress=%s, security_mode=%s, incremental_build=%d, unix_socket_directory=%s agent_backup_open = "
-        "%u,enable_dcf = %s,\n"
+        "  enableLogCompress=%s, security_mode=%s, incremental_build=%d, unix_socket_directory=%s, "
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s\n",
         log_min_messages,
         maxLogFileSize,
@@ -415,43 +419,19 @@ void ReloadParametersFromConfigfile()
         g_enableOnlineOrOffline,
         incremental_build,
         g_unixSocketDirectory,
-        agent_backup_open,
-        g_agentEnableDcf,
         g_enableE2ERto,
         g_disasterRecoveryType,
         g_environmentThreshold);
 }
 
-void listen_ip_merge(uint32 ip_count, char ip_listen[][CM_IP_LENGTH], char *ret_ip_merge, uint32 ipMergeLength)
-{
-    int rc;
-
-    if (ip_count == 1) {
-        rc = snprintf_s(ret_ip_merge, ipMergeLength, ipMergeLength - 1, "%s", ip_listen[0]);
-        securec_check_intval(rc, (void)rc);
-    } else if (ip_count == 2) {
-        rc = snprintf_s(ret_ip_merge, ipMergeLength, ipMergeLength - 1, "%s,%s", ip_listen[0], ip_listen[1]);
-        securec_check_intval(rc, (void)rc);
-    } else if (ip_count == 3) {
-        rc = snprintf_s(
-            ret_ip_merge, ipMergeLength, ipMergeLength - 1, "%s,%s,%s", ip_listen[0], ip_listen[1], ip_listen[2]);
-        securec_check_intval(rc, (void)rc);
-    } else {
-        write_runlog(ERROR, "ip count is invalid ip_count =%u\n", ip_count);
-    }
-    return;
-}
-
 int ReadDBStateFile(GaussState *state, const char *statePath)
 {
-    FILE *statef = NULL;
-
     if (state == NULL) {
         write_runlog(LOG, "Could not get information from gaussdb.state\n");
         return -1;
     }
 
-    statef = fopen(statePath, "re");
+    FILE *statef = fopen(statePath, "re");
     if (statef == NULL) {
         if (errno == ENOENT) {
             char errBuffer[ERROR_LIMIT_LEN];
@@ -470,16 +450,15 @@ int ReadDBStateFile(GaussState *state, const char *statePath)
     }
     if ((fread(state, 1, sizeof(GaussState), statef)) == 0) {
         write_runlog(LOG, "get gaussdb state infomation from the file \"%s\" failed\n", statePath);
-        fclose(statef);
+        (void)fclose(statef);
         return -1;
     }
-    fclose(statef);
+    (void)fclose(statef);
     return 0;
 }
 
 void UpdateDBStateFile(const char *path, const GaussState *state)
 {
-    FILE *fp = NULL;
     int ret;
     char tempPath[CM_PATH_LENGTH] = {0};
 
@@ -490,7 +469,7 @@ void UpdateDBStateFile(const char *path, const GaussState *state)
     ret = snprintf_s(tempPath, CM_PATH_LENGTH, CM_PATH_LENGTH - 1, "%s.temp", path);
     securec_check_intval(ret, (void)ret);
 
-    fp = fopen(tempPath, "w");
+    FILE *fp = fopen(tempPath, "w");
     if (fp == NULL) {
         write_runlog(ERROR, "open file \"%s\" failed.\n", tempPath);
         return;
@@ -498,15 +477,15 @@ void UpdateDBStateFile(const char *path, const GaussState *state)
     if (chmod(tempPath, S_IRUSR | S_IWUSR) == -1) {
         /* Close file and Nullify the pointer for retry */
         write_runlog(ERROR, "chmod file \"%s\" failed.\n", tempPath);
-        fclose(fp);
+        (void)fclose(fp);
         return;
     }
     if (fwrite(state, 1, sizeof(GaussState), fp) == 0) {
         write_runlog(ERROR, "write file \"%s\" failed.\n", tempPath);
-        fclose(fp);
+        (void)fclose(fp);
         return;
     }
-    fclose(fp);
+    (void)fclose(fp);
 
     (void)rename(tempPath, path);
 
@@ -519,21 +498,20 @@ pgpid_t get_pgpid(char *pid_path, uint32 len)
         write_runlog(ERROR, "pidPath(%s) len is 0.\n", pid_path);
         return 0;
     }
-    FILE *pidf = NULL;
     long pid;
 
     canonicalize_path(pid_path);
-    pidf = fopen(pid_path, "re");
+    FILE *pidf = fopen(pid_path, "re");
     if (pidf == NULL) {
         write_runlog(DEBUG5, "could not open PID file \"%s\"\n", pid_path);
         return 0;
     }
     if (fscanf_s(pidf, "%ld", &pid) != 1) {
         write_runlog(ERROR, "invalid data in PID file \"%s\"\n", pid_path);
-        fclose(pidf);
+        (void)fclose(pidf);
         return -1;
     }
-    fclose(pidf);
+    (void)fclose(pidf);
     return (pgpid_t)pid;
 }
 
@@ -542,7 +520,7 @@ bool is_process_alive(pgpid_t pid)
     if (pid == getpid() || pid == getppid()) {
         return false;
     }
-    if (kill(pid, 0) == 0) {
+    if (kill((int)pid, 0) == 0) {
         return true;
     }
     return false;
@@ -586,7 +564,6 @@ void set_disc_check_state(uint32 instanceId)
 
 bool agentCheckDisc(const char *path)
 {
-    FILE *fd = NULL;
     char write_test_file[MAXPGPATH] = {0};
     int rc;
     char buf[2] = {0};
@@ -598,29 +575,29 @@ bool agentCheckDisc(const char *path)
     check_input_for_security(write_test_file);
     canonicalize_path(write_test_file);
     errno = 0;
-    fd = fopen(write_test_file, "we");
+    FILE *fd = fopen(write_test_file, "we");
     if (fd != NULL) {
         errno = 0;
         if (fwrite("1", sizeof("1"), 1, fd) != 1) {
             if (errno == EROFS || errno == EIO) {
-                fclose(fd);
+                (void)fclose(fd);
                 write_runlog(LOG, "could not write disc test file, ERRNO : %d\n", errno);
                 (void)remove(write_test_file);
                 return false;
             }
         }
-        fclose(fd);
+        (void)fclose(fd);
         fd = fopen(write_test_file, "re");
         if (fd != NULL) {
             if (fread(buf, sizeof("1"), 1, fd) != 1) {
                 if (errno == ENOSPC) {
-                    fclose(fd);
+                    (void)fclose(fd);
                     write_runlog(LOG, "could not read disc test file, ERRNO : %d\n", errno);
                     (void)remove(write_test_file);
                     return false;
                 }
             }
-            fclose(fd);
+            (void)fclose(fd);
         }
         (void)remove(write_test_file);
         return true;
@@ -718,7 +695,7 @@ int search_HA_node(uint32 localPort, uint32 LocalHAListenCount, char LocalHAIP[]
                 uint32 primary_dn_idx = 0;
                 for (uint32 dnId = 0; dnId < g_dn_replication_num - 1; dnId++) {
                     be_continue = true;
-                    if (PRIMARY_DN == g_node[i].datanode[j].peerDatanodes[dnId].datanodePeerRole) {
+                    if (g_node[i].datanode[j].peerDatanodes[dnId].datanodePeerRole == PRIMARY_DN) {
                         be_continue = false;
                         primary_dn_idx = dnId;
                         if ((g_node[i].datanode[j].datanodeLocalHAPort != peerPort) ||
@@ -803,7 +780,6 @@ int search_HA_node(uint32 localPort, uint32 LocalHAListenCount, char LocalHAIP[]
 
 int agentCheckPort(uint32 port)
 {
-    FILE *fp = NULL;
     char buf[MAXPGPATH] = {0};
     char localip[MAXPGPATH] = {0};
     char peerip[MAXPGPATH] = {0};
@@ -815,7 +791,7 @@ int agentCheckPort(uint32 port)
     uint32 status = 0;
     int rc = 0;
 
-    fp = fopen(PROC_NET_TCP, "re");
+    FILE *fp = fopen(PROC_NET_TCP, "re");
     if (fp == NULL) {
         write_runlog(ERROR, "can not open file \"%s\"\n", PROC_NET_TCP);
         return -1;
@@ -823,7 +799,7 @@ int agentCheckPort(uint32 port)
 
     if (fgets(buf, MAXPGPATH - 1, fp) == NULL) {
         write_runlog(ERROR, "can not read file \"%s\"\n", PROC_NET_TCP);
-        fclose(fp);
+        (void)fclose(fp);
         return -1;
     }
 
@@ -844,13 +820,13 @@ int agentCheckPort(uint32 port)
             other,
             MAXPGPATH);
         if (rc != 7) {
-            write_runlog(ERROR, "get value by sscanf_s return error:%d, %s:%d \n", rc, __FILE__, __LINE__);
+            write_runlog(ERROR, "get value by sscanf_s return error:%d, %s:%d \n", rc, __FUNCTION__, __LINE__);
             continue;
         }
 
         securec_check_intval(rc, (void)rc);
         if (localport == port && status == LISTEN) {
-            fclose(fp);
+            (void)fclose(fp);
             write_runlog(WARNING,
                 "port:%u already in use. /proc/net/tcp:\n%s \n%s",
                 localport,
@@ -876,80 +852,8 @@ int agentCheckPort(uint32 port)
         }
     }
 
-    fclose(fp);
+    (void)fclose(fp);
     return 0;
-}
-
-/*
- * @Description: get nic status related with specified ip.
- *
- * @in listen_ip_count:listen ip count
- * @in ips:listen ips
- *
- * @out: true   nic is up
- *       false  nic is down
- */
-bool getnicstatus(uint32 listen_ip_count, char ips[][CM_IP_LENGTH])
-{
-    struct ifaddrs *ifa = NULL, *ifList = NULL;
-    char host[NI_MAXHOST] = {0};
-    uint32 i;
-    char all_listen_ip[CM_IP_ALL_NUM_LENGTH] = {0};
-    uint32 validIpCount = 0;
-
-    if (getifaddrs(&ifList) < 0) {
-        write_runlog(WARNING, "failed to get iflist.\n");
-        return false;
-    }
-
-    for (ifa = ifList; ifa != NULL; ifa = ifa->ifa_next) {
-        if (ifa->ifa_addr == NULL) {
-            continue;
-        }
-        if (ifa->ifa_addr->sa_family == AF_INET) {
-            if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST) !=
-                0) {
-                write_runlog(WARNING, "failed to get name info.\n");
-                freeifaddrs(ifList);
-                return false;
-            }
-
-            for (i = 0; i < listen_ip_count; i++) {
-                if (strncmp(host, ips[i], NI_MAXHOST) == 0) {
-                    break;
-                }
-            }
-
-            if (i >= listen_ip_count) {
-                continue;
-            }
-
-            if (!(ifa->ifa_flags & IFF_UP)) {
-                write_runlog(
-                    WARNING, "nic %s related with %s is down, ifa_flags=%u.\n", ifa->ifa_name, ips[i], ifa->ifa_flags);
-                freeifaddrs(ifList);
-                return false;
-            }
-
-            if (!(ifa->ifa_flags & IFF_RUNNING)) {
-                write_runlog(WARNING, "nic %s related with %s not running,ifa_flags=%u.\n",
-                    ifa->ifa_name, ips[i], ifa->ifa_flags);
-                freeifaddrs(ifList);
-                return false;
-            }
-
-            validIpCount++;
-            if (validIpCount == listen_ip_count) {
-                freeifaddrs(ifList);
-                return true;
-            }
-        }
-    }
-
-    listen_ip_merge(listen_ip_count, ips, all_listen_ip, CM_IP_ALL_NUM_LENGTH);
-    write_runlog(WARNING, "can't find nic related with %s.\n", all_listen_ip);
-    freeifaddrs(ifList);
-    return false;
 }
 
 /**
@@ -1007,7 +911,7 @@ uint32 CheckDiskForLogPath(void)
 int ExecuteSystemCmd(const char *cmd)
 {
     int ret = system(cmd);
-    if (ret != 0) {
+    if (ret == -1) {
         write_runlog(ERROR, "Fail to execute command %s, and errno=%d.\n", cmd, errno);
         return -1;
     }
@@ -1024,14 +928,12 @@ int ExecuteSystemCmd(const char *cmd)
 
 void CheckDnNicDown(uint32 index)
 {
-    g_nicDown[index] = ((!getnicstatus(
-        g_currentNode->datanode[index].datanodeListenCount, g_currentNode->datanode[index].datanodeListenIP)) ||
-        (!getnicstatus(g_currentNode->datanode[index].datanodeLocalHAListenCount,
-            g_currentNode->datanode[index].datanodeLocalHAIP)) ||
-        (!getnicstatus(g_currentNode->cmAgentListenCount, g_currentNode->cmAgentIP)));
+    dataNodeInfo *dnInfo = &(g_currentNode->datanode[index]);
+    g_nicDown[index] = ((!GetNicStatus(dnInfo->datanodeId, CM_INSTANCE_TYPE_DN)) ||
+        (!GetNicStatus(dnInfo->datanodeId, CM_INSTANCE_TYPE_DN, NETWORK_TYPE_HA)) ||
+        (!GetNicStatus(g_currentNode->cmAgentId, CM_INSTANCE_TYPE_CMA)));
     if (g_nicDown[index]) {
-        write_runlog(
-            WARNING, "nic related with datanode(%s) not up.\n", g_currentNode->datanode[index].datanodeLocalDataPath);
+        write_runlog(WARNING, "nic related with datanode(%s) not up.\n", dnInfo->datanodeLocalDataPath);
     }
 }
 
@@ -1057,11 +959,10 @@ bool DnManualStop(uint32 index)
 
 bool DirectoryIsDestoryed(const char *path)
 {
-    DIR *xldir = NULL;
-    struct dirent *xlde = NULL;
+    struct dirent *xlde;
     bool ret = true;
 
-    xldir = opendir(path);
+    DIR *xldir = opendir(path);
     if (xldir == NULL) {
         /* missing dir is not considerred here */
         return false;
@@ -1083,11 +984,10 @@ bool DirectoryIsDestoryed(const char *path)
 
 bool IsDirectoryDestoryed(const char *path)
 {
-    DIR *xldir = NULL;
-    struct dirent *xlde = NULL;
+    struct dirent *xlde;
     bool ret = true;
 
-    xldir = opendir(path);
+    DIR *xldir = opendir(path);
     if (xldir == NULL) {
         /* missing dir is not considerred here */
         return false;
@@ -1186,30 +1086,20 @@ void ReportCMAEventAlarm(Alarm* alarmItem, AlarmAdditionalParam* additionalParam
 
 bool CheckStartDN()
 {
-    int times = 0;
-
     if (!GetIsSharedStorageMode()) {
         return true;
     }
-
-    g_isNeedGetDoradoIp = true;
-    for (;;) {
-        if (times++ > CMA_SHARED_STORAGE_MODE_TIMEOUT) {
-            write_runlog(ERROR, "get dorado ip timeout.\n");
-            g_isNeedGetDoradoIp = false;
-            return true;
-        }
-        if (strcmp(g_doradoIp, "unknown") == 0) {
-            write_runlog(ERROR, "get dorado ip failed.\n");
-            return false;
-        }
-        if (g_doradoIp[0] == '\0') {
-            cm_sleep(1);
-            continue;
-        }
-        break;
+    if (undocumentedVersion != 0 && undocumentedVersion < DORADO_UPGRADE_VERSION) {
+        return !IsNodeOfflineFromEtcd(g_nodeId, CM_AGENT);
     }
-    g_isNeedGetDoradoIp = false;
+    if (g_doradoIp[0] == '\0') {
+        write_runlog(LOG, "get dorado ip is NULL.\n");
+        return true;
+    }
+    if (strcmp(g_doradoIp, "unknown") == 0) {
+        write_runlog(ERROR, "get dorado ip failed.\n");
+        return true;
+    }
     if (strcmp(g_doradoIp, g_currentNode->sshChannel[0]) == 0) {
         write_runlog(DEBUG1, "Line:%d Get ignore node(%s) successfully.\n", __LINE__, g_currentNode->sshChannel[0]);
         return false;
@@ -1271,59 +1161,13 @@ int ProcessDnBarrierInfoResp(const cm_to_agent_barrier_info *barrierRespMsg)
     return 0;
 }
 
-void PushMsgToClientSendQue(char *msgPtr, uint32 msgLen, uint32 conId)
-{
-    AgentMsgPkg msgPkg = {0};
-    msgPkg.msgPtr = msgPtr;
-    msgPkg.msgLen = msgLen;
-    msgPkg.conId = conId;
-    (void)pthread_mutex_lock(&g_sendQueue.lock);
-    g_sendQueue.msg.push(msgPkg);
-    (void)pthread_mutex_unlock(&g_sendQueue.lock);
-    (void)pthread_cond_signal(&g_sendQueue.cond);
-}
-
-void PushMsgToClientRecvQue(char *msgPtr, uint32 msgLen)
-{
-    AgentMsgPkg msgPkg = {0};
-    msgPkg.msgPtr = msgPtr;
-    msgPkg.msgLen = msgLen;
-    (void)pthread_mutex_lock(&g_recvQueue.lock);
-    g_recvQueue.msg.push(msgPkg);
-    (void)pthread_mutex_unlock(&g_recvQueue.lock);
-    (void)pthread_cond_signal(&g_recvQueue.cond);
-}
-
-void CleanClientMsgQueueCore(MsgQueue &msgQueue, uint32 conId)
-{
-    (void)pthread_mutex_lock(&msgQueue.lock);
-    queue<AgentMsgPkg> newQue;
-    while (!msgQueue.msg.empty()) {
-        if (msgQueue.msg.front().conId == conId) {
-            free(msgQueue.msg.front().msgPtr);
-            msgQueue.msg.pop();
-            continue;
-        }
-        newQue.push(msgQueue.msg.front());
-        msgQueue.msg.pop();
-    }
-    swap(msgQueue.msg, newQue);
-    (void)pthread_mutex_unlock(&msgQueue.lock);
-}
-
-void CleanClientMsgQueue(uint32 conId)
-{
-    CleanClientMsgQueueCore(g_sendQueue, conId);
-    CleanClientMsgQueueCore(g_recvQueue, conId);
-}
-
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 static int GetDnInstanceIdStr(const CmToAgentGsGucSyncList *msgTypeDoGsGuc, char *ids, size_t idsLen)
 {
     errno_t rc = 0;
     uint32 instanceId = msgTypeDoGsGuc->instanceId;
     const DatanodeSyncList *expectSyncList = &(msgTypeDoGsGuc->dnSyncList);
-    int flag = false;
+    bool flag = false;
     int index = 0;
     size_t len = 0;
     for (; index < expectSyncList->count; ++index) {
@@ -1388,7 +1232,6 @@ static void SetCmDoWrite(uint32 idx)
 int ProcessGsGucDnCommand(const CmToAgentGsGucSyncList *msgTypeDoGsGuc)
 {
     char gsGucCommand[MAXPGPATH] = {0};
-    errno_t rc = 0;
     char dnInstanceIds[MAXPGPATH] = {0};
     char syncListStr[MAXPGPATH] = {0};
     int syncStandbyNum = GetDnInstanceIdStr(msgTypeDoGsGuc, dnInstanceIds, sizeof(dnInstanceIds));
@@ -1408,7 +1251,7 @@ int ProcessGsGucDnCommand(const CmToAgentGsGucSyncList *msgTypeDoGsGuc)
         }
     }
     const char *dnSyncMode = "ANY";
-    rc = snprintf_s(gsGucCommand, MAXPGPATH, MAXPGPATH - 1,
+    errno_t rc = snprintf_s(gsGucCommand, MAXPGPATH, MAXPGPATH - 1,
         "gs_guc reload  -Z datanode -D %s  -c \"synchronous_standby_names = '%s NODE %d(%s)'\" >> %s 2>&1 ",
         g_currentNode->datanode[dnIndex].datanodeLocalDataPath, dnSyncMode, syncStandbyNum, dnInstanceIds,
         system_call_log);
@@ -1428,3 +1271,66 @@ int ProcessGsGucDnCommand(const CmToAgentGsGucSyncList *msgTypeDoGsGuc)
     return 0;
 }
 #endif
+
+void PrintInstanceStack(const char* dataPath, bool isPrintedOnce)
+{
+    if (isPrintedOnce) {
+        return;
+    }
+
+    char command[CM_MAX_COMMAND_LEN];
+    errno_t rc = snprintf_s(command, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
+        "gs_ctl stack -D %s >> \"%s\" 2>&1 &",
+        dataPath, system_call_log);
+    securec_check_intval(rc, (void)rc);
+
+    int ret = system(command);
+    if (ret != 0) {
+        write_runlog(ERROR, "[%s] command:%s failed %d! errno=%d.\n", __FUNCTION__, command, ret, errno);
+    } else {
+        write_runlog(LOG, "[%s] command:%s success\n", __FUNCTION__, command);
+    }
+}
+
+void *DiskUsageCheckMain(void *arg)
+{
+    thread_name = "DiskUsageCheck";
+    pthread_t threadId = pthread_self();
+    write_runlog(LOG, "Disk usage check thread start, threadid %lu.\n", threadId);
+
+    for (;;) {
+        if (g_shutdownRequest) {
+            cm_sleep(5);
+            continue;
+        }
+#ifdef ENABLE_MULTIPLE_NODES
+        CheckDiskForCNDataPath();
+#endif
+        CheckDiskForDNDataPath();
+        cm_sleep(1);
+    }
+    return NULL;
+}
+
+bool FindDnIdxInCurNode(uint32 instId, uint32 *dnIdx, const char *str)
+{
+    for (uint32 i = 0; i < g_currentNode->datanodeCount; ++i) {
+        if (g_currentNode->datanode[i].datanodeId == instId) {
+            *dnIdx = i;
+            return true;
+        }
+    }
+    write_runlog(ERROR, "%s cannot find the instId(%u) in current node.\n", str, instId);
+    return false;
+}
+
+CmResConfList *CmaGetResConfByResName(const char *resName)
+{
+    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+        if (strcmp(g_resConf[i].resName, resName) == 0) {
+            return &g_resConf[i];
+        }
+    }
+    write_runlog(ERROR, "in local res conf, can't find res(%s).\n", resName);
+    return NULL;
+}

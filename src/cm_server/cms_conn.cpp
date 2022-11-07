@@ -21,27 +21,67 @@
  *
  * -------------------------------------------------------------------------
  */
-#include "sys/epoll.h"
+#include <map>
+#include <sys/eventfd.h>
+#include <sys/epoll.h>
 #include "cm/cm_elog.h"
-#include "cms_conn.h"
 #include "cms_common.h"
 #include "cms_global_params.h"
+#include "cms_conn.h"
 #ifdef KRB5
 #include "gssapi/gssapi_krb5.h"
 #endif
+#include "cms_ddb_adapter.h"
+#include "cm_msg_buf_pool.h"
+#include "cm_error.h"
+#include "cms_process_messages.h"
+#include "cm_util.h"
 
-int ServerListenSocket[MAXLISTEN] = {0};
+static const int EPOLL_TIMEOUT = 1000;
+static const int SEND_COUNT = 100;
+static const uint32 ALL_AGENT_NODE_ID = 0xffffffff;
+static const uint32 MAX_MSG_BUF_POOL_SIZE = 102400;
+static const uint32 MAX_MSG_BUF_POOL_COUNT = 200;
 
-void CloseHAConnection(CM_Connection* con)
+struct DdbPreAgentCon {
+    uint32 connCount;
+    char conFlag[DDB_MAX_CONNECTIONS];
+};
+
+using MapConns = std::map<uint32, CM_Connection*>;
+
+struct TempConns {
+    MapConns tempConns;
+    uint32 tempConnSeq;
+    pthread_mutex_t lock;
+};
+
+
+TempConns g_tempConns;
+CM_Connections gConns;
+DdbPreAgentCon g_preAgentCon = {0};
+uint8 g_msgProcFlag[MSG_CM_TYPE_CEIL];
+static int g_wakefd = -1;
+
+int32 InitConn()
 {
-    if (con != NULL && con->port != NULL) {
-        StreamClose(con->port->sock);
-        FREE_AND_RESET(con->port->node_name);
-        FREE_AND_RESET(con->port->remote_host);
+    MsgPoolInit(MAX_MSG_BUF_POOL_SIZE, MAX_MSG_BUF_POOL_COUNT);
 
-        ConnFree(con->port);
-        con->port = NULL;
+    int ret = pthread_rwlock_init(&(gConns.lock), NULL);
+    if (ret != 0) {
+        write_runlog(LOG, "init CM Connections lock failed !\n");
+        return -1;
     }
+    errno_t rc = memset_s(&g_preAgentCon, sizeof(DdbPreAgentCon), 0, sizeof(DdbPreAgentCon));
+    securec_check_errno(rc, (void)rc);
+
+    rc = memset_s(g_msgProcFlag, sizeof(g_msgProcFlag), 0, sizeof(g_msgProcFlag));
+    securec_check_errno(rc, (void)rc);
+
+    g_msgProcFlag[MSG_CTL_CM_SWITCHOVER_FAST] |= MPF_DO_SWITCHOVER;
+    g_msgProcFlag[MSG_AGENT_CM_COORDINATE_INSTANCE_STATUS] |= MPF_IS_CN_REPORT;
+
+    return 0;
 }
 
 /*
@@ -49,13 +89,22 @@ void CloseHAConnection(CM_Connection* con)
  */
 Port* ConnCreate(int serverFd)
 {
-    Port* port = NULL;
-
-    if ((port = (Port*)calloc(1, sizeof(Port))) == NULL) {
-        write_runlog(ERROR, "out of memory\n");
+    Port *port = (Port*)calloc(1, sizeof(Port));
+    if (port == NULL) {
+        write_runlog(FATAL, "out of memory\n");
         FreeNotifyMsg();
         exit(1);
     }
+
+    errno_t rc = memset_s(port, sizeof(Port), 0, sizeof(Port));
+    securec_check_errno(rc, (void)rc);
+
+    port->pipe.link.tcp.closed = CM_TRUE;
+    port->pipe.link.tcp.sock = CS_INVALID_SOCKET;
+    port->pipe.link.ssl.tcp.closed = CM_TRUE;
+    port->pipe.link.ssl.tcp.sock = CS_INVALID_SOCKET;
+    port->pipe.link.ssl.ssl_ctx = NULL;
+    port->pipe.link.ssl.ssl_sock = NULL;
 
     if (StreamConnection(serverFd, port) != STATUS_OK) {
         if (port->sock >= 0) {
@@ -120,7 +169,10 @@ void ConnCloseAndFree(CM_Connection* con)
         FREE_AND_RESET(con->inBuffer);
     }
 }
-void RemoveCMAgentConnection(CM_Connection* con)
+
+void RemoveTempConnection(CM_Connection *con);
+
+void RemoveConnection(CM_Connection* con)
 {
     if (con == NULL) {
         return;
@@ -146,9 +198,28 @@ void RemoveCMAgentConnection(CM_Connection* con)
             }
         }
 
+        if (con->connSeq != 0) {
+            RemoveTempConnection(con);
+        }
         (void)pthread_rwlock_unlock(&gConns.lock);
+    } else if (con->port->remote_type == CM_CTL) {
+        RemoveTempConnection(con);
     }
+
     ConnCloseAndFree(con);
+}
+
+void DisableRemoveConn(CM_Connection* con)
+{
+    EventDel(con->epHandle, con);
+    RemoveConnection(con);
+}
+
+void RemoveConnAfterSendMsgFailed(CM_Connection* con)
+{
+    if (con->port->remote_type != CM_SERVER) {
+        DisableRemoveConn(con);
+    }
 }
 
 void AddCMAgentConnection(CM_Connection *con)
@@ -164,6 +235,11 @@ void AddCMAgentConnection(CM_Connection *con)
 
     gConns.connections[con->port->node_id] = con;
     gConns.count++;
+
+    if (gConns.max_node_id < con->port->node_id) {
+        gConns.max_node_id = con->port->node_id;
+    }
+
     write_runlog(LOG, "cm_agent connected from nodeId %u, conn count=%u.\n", con->port->node_id, gConns.count);
     if (gConns.count == 1) {
         write_runlog(LOG, "pre conn count reset when add conn.\n");
@@ -171,8 +247,42 @@ void AddCMAgentConnection(CM_Connection *con)
         errno_t rc = memset_s(g_preAgentCon.conFlag, sizeof(g_preAgentCon.conFlag), 0, sizeof(g_preAgentCon.conFlag));
         securec_check_errno(rc, (void)pthread_rwlock_unlock(&gConns.lock));
     }
+    con->connSeq = 0;
     (void)pthread_rwlock_unlock(&gConns.lock);
     con->notifyCn = setNotifyCnFlagByNodeId(con->port->node_id);
+}
+
+void AddTempConnection(CM_Connection *con)
+{
+    (void)pthread_mutex_lock(&g_tempConns.lock);
+    g_tempConns.tempConnSeq++;
+    con->connSeq = g_tempConns.tempConnSeq;
+    (void)g_tempConns.tempConns.insert(make_pair(con->connSeq, con));
+    (void)pthread_mutex_unlock(&g_tempConns.lock);
+    write_runlog(DEBUG5, "AddTempConnection:connSeq=%u\n", con->connSeq);
+}
+
+void RemoveTempConnection(CM_Connection *con)
+{
+    (void)pthread_mutex_lock(&g_tempConns.lock);
+    (void)g_tempConns.tempConns.erase(con->connSeq);
+    (void)pthread_mutex_unlock(&g_tempConns.lock);
+    write_runlog(DEBUG5, "RemoveTempConnection:connSeq=%u\n", con->connSeq);
+}
+
+CM_Connection* GetTempConnection(uint64 connSeq)
+{
+    CM_Connection *con = NULL;
+    (void)pthread_mutex_lock(&g_tempConns.lock);
+    MapConns::iterator it = g_tempConns.tempConns.find(connSeq);
+    if (it != g_tempConns.tempConns.end()) {
+        con = it->second;
+    }
+    (void)pthread_mutex_unlock(&g_tempConns.lock);
+
+    write_runlog(DEBUG5, "GetTempConnection:connSeq=%lu\n", connSeq);
+
+    return con;
 }
 
 int cm_server_flush_msg(CM_Connection* con)
@@ -182,20 +292,16 @@ int cm_server_flush_msg(CM_Connection* con)
         ret = pq_flush(con->port);
         if (ret != 0) {
             write_runlog(ERROR, "pq_flush failed, return ret=%d\n", ret);
-
-            if (con->port->remote_type != CM_SERVER) {
-                EventDel(con->epHandle, con);
-                RemoveCMAgentConnection(con);
-            }
         }
     }
     return ret;
 }
+
 int CMHandleCheckAuth(CM_Connection* con)
 {
     int cmAuth;
 #ifdef KRB5
-    if (con->gss_check == true) {
+    if (con->gss_check) {
         return 0;
     }
 #endif // KRB5
@@ -237,7 +343,7 @@ int CMHandleCheckAuth(CM_Connection* con)
 
     do {
         /* Get the actual GSS token */
-        if (pq_getmessage(con->port, con->inBuffer, CM_MAX_AUTH_TOKEN_LENGTH)) {
+        if (pq_getmessage(con->port, con->inBuffer, CM_MAX_AUTH_TOKEN_LENGTH, false)) {
             return -1;
         }
         /* Map to GSSAPI style buffer */
@@ -246,7 +352,8 @@ int CMHandleCheckAuth(CM_Connection* con)
         /* Clean the config cache and ticket cache set by hadoop remote read. */
         krb5_clean_cache_profile_path();
         /* Krb5 config file priority : setpath > env(MPPDB_KRB5_FILE_PATH) > default(/etc/krb5.conf). */
-        if (NULL != (krbconfig = gs_getenv_r("MPPDB_KRB5_FILE_PATH"))) {
+        krbconfig = gs_getenv_r("MPPDB_KRB5_FILE_PATH");
+        if (krbconfig != NULL) {
             krb5_set_profile_path(krbconfig);
         }
         maj_stat = gss_accept_sec_context(&min_stat,
@@ -263,10 +370,10 @@ int CMHandleCheckAuth(CM_Connection* con)
 
         /* Negotiation generated data to be sent to the client. */
         if (con->gss_outbuf.length > 0) {
-            int ret = 0;
-            ret = cm_server_send_msg(con, 'P', (char*)con->gss_outbuf.value, con->gss_outbuf.length);
-            if (ret == 0) {
-                ret = cm_server_flush_msg(con);
+            int ret = CmsSendAndFlushMsg(con, 'P', (char*)con->gss_outbuf.value, con->gss_outbuf.length);
+            if (ret != 0) {
+                RemoveConnAfterSendMsgFailed(con);
+                write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
             }
             if (ret != 0) {
                 (void)gss_release_cred(&min_stat, &con->gss_cred);
@@ -303,8 +410,10 @@ int CMHandleCheckAuth(CM_Connection* con)
 #endif // KRB5
     /* Authentication succeed, send GTM_AUTH_REQ_OK */
     cmAuth = (int)htonl(CM_AUTH_REQ_OK);
-    (void)cm_server_send_msg(con, 'R', (char*)&cmAuth, sizeof(cmAuth));
-    (void)cm_server_flush_msg(con);
+    if (CmsSendAndFlushMsg(con, 'R', (char*)&cmAuth, sizeof(cmAuth)) != 0) {
+        RemoveConnAfterSendMsgFailed(con);
+        write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
+    }
 
     return 0;
 }
@@ -344,17 +453,17 @@ void ConnFree(Port* conn)
 }
 
 
-static void CloseAllConnections(int epollHandle)
+static void CloseAllConnections(volatile sig_atomic_t& gotConnsClose, int epollHandle)
 {
     CM_Connection* con = NULL;
 
-    if (got_conns_close == true) {
+    if (gotConnsClose == 1) {
         /* left some time, other thread maybe use the mem of conn. */
         cm_sleep(1);
         bool findepollHandle = false;
         (void)pthread_rwlock_wrlock(&gConns.lock);
         write_runlog(LOG, "receive signal to close all the agent connections now, conn count is %u.\n", gConns.count);
-        for (int i = 0; i < CM_MAX_CONNECTIONS; i++) {
+        for (uint32 i = 0; i < gConns.max_node_id + 1; i++) {
             con = gConns.connections[i];
             if (con != NULL && epollHandle == con->epHandle) {
                 Assert(con->port->remote_type == CM_AGENT);
@@ -370,7 +479,7 @@ static void CloseAllConnections(int epollHandle)
             }
         }
         if (gConns.count == 0 || g_HA_status->local_role == CM_SERVER_PRIMARY) {
-            got_conns_close = false;
+            gotConnsClose = 0;
             write_runlog(LOG, "reset close conn flag.\n");
         }
         (void)pthread_rwlock_unlock(&gConns.lock);
@@ -407,25 +516,40 @@ void setBlockSigMask(sigset_t* block_signal)
 #endif
 }
 
-void* CM_ThreadMain(void* argp)
+bool CanProcThisMsg(void *threadInfo, const char *msgData)
 {
-    int epollHandle;
-    struct epoll_event events[MAX_EVENTS];
+    const MsgRecvInfo *msg = (const MsgRecvInfo *)msgData;
+    CM_WorkThread *thrinfo = (CM_WorkThread *)threadInfo;
+    for (uint32 i = 0; i < gWorkThreads.count; i++) {
+        if (gWorkThreads.threads[i].ProcConnID.remoteType == msg->connID.remoteType &&
+            gWorkThreads.threads[i].ProcConnID.connSeq == msg->connID.connSeq &&
+            gWorkThreads.threads[i].ProcConnID.agentNodeId == msg->connID.agentNodeId) {
+            return false;
+        }
+    }
+
+    thrinfo->ProcConnID = msg->connID;
+    return true;
+}
+
+void* CM_WorkThreadMain(void* argp)
+{
     sigset_t block_sig_set;
 
-    CM_Thread* thrinfo = (CM_Thread*)argp;
+    CM_WorkThread* thrinfo = (CM_WorkThread*)argp;
 
-    thread_name = (thrinfo->type == CM_AGENT) ? "CM_AGENT" : "CM_CTL";
-
-    epollHandle = thrinfo->epHandle;
+    thread_name = (thrinfo->type == CM_AGENT) ? "NORMAL WORKER" : "CTL WORKER";
+    MsgPriority pri = (thrinfo->type == CM_AGENT) ? MsgPriNormal : MsgPriHigh;
 
     (void)pthread_detach(pthread_self());
 
     setBlockSigMask(&block_sig_set);
 
-    write_runlog(LOG, "cmserver pool thread %lu starting, epollfd is %d.\n", thrinfo->tid, epollHandle);
+    write_runlog(LOG, "cmserver pool thread %lu starting, \n", thrinfo->tid);
+    SetCanProcThisMsgFun(CanProcThisMsg);
 
     uint32 msgCount = 0;
+    MsgRecvInfo *msg = NULL;
 
     for (;;) {
         if (got_stop == true) {
@@ -434,30 +558,26 @@ void* CM_ThreadMain(void* argp)
             continue;
         }
 
-        CloseAllConnections(epollHandle);
         thrinfo->isBusy = false;
-
-        /* wait for events to happen, 5s timeout */
-        int fds = epoll_pwait(epollHandle, events, MAX_EVENTS, 5000, &block_sig_set);
-        if (fds < 0) {
-            if (errno != EINTR && errno != EWOULDBLOCK) {
-                write_runlog(ERROR, "epoll_wait fd %d error :%m, agent thread exit.\n", epollHandle);
-                break;
-            }
-        }
+        do {
+            msg = (MsgRecvInfo*)(getRecvMsg(pri, 1, argp));
+        } while (msg == NULL);
 
         thrinfo->isBusy = true;
-        for (int i = 0; i < fds; i++) {
-            CM_Connection* con = (CM_Connection*)events[i].data.ptr;
-            write_runlog(DEBUG5, "epoll event type %d.\n", events[i].events);
-            /* read event */
-            if (events[i].events & EPOLLIN) {
-                if ((con != NULL) && (con->port != NULL)) {
-                    con->callback(epollHandle, events[i].events, con->arg);
-                    msgCount++;
-                }
-            }
-        }
+        write_runlog(DEBUG5,
+            "get message from recv que:remote_type:%s,connSeq=%u,agentNodeId=%u,qtype=%c,len=%d.\n",
+            msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
+            msg->connID.connSeq,
+            msg->connID.agentNodeId,
+            msg->msg.qtype,
+            msg->msg.len);
+
+        cm_server_process_msg(msg);
+        thrinfo->ProcConnID.remoteType = 0;
+        thrinfo->ProcConnID.connSeq = 0;
+        thrinfo->ProcConnID.agentNodeId = 0;
+        FreeBufFromMsgPool((void *)msg);
+        msg = NULL;
 
         if (msgCount % (MSG_COUNT_FOR_LOG) == 0 && msgCount >= (MSG_COUNT_FOR_LOG)) {
             write_runlog(DEBUG1, "the thread has deal 300 msg at this time.\n");
@@ -465,27 +585,726 @@ void* CM_ThreadMain(void* argp)
         }
     }
 
-    close(epollHandle);
     return thrinfo;
 }
 
+void pushMsgToQue(CM_Connection* con)
+{
+    uint32 totalFreeCount, totalAllocCount, freeCount, allocCount, typeCount;
+
+    if (con->inBuffer->len < 0) {
+        write_runlog(ERROR, "invalid message buffer length:%d\n", con->inBuffer->len);
+        return;
+    }
+
+    uint32 allocLen = sizeof(MsgRecvInfo) + (uint32)con->inBuffer->len;
+    MsgRecvInfo* msgInfo = (MsgRecvInfo*)AllocBufFromMsgPool(allocLen);
+    if (msgInfo == NULL) {
+        GetTotalBufInfo(&totalFreeCount, &totalAllocCount, &typeCount);
+        GetTypeBufInfo(allocLen, &freeCount, &allocCount);
+
+        write_runlog(LOG,
+            "alloc memory for msg failed,totalFreeCount(%u), totalAllocCount(%u). this type(%u) "
+            "freeCount(%u), allocCount(%u).\n",
+            totalFreeCount,
+            totalAllocCount,
+            allocLen,
+            freeCount,
+            allocCount);
+        return;
+    }
+
+    msgInfo->connID.remoteType = con->port->remote_type;
+    msgInfo->msgProcFlag = 0;
+    msgInfo->msg = *con->inBuffer;
+    msgInfo->msg.data = (char*)&msgInfo->data[0];
+    if (con->inBuffer->len > 0) {
+        errno_t rc =
+            memcpy_s(msgInfo->msg.data, (size_t)con->inBuffer->len, con->inBuffer->data, (size_t)con->inBuffer->len);
+        securec_check_errno(rc, (void)rc);
+    }
+    msgInfo->connID.connSeq = con->connSeq;
+    msgInfo->connID.agentNodeId = con->port->node_id;
+
+    if (con->notifyCn == WAIT_TO_NOTFY_CN) {
+        con->notifyCn = setNotifyCnFlagByNodeId(con->port->node_id);
+    }
+
+    write_runlog(DEBUG5,
+        "push message to recv que:remote_type:%s,connSeq=%u,agentNodeId=%u,qtype=%c,len=%d.\n",
+        msgInfo->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
+        msgInfo->connID.connSeq,
+        msgInfo->connID.agentNodeId,
+        msgInfo->msg.qtype,
+        msgInfo->msg.len);
+
+    // push the message to the queue
+    if (con->port->remote_type == CM_CTL) {
+        pushRecvMsg(msgInfo, MsgPriHigh);
+    } else {
+        pushRecvMsg(msgInfo, MsgPriNormal);
+    }
+}
+
+static bool checkMsg(CM_Connection* con)
+{
+    const cm_msg_type *msgTypePtr = (const cm_msg_type *)(CmGetmsgtype(con->inBuffer, (int)sizeof(cm_msg_type)));
+    if (msgTypePtr == NULL) {
+        return false;
+    }
+
+    int msgType = msgTypePtr->msg_type;
+    if (msgType >= (int)MSG_CM_TYPE_CEIL || msgType < 0) {
+        write_runlog(ERROR, "Invalid cms msg type=[%d], node=[%s: %u], socket=%d.\n",
+            msgType, con->port->node_name, con->port->node_id, con->port->sock);
+        CM_resetStringInfo(con->inBuffer);
+        return false;
+    }
+
+    if (!con->port->is_postmaster && g_HA_status->local_role != CM_SERVER_PRIMARY &&
+        con->port->remote_type != CM_SERVER) {
+        write_runlog(LOG,
+            "local cmserver role(%d) is not primary, the msg is %s.\n",
+            g_HA_status->local_role,
+            cluster_msg_int_to_string(msgType));
+        DisableRemoveConn(con);
+        return false;
+    }
+
+    if (msgType != (int)MSG_CM_SSL_CONN_REQUEST && g_sslOption.enable_ssl == CM_TRUE &&
+        con->port->pipe.type != CS_TYPE_SSL) {
+        write_runlog(ERROR, "It will disconnect the connection for msg type %d is invalid,the msg is %s.\n",
+            (int)con->port->pipe.type, cluster_msg_int_to_string(msgType));
+        DisableRemoveConn(con);
+        return false;
+    }
+
+    return true;
+}
+
+static void PrintReadNoMessage(const CM_Connection* con)
+{
+    int32 logLevel = DEBUG5;
+    if (con == NULL) {
+        write_runlog(logLevel, "read no messge");
+        return;
+    }
+    if (con->port != NULL && con->inBuffer != NULL) {
+        write_runlog(logLevel, "read no messge, node=[%s: %u], socket=%d, qtype=%d, msgLen=%d, len=%d, maxLen=%d.\n",
+            con->port->node_name, con->port->node_id, con->port->sock, con->inBuffer->qtype, con->inBuffer->msglen,
+            con->inBuffer->len, con->inBuffer->maxlen);
+    } else if (con->inBuffer != NULL) {
+        write_runlog(logLevel, "read no messge, qtype=%d, msgLen=%d, len=%d, maxLen=%d.\n",
+            con->inBuffer->qtype, con->inBuffer->msglen, con->inBuffer->len, con->inBuffer->maxlen);
+    } else if (con->port != NULL) {
+        write_runlog(logLevel, "read no messge, node=[%s: %u], socket=%d.\n",
+            con->port->node_name, con->port->node_id, con->port->sock);
+    } else {
+        write_runlog(logLevel, "read no messge");
+    }
+}
+
+static void CleanConBuffer(CM_Connection *con)
+{
+    if (con == NULL) {
+        return;
+    }
+    PrintReadNoMessage(con);
+
+    // wait for 60s, and then close socket
+    if (con->msgFirstPartRecvTime != 0 && time(NULL) >= con->msgFirstPartRecvTime + AUTHENTICATION_TIMEOUT) {
+        if (con->port != NULL) {
+            write_runlog(LOG, "recv message timeout, nodeId[%s: %u], socket is %d.\n",
+                con->port->node_name, con->port->node_id, con->port->sock);
+        } else {
+            write_runlog(LOG, "recv message timeout.\n");
+        }
+        DisableRemoveConn(con);
+    }
+}
+
+/**
+ * @brief
+ *
+ * @param  epollFd          My Param doc
+ * @param  events           My Param doc
+ * @param  arg              My Param doc
+ */
+static void cm_server_recv_msg(void* arg)
+{
+    CM_Connection* con = (CM_Connection*)arg;
+    int qtype = 0;
+
+    while (con != NULL && con->fd >= 0) {
+        qtype = ReadCommand(con, "cm_server_recv_msg");
+        write_runlog(
+            DEBUG5, "read qtype is %d, msglen =%d len =%d\n", qtype, con->inBuffer->msglen, con->inBuffer->len);
+
+        switch (qtype) {
+            case 'C':
+                con->last_active = time(NULL);
+                con->msgFirstPartRecvTime = 0;
+#ifdef KRB5
+                if (!con->gss_check && cm_auth_method == CM_AUTH_GSS) {
+                    write_runlog(
+                        LOG, "will igrone the msg(nodeid:%u), the gss check has not pass.\n", con->port->node_id);
+                    DisableRemoveConn(con);
+                } else {
+#endif  // KRB5
+                if (!checkMsg(con)) {
+                    break;
+                }
+                pushMsgToQue(con);
+#ifdef KRB5
+                }
+#endif // KRB5
+                CM_resetStringInfo(con->inBuffer);
+                break;
+            case 'p':
+                con->msgFirstPartRecvTime = 0;
+#ifdef KRB5
+                if (cm_auth_method == CM_AUTH_GSS) {
+                    con->last_active = time(NULL);
+                    if (CMHandleCheckAuth(con) == 0) {
+                        con->gss_check = true;
+                    }
+                } else {
+#endif // KRB5
+                    write_runlog(LOG, "trust conn type, don't need send gss msg.\n");
+                    DisableRemoveConn(con);
+#ifdef KRB5
+                }
+#endif // KRB5
+                CM_resetStringInfo(con->inBuffer);
+                break;
+            case 'X':
+            case EOF:
+                con->msgFirstPartRecvTime = 0;
+                if (con->port != NULL) {
+                    if (con->port->remote_type == CM_CTL) {
+                        write_runlog(DEBUG1, "connection closed by client, nodeid is %u.\n", con->port->node_id);
+                    } else {
+                        write_runlog(LOG, "connection closed by client, nodeid is %u.\n", con->port->node_id);
+                    }
+                }
+                DisableRemoveConn(con);
+                break;
+            case TCP_SOCKET_ERROR_NO_MESSAGE:
+            case 0:
+                CleanConBuffer(con);
+                return;
+            case TCP_SOCKET_ERROR_EPIPE:
+                write_runlog(ERROR, "connection was broken, nodeid is %u.\n", con->port->node_id);
+                DisableRemoveConn(con);
+                break;
+            default:
+                write_runlog(ERROR, "invalid frontend message type %d", qtype);
+                DisableRemoveConn(con);
+                break;
+        }
+
+        /* some communication error occurred, free con here */
+        Assert(con != NULL);
+        if (con->fd == INVALIDFD) {
+            FREE_AND_RESET(con);
+        }
+    }
+}
+
+static void recvMsg(const volatile sig_atomic_t& gotConnsClose, int fds, struct epoll_event *events)
+{
+    static uint32 msgCount = 0;
+    eventfd_t value = 0;
+
+    for (int i = 0; i < fds; i++) {
+        if (gotConnsClose) {
+            return;
+        }
+
+        if (events[i].data.fd == g_wakefd) {
+            int ret = eventfd_read(g_wakefd, &value);
+            write_runlog(DEBUG5, "eventfd_read ret = %d,value=%lu.\n", ret, value);
+            continue;
+        }
+
+        CM_Connection* con = (CM_Connection*)events[i].data.ptr;
+        write_runlog(DEBUG5, "epoll event type %u.\n", events[i].events);
+        /* read event */
+        if (events[i].events & EPOLLIN) {
+            if ((con != NULL) && (con->port != NULL)) {
+                cm_server_recv_msg(con->arg);
+                msgCount++;
+            }
+        }
+    }
+
+    if (msgCount % (MSG_COUNT_FOR_LOG) == 0 && msgCount >= (MSG_COUNT_FOR_LOG)) {
+        write_runlog(DEBUG1, "the thread has received %d msg(s) at this time.\n", MSG_COUNT_FOR_LOG);
+        msgCount = 0;
+    }
+}
+
+static CM_Connection *getConnect(const MsgSendInfo* msg)
+{
+    CM_Connection *con = NULL;
+    int32 msgType = -1;
+    if (msg->dataSize > sizeof(int)) {
+        msgType = *((const int *)msg->data);
+    }
+    if (msg->connID.remoteType == CM_CTL) {
+        con = GetTempConnection(msg->connID.connSeq);
+    } else if (msg->connID.remoteType == CM_AGENT) {
+        if (g_sslOption.enable_ssl && msgType == (int)MSG_CM_SSL_CONN_ACK) {
+            con = GetTempConnection(msg->connID.connSeq);
+            if (con != NULL && con->port->node_id != msg->connID.agentNodeId) {
+                write_runlog(ERROR,
+                    "getConnect is invalid,connect's node_id=%u,msg'node_id=%u.\n",
+                    con->port->node_id,
+                    msg->connID.agentNodeId);
+                con = NULL;
+            }
+        } else {
+            con = GetTempConnection(msg->connID.connSeq);
+            if (con == NULL || con->port->node_id != msg->connID.agentNodeId) {
+                con = gConns.connections[msg->connID.agentNodeId];
+            }
+        }
+    }
+
+    write_runlog(DEBUG5, "getConnect:remote_type=%d,connSeq=%u,agentNodeId=%u,msg_type=%d.\n",
+        msg->connID.remoteType, msg->connID.connSeq, msg->connID.agentNodeId, msgType);
+
+    return con;
+}
+
+static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
+{
+    status_t status = CM_SUCCESS;
+    CmsSSLConnMsg *connMsg = (CmsSSLConnMsg *)msg->data;
+    uint64 now = GetMonotonicTimeMs();
+    bool retryProc = false;
+    static const int retrySSLAcceptDetayMs = 10;
+    write_runlog(LOG, "[InnerProcSSLAccept] now=%lu,procTime=%lu,startTime=%lu,connSeq=%u.\n",
+        now, msg->procTime, connMsg->startConnTime, con->connSeq);
+
+    status = cm_cs_ssl_accept(g_ssl_acceptor_fd, &con->port->pipe);
+    if (status == CM_TIMEDOUT) {
+        if (now < connMsg->startConnTime + CM_SSL_IO_TIMEOUT) {
+            retryProc = true;
+            status = CM_SUCCESS;
+            write_runlog(LOG, "[ProcessSslConnRequest]retry ssl connect,connSeq=%u.\n", con->connSeq);
+        } else {
+            write_runlog(ERROR, "[ProcessSslConnRequest]ssl connect timeout,connSeq=%u.\n", con->connSeq);
+        }
+    }
+
+    if (status == CM_SUCCESS && retryProc) {
+        uint32 msgSize = sizeof(MsgSendInfo) + msg->dataSize;
+        MsgSendInfo *nextConnMsg = (MsgSendInfo *)AllocBufFromMsgPool(msgSize);
+        if (nextConnMsg == NULL) {
+            write_runlog(ERROR, "[%s] AllocBufFromMsgPool failed.\n", __FUNCTION__);
+            DisableRemoveConn(con);
+            return;
+        }
+        errno_t rc = memcpy_s(nextConnMsg, msgSize, msg, msgSize);
+        securec_check_errno(rc, (void)rc);
+        nextConnMsg->procTime = now + retrySSLAcceptDetayMs;
+        pushSendMsg(nextConnMsg, MsgPriNormal);
+        write_runlog(LOG,
+            "[ProcessSslConnRequest]retry ssl connect later,procTime=%lu,connSeq=%u.\n",
+            nextConnMsg->procTime,
+            con->connSeq);
+        return;
+    }
+
+    (void)EventAdd(con->epHandle, (int)EPOLLIN, con);
+
+    if (status != CM_SUCCESS) {
+        write_runlog(ERROR, "[ProcessSslConnRequest]srv ssl accept failed,connSeq=%u.\n", con->connSeq);
+        DisableRemoveConn(con);
+        return;
+    }
+
+    if (con->fd >= 0 && con->port->remote_type == CM_AGENT && con->port->node_id < CM_MAX_CONNECTIONS &&
+        !con->port->is_postmaster) {
+        AddCMAgentConnection(con);
+        RemoveTempConnection(con);
+    }
+    write_runlog(LOG, "[ProcessSslConnRequest]srv ssl connect success,connSeq=%u.\n", con->connSeq);
+}
+
+/**
+ * @brief
+ *
+ * @param  con              My Param doc
+ * @param  thread           My Param doc
+ * @return int
+ */
+static int CMAssignConnToThread(CM_Connection* con, const CM_IOThread* thread)
+{
+    Assert(con);
+    Assert(con->port);
+    Assert(thread);
+
+    int epollfd;
+
+    epollfd = thread->epHandle;
+    if (epollfd < 0) {
+        write_runlog(ERROR, "invalid epoll fd %d, thread %lu", epollfd, thread->tid);
+        return -1;
+    }
+
+    con->callback = NULL;  // cm_server_recv_msg;
+    con->arg = con;
+    CM_resetStringInfo(con->inBuffer);
+    con->port->startpack_have_processed = true;
+    con->epHandle = epollfd;
+
+    if (con->port->remote_type == CM_CTL) {
+        write_runlog(DEBUG1, "Add con socket [fd=%d] to thread %lu [epollfd=%d].\n", con->fd, thread->tid, epollfd);
+    } else {
+        write_runlog(LOG, "Add con socket [fd=%d node=[%s: %u], socket=%d] to thread %lu [epollfd=%d].\n",
+            con->fd, con->port->node_name, con->port->node_id, con->port->sock, thread->tid, epollfd);
+    }
+
+    set_socket_timeout(con->port, 0);
+    if (EventAdd(epollfd, (int)EPOLLIN, con)) {
+        write_runlog(ERROR, "Add con socket [fd=%d] to thread %lu failed!\n", con->fd, thread->tid);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int32 AssignCmaConnToThread(CM_Connection *con)
+{
+    if (con->fd < 0) {
+        return -1;
+    }
+    if (!con->port->is_postmaster && g_sslOption.enable_ssl != CM_TRUE) {
+        AddCMAgentConnection(con);
+    } else {
+        AddTempConnection(con);
+    }
+
+    /* assign new connection to a work thread by round robin */
+    if (CMAssignConnToThread(con, &gIOThread) != STATUS_OK) {
+        write_runlog(LOG, "Assign new CM_AGENT connection to worker thread failed, confd is %d.\n", con->fd);
+        return -1;
+    }
+    return 0;
+}
+
+static int32 AssignCmctlConnToThread(CM_Connection *con)
+{
+    if (con->fd < 0) {
+        return -1;
+    }
+    AddTempConnection(con);
+    if (CMAssignConnToThread(con, &gIOThread) != STATUS_OK) {
+        write_runlog(
+            LOG, "Assign new connection %d to worker thread failed, confd is %d.\n", con->port->remote_type, con->fd);
+        return -1;
+    }
+    return 0;
+}
+
+static void AssignConnToThread(CM_Connection *con)
+{
+    Assert(con != NULL);
+    Assert(con->port != NULL);
+    int32 ret = -1; // remote_type is not cm_agent or cm_ctl, it will be disableAndRemove
+    switch (con->port->remote_type) {
+        case CM_AGENT:
+            ret = AssignCmaConnToThread(con);
+            break;
+        case CM_CTL:
+            ret = AssignCmctlConnToThread(con);
+            break;
+        default:
+            write_runlog(ERROR, "remote_type(%d) is unkown, will disable conn.\n", con->port->remote_type);
+            break;
+    }
+    if (ret != 0) {
+        RemoveConnection(con);
+    }
+}
+
+static inline CM_Connection *GetCmConnect(const MsgSendInfo* msg)
+{
+    CM_Connection *con = getConnect(msg);
+    if (con == NULL) {
+        write_runlog(ERROR,
+            "[sendMsgs]get connection failed:remote_type=%s,connSeq=%u,agentNodeId=%u.\n",
+            msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
+            msg->connID.connSeq,
+            msg->connID.agentNodeId);
+        return NULL;
+    }
+    return con;
+}
+
+static void CheckDisableRemoveConn(const MsgSendInfo* msg)
+{
+    CM_Connection *con = GetCmConnect(msg);
+    if (con == NULL) {
+        return;
+    }
+    DisableRemoveConn(con);
+}
+
+static void CheckInnerProcSSLAccept(const MsgSendInfo *msg)
+{
+    CM_Connection *con = GetCmConnect(msg);
+    if (con == NULL) {
+        return;
+    }
+    InnerProcSSLAccept(msg, con);
+}
+
+static void ConnCheckDelEvent(const MsgSendInfo *msg)
+{
+    CM_Connection *con = GetCmConnect(msg);
+    if (con == NULL) {
+        return;
+    }
+    EventDel(con->epHandle, con);
+}
+
+static void CheckConnectAssignThread(const MsgSendInfo* msg)
+{
+    if (msg->dataSize < sizeof(CM_Connection *)) {
+        return;
+    }
+    AssignConnToThread(*(CM_Connection **)msg->data);
+}
+
+void InnerProc(const MsgSendInfo* msg)
+{
+    switch (msg->procMethod) {
+        case PM_REMOVE_CONN:
+            CheckDisableRemoveConn(msg);
+            break;
+        case PM_SSL_ACCEPT:
+            CheckInnerProcSSLAccept(msg);
+            break;
+        case PM_REMOVE_EPOLL:
+            // don't receive message while the ssl connection is not ready.
+            ConnCheckDelEvent(msg);
+            break;
+        case PM_ASSIGN_CONN:
+            CheckConnectAssignThread(msg);
+            break;
+        default:;
+    }
+}
+
+static int sendMsg(const MsgSendInfo *msg, CM_Connection *con)
+{
+    int ret = CmsSendAndFlushMsg(con, msg->msgType, (const char *)&msg->data[0], msg->dataSize, msg->log_level);
+    if (ret != 0) {
+        write_runlog(ERROR, "CmsSendAndFlushMsg error.\n");
+    } else {
+        write_runlog(DEBUG5, "CmsSendAndFlushMsg success.\n");
+    }
+#ifdef ENABLE_MULTIPLE_NODES
+    if (msg->msgProcFlag & MPF_IS_CN_REPORT) {
+        SetCmdStautus(ret);
+    }
+#endif
+    return ret;
+}
+
+static void sendMsg(const MsgSendInfo *msg)
+{
+    if (msg->connID.remoteType == CM_AGENT && msg->connID.agentNodeId == ALL_AGENT_NODE_ID) {
+        (void)pthread_rwlock_wrlock(&gConns.lock);
+        for (uint32 i = 0; i < gConns.max_node_id + 1; i++) {
+            CM_Connection *con = gConns.connections[i];
+            if (con == NULL) {
+                continue;
+            }
+            if (sendMsg(msg, con) != 0) {
+                (void)pthread_rwlock_unlock(&gConns.lock);
+                RemoveConnAfterSendMsgFailed(con);
+                (void)pthread_rwlock_wrlock(&gConns.lock);
+            }
+        }
+        (void)pthread_rwlock_unlock(&gConns.lock);
+    } else {
+        CM_Connection *con = getConnect(msg);
+        if (con == NULL) {
+            write_runlog(ERROR,
+                "[sendMsgs]get connection failed:remote_type=%s,connSeq=%u,agentNodeId=%u.\n",
+                msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
+                msg->connID.connSeq,
+                msg->connID.agentNodeId);
+            return;
+        }
+
+        if (sendMsg(msg, con) != 0) {
+            RemoveConnAfterSendMsgFailed(con);
+        }
+    }
+}
+
+static void procSendMsg(const MsgSendInfo *msg)
+{
+    if (msg->procMethod == (int)PM_NONE) {
+        sendMsg(msg);
+    } else {
+        write_runlog(DEBUG5, "innerProc,method=%d.\n", msg->procMethod);
+        InnerProc(msg);
+    }
+}
+
+static void sendMsgs()
+{
+    static uint32 msgCount = 0;
+    size_t total = getSendMsgCount();
+    size_t procCount = 0;
+
+    for (;;) {
+        MsgSendInfo *msg = (MsgSendInfo*)(getSendMsg());
+        if (msg == NULL) {
+            write_runlog(DEBUG5, "no message in send que.\n");
+            break;
+        }
+
+        write_runlog(DEBUG5,
+            "get message from send que:remote_type:%s,connSeq=%u,agentNodeId=%u,msgType=%c:%d,len=%u.\n",
+            msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
+            msg->connID.connSeq,
+            msg->connID.agentNodeId,
+            msg->msgType,
+            msg->dataSize > sizeof(int) ? *((int *)msg->data) : 0,  // internal process message's datasize maybe 0
+            msg->dataSize);
+
+        procSendMsg(msg);
+        FreeBufFromMsgPool(msg);
+        msg = NULL;
+
+        if (msgCount++ % SEND_COUNT == 0) {
+            write_runlog(DEBUG1, "the thread has send %u msg at this time.\n", msgCount);
+        }
+
+        procCount++;
+        if (procCount >= total) {
+            break;
+        }
+    }
+}
+
+static void WakeSenderFunc(void)
+{
+    eventfd_t value = pthread_self();
+    if (g_wakefd >= 0) {
+        int ret = eventfd_write(g_wakefd, value);
+        if (ret != 0) {
+            write_runlog(ERROR, "eventfd_write failed.ret = %d,errno=%d,value=%lu.\n", ret, errno, value);
+        }
+    } else {
+        write_runlog(DEBUG5, "io thread is not ready.\n");
+    }
+}
+
+static int CreateWakeupEvent(int epollHandle)
+{
+    g_wakefd = eventfd(0, 0);
+    if (g_wakefd < 0) {
+        write_runlog(ERROR, "eventfd error :%d.\n", errno);
+        return CM_ERROR;
+    }
+
+    write_runlog(LOG, "eventfd :%d.\n", g_wakefd);
+
+    struct epoll_event ev = {.events = (uint32)EPOLLIN, {.fd = g_wakefd}};
+    if (epoll_ctl(epollHandle, EPOLL_CTL_ADD, g_wakefd, &ev) != 0) {
+        write_runlog(ERROR, "epoll_ctl error :%d.\n", errno);
+        (void)close(g_wakefd);
+        g_wakefd = -1;
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+void* CM_IOThreadMain(void* argp)
+{
+    int epollHandle;
+    struct epoll_event events[MAX_EVENTS];
+    sigset_t block_sig_set;
+
+    CM_IOThread* thrinfo = (CM_IOThread*)argp;
+    thread_name = "IO_THREAD";
+    epollHandle = thrinfo->epHandle;
+    if (CreateWakeupEvent(epollHandle) != CM_SUCCESS) {
+        return NULL;
+    }
+    (void)pthread_detach(pthread_self());
+    setBlockSigMask(&block_sig_set);
+    setWakeSenderFunc(WakeSenderFunc);
+    int waitTime = EPOLL_TIMEOUT;
+    volatile sig_atomic_t& gotConnsClose = got_conns_close[thrinfo->id];
+    write_runlog(LOG, "cmserver pool thread %lu starting, epollfd is %d.\n", thrinfo->tid, epollHandle);
+    for (;;) {
+        if (got_stop == 1) {
+            write_runlog(LOG, "receive exit request in cm arbitrate.\n");
+            cm_sleep(1);
+            continue;
+        }
+
+        CloseAllConnections(gotConnsClose, epollHandle);
+
+        thrinfo->isBusy = false;
+        /* wait for events to happen, 5s timeout */
+        if (existSendMsg()) {
+            waitTime = 1;
+        } else {
+            waitTime = EPOLL_TIMEOUT;
+        }
+        int fds = epoll_pwait(epollHandle, events, MAX_EVENTS, waitTime, &block_sig_set);
+        if (fds < 0) {
+            if (errno != EINTR && errno != EWOULDBLOCK) {
+                write_runlog(ERROR, "epoll_wait fd %d error :%d, agent thread exit.\n", epollHandle, errno);
+                break;
+            }
+        }
+        thrinfo->isBusy = true;
+        if (fds > 0) {
+            recvMsg(gotConnsClose, fds, events);
+        }
+
+        sendMsgs();
+    }
+
+    (void)close(epollHandle);
+    (void)close(g_wakefd);
+    g_wakefd = -1;
+
+    return thrinfo;
+}
+
+
 /**
  * @brief add/mod an event to epoll
- * 
+ *
  * @param  epoll_handle     My Param doc
  * @param  events           My Param doc
  * @param  con              My Param doc
- * @return int 
+ * @return int
  */
 int EventAdd(int epoll_handle, int events, CM_Connection* con)
 {
-    struct epoll_event epv = {0};
+    struct epoll_event epv;
+    errno_t rc = memset_s(&epv, sizeof(epoll_event), 0, sizeof(epoll_event));
+    securec_check_errno(rc, (void)rc);
     epv.data.ptr = con;
     con->events = events;
     epv.events = (uint32)events;
 
     if (epoll_ctl(epoll_handle, EPOLL_CTL_ADD, con->fd, &epv) < 0) {
-        write_runlog(LOG, "Event Add failed [fd=%d], evnets[%04X]: %m\n", con->fd, events);
+        write_runlog(LOG, "Event Add failed [fd=%d], evnets[%04X]: %d\n", con->fd, (uint32)events, errno);
         return -1;
     }
 
@@ -494,41 +1313,43 @@ int EventAdd(int epoll_handle, int events, CM_Connection* con)
 
 /**
  * @brief delete an event from epoll
- * 
+ *
  * @param  epollFd          My Param doc
  * @param  con              My Param doc
  */
 void EventDel(int epollFd, CM_Connection* con)
 {
-    struct epoll_event epv = {0};
-
+    struct epoll_event epv;
+    errno_t rc = memset_s(&epv, sizeof(epoll_event), 0, sizeof(epoll_event));
+    securec_check_errno(rc, (void)rc);
     epv.data.ptr = con;
 
     if (epoll_ctl(epollFd, EPOLL_CTL_DEL, con->fd, &epv) < 0) {
-        write_runlog(LOG, "EPOLL_CTL_DEL failed [fd=%d]: %m\n", con->fd);
+        write_runlog(LOG, "EPOLL_CTL_DEL failed [fd=%d]: %d\n", con->fd, errno);
     }
 }
 
 /**
  * @brief ReadCommand reads a command from either the frontend or
- *      standard input, places it in inBuf, and returns the
- *      message type code (first byte of the message).
- *      EOF is returned if end of file.
- * 
+ * standard input, places it in inBuf, and returns the
+ * message type code (first byte of the message).
+ * EOF is returned if end of file.
+ *
  * @param  myport           My Param doc
  * @param  inBuf            My Param doc
- * @return int 
+ * @return int
  */
-int ReadCommand(Port* myport, CM_StringInfo inBuf)
+int ReadCommand(CM_Connection *con, const char *str)
 {
     int qtype;
     int ret;
 
-    if (myport == NULL || inBuf == NULL) {
+    if (con == NULL || con->port == NULL || con->inBuffer == NULL) {
         write_runlog(ERROR, "input param is null.\n");
         return -1;
     }
-
+    Port *myport = con->port;
+    CM_StringInfo inBuf = con->inBuffer;
     if ((inBuf->msglen != 0) && (inBuf->msglen == inBuf->len)) {
         return inBuf->qtype;
     }
@@ -549,17 +1370,19 @@ int ReadCommand(Port* myport, CM_StringInfo inBuf)
             case 'p':
                 break;
             default:
-                write_runlog(ERROR, "invalid frontend message type %d, in ReadCommand\n", qtype);
+                write_runlog(ERROR, "[%s] invalid frontend message type %d, nodeId=[%s: %u], socket=%d,"
+                    " in ReadCommand\n", str, qtype, myport->node_name, myport->node_id, myport->sock);
                 return EOF;
         }
         inBuf->qtype = qtype;
+        con->msgFirstPartRecvTime = time(NULL);
     }
     /*
      * In protocol version 3, all frontend messages have a length word next
      * after the type code; we can read the message contents independently of
      * the type.
      */
-    ret = pq_getmessage(myport, inBuf, 0);
+    ret = pq_getmessage(myport, inBuf, 0, true);
     if (ret != 0) {
         return ret; /* suitable message already logged */
     }
@@ -573,7 +1396,7 @@ int ReadCommand(Port* myport, CM_StringInfo inBuf)
 
 /*
  * GtmHandleTrustAuth
- *     handles trust authentication between gtm client and gtm server.
+ * handles trust authentication between gtm client and gtm server.
  *
  * @param (in) thrinfo: CreateRlsPolicyStmt describes the policy to create.
  * @return: void
@@ -585,8 +1408,10 @@ static void CMHandleTrustAuth(CM_Connection* con)
      * expects that in the current protocol
      */
     int cmAuth = (int)htonl(CM_AUTH_REQ_OK);
-    (void)cm_server_send_msg(con, 'R', (char*)&cmAuth, sizeof(cmAuth));
-    (void)cm_server_flush_msg(con);
+    if (CmsSendAndFlushMsg(con, 'R', (char*)&cmAuth, sizeof(cmAuth)) != 0) {
+        RemoveConnAfterSendMsgFailed(con);
+        write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
+    }
     CM_resetStringInfo(con->inBuffer);
 }
 
@@ -595,8 +1420,10 @@ static void CMHandleGssAuth(CM_Connection* con)
 {
     /* 1. Send authentication request message GTM_AUTH_REQ_GSS to client */
     int cmAuth = (int)htonl(CM_AUTH_REQ_GSS);
-    (void)cm_server_send_msg(con, 'R', (char*)&cmAuth, sizeof(cmAuth));
-    (void)cm_server_flush_msg(con);
+    if (CmsSendAndFlushMsg(con, 'R', (char*)&cmAuth, sizeof(cmAuth)) != 0) {
+        RemoveConnAfterSendMsgFailed(con);
+        write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
+    }
     CM_resetStringInfo(con->inBuffer);
 }
 #endif // KRB5
@@ -631,22 +1458,20 @@ void CMPerformAuthentication(CM_Connection *con)
 int get_authentication_type(const char* config_file)
 {
     char buf[BUF_LEN];
-    FILE* fd = NULL;
     int type = CM_AUTH_TRUST;
 
     if (config_file == NULL) {
         return CM_AUTH_TRUST;  /* default level */
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
-        printf("can not open config file: %s errno:%s\n", config_file, strerror(errno));
+        (void)printf("FATAL can not open config file: %s errno:%s\n", config_file, strerror(errno));
         exit(1);
     }
 
     while (!feof(fd)) {
-        errno_t rc;
-        rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
+        errno_t rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
         securec_check_errno(rc, (void)rc);
         (void)fgets(buf, BUF_LEN, fd);
 
@@ -668,6 +1493,223 @@ int get_authentication_type(const char* config_file)
         }
     }
 
-    fclose(fd);
+    (void)fclose(fd);
     return type;
+}
+
+uint32 GetCmsConnCmaCount(void)
+{
+    (void)pthread_rwlock_rdlock(&gConns.lock);
+    uint32 count = gConns.count;
+    (void)pthread_rwlock_unlock(&gConns.lock);
+    return count;
+}
+
+bool CheckAgentConnIsCurrent(uint32 nodeid)
+{
+    (void)pthread_rwlock_rdlock(&gConns.lock);
+    bool res = (gConns.connections[nodeid] == NULL);
+    (void)pthread_rwlock_unlock(&gConns.lock);
+    return res;
+}
+
+bool isLoneNode(int timeout)
+{
+    uint32 count = 0;
+    long currentTime = time(NULL);
+    long delayTime;
+    const int div_count = 2;
+    CM_Connection* conn;
+
+    (void)pthread_rwlock_wrlock(&gConns.lock);
+    for (uint32 i = 0; i < gConns.max_node_id + 1; i++) {
+        conn = gConns.connections[i];
+        if ((conn != NULL) && (conn->fd >= 0)) {
+            delayTime = currentTime - conn->last_active;
+            if (delayTime < timeout) {
+                count++;
+            }
+        }
+    }
+
+    for (uint32 i = 0; i < MAXLISTEN; i++) {
+        conn = gConns.connections[CM_MAX_CONNECTIONS + i];
+        if ((conn != NULL) && (conn->fd >= 0)) {
+            delayTime = currentTime - conn->last_active;
+            if (delayTime < timeout) {
+                count++;
+            }
+        }
+    }
+    (void)pthread_rwlock_unlock(&gConns.lock);
+
+    write_runlog(LOG, "active agent connections count = %u\n", count);
+
+    return g_single_node_cluster ? false : (count <= g_node_num / div_count);
+}
+
+static void ProcessNodeConn(uint32 nodeId)
+{
+    write_runlog(LOG, "add pre conn for node %u.\n", nodeId);
+    ++g_preAgentCon.connCount;
+    g_preAgentCon.conFlag[nodeId] = 1;
+}
+
+void ProcPreNodeConn(uint32 nodeId)
+{
+    (void)pthread_rwlock_wrlock(&gConns.lock);
+    if (nodeId >= CM_MAX_CONNECTIONS || g_preAgentCon.conFlag[nodeId] != 0) {
+        (void)pthread_rwlock_unlock(&gConns.lock);
+        return;
+    }
+
+    if (g_multi_az_cluster) {
+        if (g_etcd_num > 0) {
+            if (nodeId != g_currentNode->node) {
+                ProcessNodeConn(nodeId);
+            }
+        } else {
+            ProcessNodeConn(nodeId);
+        }
+    } else {
+        if (IsDdbHealth(DDB_PRE_CONN)) {
+            if (nodeId != g_currentNode->node) {
+                ProcessNodeConn(nodeId);
+            }
+        } else {
+            ProcessNodeConn(nodeId);
+        }
+    }
+
+    (void)pthread_rwlock_unlock(&gConns.lock);
+}
+
+void addListenConn(int i, CM_Connection *listenCon)
+{
+    gConns.connections[CM_MAX_CONNECTIONS + i] = listenCon;
+}
+
+void getConnInfo(uint32& connCount, uint32& preConnCount)
+{
+    (void)pthread_rwlock_rdlock(&gConns.lock);
+
+    connCount = gConns.count;
+    preConnCount = g_preAgentCon.connCount;
+
+    (void)pthread_rwlock_unlock(&gConns.lock);
+}
+
+uint32 getPreConnCount(void)
+{
+    (void)pthread_rwlock_rdlock(&gConns.lock);
+    uint32 count =  g_preAgentCon.connCount;
+    (void)pthread_rwlock_unlock(&gConns.lock);
+
+    return count;
+}
+
+void resetPreConn(void)
+{
+    (void)pthread_rwlock_wrlock(&gConns.lock);
+    write_runlog(LOG, "pre conn reset when choose cms primary.\n");
+    g_preAgentCon.connCount = 0;
+    errno_t rc = memset_s(g_preAgentCon.conFlag, sizeof(g_preAgentCon.conFlag), 0, sizeof(g_preAgentCon.conFlag));
+    securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_unlock(&gConns.lock);
+}
+
+static int asyncSendMsgInner(const ConnID& connID, uint8 msgProcFlag, char msgtype,
+    const char *s, size_t len, int log_level)
+{
+    MsgSendInfo *msg = (MsgSendInfo *)AllocBufFromMsgPool((uint32)(sizeof(MsgSendInfo) + len));
+    if (msg == NULL) {
+        write_runlog(ERROR, "RespondMsg:AllocBufFromMsgPool failed,size=%u\n", (uint32)(sizeof(MsgSendInfo) + len));
+        return (int)ERR_ALLOC_MEMORY;
+    }
+    msg->connID.remoteType = connID.remoteType;
+    msg->connID.agentNodeId = connID.agentNodeId;
+    msg->connID.connSeq = connID.connSeq;
+    msg->procTime = 0;
+    msg->log_level = log_level;
+    msg->dataSize = (uint32)len;
+    msg->msgType = msgtype;
+    msg->procMethod = 0;
+    msg->msgProcFlag = msgProcFlag;
+    if (s != NULL && len > 0) {
+        errno_t rc = memcpy_s(msg->data, len, s, len);
+        securec_check_errno(rc, (void)rc);
+    }
+
+    write_runlog(DEBUG1,
+        "push message to send que:remote_type:%s,connSeq=%u,agentNodeId=%u,msgType=%c,len=%u.\n",
+        msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
+        msg->connID.connSeq,
+        msg->connID.agentNodeId,
+        msg->msgType,
+        msg->dataSize);
+
+    pushSendMsg(msg, msg->connID.remoteType == CM_AGENT ? MsgPriNormal : MsgPriHigh);
+
+    return 0;
+}
+
+int RespondMsg(const MsgRecvInfo* recvMsg, char msgtype, const char *s, size_t len, int log_level)
+{
+    ConnID connID;
+    connID.remoteType = recvMsg->connID.remoteType;
+    connID.connSeq = recvMsg->connID.connSeq;
+    connID.agentNodeId = recvMsg->connID.agentNodeId;
+    return asyncSendMsgInner(connID, recvMsg->msgProcFlag, msgtype, s, len, log_level);
+}
+
+int SendToAgentMsg(uint agentNodeId, char msgtype, const char *s, size_t len, int log_level)
+{
+    ConnID connID;
+    connID.remoteType = CM_AGENT;
+    connID.connSeq = 0;
+    connID.agentNodeId = agentNodeId;
+    return asyncSendMsgInner(connID, 0, msgtype, s, len, log_level);
+}
+
+int BroadcastMsg(char msgtype, const char *s, size_t len, int log_level)
+{
+    ConnID connID;
+    connID.remoteType = CM_AGENT;
+    connID.connSeq = 0;
+    connID.agentNodeId = ALL_AGENT_NODE_ID;
+    return asyncSendMsgInner(connID, 0, msgtype, s, len, log_level);
+}
+
+void AsyncProcMsg(const MsgRecvInfo *recvMsg, IOProcMethond procMethod, const char *s, uint32 len)
+{
+    MsgSendInfo *msg = (MsgSendInfo *)AllocBufFromMsgPool(sizeof(MsgSendInfo) + len);
+    if (msg == NULL) {
+        write_runlog(ERROR, "[%s] AllocBufFromMsgPool failed.\n", __FUNCTION__);
+        return;
+    }
+    msg->connID.remoteType = recvMsg->connID.remoteType;
+    msg->connID.connSeq = recvMsg->connID.connSeq;
+    msg->connID.agentNodeId = recvMsg->connID.agentNodeId;
+    msg->procTime = 0;
+    msg->dataSize = len;
+    msg->msgType = 0;
+    msg->procMethod = (char)procMethod;
+    if (s != NULL && len > 0) {
+        errno_t rc = memcpy_s(msg->data, len, s, len);
+        securec_check_errno(rc, (void)rc);
+    }
+    int32 logLevel = LOG;
+    if (msg->connID.remoteType == CM_CTL) {
+        logLevel = DEBUG1;
+    }
+
+    write_runlog(logLevel,
+        "push message to send que:remote_type:%s,connSeq=%u,agentNodeId=%u,procMethod=%d,len=%u.\n",
+        msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
+        msg->connID.connSeq,
+        msg->connID.agentNodeId,
+        (int)msg->procMethod,
+        msg->dataSize);
+
+    pushSendMsg(msg, msg->connID.remoteType == CM_AGENT ? MsgPriNormal : MsgPriHigh);
 }

@@ -37,8 +37,12 @@ enable_gtm_phony_dead_check = 1                               #enable gtm phony 
 unix_socket_directory = ''                                    #directory of unix socket
 dilatation_shard_count_for_disk_capacity_alarm = 1             #check disk capacity, 0 means off, bigger than 0 means dilatation shard number
 enable_dcf = off
-enable_e2e_rto = 0                                           #enable extreme rto, 1 means on, 0 means off
+enable_e2e_rto = 0                                            #enable extreme rto, 1 means on, 0 means off
 disaster_recovery_type = 0
 environment_threshold = (0,0,0,0,0)
 agent_backup_open = 0
-############### End ###################
+agent_rhb_interval = 1000                                     # the heatbeat of cma to cma broadcast interval, unit is ms
+enable_ssl = off                                              # enable cma to cma ssl
+ssl_cert_expire_alert_threshold = 90
+ssl_cert_expire_check_interval = 86400
+############### must leave a new line at the end ###################

@@ -26,23 +26,9 @@
 
 #include "common/config/cm_config.h"
 
-#define INSTANCE_NAME_LENGTH 256
-
-extern int InitNodeReadonlyInfo();
-extern bool checkReadOnlyStatus(uint32 instanceId);
-
-extern void* StorageDetectMain(void* arg);
-
-extern void SetPreAlarmForNodeInstance(uint32 instanceId);
-extern void ReportPreAlarmForNodeInstance();
-extern void PreAlarmForNodeThreshold();
-
-extern void SetPreAlarmForLogDiskInstance(const char* nodeName);
-extern void RepostPreAlarmForLogDiskInstance();
-extern void PreAlarmForLogPathThreshold();
-extern void SetNodeInstanceReadOnlyStatus(int instanceType, uint32 instanceId, uint32 readonly);
-extern void SaveNodeReadOnlyConfig(int logLevel);
-extern void CheckAndSetStorageThresholdReadOnlyAlarm();
+void* StorageDetectMain(void* arg);
+bool CheckReadOnlyStatus(uint32 instanceId);
+bool IsReadOnlyFinalState(uint32 instanceId, bool expectedState);
 int UpdateNodeReadonlyInfo(uint32 lastNodeNum);
 
 #endif

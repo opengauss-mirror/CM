@@ -41,6 +41,7 @@
 #define CM_PATH_LENGTH 1024
 #define CM_NODE_MAXNUM 1024
 #define CM_MAX_DATANODE_PER_NODE 160
+#define CM_MAX_THREAD_NUM (165)
 #define CM_MAX_INSTANCE_PER_NODE 192
 #define INVALID_NODE_NUM (CM_NODE_MAXNUM + 1)
 #define INVALID_INSTACNE_NUM (0xFFFFFFFF)
@@ -153,12 +154,13 @@ extern uint32 g_az_slave;
 extern uint32 g_az_arbiter;
 
 typedef enum ClusterType {
-   InvalidCluster = 0, // please don't change this value
-   MasterStandbyDummyCluster = 1,
-   SingleCluster = 2,
-   SinglePrimaryMultiStandbyCluster = 3,
-   SingleInstCluster = 4,
-   V3SingleInstCluster = 5
+    InvalidCluster = 0, // please don't change this value
+    MasterStandbyDummyCluster = 1,
+    SingleCluster = 2,
+    SingleInstClusterCent = 3,  // single node with only DN
+    SinglePrimaryMultiStandbyCluster = 4,
+    SingleInstCluster = 5,
+    V3SingleInstCluster = 6
 } ClusterType;
 
 typedef enum AZRole { AZMaster, AZSlave, AZArbiter } AZRole;
@@ -279,7 +281,7 @@ typedef struct staticNodeConfig {
     peerCmServerInfo peerCmServers[CM_MAX_CMSERVER_STANDBY_NUM];
 
     /**/
-    uint32 gtmAgentId;
+    uint32 cmAgentId;
     uint32 cmAgentMirrorId;
     uint32 cmAgentListenCount;
     char cmAgentIP[CM_IP_NUM][CM_IP_LENGTH];
@@ -343,7 +345,6 @@ typedef struct staticNodeConfig {
 
     uint32 sctpBeginPort;
     uint32 sctpEndPort;
-
 } staticNodeConfig;
 
 typedef struct dynamicConfigHeader {
@@ -368,7 +369,6 @@ typedef struct dynamicRelationConfig {
 } dynamicRelationConfig;
 
 typedef struct staticLogicNodeConfig {
-
     uint32 crc;
     uint32 node;
     char nodeName[CM_NODE_NAME];
@@ -390,7 +390,7 @@ typedef struct logicClusterStaticConfig {
     char LogicClusterName[CM_LOGIC_CLUSTER_NAME_LEN];
     uint32 LogicClusterStatus;
     uint32 isLogicClusterBalanced;
-    uint32 isRedistribution;
+    bool isRedistribution;
     staticConfigHeader logicClusterNodeHeader;
     staticLogicNodeConfig* logicClusterNode;
 } logicClusterStaticConfig;
@@ -451,7 +451,7 @@ extern int read_logic_cluster_name(const char* file_path, logicClusterList& lcLi
 extern int read_logic_cluster_config_files(const char* file_path, int* err_no);
 extern int read_lc_config_file(const char* file_path, int* err_no);
 extern int find_node_index_by_nodeid(uint32 nodeId, uint32* node_index);
-extern int find_current_node_by_nodeid(uint32 nodeId);
+extern int find_current_node_by_nodeid();
 extern int node_index_Comparator(const void* arg1, const void* arg2);
 extern void set_cm_read_flag(bool falg);
 extern char* getAZNamebyPriority(uint32 azPriority);

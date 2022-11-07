@@ -5,19 +5,14 @@ include $(BASE_BUILD_PATH)/Makefile.global
 subdir = src/cm_communication/cm_libpq
 
 DESTDIR = $(CM_TOP_BUILDDIR)/output
-VERSION = 1
 
-include $(BASE_BUILD_PATH)/common.mk
+OBJS = $(patsubst %.cpp,%.o,$(wildcard *.cpp))
 
-OBJS = ip.o pqcomm.o pqsignal.o
 
-.NOTPARALLEL:
 all: libcmpq.a libcmpq.so
 
 libcmpq.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) ip.cpp pqcomm.cpp pqsignal.cpp -o libcmpq.so.$(VERSION)
-	rm -f libcmpq.so && \
-	ln -s libcmpq.so.$(VERSION) libcmpq.so
+	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) $(wildcard *.cpp) -o libcmpq.so
 
 libcmpq.a: $(OBJS)
 	ar crs $@ $^
@@ -29,8 +24,4 @@ uninstall:
 	rm -f '$(DESTDIR)$(includedir)/cm-libpq-fe.h'
 
 clean:
-	rm -f $(OBJS) libcmpq.a libcmpq.so libcmpq.so.$(VERSION) *.depend
-
-distclean: clean
-
-maintainer-clean: distclean
+	rm -f $(OBJS) libcmpq.a libcmpq.so *.depend

@@ -29,16 +29,19 @@ extern "C" {
 #endif
 
 #ifdef WIN32
-__declspec(thread) error_info_t g_tls_error = {0};
+__declspec(thread) error_info_t g_tlsError = {0};
 #else
-__thread error_info_t g_tls_error = {0};
+__thread error_info_t g_tlsError = {0};
 #endif
+const int DISKRW_ERR_LENGTH = 1024;
+
+static THR_LOCAL char g_diskRwErr[DISKRW_ERR_LENGTH] = {0};
 
 /*
  * one error no corresponds to one error desc
  * Attention: keep the array index same as error no
  */
-const char *g_error_desc[ERR_MAX_COUNT] = {
+const char *g_errorDesc[ERR_MAX_COUNT] = {
     [ERR_ERRNO_BASE] = "Normal, no error reported",
     [ERR_SYSTEM_CALL] = "Secure C lib has thrown an error %d",
     [ERR_RESET_MEMORY] = "Secure C lib has thrown an error %d",
@@ -80,14 +83,22 @@ const char *g_error_desc[ERR_MAX_COUNT] = {
     [ERR_SSL_FILE_PERMISSION]      = "SSL certificate file \"%s\" has write, execute, group or world access permission",
     [ERR_PEER_CLOSED_REASON]       = "%s connection is closed, reason: %d",
     [ERR_PEER_CLOSED]              = "%s connection is closed",
-    [ERR_TCP_TIMEOUT]              = "%s timeout"
+    [ERR_TCP_TIMEOUT]              = "%s timeout",
+    [ERR_DISKRW_KEY_NOTFOUND]      = "can't find the key %s",
+    [ERR_DISKRW_CHECK_HEADER]      = "check header data with key %s failed",
+    [ERR_DISKRW_GET_DATA]          = "get data with key %s failed",
+    [ERR_DISKRW_UPDATE_DATA]       = "write key %s value %s to disk failed",
+    [ERR_DISKRW_DELETE_DATA]       = "delete key %s from disk failed",
+    [ERR_DISKRW_UPDATE_HEADER]     = "update header data with key %s failed",
+    [ERR_DISKRW_DISK_HEAD_FULL]    = "disk head is already full when write key %s value %s",
+    [ERR_DISKRW_WRITE_KEY]         = "write key %s to disk failed",
+    [ERR_DISKRW_INSERT_KEY]        = "insert key %s to memory failed",
+    [ERR_INVALID_DDB_CMD]          = "Server command content is error"
     };
 
-void cm_str_upper(char *str)
+void CmStrUpper(char *str)
 {
-    char *tmp = NULL;
-
-    tmp = str;
+    char *tmp = str;
     while (*tmp != '\0') {
         *tmp = UPPER(*tmp);
         tmp++;
@@ -96,11 +107,9 @@ void cm_str_upper(char *str)
     return;
 }
 
-void cm_str_lower(char *str)
+void CmStrLower(char *str)
 {
-    char *tmp = NULL;
-
-    tmp = str;
+    char *tmp = str;
     while (*tmp != '\0') {
         *tmp = LOWER(*tmp);
         tmp++;
@@ -109,7 +118,7 @@ void cm_str_lower(char *str)
     return;
 }
 
-int cm_get_sock_error()
+int CmGetSockError()
 {
 #ifdef WIN32
     return WSAGetLastError();
@@ -118,7 +127,7 @@ int cm_get_sock_error()
 #endif
 }
 
-void cm_set_sock_error(int32 e)
+void CmSetSockError(int32 e)
 {
 #ifdef WIN32
     WSASetLastError(e);
@@ -141,7 +150,7 @@ status_t cm_set_srv_error(const char *file, uint32 line, cm_errno_t code, const 
     return CM_SUCCESS;
 }
 
-void cm_set_error(const char *file, uint32 line, cm_errno_t code, const char *format, ...)
+void CmSetError(const char *file, uint32 line, cm_errno_t code, const char *format, ...)
 {
     va_list args;
 
@@ -152,7 +161,7 @@ void cm_set_error(const char *file, uint32 line, cm_errno_t code, const char *fo
     va_end(args);
 }
 
-void cm_set_error_ex(const char *file, uint32 line, cm_errno_t code, const char *format, ...)
+void CmSetErrorEx(const char *file, uint32 line, cm_errno_t code, const char *format, ...)
 {
     va_list args;
 
@@ -162,9 +171,28 @@ void cm_set_error_ex(const char *file, uint32 line, cm_errno_t code, const char 
     if (SECUREC_UNLIKELY(err == -1)) {
         write_runlog(ERROR, "Secure C lib has thrown an error %d while setting error, %s:%u", err, file, line);
     }
-    cm_set_error(file, line, code, g_error_desc[code], tmp);
+    CmSetError(file, line, code, g_errorDesc[code], tmp);
 
     va_end(args);
+}
+
+void SetDiskRwError(const char *format, ...)
+{
+    va_list args;
+
+    va_start(args, format);
+
+    errno_t err = vsnprintf_s(g_diskRwErr, DISKRW_ERR_LENGTH, DISKRW_ERR_LENGTH - 1, format, args);
+    if (SECUREC_UNLIKELY(err == -1)) {
+        write_runlog(ERROR, "Secure C lib has thrown an error while setting disk error.\n");
+    }
+
+    va_end(args);
+}
+
+const char *GetDiskRwError()
+{
+    return g_diskRwErr;
 }
 
 #ifdef __cplusplus

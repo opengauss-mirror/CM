@@ -15,7 +15,7 @@
 #ifndef GS_THREADLOCAL_H_
 #define GS_THREADLOCAL_H_
 
-/*PClint*/
+/* PClint */
 #ifdef PC_LINT
 #define THR_LOCAL
 #endif

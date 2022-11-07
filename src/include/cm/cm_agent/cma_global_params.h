@@ -28,6 +28,7 @@
 #include "cm/cm_c.h"
 #include "cm/cm_misc.h"
 #include "cm_ddb_adapter.h"
+#include "cma_network_check.h"
 #include "cma_main.h"
 
 typedef enum MAINTENANCE_MODE_ {
@@ -97,6 +98,9 @@ typedef struct CmDoWriteOper_t {
 #define PHONY_DEAD_THRESHOLD 300
 
 #define LISTEN 10
+#define AGENT_CONN_DN_TIMEOUT (2)
+
+#define BOOL_STR_MAX_LEN 10
 
 extern struct passwd* pw;
 extern FILE* g_lockfile;
@@ -110,6 +114,7 @@ extern DnSyncListInfo g_dnSyncListInfo[CM_MAX_DATANODE_PER_NODE];
 extern CmDoWriteOper g_cmDoWriteOper[CM_MAX_DATANODE_PER_NODE];
 extern etcd_status_info g_etcdReportMsg;
 extern kerberos_status_info g_kerberosReportMsg;
+extern OneNodeResStatusInfo g_resReportMsg;
 
 /* Enable the datanode incremental build mode */
 extern volatile bool incremental_build;
@@ -122,7 +127,7 @@ extern struct timespec g_serverHeartbeatTime;
 extern struct timespec g_disconnectTime;
 
 extern TlsAuthPath g_tlsPath;
-extern pthread_t g_threadId[CM_MAX_DATANODE_PER_NODE + 5];
+extern pthread_t g_threadId[CM_MAX_THREAD_NUM];
 
 extern const char* g_progname;
 extern char configDir[MAX_PATH_LEN];
@@ -154,12 +159,12 @@ extern char g_cmClusterResizePath[MAX_PATH_LEN];
 extern char g_cmClusterReplacePath[MAX_PATH_LEN];
 extern char system_call_log[MAXPGPATH];
 extern char g_unixSocketDirectory[MAXPGPATH];
+extern char g_votingDiskPath[MAX_PATH_LEN];
 extern char g_logBasePath[MAXPGPATH];
-extern char g_enableCnAutoRepair[10];
-extern char g_enableOnlineOrOffline[10];
-extern char g_enableLogCompress[10];
+extern char g_enableCnAutoRepair[BOOL_STR_MAX_LEN];
+extern char g_enableOnlineOrOffline[BOOL_STR_MAX_LEN];
+extern char g_enableLogCompress[BOOL_STR_MAX_LEN];
 extern char instance_maintance_path[MAX_PATH_LEN];
-extern bool g_dnCascade[CM_MAX_DATANODE_PER_NODE];
 
 extern volatile bool g_repairCn;
 extern bool g_shutdownRequest;
@@ -171,12 +176,10 @@ extern bool g_cmAgentFirstStart;
 extern bool g_cmStaticConfigNeedVerifyToCn;
 extern bool g_cmServerNeedReconnect;
 extern bool g_cmAgentNeedAlterPgxcNode;
-extern bool g_isNeedGetDoradoIp;
 #ifdef ENABLE_MULTIPLE_NODES
 extern bool cm_agent_need_check_libcomm_port;
 #endif
 extern bool g_isCmaBuildingDn[CM_MAX_DATANODE_PER_NODE];
-extern bool g_needUpdateSecboxConf;
 extern bool g_gtmDiskDamage;
 extern bool g_cnDiskDamage;
 extern bool g_cmsDiskDamage;
@@ -190,6 +193,8 @@ extern bool g_dnBuild[CM_MAX_DATANODE_PER_NODE];
 extern bool g_nicDown[CM_MAX_DATANODE_PER_NODE];
 extern bool g_dnPingFault[CM_MAX_DATANODE_PER_NODE];
 extern bool g_mostAvailableSync[CM_MAX_DATANODE_PER_NODE];
+extern bool g_dnReadOnly[CM_MAX_DATANODE_PER_NODE];
+extern bool g_cnReadOnly;
 #ifndef ENABLE_MULTIPLE_NODES
 extern bool g_ltranDown[CM_MAX_DATANODE_PER_NODE];
 #endif
@@ -209,7 +214,6 @@ extern uint32 agent_connect_retries;
 extern uint32 agent_check_interval;
 extern uint32 agent_kill_instance_timeout;
 extern uint32 g_agentKerberosStatusCheckInterval;
-extern uint32 g_agentDiskUsageStatusCheckTimes;
 extern uint32 g_cnAutoRepairDelay;
 extern uint32 dilatation_shard_count_for_disk_capacity_alarm;
 extern uint32 g_checkDiscInstanceNow;
@@ -217,7 +221,6 @@ extern uint32 g_nodeId;
 extern uint32 g_healthInstance;
 extern uint32 agent_phony_dead_check_interval;
 extern uint32 g_agentCheckTStatusInterval;
-extern uint32 g_agentToDb;
 extern uint32 g_threadDeadEffectiveTime;
 extern uint32 enable_gtm_phony_dead_check;
 extern uint32 g_cmaConnectCmsInOtherNodeCount;
@@ -230,10 +233,9 @@ extern uint32 g_enableE2ERto;
 extern DisasterRecoveryType g_disasterRecoveryType;
 
 extern int g_cmShutdownLevel; /* cm_ctl stop single instance, single node or all nodes */
-extern int g_cmShutdownMode;  /* fast shutdown */
+extern ShutdownMode g_cmShutdownMode;  /* fast shutdown */
 extern int g_cnFrequentRestartCounts;
 extern int g_cnDnPairsCount;
-extern int g_isCatalogChanged;
 extern int g_currenPgxcNodeNum;
 extern int g_normalStopTryTimes;
 extern int g_gtmStartCounts;
@@ -242,16 +244,18 @@ extern int g_dnStartCounts[CM_MAX_DATANODE_PER_NODE];
 extern int g_primaryDnRestartCounts[CM_MAX_DATANODE_PER_NODE];
 extern int g_primaryDnRestartCountsInHour[CM_MAX_DATANODE_PER_NODE];
 extern bool g_dnPhonyDeadD[CM_MAX_DATANODE_PER_NODE];
+extern bool g_dnCore[CM_MAX_DATANODE_PER_NODE];
+extern bool g_dnNoFreeProc[CM_MAX_DATANODE_PER_NODE];
+extern bool g_isCatalogChanged;
 extern bool g_gtmPhonyDeadD;
-extern bool g_dnNoFreeProc;
 extern bool g_cnNoFreeProc;
 extern bool g_cnWaiting;
+extern bool g_cleanDropCnFlag;
 
 extern int g_startCmsCount;
 extern int g_startCnCount;
 extern int g_startDnCount[CM_MAX_DATANODE_PER_NODE];
 extern int g_startGtmCount;
-extern int g_cleanDropCnFlag;
 extern int g_cmServerInstanceStatus;
 extern int g_dnRoleForPhonyDead[CM_MAX_DATANODE_PER_NODE];
 extern int g_gtmRoleForPhonyDead;
@@ -265,9 +269,10 @@ extern int64 log_max_size;
 extern uint32 log_max_count;
 extern uint32 log_saved_days;
 extern uint32 log_threshold_check_interval;
-extern char g_agentEnableDcf[10];
+extern char g_agentEnableDcf[BOOL_STR_MAX_LEN];
 extern long g_check_disc_state;
-extern long g_thread_state[CM_MAX_DATANODE_PER_NODE + 5];
+extern long g_thread_state[CM_MAX_THREAD_NUM];
+extern const char *g_threadName[CM_MAX_THREAD_NUM];
 extern uint32 g_serverNodeId;
 extern bool g_pgxcPoolReload;
 extern uint32 g_autoRepairCnt;
@@ -279,9 +284,12 @@ extern char g_agentQueryBarrier[BARRIERLEN];
 extern char g_agentTargetBarrier[BARRIERLEN];
 extern char g_environmentThreshold[CM_PATH_LENGTH];
 extern char g_doradoIp[CM_IP_LENGTH];
+extern uint32 g_diskTimeout;
+extern char g_enableMesSsl[BOOL_STR_MAX_LEN];
+extern uint32 g_sslCertExpireCheckInterval;
+extern uint32 g_cmaRhbItvl;
+extern CmResConfList g_resConf[CM_MAX_RES_INST_COUNT];
 
-extern MsgQueue g_sendQueue;
-extern MsgQueue g_recvQueue;
 bool &GetIsSharedStorageMode();
 
 #define FENCE_TIMEOUT (agent_connect_retries * (agent_connect_timeout + agent_report_interval))
@@ -296,5 +304,6 @@ extern bool g_dn_report_msg_ok;
 #define PHYSICAL_CPU_NUM (1 << agent_process_cpu_affinity)
 #define CPU_AFFINITY_MAX 2
 #endif
+
 
 #endif

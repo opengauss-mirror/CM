@@ -135,25 +135,25 @@ typedef union GTM_ResultData {
         long send_count;
         long receive_count;
         int sync_mode;
-    } grd_query_gtm_status; /*MSG_QUREY_GTM_STATUS*/
+    } grd_query_gtm_status; /* MSG_QUREY_GTM_STATUS */
 
     int grd_gtm_sync_mode_result;
 
-    int32 grd_check_standby_role_result; /*MSG_CHECK_STANDBY_ROLE*/
+    int32 grd_check_standby_role_result; /* MSG_CHECK_STANDBY_ROLE */
 
-    int32 grd_sync_file_result; /*MSG_SYNC_FILE*/
+    int32 grd_sync_file_result; /* MSG_SYNC_FILE */
 
-    int32 grd_check_next_gxid_result; /*MSG_SYNC_FILE*/
+    int32 grd_check_next_gxid_result; /* MSG_SYNC_FILE */
 
     struct {
         int max_server_memory;
         double query_memory_limit;
-    } grd_workload_manager_init_result; /*MSG_TXN_WORKLOAD_INIT*/
+    } grd_workload_manager_init_result; /* MSG_TXN_WORKLOAD_INIT */
 
-    int32 grd_create_resource_pool_result; /*MSG_WLM_RESOURCEPOOL_CREATE*/
-    int32 grd_update_resource_pool_result; /*MSG_WLM_RESOURCEPOOL_UPDATE*/
-    int32 grd_delete_resource_pool_result; /*MSG_WLM_RESOURCEPOOL_DELETE*/
-    int32 grd_init_resource_pool_result;   /*MSG_WLM_RESOURCEPOOL_INIT*/
+    int32 grd_create_resource_pool_result; /* MSG_WLM_RESOURCEPOOL_CREATE */
+    int32 grd_update_resource_pool_result; /* MSG_WLM_RESOURCEPOOL_UPDATE */
+    int32 grd_delete_resource_pool_result; /* MSG_WLM_RESOURCEPOOL_DELETE */
+    int32 grd_init_resource_pool_result;   /* MSG_WLM_RESOURCEPOOL_INIT */
 
     struct {
         int32 length;
@@ -181,7 +181,7 @@ typedef struct GTM_Result {
     int gr_status;
     GTM_ProxyMsgHeader gr_proxyhdr;
     GTM_ResultData gr_resdata;
-    GTM_Timeline gr_timeline; /*GTM start status, now mean restart times*/
+    GTM_Timeline gr_timeline; /* GTM start status, now mean restart times */
     uint64 csn;               /* snapshot csn or commit csn */
     /*
      * We keep these two items outside the union to avoid repeated malloc/free

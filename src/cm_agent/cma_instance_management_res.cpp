@@ -1,0 +1,556 @@
+/*
+ * Copyright (c) 2021 Huawei Technologies Co.,Ltd.
+ *
+ * CM is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * cma_instance_management_ext.cpp
+ *
+ *
+ * IDENTIFICATION
+ *    src/cm_agent/cma_instance_management_ext.cpp
+ *
+ * -------------------------------------------------------------------------
+ */
+#include <sys/wait.h>
+#include "cm/cm_json_config.h"
+#include "cma_global_params.h"
+#include "cma_alarm.h"
+#include "cma_instance_management.h"
+#include "cma_instance_management_res.h"
+
+uint32 g_localResConfCount = 0;
+
+int SystemExecute(const char *scriptPath, const char *oper, uint32 timeout)
+{
+    char command[MAX_PATH_LEN + MAX_OPTION_LEN] = {0};
+    int ret = snprintf_s(command,
+        MAX_PATH_LEN + MAX_OPTION_LEN,
+        MAX_PATH_LEN + MAX_OPTION_LEN - 1,
+        SYSTEMQUOTE "timeout -s SIGKILL %us %s %s > %s" SYSTEMQUOTE,
+        timeout,
+        scriptPath,
+        oper,
+        CM_DEVNULL);
+    securec_check_intval(ret, (void)ret);
+    int status = system(command);
+    if (status == -1) {
+        write_runlog(ERROR, "run system command failed %s, errno(%d).\n", command, errno);
+        return -1;
+    }
+    if (WIFEXITED(status)) {
+        ret = WEXITSTATUS(status);
+        write_runlog(DEBUG1, "run script command %s, ret=%d.\n", command, ret);
+        return ret;
+    } else {
+        write_runlog(ERROR, "run system command failed %s, ret=%d, errno(%d).\n", command, WEXITSTATUS(status), errno);
+    }
+    return -1;
+}
+
+void StartOneResInst(const CmResConfList *conf)
+{
+    char oper[MAX_OPTION_LEN] = {0};
+    int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s", conf->resInstanceId, conf->arg);
+    securec_check_intval(ret, (void)ret);
+
+    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    if (ret == 0) {
+        write_runlog(LOG, "StartOneResInst: run start script (%s %s) successfully.\n", conf->script, oper);
+    } else {
+        write_runlog(ERROR, "StartOneResInst: run start script (%s %s) failed, ret=%d.\n", conf->script, oper, ret);
+    }
+}
+
+void StopOneResInst(const CmResConfList *conf)
+{
+    char oper[MAX_OPTION_LEN] = {0};
+    int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-stop %u %s", conf->resInstanceId, conf->arg);
+    securec_check_intval(ret, (void)ret);
+
+    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    if (ret == 0) {
+        write_runlog(LOG, "StopOneResInst: run stop command (%s %s) successfully.\n", conf->script, oper);
+    } else {
+        write_runlog(ERROR, "StopOneResInst: run stop command (%s %s) failed, ret=%d.\n", conf->script, oper, ret);
+    }
+}
+
+void OneResInstShutdown(const CmResConfList *oneResConf)
+{
+    if (CheckOneResInst(oneResConf) != CUS_RES_CHECK_STAT_OFFLINE) {
+        write_runlog(LOG, "custom resource(%s:%u) shutdown.\n", oneResConf->resName, oneResConf->cmInstanceId);
+        StopOneResInst(oneResConf);
+    }
+}
+
+status_t RegOneResInst(const CmResConfList *conf, uint32 destInstId)
+{
+    char oper[MAX_OPTION_LEN] = {0};
+    int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-reg %u %s", destInstId, conf->arg);
+    securec_check_intval(ret, (void)ret);
+
+    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    if (ret != 0) {
+        write_runlog(ERROR, "RegOneResInst: reg inst cmd(%s %s) failed, ret=%d\n", conf->script, oper, ret);
+        return CM_ERROR;
+    }
+    write_runlog(LOG, "RegOneResInst: reg inst cmd(%s %s) success\n", conf->script, oper);
+    return CM_SUCCESS;
+}
+
+status_t UnregOneResInst(const CmResConfList *conf, uint32 destInstId)
+{
+    char oper[MAX_OPTION_LEN] = {0};
+    int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-unreg %u %s", destInstId, conf->arg);
+    securec_check_intval(ret, (void)ret);
+
+    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    if (ret != 0) {
+        write_runlog(ERROR, "UnregOneResInst: unreg inst cmd:(%s %s) failed, ret=%d\n", conf->script, oper, ret);
+        return CM_ERROR;
+    }
+    write_runlog(LOG, "UnregOneResInst: unreg inst cmd:(%s %s) success\n", conf->script, oper);
+    return CM_SUCCESS;
+}
+
+// -1:error, 0:unreg, 1:pending, 2:reg
+ResIsregStatus IsregOneResInst(const CmResConfList *conf, uint32 destInstId)
+{
+    char oper[MAX_OPTION_LEN];
+    int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-isreg %u %s", destInstId, conf->arg);
+    securec_check_intval(ret, (void)ret);
+
+    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    switch (ret) {
+        case RES_INST_ISREG_UNKNOWN:
+            write_runlog(DEBUG5, "IsregOneResInst: res(%s) inst(%u) get isreg error.\n", conf->resName, destInstId);
+            return CM_RES_ISREG_UNKNOWN;
+        case RES_INST_ISREG_UNREG:
+            write_runlog(DEBUG5, "IsregOneResInst: res(%s) inst(%u) has been unreg.\n", conf->resName, destInstId);
+            return CM_RES_ISREG_UNREG;
+        case RES_INST_ISREG_PENDING:
+            write_runlog(DEBUG5, "IsregOneResInst: res(%s) inst(%u) has been pending.\n", conf->resName, destInstId);
+            return CM_RES_ISREG_PENDING;
+        case RES_INST_ISREG_REG:
+            write_runlog(DEBUG5, "IsregOneResInst: res(%s) inst(%u) has been reg.\n", conf->resName, destInstId);
+            return CM_RES_ISREG_REG;
+        case RES_INST_ISREG_NOT_SUPPORT:
+            write_runlog(DEBUG5, "IsregOneResInst: res(%s) inst(%u) not support isreg.\n", conf->resName, destInstId);
+            return CM_RES_ISREG_NOT_SUPPORT;
+        default:
+            write_runlog(ERROR, "IsregOneResInst: res(%s) inst(%u) get unknown isreg ret(%d).\n",
+                conf->resName, destInstId, ret);
+            break;
+    }
+
+    return CM_RES_ISREG_UNKNOWN;
+}
+
+status_t CleanOneResInst(const CmResConfList *conf)
+{
+    char oper[MAX_OPTION_LEN];
+    int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-clean %u %s", conf->resInstanceId, conf->arg);
+    securec_check_intval(ret, (void)ret);
+
+    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    if (ret != 0) {
+        write_runlog(ERROR, "CleanOneResInst: clean inst cmd(%s %s) failed, ret=%d\n", conf->script, oper, ret);
+        return CM_ERROR;
+    }
+    write_runlog(LOG, "CleanOneResInst: clean inst cmd(%s %s) success\n", conf->script, oper);
+    return CM_SUCCESS;
+}
+
+void StopAllResInst()
+{
+    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+        (void)CleanOneResInst(&g_resConf[i]);
+    }
+}
+
+int CheckOneResInst(const CmResConfList *conf)
+{
+    char oper[MAX_OPTION_LEN] = {0};
+    int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-check %u %s", conf->resInstanceId, conf->arg);
+    securec_check_intval(ret, (void)ret);
+
+    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    if ((ret != CUS_RES_CHECK_STAT_ONLINE) && (ret != CUS_RES_CHECK_STAT_OFFLINE)) {
+        write_runlog(LOG, "CheckOneResInst, run system command(%s %s) special result=%d\n",  conf->script, oper, ret);
+    }
+    return ret;
+}
+
+static void ManualStopLocalResInst(CmResConfList *conf)
+{
+    char instanceStartFile[MAX_PATH_LEN] = {0};
+    int ret = snprintf_s(instanceStartFile, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+        "%s_%u", g_cmInstanceManualStartPath, conf->cmInstanceId);
+    securec_check_intval(ret, (void)ret);
+
+    if (CmFileExist(instanceStartFile)) {
+        write_runlog(LOG, "instanceStartFile(%s) is exist, can't create again.\n", instanceStartFile);
+        return;
+    }
+    
+    char command[MAX_PATH_LEN] = {0};
+    ret = snprintf_s(command, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+        SYSTEMQUOTE "touch %s;chmod 600 %s < \"%s\" 2>&1" SYSTEMQUOTE,
+        instanceStartFile, instanceStartFile, DEVNULL);
+    securec_check_intval(ret, (void)ret);
+    
+    ret = system(command);
+    if (ret != 0) {
+        write_runlog(ERROR, "manual stop res(%s) inst(%u) failed, ret=%d.\n", conf->resName, conf->resInstanceId, ret);
+    } else {
+        write_runlog(LOG, "manual stop res(%s) inst(%u) success.\n", conf->resName, conf->resInstanceId);
+        conf->checkInfo.startCount = 0;
+        conf->checkInfo.startTime = 0;
+    }
+}
+
+bool IsInstManualStopped(uint32 instId)
+{
+    char manualStart[MAX_PATH_LEN] = {0};
+    int ret = snprintf_s(manualStart, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s_%u", g_cmInstanceManualStartPath, instId);
+    securec_check_intval(ret, (void)ret);
+    if (CmFileExist(manualStart)) {
+        write_runlog(DEBUG5, "res inst(%u) has been stop.\n", instId);
+        return true;
+    }
+    return false;
+}
+
+static bool CanCusInstDoStart(const CmResConfList *conf)
+{
+    ResIsregStatus stat = IsregOneResInst(conf, conf->resInstanceId);
+    if ((stat == CM_RES_ISREG_REG) || (stat == CM_RES_ISREG_NOT_SUPPORT)) {
+        return true;
+    }
+    write_runlog(LOG, "cur inst(%u) isreg stat=(%u), can't do start.\n", conf->cmInstanceId, (uint32)stat);
+    return false;
+}
+
+static inline void RestartOneResInst(CmResConfList *conf)
+{
+    write_runlog(LOG, "res(%s) inst(%u) need restart.\n", conf->resName, conf->cmInstanceId);
+    (void)CleanOneResInst(conf);
+    if (CanCusInstDoStart(conf)) {
+        StartOneResInst(conf);
+    }
+}
+
+static void ProcessOfflineInstance(CmResConfList *conf)
+{
+    if (conf->checkInfo.restartTimes == -1) {
+        RestartOneResInst(conf);
+        return;
+    }
+    if (conf->checkInfo.brokeTime == 0) {
+        conf->checkInfo.brokeTime = time(NULL);
+        return;
+    }
+    if (conf->checkInfo.startCount >= conf->checkInfo.restartTimes) {
+        write_runlog(LOG, "[CLIENT] res(%s) inst(%u) get out from cluster.\n", conf->resName, conf->resInstanceId);
+        ManualStopLocalResInst(conf);
+        return;
+    }
+    if ((time(NULL) - conf->checkInfo.brokeTime) < conf->checkInfo.restartDelay) {
+        write_runlog(DEBUG5, "[CLIENT] res(%s) inst(%u) curTime=%ld, brokeTime=%ld, restartDelay=%d.\n",
+            conf->resName, conf->resInstanceId, time(NULL), conf->checkInfo.brokeTime, conf->checkInfo.restartDelay);
+        return;
+    }
+    if ((time(NULL) - conf->checkInfo.startTime) < conf->checkInfo.restartPeriod) {
+        write_runlog(DEBUG5, "[CLIENT] res(%s) inst(%u) startTime = %ld, restartPeriod = %d.\n",
+            conf->resName, conf->resInstanceId, conf->checkInfo.startTime, conf->checkInfo.restartPeriod);
+        return;
+    }
+    RestartOneResInst(conf);
+    conf->checkInfo.startCount++;
+    conf->checkInfo.startTime = time(NULL);
+    write_runlog(DEBUG1, "[CLIENT] res(%s) inst(%u) startCount=%d, startTime=%ld.\n",
+        conf->resName, conf->resInstanceId, conf->checkInfo.startCount, conf->checkInfo.startTime);
+}
+
+static inline void CleanOneInstCheckCount(CmResConfList *resConf)
+{
+    resConf->checkInfo.startCount = 0;
+    resConf->checkInfo.startTime = 0;
+    resConf->checkInfo.brokeTime = 0;
+}
+
+static inline bool NeedStopResInst(const char *resName, uint32 cmInstId)
+{
+    return (IsInstManualStopped(cmInstId) || CmFileExist(g_cmManualStartPath) || !IsOneResInstWork(resName, cmInstId) ||
+        g_agentNicDown);
+}
+
+static void ProcessOnlineInstance(CmResConfList *resConf)
+{
+    // continue 5 times, check inst status is online, clean check count
+    const int instNormalTimes = 5;
+    if (resConf->checkInfo.onlineTimes < instNormalTimes) {
+        ++resConf->checkInfo.onlineTimes;
+    } else {
+        CleanOneInstCheckCount(resConf);
+    }
+}
+
+void StartResourceCheck()
+{
+    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+        int ret = CheckOneResInst(&g_resConf[i]);
+        switch (ret) {
+            case CUS_RES_CHECK_STAT_ONLINE:
+                ProcessOnlineInstance(&g_resConf[i]);
+                break;
+            case CUS_RES_CHECK_STAT_OFFLINE:
+                g_resConf[i].checkInfo.onlineTimes = 0;
+                if (NeedStopResInst(g_resConf[i].resName, g_resConf[i].cmInstanceId)) {
+                    CleanOneInstCheckCount(&g_resConf[i]);
+                    break;
+                }
+                ProcessOfflineInstance(&g_resConf[i]);
+                break;
+            default :
+                write_runlog(ERROR, "StartResourceCheck, special status(%d).\n", ret);
+                break ;
+        }
+    }
+}
+
+static bool IsInstReplaced(uint32 cmInstId)
+{
+    char flag[MAX_PATH_LEN] = {0};
+    int ret = snprintf_s(flag, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s_%u", g_binPath, CM_INSTANCE_REPLACE, cmInstId);
+    securec_check_intval(ret, (void)ret);
+    if (CmFileExist(flag)) {
+        return true;
+    }
+    return false;
+}
+
+void StopResourceCheck()
+{
+    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+        if (IsInstReplaced(g_resConf[i].cmInstanceId)) {
+            write_runlog(LOG, "custom resource instance(%s:%u) is being replaced and can't be stopped.\n",
+                g_resConf[i].resName, g_resConf[i].cmInstanceId);
+            continue;
+        }
+
+        if (IsInstManualStopped(g_resConf[i].cmInstanceId)) {
+            OneResInstShutdown(&g_resConf[i]);
+        }
+        if (CmFileExist(g_cmManualStartPath) || !IsOneResInstWork(g_resConf[i].resName, g_resConf[i].cmInstanceId)) {
+            (void)CleanOneResInst(&g_resConf[i]);
+        }
+    }
+}
+
+int ResourceStoppedCheck(void)
+{
+    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+        if (CheckOneResInst(&g_resConf[i]) == CUS_RES_CHECK_STAT_ONLINE) {
+            write_runlog(LOG, "resource is running, script is %s\n", g_resConf[i].script);
+            return PROCESS_RUNNING;
+        }
+    }
+    return PROCESS_NOT_EXIST;
+}
+
+static inline status_t PaddingResConf(const CmResConfList *oneConf)
+{
+    if (g_localResConfCount >= CM_MAX_RES_INST_COUNT) {
+        write_runlog(ERROR, "custom resource inst count overflow, max:%d.\n", CM_MAX_RES_COUNT);
+        return CM_ERROR;
+    }
+    errno_t rc = memcpy_s(&g_resConf[g_localResConfCount], sizeof(CmResConfList), oneConf, sizeof(CmResConfList));
+    securec_check_errno(rc, (void)rc);
+    ++g_localResConfCount;
+    return CM_SUCCESS;
+}
+
+static status_t InitResNameConf(const char *resNameJson, char *resNameConf)
+{
+    if (CM_IS_EMPTY_STR(resNameJson)) {
+        write_runlog(ERROR, "[InitLocalRes] resource name is empty.\n");
+        return CM_ERROR;
+    }
+
+    if (strlen(resNameJson) >= CM_MAX_RES_NAME) {
+        write_runlog(ERROR, "[InitLocalRes] resName(%s) is longer than %d.\n", resNameJson, (CM_MAX_RES_NAME - 1));
+        return CM_ERROR;
+    }
+
+    errno_t rc = strcpy_s(resNameConf, CM_MAX_RES_NAME, resNameJson);
+    securec_check_errno(rc, (void)rc);
+    return CM_SUCCESS;
+}
+
+static inline void InitOneConfOfRes(const char *paraName, int value, int *newValue, int defValue)
+{
+    if (IsResConfValid(paraName, value)) {
+        *newValue = value;
+    } else {
+        *newValue = defValue;
+    }
+}
+
+static status_t InitLocalCommConfOfDefRes(const CusResConfJson *resJson, CmResConfList *localConf)
+{
+    localConf->nodeId = g_currentNode->node;
+
+    CM_RETURN_IFERR(InitResNameConf(resJson->resName, localConf->resName));
+
+    errno_t rc = strcpy_s(localConf->script, MAX_PATH_LEN, resJson->resScript);
+    securec_check_errno(rc, (void)rc);
+    canonicalize_path(localConf->script);
+
+    const int defCheckInterval = 1;
+    InitOneConfOfRes("check_interval", resJson->checkInterval, &localConf->checkInfo.checkInterval, defCheckInterval);
+    const int defTimeOut = 10;
+    InitOneConfOfRes("time_out", resJson->timeOut, &localConf->checkInfo.timeOut, defTimeOut);
+    const int defRestartDelay = 1;
+    InitOneConfOfRes("restart_delay", resJson->restartDelay, &localConf->checkInfo.restartDelay, defRestartDelay);
+    const int defRestartPeriod = 1;
+    InitOneConfOfRes("restart_period", resJson->restartPeriod, &localConf->checkInfo.restartPeriod, defRestartPeriod);
+    const int defRestartTimes = -1;
+    InitOneConfOfRes("restart_times", resJson->restartTimes, &localConf->checkInfo.restartTimes, defRestartTimes);
+
+    return CM_SUCCESS;
+}
+
+static uint32 GetCmInstId(const CmResConfList *newConf)
+{
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+        if (strcmp(g_resStatus[i].status.resName, newConf->resName) != 0) {
+            (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+            continue;
+        }
+        uint32 cmInstId = 0;
+        for (uint32 k = 0; k < g_resStatus[i].status.instanceCount; ++k) {
+            if (g_resStatus[i].status.resStat[k].resInstanceId == newConf->resInstanceId) {
+                cmInstId = g_resStatus[i].status.resStat[k].cmInstanceId;
+                break;
+            }
+        }
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+        return cmInstId;
+    }
+    return 0;
+}
+
+static void InitLocalOneAppInstConf(const CusResInstConf *appInst, CmResConfList *newConf)
+{
+    errno_t rc = memset_s(newConf->arg, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
+    rc = strcpy_s(newConf->arg, MAX_PATH_LEN, appInst->resArgs);
+    securec_check_errno(rc, (void)rc);
+    newConf->nodeId = (uint32)appInst->nodeId;
+    newConf->resInstanceId = (uint32)appInst->resInstId;
+    newConf->cmInstanceId = GetCmInstId(newConf);
+}
+
+static status_t InitLocalAllAppResInstConf(const AppCusResConfJson *appResJson, CmResConfList *newLocalConf)
+{
+    for (uint32 i = 0; i < appResJson->instance.count; ++i) {
+        if (appResJson->instance.conf[i].nodeId == (int)newLocalConf->nodeId) {
+            InitLocalOneAppInstConf(&appResJson->instance.conf[i], newLocalConf);
+            CM_RETURN_IFERR(PaddingResConf(newLocalConf));
+        }
+    }
+    return CM_SUCCESS;
+}
+
+static void InitLocalOneDnInstConfByStaticConf(const dataNodeInfo *dnInfo, CmResConfList *newConf)
+{
+    errno_t rc = memset_s(newConf->arg, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
+    rc = strcpy_s(newConf->arg, MAX_PATH_LEN, dnInfo->datanodeLocalDataPath);
+    securec_check_errno(rc, (void)rc);
+    newConf->cmInstanceId = dnInfo->datanodeId;
+    newConf->resInstanceId = dnInfo->datanodeId;
+}
+
+static void InitLocalOneDnInstConfByJsonConf(const CusResConfJson *resJson, CmResConfList *newConf)
+{
+    for (uint32 i = 0; i < resJson->instance.count; ++i) {
+        if ((resJson->instance.conf[i].nodeId == (int)newConf->nodeId) &&
+            (resJson->instance.conf[i].resInstId == (int)newConf->resInstanceId)) {
+            errno_t rc = strcpy_s(newConf->arg, MAX_PATH_LEN, resJson->instance.conf[i].resArgs);
+            securec_check_errno(rc, (void)rc);
+        }
+    }
+}
+
+static status_t InitLocalAllDnResInstConf(const CusResConfJson *resJson, CmResConfList *newLocalConf)
+{
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        if (g_node[i].node != newLocalConf->nodeId) {
+            continue;
+        }
+        for (uint32 k = 0; k < g_node[i].datanodeCount; ++k) {
+            InitLocalOneDnInstConfByStaticConf(&g_node[i].datanode[k], newLocalConf);
+            InitLocalOneDnInstConfByJsonConf(resJson, newLocalConf);
+            CM_RETURN_IFERR(PaddingResConf(newLocalConf));
+        }
+        break;
+    }
+    return CM_SUCCESS;
+}
+
+static status_t InitLocalOneResConf(const OneCusResConfJson *oneResJson)
+{
+    CmResConfList newLocalConf;
+    errno_t rc = memset_s(&newLocalConf, sizeof(CmResConfList), 0, sizeof(CmResConfList));
+    securec_check_errno(rc, (void)rc);
+
+    if (oneResJson->resType == CUSTOM_RESOURCE_APP) {
+        CM_RETURN_IFERR(InitLocalCommConfOfDefRes(&oneResJson->appResConf, &newLocalConf));
+        CM_RETURN_IFERR(InitLocalAllAppResInstConf(&oneResJson->appResConf, &newLocalConf));
+    } else if (oneResJson->resType == CUSTOM_RESOURCE_DN) {
+        CM_RETURN_IFERR(InitLocalCommConfOfDefRes(&oneResJson->dnResConf, &newLocalConf));
+        CM_RETURN_IFERR(InitLocalAllDnResInstConf(&oneResJson->dnResConf, &newLocalConf));
+    }
+
+    return CM_SUCCESS;
+}
+
+status_t InitLocalResConf()
+{
+    if (IsConfJsonEmpty()) {
+        write_runlog(LOG, "[InitLocalRes] no resource exist.\n");
+        return CM_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < g_confJson->resource.count; ++i) {
+        CM_RETURN_IFERR(InitLocalOneResConf(&g_confJson->resource.conf[i]));
+    }
+
+    return CM_SUCCESS;
+}
+
+uint32 GetLocalResConfCount()
+{
+    return g_localResConfCount;
+}
+
+bool IsCusResExistLocal()
+{
+    if (g_localResConfCount == 0) {
+        return false;
+    }
+    return true;
+}

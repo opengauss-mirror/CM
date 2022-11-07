@@ -24,18 +24,18 @@
 #ifndef CM_MSG_H
 #define CM_MSG_H
 
+#include <pthread.h>
+#include <sys/time.h>
+#include "cm_misc_res.h"
 #include "common/config/cm_config.h"
 #include "replication/replicainternal.h"
 #include "access/xlogdefs.h"
 #include "access/redo_statistic_msg.h"
-#include <vector>
-#include <string>
-#include <pthread.h>
-#include <sys/time.h>
+#include "cm_rhb.h"
+#include "cm_voting_disk.h"
+#include "cm/cm_msg_common.h"
 
 #define CM_MAX_SENDER_NUM 2
-#define LOGIC_CLUSTER_NUMBER (32 + 1)  // max 32 logic + 1 elastic group
-#define CM_LOGIC_CLUSTER_NAME_LEN 64
 #define CM_MSG_ERR_INFORMATION_LENGTH 1024
 #ifndef MAX_INT32
 #define MAX_INT32 (2147483600)
@@ -45,22 +45,6 @@
 #define RESERVE_NUM_USED 4
 #define MAX_SYNC_STANDBY_LIST 1024
 #define REMAIN_LEN 20
-
-#define PROCESS_RESOURCE 2
-#define CM_MAX_RES_NAME 32
-#define CM_MAX_INSTANCES 64
-#define CM_MAX_RES_COUNT 16
-#define CM_MAX_RES_NODE_COUNT 16
-
-#define CM_MAX_SSL_EXPIRE_THRESHOLD   (uint32)180
-#define CM_MIN_SSL_EXPIRE_THRESHOLD   (uint32)7
-
-#define CM_PASSWD_MAX_LEN   64
-
-#define CM_DOMAIN_SOCKET "agent.socket"
-
-using std::string;
-using std::vector;
 
 typedef struct timespec cmTime_t;
 
@@ -77,7 +61,7 @@ const int32 SUCCESS_SYNC_DATA = 1;
  * Symbols in the following enum are usd in cluster_msg_map_string defined in cm_misc.cpp.
  * Modifictaion to the following enum should be reflected to cluster_msg_map_string as well.
  */
-typedef enum CM_MessageType {
+typedef enum CM_MessageType_st {
     MSG_CTL_CM_SWITCHOVER = 0,
     MSG_CTL_CM_BUILD = 1,
     MSG_CTL_CM_SYNC = 2,
@@ -257,9 +241,27 @@ typedef enum CM_MessageType {
     MSG_AGENT_CM_DATANODE_LOCAL_PEER = 156,
     MSG_GET_SHARED_STORAGE_INFO = 157,
     MSG_GET_SHARED_STORAGE_INFO_ACK = 158,
-    MSG_AGENT_CLIENT_INIT_ACK = 159,
 
-    MSG_CM_TYPE_CEIL, // new message types should be added before this.
+    MSG_AGENT_CLIENT_INIT_ACK = 159,
+    MSG_CM_RES_LOCK = 160,
+    MSG_CM_RES_LOCK_ACK = 161,
+    MSG_CM_RES_REG = 162,
+    MSG_CM_RES_REG_ACK = 163,
+    MSG_CTL_CM_QUERY_RES_INST = 164,
+    MSG_CM_CTL_QUERY_RES_INST_ACK = 165,
+
+    MSG_CM_RHB = 166,
+    MSG_CTL_CM_RHB_STATUS_REQ = 167,
+    MSG_CTL_CM_RHB_STATUS_ACK = 168,
+    MSG_CTL_CM_NODE_DISK_STATUS_REQ = 169,
+    MSG_CTL_CM_NODE_DISK_STATUS_ACK = 170,
+    MSG_AGENT_CM_FLOAT_IP = 171,
+    MSG_CM_AGENT_FLOAT_IP_ACK = 172,
+    MSG_FINISHREDO_RETRIVE = 173,
+    MSG_AGENT_CM_ISREG_REPORT = 174,
+    MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED = 175,
+
+    MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
 
 #define UNDEFINED_LOCKMODE 0
@@ -308,10 +310,6 @@ const int INSTANCE_WALSNDSTATE_NORMAL = 5;
 const int INSTANCE_WALSNDSTATE_UNKNOWN = 6;
 
 #define GS_SSL_IO_TIMEOUT          (uint32)30000 /* mill-seconds */
-
-
-#define MAX_RESOURCE_LENGTH 4096
-
 
 #define CON_OK 0
 #define CON_BAD 1
@@ -365,8 +363,8 @@ const int INSTANCE_WALSNDSTATE_UNKNOWN = 6;
 #define BARRIERLEN 40
 #define MAX_SLOT_NAME_LEN 64
 #define MAX_BARRIER_SLOT_COUNT 5
-// the length of cm_serer sync msg  is 9744, msg type is MSG_CM_CM_REPORT_SYNC
-#define CM_MSG_MAX_LENGTH (12288 * 2)
+
+#define CM_MSG_MAX_LENGTH (70 * 1024)
 
 #define CMAGENT_NO_CCN "NoCentralNode"
 
@@ -394,7 +392,7 @@ typedef enum DDB_OPER_t {
     DDB_DEL_OPER,
 } DDB_OPER;
 
-typedef struct DatanodeSyncList {
+typedef struct DatanodeSyncListSt {
     int count;
     uint32 dnSyncList[CM_PRIMARY_STANDBY_NUM];
     int syncStandbyNum;
@@ -403,26 +401,26 @@ typedef struct DatanodeSyncList {
     char remainStr[DN_SYNC_LEN];
 } DatanodeSyncList;
 
-typedef struct cm_msg_type {
+typedef struct cm_msg_type_st {
     int msg_type;
 } cm_msg_type;
 
-typedef struct cm_switchover_incomplete_msg {
+typedef struct cm_switchover_incomplete_msg_st {
     int msg_type;
     char errMsg[CM_MSG_ERR_INFORMATION_LENGTH];
 } cm_switchover_incomplete_msg;
 
-typedef struct cm_redo_stats {
+typedef struct cm_redo_stats_st {
     int is_by_query;
     uint64 redo_replayed_speed;
     XLogRecPtr standby_last_replayed_read_Ptr;
 } cm_redo_stats;
 
-typedef struct ctl_to_cm_stop_arbitration {
+typedef struct ctl_to_cm_stop_arbitration_st {
     int msg_type;
 } ctl_to_cm_stop_arbitration;
 
-typedef struct ctl_to_cm_switchover {
+typedef struct ctl_to_cm_switchover_st {
     int msg_type;
     char azName[CM_AZ_NAME];
     uint32 node;
@@ -431,7 +429,7 @@ typedef struct ctl_to_cm_switchover {
     int wait_seconds;
 } ctl_to_cm_switchover;
 
-typedef struct ctl_to_cm_failover {
+typedef struct ctl_to_cm_failover_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -439,12 +437,12 @@ typedef struct ctl_to_cm_failover {
     int wait_seconds;
 } ctl_to_cm_failover;
 
-typedef struct cm_to_ctl_finish_redo_check_ack {
+typedef struct cm_to_ctl_finish_redo_check_ack_st {
     int msg_type;
     int finish_redo_count;
 } cm_to_ctl_finish_redo_check_ack;
 
-typedef struct ctl_to_cm_finish_redo {
+typedef struct ctl_to_cm_finish_redo_st {
     int msg_type;
 } ctl_to_cm_finish_redo;
 
@@ -477,7 +475,7 @@ typedef enum CmsBuildStepEn {
     CMS_BUILD_UNLOCK = 3
 } CmsBuildStep;
 
-typedef struct ctl_to_cm_build {
+typedef struct ctl_to_cm_build_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -489,11 +487,11 @@ typedef struct ctl_to_cm_build {
     CmsBuildStep cmsBuildStep;
 } ctl_to_cm_build;
 
-typedef struct ctl_to_cm_global_barrier_query {
+typedef struct ctl_to_cm_global_barrier_query_st {
     int msg_type;
 }ctl_to_cm_global_barrier_query;
 
-typedef struct ctl_to_cm_query {
+typedef struct ctl_to_cm_query_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -534,30 +532,30 @@ typedef struct Cm2AgentRefreshObsDelText_t {
     char obsDelCnText[MAX_OBS_DEL_TEXT_LEN];
 } Cm2AgentRefreshObsDelText;
 
-typedef struct ctl_to_cm_notify {
+typedef struct ctl_to_cm_notify_st {
     CM_MessageType msg_type;
     ctlToCmNotifyDetail detail;
 } ctl_to_cm_notify;
 
-typedef struct ctl_to_cm_disable_cn {
+typedef struct ctl_to_cm_disable_cn_st {
     int msg_type;
     uint32 instanceId;
     int wait_seconds;
 } ctl_to_cm_disable_cn;
 
-typedef struct ctl_to_cm_disable_cn_ack {
+typedef struct ctl_to_cm_disable_cn_ack_st {
     int msg_type;
     bool disable_ok;
     char errMsg[CM_MSG_ERR_INFORMATION_LENGTH];
 } ctl_to_cm_disable_cn_ack;
 
-typedef enum arbitration_mode {
+typedef enum arbitration_mode_en {
     UNKNOWN_ARBITRATION = 0,
     MAJORITY_ARBITRATION = 1,
     MINORITY_ARBITRATION = 2
 } arbitration_mode;
 
-typedef enum cm_start_mode {
+typedef enum cm_start_mode_en {
     UNKNOWN_START = 0,
     MAJORITY_START = 1,
     MINORITY_START = 2,
@@ -570,19 +568,19 @@ typedef enum PromoteMode_t {
     PMODE_FORCE_STANDBY = 2,     // force standby at any time
 } PromoteMode;
 
-typedef enum switchover_az_mode {
+typedef enum switchover_az_mode_en {
     UNKNOWN_SWITCHOVER_AZ = 0,
     NON_AUTOSWITCHOVER_AZ = 1,
     AUTOSWITCHOVER_AZ = 2
 } switchover_az_mode;
 
-typedef enum logic_cluster_restart_mode {
+typedef enum logic_cluster_restart_mode_en {
     UNKNOWN_LOGIC_CLUSTER_RESTART = 0,
     INITIAL_LOGIC_CLUSTER_RESTART = 1,
     MODIFY_LOGIC_CLUSTER_RESTART = 2
 } logic_cluster_restart_mode;
 
-typedef enum cluster_mode {
+typedef enum cluster_mode_en {
     INVALID_CLUSTER_MODE = 0,
     ONE_MASTER_1_SLAVE,
     ONE_MASTER_2_SLAVE,
@@ -591,7 +589,7 @@ typedef enum cluster_mode {
     ONE_MASTER_5_SLAVE
 } cluster_mode;
 
-typedef enum synchronous_standby_mode {
+typedef enum synchronous_standby_mode_en {
     AnyFirstNo = 0, /* don't have */
     AnyAz1,         /* ANY 1(az1) */
     FirstAz1,       /* FIRST 1(az1) */
@@ -616,12 +614,18 @@ typedef enum {
 } DisasterRecoveryType;
 
 typedef enum {
+    QUORUM = 0,
+    PAXOS = 1,
+    SHARE_DISK = 2
+} DnArbitrateMode;
+
+typedef enum {
     INSTALL_TYPE_DEFAULT = 0,
     INSTALL_TYPE_SHARE_STORAGE = 1,
     INSTALL_TYPE_STREAMING = 2
 } ClusterInstallType;
 
-typedef struct ctl_to_cm_set {
+typedef struct ctl_to_cm_set_st {
     int msg_type;
     int log_level;
     uint32 logic_cluster_delay;
@@ -630,7 +634,7 @@ typedef struct ctl_to_cm_set {
     logic_cluster_restart_mode cm_logic_cluster_restart_mode;
 } ctl_to_cm_set, cm_to_ctl_get;
 
-typedef struct cm_to_agent_switchover {
+typedef struct cm_to_agent_switchover_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -640,7 +644,7 @@ typedef struct cm_to_agent_switchover {
     uint32 term;
 } cm_to_agent_switchover;
 
-typedef struct cm_to_agent_failover {
+typedef struct cm_to_agent_failover_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -649,7 +653,7 @@ typedef struct cm_to_agent_failover {
     uint32 term;
 } cm_to_agent_failover;
 
-typedef struct cm_to_agent_build {
+typedef struct cm_to_agent_build_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -662,20 +666,20 @@ typedef struct cm_to_agent_build {
     uint32 primaryNodeId;
 } cm_to_agent_build;
 
-typedef struct cm_to_agent_lock1 {
+typedef struct cm_to_agent_lock1_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
 } cm_to_agent_lock1;
 
-typedef struct cm_to_agent_obs_delete_xlog {
+typedef struct cm_to_agent_obs_delete_xlog_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
     uint64 lsn;
 } cm_to_agent_obs_delete_xlog;
 
-typedef struct cm_to_agent_lock2 {
+typedef struct cm_to_agent_lock2_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -683,27 +687,27 @@ typedef struct cm_to_agent_lock2 {
     uint32 disconn_port;
 } cm_to_agent_lock2;
 
-typedef struct cm_to_agent_unlock {
+typedef struct cm_to_agent_unlock_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
 } cm_to_agent_unlock;
 
-typedef struct cm_to_agent_finish_redo {
+typedef struct cm_to_agent_finish_redo_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
     bool is_finish_redo_cmd_sent;
 } cm_to_agent_finish_redo;
 
-typedef struct cm_to_agent_gs_guc {
+typedef struct cm_to_agent_gs_guc_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
     synchronous_standby_mode type;
 } cm_to_agent_gs_guc;
 
-typedef struct agent_to_cm_gs_guc_feedback {
+typedef struct agent_to_cm_gs_guc_feedback_st {
     int msg_type;
     uint32 node;
     uint32 instanceId; /* node of this agent */
@@ -711,7 +715,7 @@ typedef struct agent_to_cm_gs_guc_feedback {
     bool status; /* gs guc command exec status */
 } agent_to_cm_gs_guc_feedback;
 
-typedef struct CmToAgentGsGucSyncList {
+typedef struct CmToAgentGsGucSyncList_st {
     int msgType;
     uint32 node;
     uint32 instanceId;
@@ -722,7 +726,7 @@ typedef struct CmToAgentGsGucSyncList {
     int remain[REMAIN_LEN];
 } CmToAgentGsGucSyncList;
 
-typedef struct cm_to_agent_notify {
+typedef struct cm_to_agent_notify_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -757,11 +761,12 @@ typedef struct CmSendDdbOperRes_t {
     char reserved[RESERVE_LEN];
 } CmSendDdbOperRes;
 
+
 /*
  * msg struct using for cmserver to cmagent
  * including primaryed datanode count and datanode instanceId list.
  */
-typedef struct cm_to_agent_notify_cn {
+typedef struct cm_to_agent_notify_cn_st {
     int msg_type;
     uint32 node;       /* node of this coordinator */
     uint32 instanceId; /* coordinator instance id */
@@ -776,7 +781,7 @@ typedef struct cm_to_agent_notify_cn {
  * msg struct using for cmserver to cmagent
  * including primaryed datanode count and datanode instanceId list.
  */
-typedef struct cm_to_agent_drop_cn {
+typedef struct cm_to_agent_drop_cn_st {
     int msg_type;
     uint32 node;       /* node of this coordinator */
     uint32 instanceId; /* coordinator instance id */
@@ -785,7 +790,7 @@ typedef struct cm_to_agent_drop_cn {
     bool delay_repair;
 } cm_to_agent_drop_cn;
 
-typedef struct cm_to_agent_notify_cn_central_node {
+typedef struct cm_to_agent_notify_cn_central_node_st {
     int msg_type;
     uint32 node;                 /* node of this coordinator */
     uint32 instanceId;           /* coordinator instance id */
@@ -797,7 +802,7 @@ typedef struct cm_to_agent_notify_cn_central_node {
  * msg struct using for cmserver to cmagent
  * including primaryed datanode count and datanode instanceId list.
  */
-typedef struct cm_to_agent_cancel_session {
+typedef struct cm_to_agent_cancel_session_st {
     int msg_type;
     uint32 node;       /* node of this coordinator */
     uint32 instanceId; /* coordinator instance id */
@@ -807,7 +812,7 @@ typedef struct cm_to_agent_cancel_session {
  * msg struct using for cmagent to cmserver
  * feedback msg for notify cn.
  */
-typedef struct agent_to_cm_notify_cn_feedback {
+typedef struct agent_to_cm_notify_cn_feedback_st {
     int msg_type;
     uint32 node;       /* node of this coordinator */
     uint32 instanceId; /* coordinator instance id */
@@ -829,13 +834,13 @@ typedef struct Agent2CmBackupInfoRep_t {
     BackupInfo backupInfos[MAX_BARRIER_SLOT_COUNT];
 } Agent2CmBackupInfoRep;
 
-typedef struct cm_to_agent_restart {
+typedef struct cm_to_agent_restart_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
 } cm_to_agent_restart;
 
-typedef struct cm_to_agent_restart_by_mode {
+typedef struct cm_to_agent_restart_by_mode_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -843,7 +848,7 @@ typedef struct cm_to_agent_restart_by_mode {
     int role_new;
 } cm_to_agent_restart_by_mode;
 
-typedef struct cm_to_agent_rep_sync {
+typedef struct cm_to_agent_rep_sync_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -851,7 +856,7 @@ typedef struct cm_to_agent_rep_sync {
     int sync_mode;
 } cm_to_agent_rep_sync;
 
-typedef struct cm_to_agent_rep_async {
+typedef struct cm_to_agent_rep_async_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -859,7 +864,7 @@ typedef struct cm_to_agent_rep_async {
     int sync_mode;
 } cm_to_agent_rep_async;
 
-typedef struct cm_to_agent_rep_most_available {
+typedef struct cm_to_agent_rep_most_available_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -867,7 +872,7 @@ typedef struct cm_to_agent_rep_most_available {
     int sync_mode;
 } cm_to_agent_rep_most_available;
 
-typedef struct cm_instance_central_node {
+typedef struct cm_instance_central_node_st {
     pthread_rwlock_t rw_lock;
     pthread_mutex_t mt_lock;
     uint32 instanceId;
@@ -881,7 +886,7 @@ typedef struct cm_instance_central_node {
     cm_to_agent_notify_cn_central_node notify;
 } cm_instance_central_node;
 
-typedef struct cm_instance_central_node_msg {
+typedef struct cm_instance_central_node_msg_st {
     pthread_rwlock_t rw_lock;
     cm_to_agent_notify_cn_central_node notify;
 } cm_instance_central_node_msg;
@@ -890,26 +895,28 @@ typedef struct cm_instance_central_node_msg {
 #define MAX_LENGTH_HP_PATH (256)
 #define MAX_LENGTH_HP_RETURN_MSG (1024)
 
-typedef struct cm_hotpatch_msg {
+typedef struct cm_hotpatch_msg_st {
     int msg_type;
     char command[MAX_LENGTH_HP_CMD];
     char path[MAX_LENGTH_HP_PATH];
 } cm_hotpatch_msg;
 
-typedef struct cm_hotpatch_ret_msg {
+typedef struct cm_hotpatch_ret_msg_st {
     char msg[MAX_LENGTH_HP_RETURN_MSG];
 } cm_hotpatch_ret_msg;
 
-typedef struct cm_to_agent_barrier_info {
+typedef struct cm_to_agent_barrier_info_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
     char queryBarrier[BARRIERLEN];
     char targetBarrier[BARRIERLEN];
-    char Reserved[RESERVE_NUM];
+    char reserved[RESERVE_NUM];
 } cm_to_agent_barrier_info;
 
+#ifndef IP_LEN
 #define IP_LEN 64
+#endif
 #define MAX_REPL_CONNINFO_LEN 256
 #define MAX_REBUILD_REASON_LEN 256
 
@@ -950,8 +957,6 @@ const int cn_inactive = 2;
 
 #define UNKNOWN_LEVEL 0
 
-typedef uint64 XLogRecPtr;
-
 typedef enum CM_DCF_ROLE {
     DCF_ROLE_UNKNOWN = 0,
     DCF_ROLE_LEADER,
@@ -963,7 +968,7 @@ typedef enum CM_DCF_ROLE {
     DCF_ROLE_CEIL,
 } DCF_ROLE;
 
-typedef struct {
+typedef struct AgentToCmBarrierStatusReportSt {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1007,7 +1012,7 @@ typedef struct Agent2CmBarrierStatusReport_t {
     GlobalBarrierStatus globalStatus;
 } Agent2CmBarrierStatusReport;
 
-typedef struct cm_local_replconninfo {
+typedef struct cm_local_replconninfo_st {
     int local_role;
     int static_connections;
     int db_state;
@@ -1022,7 +1027,7 @@ typedef struct cm_local_replconninfo {
     bool redo_finished;
 } cm_local_replconninfo;
 
-typedef struct cm_sender_replconninfo {
+typedef struct cm_sender_replconninfo_st {
     pid_t sender_pid;
     int local_role;
     int peer_role;
@@ -1041,7 +1046,7 @@ typedef struct cm_sender_replconninfo {
     int sync_priority;
 } cm_sender_replconninfo;
 
-typedef struct cm_receiver_replconninfo {
+typedef struct cm_receiver_replconninfo_st {
     pid_t receiver_pid;
     int local_role;
     int peer_role;
@@ -1058,7 +1063,7 @@ typedef struct cm_receiver_replconninfo {
     int sync_percent;
 } cm_receiver_replconninfo;
 
-typedef struct cm_gtm_replconninfo {
+typedef struct cm_gtm_replconninfo_st {
     int local_role;
     int connect_status;
     TransactionId xid;
@@ -1067,12 +1072,12 @@ typedef struct cm_gtm_replconninfo {
     int sync_mode;
 } cm_gtm_replconninfo;
 
-typedef struct cm_coordinate_replconninfo {
+typedef struct cm_coordinate_replconninfo_st {
     int status;
     int db_state;
 } cm_coordinate_replconninfo;
 
-typedef enum cm_coordinate_group_mode {
+typedef enum cm_coordinate_group_mode_en {
     GROUP_MODE_INIT,
     GROUP_MODE_NORMAL,
     GROUP_MODE_PENDING,
@@ -1087,14 +1092,14 @@ typedef enum cm_coordinate_group_mode {
 
 const int max_cn_node_num_for_old_version = 16;
 
-typedef struct cluster_cn_info {
+typedef struct cluster_cn_info_st {
     uint32 cn_Id;
     uint32 cn_active;
     bool cn_connect;
     bool drop_success;
 } cluster_cn_info;
 
-typedef struct agent_to_cm_coordinate_status_report_old {
+typedef struct agent_to_cm_coordinate_status_report_old_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1114,7 +1119,7 @@ typedef struct agent_to_cm_coordinate_status_report_old {
     int phony_dead_times;
 } agent_to_cm_coordinate_status_report_old;
 
-typedef struct agent_to_cm_coordinate_status_report {
+typedef struct agent_to_cm_coordinate_status_report_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1136,7 +1141,7 @@ typedef struct agent_to_cm_coordinate_status_report {
     int phony_dead_times;
 } agent_to_cm_coordinate_status_report;
 
-typedef struct agent_to_cm_coordinate_status_report_v1 {
+typedef struct agent_to_cm_coordinate_status_report_v1_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1159,13 +1164,13 @@ typedef struct agent_to_cm_coordinate_status_report_v1 {
     int phony_dead_times;
 } agent_to_cm_coordinate_status_report_v1;
 
-typedef struct agent_to_cm_fenced_UDF_status_report {
+typedef struct agent_to_cm_fenced_UDF_status_report_st {
     int msg_type;
     uint32 nodeid;
     int status;
 } agent_to_cm_fenced_UDF_status_report;
 
-typedef struct agent_to_cm_datanode_status_report {
+typedef struct agent_to_cm_datanode_status_report_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1183,7 +1188,7 @@ typedef struct agent_to_cm_datanode_status_report {
     int dn_restart_counts_in_hour;
 } agent_to_cm_datanode_status_report;
 
-typedef struct AgentToCmserverDnSyncList {
+typedef struct AgentToCmserverDnSyncListSt {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1195,7 +1200,7 @@ typedef struct AgentToCmserverDnSyncList {
     char remainStr[DN_SYNC_LEN];
 } AgentToCmserverDnSyncList;
 
-typedef struct agent_to_cm_gtm_status_report {
+typedef struct agent_to_cm_gtm_status_report_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1206,20 +1211,23 @@ typedef struct agent_to_cm_gtm_status_report {
     int phony_dead_times;
 } agent_to_cm_gtm_status_report;
 
-typedef struct agent_to_cm_current_time_report {
+typedef struct agent_to_cm_current_time_report_st {
     int msg_type;
     uint32 nodeid;
     long int etcd_time;
 } agent_to_cm_current_time_report;
 
-typedef struct AgentToCMS_DiskUsageStatusReport {
+typedef struct {
     int msgType;
     uint32 instanceId;
     uint32 dataPathUsage;
     uint32 logPathUsage;
-} AgentToCMS_DiskUsageStatusReport;
+    int instanceType;
+    bool readOnly;
+    char reserved[16];
+} AgentToCmDiskUsageStatusReport;
 
-typedef struct agent_to_cm_heartbeat {
+typedef struct agent_to_cm_heartbeat_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1227,11 +1235,12 @@ typedef struct agent_to_cm_heartbeat {
     int cluster_status_request;
 } agent_to_cm_heartbeat;
 
-typedef struct AgentToCmConnectRequest {
+typedef struct AgentToCmConnectRequestSt {
     int msg_type;
     uint32 nodeid;
 } AgentToCmConnectRequest;
-typedef struct CmToAgentConnectAck {
+
+typedef struct CmToAgentConnectAckSt {
     int msg_type;
     uint32 status;
 } CmToAgentConnectAck;
@@ -1252,6 +1261,19 @@ typedef struct AgentCmDnLocalPeer_t {
     DnLocalPeer dnLpInfo;
 } AgentCmDnLocalPeer;
 
+const uint32 MAX_FLOAT_IP_COUNT = 6;
+
+const uint32 BASE_INST_RES = 16;
+typedef struct BaseInstInfoT {
+    int msgType;
+    uint32 node;
+    uint32 instId;  // instanceId
+    int instType;   // instanceType
+    char remain[BASE_INST_RES];
+} BaseInstInfo;
+
+const uint32 FLOAT_IP_MSG_RES = 512;
+
 typedef struct DnStatus_t {
     CM_MessageType barrierMsgType;
     agent_to_cm_datanode_status_report reportMsg;
@@ -1260,6 +1282,7 @@ typedef struct DnStatus_t {
         Agent2CmBarrierStatusReport barrierMsgNew;
     };
     AgentCmDnLocalPeer lpInfo;
+    AgentToCmDiskUsageStatusReport diskUsageMsg;
 } DnStatus;
 
 typedef struct DnSyncListInfo_t {
@@ -1275,24 +1298,25 @@ typedef struct CnStatus_t {
         AgentToCmBarrierStatusReport barrierMsg;
         Agent2CmBarrierStatusReport barrierMsgNew;
     };
+    AgentToCmDiskUsageStatusReport diskUsageMsg;
 } CnStatus;
 
-typedef struct coordinate_status_info {
+typedef struct coordinate_status_info_st {
     pthread_rwlock_t lk_lock;
     CnStatus cnStatus;
 } coordinate_status_info;
 
-typedef struct datanode_status_info {
+typedef struct datanode_status_info_st {
     pthread_rwlock_t lk_lock;
     DnStatus dnStatus;
 } datanode_status_info;
 
-typedef struct gtm_status_info {
+typedef struct gtm_status_info_st {
     pthread_rwlock_t lk_lock;
     agent_to_cm_gtm_status_report report_msg;
 } gtm_status_info;
 
-typedef struct cm_to_agent_heartbeat {
+typedef struct cm_to_agent_heartbeat_st {
     int msg_type;
     uint32 node;
     int type;
@@ -1300,33 +1324,33 @@ typedef struct cm_to_agent_heartbeat {
     uint32 healthInstanceId;
 } cm_to_agent_heartbeat;
 
-typedef struct cm_to_cm_vote {
+typedef struct cm_to_cm_vote_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
     int role;
 } cm_to_cm_vote;
 
-typedef struct cm_to_cm_timeline {
+typedef struct cm_to_cm_timeline_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
     long timeline;
 } cm_to_cm_timeline;
 
-typedef struct cm_to_cm_broadcast {
+typedef struct cm_to_cm_broadcast_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
     int role;
 } cm_to_cm_broadcast;
 
-typedef struct cm_to_cm_notify {
+typedef struct cm_to_cm_notify_st {
     int msg_type;
     int role;
 } cm_to_cm_notify;
 
-typedef struct cm_to_cm_switchover {
+typedef struct cm_to_cm_switchover_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1334,7 +1358,7 @@ typedef struct cm_to_cm_switchover {
     int wait_seconds;
 } cm_to_cm_switchover;
 
-typedef struct cm_to_cm_switchover_ack {
+typedef struct cm_to_cm_switchover_ack_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1342,7 +1366,7 @@ typedef struct cm_to_cm_switchover_ack {
     int wait_seconds;
 } cm_to_cm_switchover_ack;
 
-typedef struct cm_to_cm_failover {
+typedef struct cm_to_cm_failover_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1350,7 +1374,7 @@ typedef struct cm_to_cm_failover {
     int wait_seconds;
 } cm_to_cm_failover;
 
-typedef struct cm_to_cm_failover_ack {
+typedef struct cm_to_cm_failover_ack_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1358,12 +1382,12 @@ typedef struct cm_to_cm_failover_ack {
     int wait_seconds;
 } cm_to_cm_failover_ack;
 
-typedef struct cm_to_cm_sync {
+typedef struct cm_to_cm_sync_st {
     int msg_type;
     int role;
 } cm_to_cm_sync;
 
-typedef struct cm_instance_command_status {
+typedef struct cm_instance_command_status_st {
     int command_status;
     int command_send_status;
     int command_send_times;
@@ -1388,6 +1412,7 @@ typedef struct cm_instance_command_status {
     int maxSendTimes;
     int parallel;
     int32 buildFailedTimeout;
+    cmTime_t cmTime; // use to record time
 } cm_instance_command_status;
 
 typedef struct DatanodelocalPeer_t {
@@ -1398,7 +1423,7 @@ typedef struct DatanodelocalPeer_t {
 } DatanodelocalPeer;
 
 // need to keep consist with cm_to_ctl_instance_datanode_status
-typedef struct cm_instance_datanode_report_status {
+typedef struct cm_instance_datanode_report_status_st {
     cm_local_replconninfo local_status;
     int sender_count;
     BuildState build_info;
@@ -1431,7 +1456,7 @@ typedef struct cm_instance_datanode_report_status {
     DatanodelocalPeer dnLp;
 } cm_instance_datanode_report_status;
 
-typedef struct cm_instance_gtm_report_status {
+typedef struct cm_instance_gtm_report_status_st {
     cm_gtm_replconninfo local_status;
     int phony_dead_times;
     int phony_dead_interval;
@@ -1440,7 +1465,7 @@ typedef struct cm_instance_gtm_report_status {
 /*
  * each coordinator manage a list of datanode notify status
  */
-typedef struct cm_notify_msg_status {
+typedef struct cm_notify_msg_status_st {
     uint32* datanode_instance;
     uint32* datanode_index;
     bool* notify_status;
@@ -1456,7 +1481,7 @@ typedef struct cm_notify_msg_status {
 #define OBS_BACKUP_FAILED       (3)
 #define OBS_BACKUP_UNKNOWN      (4)    // conn failed, can't get status, will do nothing until it change to other
 
-typedef struct cm_instance_coordinate_report_status {
+typedef struct cm_instance_coordinate_report_status_st {
     cm_coordinate_replconninfo status;
     int isdown;
     int clean;
@@ -1483,14 +1508,14 @@ typedef struct cm_instance_coordinate_report_status {
     int buildReason;
 } cm_instance_coordinate_report_status;
 
-typedef struct cm_instance_arbitrate_status {
+typedef struct cm_instance_arbitrate_status_st {
     int sync_mode;
     bool restarting;
     int promoting_timeout;
 } cm_instance_arbitrate_status;
 
 #define MAX_CM_TO_CM_REPORT_SYNC_COUNT_PER_CYCLE 5
-typedef struct cm_to_cm_report_sync {
+typedef struct cm_to_cm_report_sync_st {
     int msg_type;
     uint32 node[CM_PRIMARY_STANDBY_NUM];
     uint32 instanceId[CM_PRIMARY_STANDBY_NUM];
@@ -1502,7 +1527,7 @@ typedef struct cm_to_cm_report_sync {
     cm_instance_arbitrate_status arbitrate_status_member[CM_PRIMARY_STANDBY_NUM];
 } cm_to_cm_report_sync;
 
-typedef struct cm_instance_role_status {
+typedef struct cm_instance_role_status_st {
     // available zone information
     char azName[CM_AZ_NAME];
     uint32 azPriority;
@@ -1515,7 +1540,7 @@ typedef struct cm_instance_role_status {
     int instanceRoleInit;
 } cm_instance_role_status;
 
-typedef struct cm_instance_role_status_0 {
+typedef struct cm_instance_role_status_0_st {
     uint32 node;
     uint32 instanceId;
     int instanceType;
@@ -1532,22 +1557,22 @@ typedef struct cm_instance_role_status_0 {
 #define CM_PRIMARY_STANDBY_MAX_NUM 9    // supprot 1 primary and [1, 7] standby
 #endif
 
-typedef struct cm_instance_role_group_0 {
+typedef struct cm_instance_role_group_0_st {
     int count;
     cm_instance_role_status_0 instanceMember[CM_PRIMARY_STANDBY_MAX_NUM_0];
 } cm_instance_role_group_0;
 
-typedef struct cm_instance_role_group {
+typedef struct cm_instance_role_group_st {
     int count;
     cm_instance_role_status instanceMember[CM_PRIMARY_STANDBY_MAX_NUM];
 } cm_instance_role_group;
 
-typedef struct cm_to_cm_role_change_notify {
+typedef struct cm_to_cm_role_change_notify_st {
     int msg_type;
     cm_instance_role_group role_change;
 } cm_to_cm_role_change_notify;
 
-typedef struct ctl_to_cm_datanode_relation_info {
+typedef struct ctl_to_cm_datanode_relation_info_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1555,7 +1580,7 @@ typedef struct ctl_to_cm_datanode_relation_info {
     int wait_seconds;
 } ctl_to_cm_datanode_relation_info;
 
-typedef struct cm_to_ctl_get_datanode_relation_ack {
+typedef struct cm_to_ctl_get_datanode_relation_ack_st {
     int command_result;
     int member_index;
     cm_instance_role_status instanceMember[CM_PRIMARY_STANDBY_MAX_NUM];
@@ -1564,7 +1589,7 @@ typedef struct cm_to_ctl_get_datanode_relation_ack {
 } cm_to_ctl_get_datanode_relation_ack;
 
 // need to keep consist with the struct cm_instance_datanode_report_status
-typedef struct cm_to_ctl_instance_datanode_status {
+typedef struct cm_to_ctl_instance_datanode_status_st {
     cm_local_replconninfo local_status;
     int sender_count;
     BuildState build_info;
@@ -1576,11 +1601,11 @@ typedef struct cm_to_ctl_instance_datanode_status {
     int send_gs_guc_time;
 } cm_to_ctl_instance_datanode_status;
 
-typedef struct cm_to_ctl_instance_gtm_status {
+typedef struct cm_to_ctl_instance_gtm_status_st {
     cm_gtm_replconninfo local_status;
 } cm_to_ctl_instance_gtm_status;
 
-typedef struct cm_to_ctl_instance_coordinate_status {
+typedef struct cm_to_ctl_instance_coordinate_status_st {
     int status;
     cm_coordinate_group_mode group_mode;
     /* no notify map in ctl */
@@ -1591,8 +1616,8 @@ typedef struct CmResourceStatusSt {
     uint32 nodeId;
     uint32 cmInstanceId;
     uint32 resInstanceId;
-    uint32 status;
-    uint32 isWorkMember;
+    uint32 status; // process status.
+    uint32 workStatus;
 } CmResourceStatus;
 
 typedef struct OneNodeResourceStatusSt {
@@ -1601,14 +1626,12 @@ typedef struct OneNodeResourceStatusSt {
     CmResourceStatus status[CM_MAX_RES_COUNT];
 } OneNodeResourceStatus;
 
-typedef struct CmsToCtlGroupResStatusSt {
-    int msg_type;
-    uint32 instance_type;
-    int msg_step;
-    OneNodeResourceStatus group_status[CM_MAX_RES_NODE_COUNT];
-} CmsToCtlGroupResStatus;
+typedef struct ResourceStatusReportSt {
+    pthread_rwlock_t rwlock;
+    OneNodeResourceStatus resStat;
+} OneNodeResStatusInfo;
 
-typedef struct cm_to_ctl_instance_status {
+typedef struct cm_to_ctl_instance_status_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1621,7 +1644,7 @@ typedef struct cm_to_ctl_instance_status {
     cm_to_ctl_instance_coordinate_status coordinatemember;
 } cm_to_ctl_instance_status;
 
-typedef struct cm_to_ctl_instance_barrier_info {
+typedef struct cm_to_ctl_instance_barrier_info_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
@@ -1634,7 +1657,7 @@ typedef struct cm_to_ctl_instance_barrier_info {
     uint64 flush_LSN;
 } cm_to_ctl_instance_barrier_info;
 
-typedef struct cm_to_ctl_central_node_status {
+typedef struct cm_to_ctl_central_node_status_st {
     uint32 instanceId;
     int node_index;
     int status;
@@ -1645,7 +1668,7 @@ typedef struct cm_to_ctl_central_node_status {
 #define CM_INVALID_COMMAND 2
 #define CM_DN_NORMAL_STATE 3
 
-typedef struct cm_to_ctl_command_ack {
+typedef struct cm_to_ctl_command_ack_st {
     int msg_type;
     int command_result;
     uint32 node;
@@ -1657,18 +1680,18 @@ typedef struct cm_to_ctl_command_ack {
     bool isCmsBuildStepSuccess;
 } cm_to_ctl_command_ack;
 
-typedef struct cm_to_ctl_balance_check_ack {
+typedef struct cm_to_ctl_balance_check_ack_st {
     int msg_type;
     int switchoverDone;
 } cm_to_ctl_balance_check_ack;
 
-typedef struct cm_to_ctl_switchover_full_check_ack {
+typedef struct cm_to_ctl_switchover_full_check_ack_st {
     int msg_type;
     int switchoverDone;
 } cm_to_ctl_switchover_full_check_ack, cm_to_ctl_switchover_az_check_ack;
 
 #define MAX_INSTANCES_LEN 512
-typedef struct cm_to_ctl_balance_result {
+typedef struct cm_to_ctl_balance_result_st {
     int msg_type;
     int imbalanceCount;
     uint32 instances[MAX_INSTANCES_LEN];
@@ -1682,7 +1705,7 @@ typedef struct cm_to_ctl_balance_result {
 #define CM_STATUS_UNKNOWN 5
 #define CM_STATUS_NORMAL_WITH_CN_DELETED 6
 
-typedef struct cm_to_ctl_cluster_status {
+typedef struct cm_to_ctl_cluster_status_st {
     int msg_type;
     int cluster_status;
     bool is_all_group_mode_pending;
@@ -1691,7 +1714,7 @@ typedef struct cm_to_ctl_cluster_status {
     bool inReloading;
 } cm_to_ctl_cluster_status;
 
-typedef struct cm_to_ctl_cluster_global_barrier_info {
+typedef struct cm_to_ctl_cluster_global_barrier_info_st {
     int msg_type;
     char global_barrierId[BARRIERLEN];
     char global_achive_barrierId[BARRIERLEN];
@@ -1713,7 +1736,7 @@ typedef struct GetSharedStorageInfoSt {
     int msg_type;
 } GetSharedStorageInfo;
 
-typedef struct cm_to_ctl_logic_cluster_status {
+typedef struct cm_to_ctl_logic_cluster_status_st {
     int msg_type;
     int cluster_status;
     bool is_all_group_mode_pending;
@@ -1725,13 +1748,13 @@ typedef struct cm_to_ctl_logic_cluster_status {
     int logic_switchedCount[LOGIC_CLUSTER_NUMBER];
 } cm_to_ctl_logic_cluster_status;
 
-typedef struct cm_to_ctl_cmserver_status {
+typedef struct cm_to_ctl_cmserver_status_st {
     int msg_type;
     int local_role;
     bool is_pending;
 } cm_to_ctl_cmserver_status;
 
-typedef struct cm_query_instance_status {
+typedef struct cm_query_instance_status_st {
     int msg_type;
     uint32 nodeId;
     uint32 instanceType;  // only for etcd and cmserver
@@ -1740,7 +1763,34 @@ typedef struct cm_query_instance_status {
     bool pending;
 } cm_query_instance_status;
 
-typedef struct etcd_status_info {
+typedef struct CmRhbMsg_ {
+    int msg_type;
+    uint32 nodeId;
+    uint32 hwl;
+    time_t hbs[MAX_RHB_NUM];
+} CmRhbMsg;
+
+typedef struct CmShowStatReq_ {
+    int msgType;
+} CmShowStatReq;
+
+typedef struct CmRhbStatAck_ {
+    int msg_type;
+    time_t baseTime;
+    uint32 timeout;
+    uint32 hwl;
+    time_t hbs[MAX_RHB_NUM][MAX_RHB_NUM];
+} CmRhbStatAck;
+
+typedef struct CmNodeDiskStatAck_ {
+    int msg_type;
+    time_t baseTime;
+    uint32 timeout;
+    uint32 hwl;
+    time_t nodeDiskStats[VOTING_DISK_MAX_NODE_NUM];
+} CmNodeDiskStatAck;
+
+typedef struct etcd_status_info_st {
     pthread_rwlock_t lk_lock;
     cm_query_instance_status report_msg;
 } etcd_status_info;
@@ -1752,7 +1802,7 @@ typedef struct etcd_status_info {
 #define MAXLEN 20
 #define KERBEROS_NUM 2
 
-typedef struct agent_to_cm_kerberos_status_report {
+typedef struct agent_to_cm_kerberos_status_report_st {
     int msg_type;
     uint32 node;
     char kerberos_ip[CM_IP_LENGTH];
@@ -1762,12 +1812,12 @@ typedef struct agent_to_cm_kerberos_status_report {
     char nodeName[CM_NODE_NAME];
 } agent_to_cm_kerberos_status_report;
 
-typedef struct kerberos_status_info {
+typedef struct kerberos_status_info_st {
     pthread_rwlock_t lk_lock;
     agent_to_cm_kerberos_status_report report_msg;
 } kerberos_status_info;
 
-typedef struct cm_to_ctl_kerberos_status_query {
+typedef struct cm_to_ctl_kerberos_status_query_st {
     int msg_type;
     uint32 heartbeat[KERBEROS_NUM];
     uint32 node[KERBEROS_NUM];
@@ -1778,13 +1828,11 @@ typedef struct cm_to_ctl_kerberos_status_query {
     char nodeName[KERBEROS_NUM][CM_NODE_NAME];
 } cm_to_ctl_kerberos_status_query;
 
-typedef struct kerberos_group_report_status {
+typedef struct kerberos_group_report_status_st {
     pthread_rwlock_t lk_lock;
     cm_to_ctl_kerberos_status_query kerberos_status;
 } kerberos_group_report_status;
 
-
-typedef uint32 ShortTransactionId;
 
 /* ----------------
  *        Special transaction ID values
@@ -1819,9 +1867,15 @@ typedef uint32 ShortTransactionId;
  * Beware of passing expressions with side-effects to these macros,
  * since the arguments may be evaluated multiple times.
  */
+#ifndef XLByteLT
 #define XLByteLT(a, b) ((a) < (b))
+#endif
+#ifndef XLByteLE
 #define XLByteLE(a, b) ((a) <= (b))
+#endif
+#ifndef XLByteEQ
 #define XLByteEQ(a, b) ((a) == (b))
+#endif
 
 #define InvalidTerm (0)
 #define FirstTerm (2)
@@ -1846,15 +1900,15 @@ typedef uint32 ShortTransactionId;
  */
 #define CM_RESULT_UNKNOWN (1)
 
-typedef struct ResultDataPacked {
+typedef struct ResultDataPackedSt {
     char pad[CM_MSG_MAX_LENGTH];
 } ResultDataPacked;
 
-typedef union CM_ResultData {
+typedef union CM_ResultData_st {
     ResultDataPacked packed;
 } CM_ResultData;
 
-typedef struct CM_Result {
+typedef struct CM_Result_st {
     int gr_msglen;
     int gr_status;
     int gr_type;
@@ -1864,11 +1918,11 @@ typedef struct CM_Result {
 extern int query_gtm_status_wrapper(const char pid_path[MAXPGPATH], agent_to_cm_gtm_status_report& agent_to_cm_gtm);
 extern int query_gtm_status_for_phony_dead(const char pid_path[MAXPGPATH]);
 
-typedef struct CtlToCMReload {
+typedef struct CtlToCMReloadSt {
     int msgType;
 } CtlToCMReload;
 
-typedef struct CMToCtlReloadAck {
+typedef struct CMToCtlReloadAckSt {
     int msgType;
     bool reloadOk;
 } CMToCtlReloadAck;
@@ -1886,51 +1940,103 @@ typedef struct ExecDdbCmdAckMsgSt {
     char errMsg[ERR_MSG_LENGTH];
 } ExecDdbCmdAckMsg;
 
-typedef struct CmResStatInfoSt {
-    uint32 nodeId;
-    uint32 cmInstanceId;
-    uint32 resInstanceId;
-    uint32 isWorkMember;
-    uint32 status;
-} CmResStatInfo;
-
-typedef struct OneResStatListSt {
-    unsigned long long version;
-    uint32 instanceCount;
-    char resName[CM_MAX_RES_NAME];
-    CmResStatInfo resStat[CM_MAX_INSTANCES];
-} OneResStatList;
-
-typedef struct CmResStatListSt {
-    pthread_rwlock_t rwlock;
-    OneResStatList status;
-} CmResStatList;
-
 typedef struct ResInfoSt {
     uint32 resInstanceId;
     char reserve[4];
     char resName[CM_MAX_RES_NAME];
 } ResInfo;
 
+typedef struct LockInfoSt {
+    uint32 lockOpt;
+    uint32 transInstId;
+    char lockName[CM_MAX_LOCK_NAME];
+} LockInfo;
+
+typedef enum LockOptionEn {
+    CM_RES_LOCK = 0,
+    CM_RES_UNLOCK,
+    CM_RES_GET_LOCK_OWNER,
+    CM_RES_LOCK_TRANS,
+} LockOption;
+
 typedef struct InitResultSt {
     bool isSuccess;
     char reserve[7];
 } InitResult;
 
+typedef struct LockResultSt {
+    uint32 lockOwner;
+    uint32 error;
+    char lockName[CM_MAX_LOCK_NAME];
+} LockResult;
+
+// cms to cma
 typedef struct CmsReportResStatListSt {
     int msgType;
     OneResStatList resList;
 } CmsReportResStatList;
 
-// agent send msg to cm server
+typedef struct CmsReportLockResultSt {
+    int msgType;
+    uint32 lockOwner;
+    uint32 conId;
+    uint32 lockOpt;
+    uint32 error;
+    char lockName[CM_MAX_LOCK_NAME];
+} CmsReportLockResult;
+
+typedef struct CmsNotifyAgentRegMsgSt {
+    int msgType;
+    int resMode;  // 1:need do reg 0:need do unreg
+    uint32 nodeId;  // reg node or unreg node
+    uint32 resInstId;  // reg node or unreg res inst
+    char resName[CM_MAX_RES_NAME];
+} CmsNotifyAgentRegMsg;
+
+typedef struct CmsFlushIsregCheckListSt {
+    int msgType;
+    uint32 checkCount;
+    uint32 checkList[CM_MAX_RES_INST_COUNT];
+} CmsFlushIsregCheckList;
+
+// cma to cms
 typedef struct ReportResStatusSt {
     int msgType;
-    CmResourceStatus stat;
+    OneNodeResourceStatus nodeStat;
 } ReportResStatus;
 
 typedef struct RequestResStatListSt {
     int msgType;
 } RequestResStatList;
+
+typedef struct CmaToCmsRegResultSt {
+    int32 msgType;
+    char resName[CM_MAX_RES_NAME];
+    uint32 cmInstId;
+    uint32 workStat;  // 0:unreg 1:reg
+} CmaToCmsRegResult;
+
+typedef struct ResInstIsregSt {
+    uint32 cmInstId;
+    int isreg;
+} ResInstIsreg;
+
+typedef struct CmaToCmsIsregMsgSt {
+    int msgType;
+    uint32 nodeId;
+    uint32 isregCount;
+    ResInstIsreg isregList[CM_MAX_RES_INST_COUNT];
+} CmaToCmsIsregMsg;
+
+typedef struct CmaToCmsResLockSt {
+    int msgType;
+    uint32 conId;
+    uint32 lockOpt;
+    uint32 cmInstId;
+    uint32 transInstId;
+    char resName[CM_MAX_RES_NAME];
+    char lockName[CM_MAX_LOCK_NAME];
+} CmaToCmsResLock;
 
 typedef struct MsgHeadSt {
     uint32 msgType;
@@ -1938,7 +2044,7 @@ typedef struct MsgHeadSt {
     uint64 msgVer;
 } MsgHead;
 
-// agent send message
+// cma to client
 typedef struct AgentToClientResListSt {
     MsgHead head;
     OneResStatList resStatusList;
@@ -1949,6 +2055,12 @@ typedef struct AgentToClientInitResultSt {
     InitResult result;
 } AgentToClientInitResult;
 
+typedef struct AgentToClientResLockResultSt {
+    MsgHead head;
+    LockResult result;
+} AgentToClientResLockResult;
+
+// client to cma
 typedef struct ClientHbMsgSt {
     MsgHead head;
     uint64 version;
@@ -1958,5 +2070,32 @@ typedef struct ClientInitMsgSt {
     MsgHead head;
     ResInfo resInfo;
 } ClientInitMsg;
+
+typedef struct ClientCmLockMsgSt {
+    MsgHead head;
+    LockInfo info;
+} ClientCmLockMsg;
+
+// cms to ctl
+typedef struct CmsToCtlOneResInstStatSt {
+    int msgType;
+    CmResStatInfo instStat;
+} CmsToCtlOneResInstStat;
+
+typedef struct CmsToCtlGroupResStatusSt {
+    int msgType;
+    int msgStep;
+    OneResStatList oneResStat;
+} CmsToCtlGroupResStatus;
+
+// ctl to cms
+typedef struct QueryOneResInstStatSt {
+    int msgType;
+    uint32 instId;
+} QueryOneResInstStat;
+
+typedef struct CmsSSLConnSt {
+    uint64 startConnTime;
+} CmsSSLConnMsg;
 
 #endif

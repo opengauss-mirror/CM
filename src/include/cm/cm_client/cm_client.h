@@ -39,7 +39,6 @@ extern "C" {
 #define NO_STAT_CHANGED 0
 #define STAT_CHANGED    1
 
-#define CLIENT_TCP_TIMEOUT      (5)
 #define CLIENT_USEC_TO_NSEC     (1000)
 #define CLIENT_INVALID_SOCKET   (-1)
 #define CLIENT_RES_DATA_TIMEOUT (5)
@@ -62,6 +61,8 @@ typedef struct ConnAgentSt {
     volatile bool isClosed;
     uint32 resInstanceId;
     CmNotifyFunc callback;
+    timespec recvTime;
+    pthread_rwlock_t rwlock;
 } ConnAgent;
 
 typedef struct SendMsgQueueSt {
@@ -89,7 +90,17 @@ typedef struct ClientLockResultSt {
     uint32 ownerId;
 } ClientLockResult;
 
-status_t PreInit(uint32 instanceId, const char *resName, CmNotifyFunc func, bool *isFirstInit);
+typedef struct {
+    LockFlag lockFlag;
+    InitFlag initFlag;
+    ConnAgent agentConnect;
+    SendMsgQueue sendMsg;
+    OneResStatList clientStatusList;
+    pthread_t conThreadId;
+    pthread_t sendThreadId;
+    pthread_t recvThreadId;
+} ClientCtx;
+
 status_t CreateConnectAgentThread(void);
 status_t CreateSendMsgThread(void);
 status_t CreateRecvMsgThread(void);
@@ -97,10 +108,15 @@ status_t CreateRecvMsgThread(void);
 #ifdef __cplusplus
 }
 
+status_t PreInit(uint32 instanceId, const char *resName, CmNotifyFunc func, bool *isFirstInit);
 void ShutdownClient();
+void AllocClientMemory();
+void FreeClientMemory();
 void SendMsgApi(char *msgPtr, size_t msgLen);
 bool &GetIsClientInit();
-OneResStatList &GetClientStatusList();
+LockFlag *GetLockFlag();
+InitFlag *GetInitFlag();
+OneResStatList *GetClientStatusList();
 status_t SendInitMsg(uint32 instanceId, const char *resName);
 bool SendInitMsgAndGetResult(const char *resName, uint32 instId);
 ClientLockResult SendLockMsgAndWaitResult(char *msgPtr, uint32 msgLen);

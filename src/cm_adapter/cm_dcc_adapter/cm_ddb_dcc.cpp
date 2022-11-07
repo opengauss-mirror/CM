@@ -49,6 +49,8 @@ static const int32 CAN_FIND_DCC_LEAD = 0;
 static const int32 LEAD_IS_CURRENT_INSTANCE = 1;
 
 static uint32 g_cmServerNum = 0;
+static volatile int64 g_waitForChangeTime = 0;
+static int64 g_waitForTime = 0;
 static ServerSocket *g_dccInfo = NULL;
 static DDB_ROLE g_dbRole = DDB_ROLE_FOLLOWER;
 static volatile uint32 g_expectPriority = DCC_AVG_PRIORITY;
@@ -100,11 +102,12 @@ status_t DrvDccFreeConn(DrvCon_t *session)
     return CM_SUCCESS;
 }
 
-status_t DrvDccAllocConn(DrvCon_t *session, DrvApiInfo *apiInfo)
+status_t DrvDccAllocConn(DrvCon_t *session, const DrvApiInfo *apiInfo)
 {
     int32 res = srv_dcc_alloc_handle(session);
     if (res != 0) {
         GetErrorMsg("srv_dcc_alloc_handle");
+        *session = NULL;
         return CM_ERROR;
     }
     return CM_SUCCESS;
@@ -118,8 +121,7 @@ static void SetDccText(dcc_text_t *dccText, char *data, size_t len)
 
 static void GetErrorMsg(const char *key)
 {
-    errno_t rc = 0;
-    rc = memset_s(g_err, MAX_ERR_LEN, 0, MAX_ERR_LEN);
+    errno_t rc = memset_s(g_err, MAX_ERR_LEN, 0, MAX_ERR_LEN);
     securec_check_errno(rc, (void)rc);
     int32 code = srv_dcc_get_errorno();
     const char *errMsg = srv_dcc_get_error(code);
@@ -159,7 +161,7 @@ static status_t GetDccText(dcc_text_t *dccText, char *data, uint32 len)
     return CM_SUCCESS;
 }
 
-status_t DrvDccGetValue(const DrvCon_t session, DrvText *key, DrvText *value, DrvGetOption *option)
+status_t DrvDccGetValue(const DrvCon_t session, DrvText *key, DrvText *value, const DrvGetOption *option)
 {
     uint32 eof = 0;
     dcc_option_t dccOption = {0};
@@ -190,7 +192,7 @@ static void RestDccTextKV(dcc_text_t *dccKey, dcc_text_t *dccValue)
 }
 
 status_t DrvDccGetAllKV(
-    const DrvCon_t session, DrvText *key, DrvKeyValue *keyValue, uint32 length, DrvGetOption *option)
+    const DrvCon_t session, DrvText *key, DrvKeyValue *keyValue, uint32 length, const DrvGetOption *option)
 {
     uint32 eof = 0;
     uint32 idx = 0;
@@ -324,7 +326,11 @@ status_t DrvDccSetKV(const DrvCon_t session, DrvText *key, DrvText *value, DrvSe
     dcc_text_t dccKey = {0};
     SetDccText(&dccKey, key->data, strlen(key->data));
     dcc_text_t dccValue = {0};
-    SetDccText(&dccValue, value->data, strlen(value->data));
+    if (option != NULL && option->isSetBinary) {
+        SetDccText(&dccValue, value->data, value->len);
+    } else {
+        SetDccText(&dccValue, value->data, strlen(value->data));
+    }
     dcc_option_t dccOption = {0};
     dccOption.write_op.is_prefix = 0;
     dccOption.cmd_timeout = g_timeOut;
@@ -342,7 +348,7 @@ status_t DrvDccSetKV(const DrvCon_t session, DrvText *key, DrvText *value, DrvSe
     return CM_SUCCESS;
 }
 
-status_t DrvDccDelKV(const DrvCon_t session, DrvText *key, DrvDelOption *option)
+status_t DrvDccDelKV(const DrvCon_t session, DrvText *key)
 {
     dcc_text_t dccKey = {0};
     SetDccText(&dccKey, key->data, strlen(key->data));
@@ -550,15 +556,18 @@ static void DrvNotifyDcc(DDB_ROLE dbRole)
 {
     const char *str = "[DrvNotifyDcc]";
     write_runlog(LOG, "%s %d: receive notify msg, it will set prority, dbRole is [%d: %d], g_expectPriority is %u, "
-        "g_cmServerNum is %u.\n", str, __LINE__, dbRole, g_dbRole, g_expectPriority, g_cmServerNum);
+        "g_cmServerNum is %u.\n", str, __LINE__, (int32)dbRole, (int32)g_dbRole, g_expectPriority, g_cmServerNum);
     if (g_dbRole != dbRole && g_cmServerNum > ONE_PRIMARY_ONE_STANDBY) {
         if (dbRole == DDB_ROLE_FOLLOWER) {
             g_expectPriority = DCC_MIN_PRIORITY;
+            g_waitForChangeTime = g_waitForTime;
         } else if (dbRole == DDB_ROLE_LEADER) {
             g_expectPriority = DCC_MAX_PRIORITY;
+            g_waitForChangeTime = g_waitForTime;
         }
-        write_runlog(LOG, "%s receive notify msg, it has setted prority, dbRole is [%d: %d], g_expectPriority is %u.\n",
-            str, dbRole, g_dbRole, g_expectPriority);
+        write_runlog(LOG, "%s receive notify msg, it has setted prority, dbRole is [%d: %d], g_expectPriority is %u, "
+            "g_waitForChangeTime is %ld, g_waitForTime is %ld.\n", str, (int32)dbRole, (int32)g_dbRole,
+            g_expectPriority, (long int)g_waitForChangeTime, (long int)g_waitForTime);
     }
     return;
 }
@@ -780,16 +789,23 @@ static bool CheckDccDemote()
         ret = SetPriority(g_expectPriority);
         ret = srv_dcc_demote_follower();
         (void)DccRoleToDdbRole(DCC_ROLE_FOLLOWER);
-        write_runlog(LOG, "dcc will demote follower, ret is %d.\n", ret);
+        write_runlog(LOG, "[CheckDccDemote] dcc will demote follower, ret is %d.\n", ret);
         if (ret != 0) {
-            write_runlog(ERROR, "dcc failed to demote follower, error msg is %s.\n", DrvDccLastError());
+            write_runlog(ERROR, "[CheckDccDemote] dcc failed to demote follower, error msg is %s.\n",
+                DrvDccLastError());
         }
         return true;
     }
     if (CheckDccLeader() != CAN_FIND_DCC_LEAD) {
         return true;
     }
-    write_runlog(LOG, "line %s:%d, will reset g_expectPriority from %u to %u.\n",
+    // wait for all cms can be promoted, in order to prevent two-cms turn.
+    if (g_waitForChangeTime > 0) {
+        write_runlog(DEBUG1, "[CheckDccDemote] g_waitForChangeTime is %ld, cannot reset g_expectPriority.\n",
+            (long int)g_waitForChangeTime);
+        return true;
+    }
+    write_runlog(LOG, "[CheckDccDemote] line %s:%d, will reset g_expectPriority from %u to %u.\n",
         __FUNCTION__, __LINE__, g_expectPriority, DCC_AVG_PRIORITY);
     g_expectPriority = DCC_AVG_PRIORITY;
     return false;
@@ -805,14 +821,21 @@ static bool CheckDccPromote()
             return true;
         }
         int32 ret = SetPriority(g_expectPriority);
-        write_runlog(LOG, "line %s:%d set priority(%u), ret is %d.\n", __FUNCTION__, __LINE__, g_expectPriority, ret);
+        write_runlog(LOG, "[CheckDccPromote] line %s:%d set priority(%u), ret is %d.\n", __FUNCTION__, __LINE__,
+            g_expectPriority, ret);
         ret = srv_dcc_promote_leader(g_dccInfo[g_curIdx].nodeIdInfo.instd, PROMOTE_LEADER_TIME);
         if (ret != 0) {
-            write_runlog(ERROR, "failed to set dcc promote leader, error msg is %s.\n", DrvDccLastError());
+            write_runlog(ERROR, "[CheckDccPromote] failed to set dcc promote leader, error msg is %s.\n",
+                DrvDccLastError());
         }
         return true;
     }
-    write_runlog(LOG, "line %s:%d, will reset g_expectPriority from %u to %u.\n",
+    if (g_waitForChangeTime > 0) {
+        write_runlog(DEBUG1, "[CheckDccDemote] g_waitForChangeTime is %ld, cannot reset g_expectPriority.\n",
+            (long int)g_waitForChangeTime);
+        return true;
+    }
+    write_runlog(LOG, "[CheckDccPromote] line %s:%d, will reset g_expectPriority from %u to %u.\n",
         __FUNCTION__, __LINE__, g_expectPriority, DCC_AVG_PRIORITY);
     g_expectPriority = DCC_AVG_PRIORITY;
     return false;
@@ -879,14 +902,41 @@ static status_t CreateSetPriorityThread()
     return CM_SUCCESS;
 }
 
+void *DccMonitorMain(void *argp)
+{
+    thread_name = "DCC_MONITOR";
+    write_runlog(LOG, "Starting DCC monitor thread.\n");
+    for (;;) {
+        if (g_waitForChangeTime > 0) {
+            --g_waitForChangeTime;
+        }
+        (void)sleep(1);
+    }
+    return NULL;
+}
+
+static status_t CreateMonitorThread()
+{
+    pthread_t thrId;
+    int32 res = pthread_create(&thrId, NULL, DccMonitorMain, NULL);
+    if (res != 0) {
+        write_runlog(ERROR, "Failed to create DccMonitorMain.\n");
+        return CM_ERROR;
+    }
+    return CM_SUCCESS;
+}
+
 static status_t CreateDccThread(const DrvApiInfo *apiInfo)
 {
-
     if (g_cmServerNum <= ONE_PRIMARY_ONE_STANDBY) {
         write_runlog(LOG, "this cmServer is %u, cannot CreateSetPriorityThread.\n", g_cmServerNum);
         return CM_SUCCESS;
     }
-    status_t st = CreateSetPriorityThread();
+    status_t st = CreateMonitorThread();
+    if (st != CM_SUCCESS) {
+        return CM_ERROR;
+    }
+    st = CreateSetPriorityThread();
     return st;
 }
 
@@ -921,9 +971,20 @@ static status_t InitDccInfoAndCreateThread(const DrvApiInfo *apiInfo)
     }
     st = GetCurNodeIdx(apiInfo);
     CM_RETURN_IFERR(st);
-
+    g_waitForTime = apiInfo->server_t.waitTime;
     st = CreateDccThread(apiInfo);
     return st;
+}
+
+static status_t DrvDccStop(bool *ddbStop)
+{
+    int32 ret = srv_dcc_stop();
+    write_runlog(LOG, "dcc has stopped, and ret is %d.\n", ret);
+    if (ret == 0) {
+        *ddbStop = true;
+        return CM_SUCCESS;
+    }
+    return CM_ERROR;
 }
 
 static status_t DccLoadApi(const DrvApiInfo *apiInfo)
@@ -949,6 +1010,7 @@ static status_t DccLoadApi(const DrvApiInfo *apiInfo)
     drv->execCmd = DrvExecDccCmd;
     drv->setBlocked = DrvDccSetBlocked;
     drv->setParam = DrvDccSetParam;
+    drv->stop = DrvDccStop;
     g_cmServerNum = apiInfo->nodeNum;
     status_t st = StartDccProcess(apiInfo);
     if (st != CM_SUCCESS) {

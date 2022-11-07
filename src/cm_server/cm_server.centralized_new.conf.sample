@@ -64,4 +64,10 @@ ddb_log_backup_file_count = 10           # Maximum number of log files that can 
 ddb_max_log_file_size = 10M              # Maximum number of bytes in a log
 ddb_log_suppress_enable = 1              # Indicates whether to enable the log suppression function. 1: open 0, close
 ddb_election_timeout = 3                 # DCC election timeout interval [1S,600S]
-############### End ###################
+share_disk_path = ''
+voting_disk_path = ''
+disk_timeout = 200
+agent_network_timeout = 6
+dn_arbitrate_mode = quorum
+delay_arbitrate_max_cluster_timeout = 300 # When resources are in the startup process, delay arbitration of the maximum cluster.
+############### must leave a new line at the end ###################

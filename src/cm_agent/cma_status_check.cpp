@@ -30,14 +30,14 @@
 #include "cma_common.h"
 #include "cma_client.h"
 #include "cma_instance_management.h"
+#include "cma_instance_management_res.h"
 #include "cma_process_messages.h"
-#include "cma_status_check.h"
 #include "cma_connect.h"
 #include "cma_instance_check.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
-#include "cma_coordinator_utils.h"
 #endif
+#include "cma_status_check.h"
 
 /*
  * dilatation status. If the cluster in dilatation status, we query  coordinate and report status for every loop. Or,
@@ -65,29 +65,18 @@ using CpuInfo = struct CpuInfoSt {
 
 void etcd_status_check_and_report(void)
 {
-    int ret;
-    errno_t rcs;
-    if (g_currentNode->etcd) {
-        if (agent_cm_server_connect == NULL) {
-            return;
-        }
-        cm_query_instance_status report_msg;
-        (void)pthread_rwlock_wrlock(&(g_etcdReportMsg.lk_lock));
-        rcs = memcpy_s(&(report_msg),
-            sizeof(cm_query_instance_status),
-            &(g_etcdReportMsg.report_msg),
-            sizeof(cm_query_instance_status));
-        securec_check_errno(rcs, (void)rcs);
-        (void)pthread_rwlock_unlock(&(g_etcdReportMsg.lk_lock));
-
-        ret = cm_client_send_msg(
-            agent_cm_server_connect, 'C', (char*)(&report_msg), sizeof(cm_query_instance_status));
-        if (ret != 0) {
-            write_runlog(ERROR, "cm_client_send_msg send gtm fail  1!\n");
-            CloseConnToCmserver();
-            return;
-        }
+    if (g_currentNode->etcd == 0) {
+        return;
     }
+
+    cm_query_instance_status reportMsg = {0};
+    (void)pthread_rwlock_wrlock(&(g_etcdReportMsg.lk_lock));
+    errno_t rc = memcpy_s(&reportMsg, sizeof(cm_query_instance_status),
+        &(g_etcdReportMsg.report_msg), sizeof(cm_query_instance_status));
+    securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_unlock(&(g_etcdReportMsg.lk_lock));
+
+    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(cm_query_instance_status), "etcd status");
 }
 
 static status_t GetCpuInfo(IoStat *stat, CpuInfo &cpu, const char *line)
@@ -111,7 +100,7 @@ static status_t GetCpuInfo(IoStat *stat, CpuInfo &cpu, const char *line)
 
 static int ReadCpuStatus(int cpu_nr, IoStat *stat, bool getTotalCpuHave)
 {
-    FILE* cpufp = NULL;
+    FILE* cpufp;
     char line[8192];
     CpuInfo cpu = {0};
 
@@ -119,15 +108,15 @@ static int ReadCpuStatus(int cpu_nr, IoStat *stat, bool getTotalCpuHave)
         write_runlog(ERROR, "cannot open file: %s \n", FILE_CPUSTAT);
         return -1;
     }
-    while (fgets(line, sizeof(line), cpufp) != NULL ) {
+    while (fgets(line, sizeof(line), cpufp) != NULL) {
         /* first line -- total cpu */
         if (!strncmp(line, "cpu ", 4) && (cpu_nr == 1 || getTotalCpuHave)) {
             /* for non smp iostat or cpu stat, get the total jiffies */
             if (GetCpuInfo(stat, cpu, line) != CM_SUCCESS) {
-                fclose(cpufp);
+                (void)fclose(cpufp);
                 return -1;
             }
-            fclose(cpufp);
+            (void)fclose(cpufp);
             uint64 tmp = cpu.cpuUser + cpu.cpuNice + cpu.cpuSys;
             uint64 total = tmp + cpu.cpuIdle;
             if (total == 0) {
@@ -141,23 +130,23 @@ static int ReadCpuStatus(int cpu_nr, IoStat *stat, bool getTotalCpuHave)
         /* for smp, cpu0 is enough for iostat */
         if (cpu_nr > 1 && !strncmp(line, "cpu0", 4)) {
             if (GetCpuInfo(stat, cpu, line) != CM_SUCCESS) {
-                fclose(cpufp);
+                (void)fclose(cpufp);
                 return -1;
             }
-            fclose(cpufp);
+            (void)fclose(cpufp);
 
             return 0;
         }
     }
     write_runlog(ERROR, "get cpu info fail.\n");
-    fclose(cpufp);
+    (void)fclose(cpufp);
 
     return 0;
 }
 
 void ReadDiskstatsStatus(const char* device, IoStat* stat)
 {
-    FILE* iofp = NULL;
+    FILE* iofp;
     char line[MAX_PATH_LEN] = {0};
     char dev_name[MAX_DEVICE_DIR] = {0};
     int i;
@@ -205,7 +194,7 @@ void ReadDiskstatsStatus(const char* device, IoStat* stat)
         write_runlog(LOG, "cannot get the information of the file %s.\n", FILE_DISKSTAT);
     }
 
-    fclose(iofp);
+    (void)fclose(iofp);
 }
 
 uint64 GetAverageValue(uint64 value1, uint64 value2, uint64 itv, uint32 unit)
@@ -300,7 +289,7 @@ static void CmGetDisk(const char* datadir, char* devicename, uint32 nameLen)
     }
     if (fgets(buf, sizeof(buf), fp) != NULL) {
         write_runlog(LOG, "second line is %s.\n", buf);
-        uint32 length = strlen(buf);
+        uint32 length = (uint32)strlen(buf);
         if (length == 0) {
             (void)pclose(fp);
             write_runlog(LOG, "execute %s, result is empty.\n", dfcommand);
@@ -339,7 +328,7 @@ static void CmGetDisk(const char* datadir, char* devicename, uint32 nameLen)
         write_runlog(LOG, "execute %s success.\n", dfcommand);
     }
     if (fgets(buf, sizeof(buf), fp) != NULL) {
-        uint32 length = strlen(buf);
+        uint32 length = (uint32)strlen(buf);
         bool findDevice = false;
         if (length == 0) {
             (void)pclose(fp);
@@ -382,24 +371,21 @@ static void CmGetDisk(const char* datadir, char* devicename, uint32 nameLen)
     (void)pclose(fp);
 
     size_t buf_len = 0;
-    FILE* mtfp = NULL;
-    struct mntent* ent = NULL;
-    char* mntentBuffer = NULL;
-
+    struct mntent* ent;
     struct mntent tempEnt = {};
 
-    mtfp = fopen(FILE_MOUNTS, "re");
+    FILE *mtfp = fopen(FILE_MOUNTS, "re");
     if (mtfp == NULL) {
         write_runlog(LOG, "cannot open file %s.\n", FILE_MOUNTS);
         return;
     }
 
     /* The buffer is too big, so it can not be stored in the stack space. */
-    mntentBuffer = (char*)malloc(4 * FILENAME_MAX);
+    char *mntentBuffer = (char *)malloc(4 * FILENAME_MAX);
     if (mntentBuffer == NULL) {
         write_runlog(ERROR,
             "Failed to allocate memory: Out of memory. RequestSize=%d.\n", 4 * FILENAME_MAX);
-        fclose(mtfp);
+        (void)fclose(mtfp);
         return;
     }
 
@@ -409,12 +395,13 @@ static void CmGetDisk(const char* datadir, char* devicename, uint32 nameLen)
          * get the file system with type of ext* or xfs.
          * find the best fit for the data directory
          */
+        const size_t offset = strlen("/dev/");
         if (strncmp(ent->mnt_fsname, devicePath, buf_len) == 0 && strlen(datadir) >= buf_len &&
             buf_len == strlen(devicePath)) {
-            rc = strncpy_s(devicename, MAX_DEVICE_DIR, ent->mnt_fsname + 5, (errno_t)strlen(ent->mnt_fsname + 5));
+            rc = strncpy_s(devicename, MAX_DEVICE_DIR, ent->mnt_fsname + offset, strlen(ent->mnt_fsname + offset));
             if (rc != 0) {
                 write_runlog(ERROR, "memcpy device name fail.\n");
-                fclose(mtfp);
+                (void)fclose(mtfp);
                 FREE_AND_RESET(mntentBuffer);
                 return;
             } else {
@@ -425,7 +412,7 @@ static void CmGetDisk(const char* datadir, char* devicename, uint32 nameLen)
 
     write_runlog(LOG, "devicename is %s.\n", devicename);
 
-    fclose(mtfp);
+    (void)fclose(mtfp);
     FREE_AND_RESET(mntentBuffer);
 }
 
@@ -447,7 +434,7 @@ static int GetCpuCount(void)
             }
         } while (ret == 0);
     } else if (access("/proc/cpuinfo", F_OK) == 0) {
-        FILE* fd = NULL;
+        FILE* fd;
 
         if ((fd = fopen("/proc/cpuinfo", "re")) == NULL) {
             return -1;
@@ -458,7 +445,7 @@ static int GetCpuCount(void)
                 cpucnt++;
             }
         }
-        fclose(fd);
+        (void)fclose(fd);
     }
 
     return cpucnt ? cpucnt : -1;
@@ -532,11 +519,11 @@ int CheckCertFilePermission(const char *certFile)
 {
     struct stat buf;
     if (stat(certFile, &buf) != 0) {
-        write_runlog(ERROR, "Try to stat cert key file \"%s\" failed!\n", certFile);
+        write_runlog(WARNING, "Try to stat cert key file \"%s\" failed!\n", certFile);
         return -1;
     }
     if (!S_ISREG(buf.st_mode) || (buf.st_mode & (S_IRWXG | S_IRWXO)) || ((buf.st_mode & S_IRWXU) == S_IRWXU)) {
-        write_runlog(ERROR, "The file \"%s\" permission should be u=rw(600) or less.\n", certFile);
+        write_runlog(WARNING, "The file \"%s\" permission should be u=rw(600) or less.\n", certFile);
         return -1;
     }
     return 0;
@@ -553,11 +540,11 @@ bool EtcdCertFileExpire(const char *certFile)
         expireSeconds);
     securec_check_intval(rcs, (void)rcs);
     if (!ExecuteCmdWithResult(command, result, CM_PATH_LENGTH)) {
-        write_runlog(ERROR, "Execute check etcd cert file expire cmd %s failed, result=%s\n", command, result);
+        write_runlog(WARNING, "Execute check etcd cert file expire cmd %s failed, result=%s\n", command, result);
         return false;
     }
     if (strstr(result, certExpire) != NULL) {
-        write_runlog(ERROR,
+        write_runlog(WARNING,
             "etcd cert file %s may has been expired or will be expired in less %d days, please check!\n", certFile,
             expireDays);
         return true;
@@ -757,15 +744,11 @@ void* ETCDStatusCheckMain(void* arg)
 /* agent send report_msg to cm_server */
 void kerberos_status_check_and_report()
 {
-    int ret;
-    errno_t rcs;
     if (agent_cm_server_connect == NULL) {
         return;
     }
-    agent_to_cm_kerberos_status_report report_msg;
     char kerberosConfigPath[MAX_PATH_LEN] = {0};
-    int isKerberos = cmagent_getenv("MPPDB_KRB5_FILE_PATH", kerberosConfigPath, sizeof(kerberosConfigPath));
-    if (isKerberos != EOK) {
+    if (cmagent_getenv("MPPDB_KRB5_FILE_PATH", kerberosConfigPath, sizeof(kerberosConfigPath)) != EOK) {
         write_runlog(DEBUG1, "kerberos_status_check_and_report: MPPDB_KRB5_FILE_PATH get fail.\n");
         return;
     }
@@ -775,75 +758,80 @@ void kerberos_status_check_and_report()
         write_runlog(DEBUG1, "kerberos_status_check_and_report: kerberos config file not exist.\n");
         return;
     }
+    agent_to_cm_kerberos_status_report reportMsg = {0};
     (void)pthread_rwlock_wrlock(&(g_kerberosReportMsg.lk_lock));
-    rcs = memcpy_s(&(report_msg), sizeof(agent_to_cm_kerberos_status_report),
+    errno_t rc = memcpy_s(&reportMsg, sizeof(agent_to_cm_kerberos_status_report),
         &(g_kerberosReportMsg.report_msg), sizeof(agent_to_cm_kerberos_status_report));
-    securec_check_errno(rcs, (void)rcs);
+    securec_check_errno(rc, (void)rc);
     (void)pthread_rwlock_unlock(&(g_kerberosReportMsg.lk_lock));
-    ret = cm_client_send_msg(
-        agent_cm_server_connect, 'C', (char*)(&report_msg), sizeof(agent_to_cm_kerberos_status_report));
-    if (ret != 0) {
-        write_runlog(ERROR, "cm_client_send_msg send kerberos fail !\n");
-        CloseConnToCmserver();
+
+    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_kerberos_status_report), "kerberos status");
+}
+
+static void SendDnReportMsg(const DnStatus *pkgDnStatus, uint32 datanodeId)
+{
+    agent_to_cm_datanode_status_report reportMsg = {0};
+    errno_t rc = memcpy_s(&reportMsg, sizeof(agent_to_cm_datanode_status_report),
+        &pkgDnStatus->reportMsg, sizeof(agent_to_cm_datanode_status_report));
+    securec_check_errno(rc, (void)rc);
+
+    write_runlog(DEBUG5, "dn(%u) reportMsg will send to cms.\n", datanodeId);
+    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_datanode_status_report), "dn report");
+}
+
+static void SendBarrierMsg(const DnStatus *pkgDnStatus, uint32 datanodeId)
+{
+    AgentToCmBarrierStatusReport barrierMsg = {0};
+    errno_t rc = memcpy_s(&barrierMsg, sizeof(AgentToCmBarrierStatusReport),
+        &pkgDnStatus->barrierMsg, sizeof(AgentToCmBarrierStatusReport));
+    securec_check_errno(rc, (void)rc);
+
+    write_runlog(DEBUG5, "dn(%u) barrier(%d) will send to cms.\n", datanodeId, (int)pkgDnStatus->barrierMsgType);
+    PushMsgToCmsSendQue((char *)&barrierMsg, (uint32)sizeof(AgentToCmBarrierStatusReport), "dn barrier");
+}
+
+static void SendLpInfoMsg(const DnStatus *pkgDnStatus, uint32 datanodeId)
+{
+    AgentCmDnLocalPeer lpInfo = {0};
+    errno_t rc = memcpy_s(&lpInfo, sizeof(AgentCmDnLocalPeer), &pkgDnStatus->lpInfo, sizeof(AgentCmDnLocalPeer));
+    securec_check_errno(rc, (void)rc);
+
+    write_runlog(DEBUG5, "dn(%u) dnLocalPeer will send to cms.\n", datanodeId);
+    PushMsgToCmsSendQue((char *)&lpInfo, (uint32)sizeof(AgentCmDnLocalPeer), "dnLocalPeer");
+}
+
+static void SendDiskUsageMsg(const DnStatus *pkgDnStatus, uint32 datanodeId)
+{
+    AgentToCmDiskUsageStatusReport diskUsageMsg = {0};
+    errno_t rc = memcpy_s(&diskUsageMsg, sizeof(AgentToCmDiskUsageStatusReport),
+        &pkgDnStatus->diskUsageMsg, sizeof(AgentToCmDiskUsageStatusReport));
+    securec_check_errno(rc, (void)rc);
+
+    write_runlog(DEBUG5, "dn(%u) dnDiskUsage will send to cms.\n", datanodeId);
+    PushMsgToCmsSendQue((char *)&diskUsageMsg, (uint32)sizeof(AgentToCmDiskUsageStatusReport), "dnDiskUsage");
+}
+
+static void SendDnReportMsgCore(const DnStatus *pkgDnStatus, uint32 datanodeId, AgentToCmserverDnSyncList *syncListMsg)
+{
+    SendDnReportMsg(pkgDnStatus, datanodeId);
+    if (g_clusterType == V3SingleInstCluster) {
         return;
     }
-}
-
-/* agent send report_msg to cm_server */
-static void SendResStatReportMsg(const OneNodeResourceStatus *nodeStat)
-{
-    errno_t rc;
-    for (uint32 i = 0; i < nodeStat->count; ++i) {
-        ReportResStatus reportMsg = {0};
-        reportMsg.msgType = MSG_AGENT_CM_RESOURCE_STATUS;
-        rc = memcpy_s(&reportMsg.stat, sizeof(CmResourceStatus), &nodeStat->status[i], sizeof(CmResourceStatus));
-        securec_check_errno(rc, (void)rc);
-        if (cm_client_send_msg(agent_cm_server_connect, 'C', (char*)(&reportMsg), sizeof(ReportResStatus)) !=
-            CM_SUCCESS) {
-            write_runlog(ERROR, "cm_client_send_msg send resource info fail !\n");
-            CloseConnToCmserver();
-            return;
-        }
-    }
-}
-
-static bool SendDnReportMsgCore(const DnStatus *pkgDnStatus, uint32 datanodeId,
-    const AgentToCmserverDnSyncList *syncListMsg)
-{
-    int ret = 0;
-    if (!CmaSendMsgToCms(&pkgDnStatus->reportMsg, sizeof(agent_to_cm_datanode_status_report), "reportMsg")) {
-        return false;
-    }
-    write_runlog(DEBUG5, "CmaSendMsgToCms send dn report_msg is %u\n", datanodeId);
-    if (g_clusterType == V3SingleInstCluster) {
-        return true;
-    }
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
-    if (!CmaSendMsgToCms(syncListMsg, sizeof(AgentToCmserverDnSyncList), "dnSyncListMsg")) {
-        return false;
-    }
-    write_runlog(DEBUG5, "CmaSendMsgToCms send dn syncListMsg is %u\n", datanodeId);
+    write_runlog(DEBUG5, "dn(%u) syncListMsg will send to cms.\n", datanodeId);
+    PushMsgToCmsSendQue((char *)syncListMsg, (uint32)sizeof(AgentToCmserverDnSyncList), "dn syncListMsg");
 #endif
-
     if (pkgDnStatus->barrierMsgType == MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER) {
-        ret = cm_client_send_msg(agent_cm_server_connect,
-            'C', (const char *)&pkgDnStatus->barrierMsg, sizeof(AgentToCmBarrierStatusReport));
+        SendBarrierMsg(pkgDnStatus, datanodeId);
+        return;
     }
-    if (ret != 0) {
-        write_runlog(ERROR, "cm_client_send_msg send DN barrierMsg(%d) fail!\n", pkgDnStatus->barrierMsgType);
-        CloseConnToCmserver();
-        return false;
-    }
-    write_runlog(DEBUG5, "cm_client_send_msg send dn barrierMsg(%d) is %u\n", pkgDnStatus->barrierMsgType, datanodeId);
+    SendDiskUsageMsg(pkgDnStatus, datanodeId);
     // only cascade standby cannot report lpInfo
     if (pkgDnStatus->reportMsg.receive_status.local_role != INSTANCE_ROLE_CASCADE_STANDBY) {
-        return true;
+        return;
     }
-    if (!CmaSendMsgToCms(&(pkgDnStatus->lpInfo), sizeof(AgentCmDnLocalPeer), "dnLocalPeer")) {
-        return false;
-    }
-    write_runlog(DEBUG5, "cm_client_send_msg send dn dnLocalPeer is %u\n", datanodeId);
-    return true;
+
+    SendLpInfoMsg(pkgDnStatus, datanodeId);
 }
 
 static void DnStatusFinalProcessing(DnStatus* pkgDnStatus, uint32 dnId)
@@ -856,7 +844,7 @@ static void DnStatusFinalProcessing(DnStatus* pkgDnStatus, uint32 dnId)
     } else {
         g_dnRoleForPhonyDead[dnId] = INSTANCE_ROLE_INIT;
     }
-    if (g_dnPhonyDeadD[dnId]) {
+    if (g_dnPhonyDeadD[dnId] || g_dnCore[dnId]) {
         pkgDnStatus->reportMsg.local_status.local_role = INSTANCE_ROLE_UNKNOWN;
         write_runlog(WARNING, "datenode phony dead D or Core, set local_role Unknown\n");
     }
@@ -879,11 +867,8 @@ static void CopyDnReportMsg(AgentToCmserverDnSyncList *syncList, uint32 ii)
 
 void DatanodeStatusReport(void)
 {
-    int ret;
-    uint32 ii;
-    errno_t rcs;
-
-    for (ii = 0; ii < g_currentNode->datanodeCount; ii++) {
+    errno_t rc;
+    for (uint32 ii = 0; ii < g_currentNode->datanodeCount; ii++) {
         if (agent_cm_server_connect == NULL) {
             continue;
         }
@@ -899,87 +884,65 @@ void DatanodeStatusReport(void)
             }
         }
         if (g_dnReportMsg[ii].dnStatus.reportMsg.connectStatus == AGENT_TO_INSTANCE_CONNECTION_OK) {
-            DnStatus pkgDnStatus;
-            rcs = memcpy_s(&(pkgDnStatus), sizeof(DnStatus), &(g_dnReportMsg[ii].dnStatus), sizeof(DnStatus));
-            securec_check_errno(rcs, (void)rcs);
+            DnStatus dnStatus;
+            rc = memcpy_s(&(dnStatus), sizeof(DnStatus), &(g_dnReportMsg[ii].dnStatus), sizeof(DnStatus));
+            securec_check_errno(rc, (void)rc);
             (void)pthread_rwlock_unlock(&(g_dnReportMsg[ii].lk_lock));
-            AgentToCmserverDnSyncList syncList;
+
+            AgentToCmserverDnSyncList syncList = {0};
             CopyDnReportMsg(&syncList, ii);
-            DnStatusFinalProcessing(&pkgDnStatus, ii);
-            pkgDnStatus.reportMsg.phony_dead_times = g_dnPhonyDeadTimes[ii];
-            if (!SendDnReportMsgCore(&pkgDnStatus, g_currentNode->datanode[ii].datanodeId, &syncList)) {
-                continue;
-            }
+            DnStatusFinalProcessing(&dnStatus, ii);
+            dnStatus.reportMsg.phony_dead_times = g_dnPhonyDeadTimes[ii];
+
+            SendDnReportMsgCore(&dnStatus, g_currentNode->datanode[ii].datanodeId, &syncList);
         } else if (g_dnReportMsg[ii].dnStatus.reportMsg.processStatus == INSTANCE_PROCESS_RUNNING) {
-            agent_to_cm_heartbeat heartbeat_msg;
-            g_dnRoleForPhonyDead[ii] = INSTANCE_ROLE_INIT;
-
-            rcs = memset_s(&heartbeat_msg, sizeof(heartbeat_msg), 0, sizeof(heartbeat_msg));
-            securec_check_errno(rcs, (void)rcs);
             (void)pthread_rwlock_unlock(&(g_dnReportMsg[ii].lk_lock));
-            heartbeat_msg.msg_type = MSG_AGENT_CM_HEARTBEAT;
-            heartbeat_msg.node = g_currentNode->node;
-            heartbeat_msg.instanceId = g_currentNode->datanode[ii].datanodeId;
-            heartbeat_msg.instanceType = INSTANCE_TYPE_DATANODE;
+            g_dnRoleForPhonyDead[ii] = INSTANCE_ROLE_INIT;
+            agent_to_cm_heartbeat hbMsg = {0};
+            hbMsg.msg_type = (int)MSG_AGENT_CM_HEARTBEAT;
+            hbMsg.node = g_currentNode->node;
+            hbMsg.instanceId = g_currentNode->datanode[ii].datanodeId;
+            hbMsg.instanceType = INSTANCE_TYPE_DATANODE;
 
-            ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&heartbeat_msg, sizeof(heartbeat_msg));
-            if (ret != 0) {
-                write_runlog(ERROR, "cm_client_send_msg send datanode heartbeat msg failed!\n");
-                CloseConnToCmserver();
-                continue;
-            }
-            write_runlog(DEBUG5, "cm_client_send_msg send datanode heartbeat msg.\n");
+            PushMsgToCmsSendQue((char *)&hbMsg, (uint32)sizeof(agent_to_cm_heartbeat), "dn heartbeat");
         } else {
             DnStatus pkgDnStatus;
-            AgentToCmserverDnSyncList syncList;
-            rcs = memcpy_s(&(pkgDnStatus), sizeof(DnStatus), &(g_dnReportMsg[ii].dnStatus), sizeof(DnStatus));
-            securec_check_errno(rcs, (void)rcs);
+            rc = memcpy_s(&(pkgDnStatus), sizeof(DnStatus), &(g_dnReportMsg[ii].dnStatus), sizeof(DnStatus));
+            securec_check_errno(rc, (void)rc);
             (void)pthread_rwlock_unlock(&(g_dnReportMsg[ii].lk_lock));
+
+            AgentToCmserverDnSyncList syncList = {0};
             CopyDnReportMsg(&syncList, ii);
             g_dnRoleForPhonyDead[ii] = pkgDnStatus.reportMsg.local_status.local_role;
-            if (!SendDnReportMsgCore(&pkgDnStatus, g_currentNode->datanode[ii].datanodeId, &syncList)) {
-                continue;
-            }
+
+            SendDnReportMsgCore(&pkgDnStatus, g_currentNode->datanode[ii].datanodeId, &syncList);
         }
     }
 }
 
 void fenced_UDF_status_check_and_report(void)
 {
-    agent_to_cm_fenced_UDF_status_report report_msg;
-    int ret;
-
     if (agent_cm_server_connect == NULL) {
         return;
     }
 
-    report_msg.msg_type = MSG_AGENT_CM_FENCED_UDF_INSTANCE_STATUS;
-    report_msg.nodeid = g_nodeId;
+    agent_to_cm_fenced_UDF_status_report reportMsg = {0};
+    reportMsg.msg_type = (int)MSG_AGENT_CM_FENCED_UDF_INSTANCE_STATUS;
+    reportMsg.nodeid = g_nodeId;
 
     if (!g_fencedUdfStopped) {
-        report_msg.status = INSTANCE_ROLE_NORMAL;
+        reportMsg.status = INSTANCE_ROLE_NORMAL;
     } else {
-        report_msg.status = INSTANCE_ROLE_UNKNOWN;
+        reportMsg.status = INSTANCE_ROLE_UNKNOWN;
     }
-
-    ret = cm_client_send_msg(
-        agent_cm_server_connect, 'C', (char*)&report_msg, sizeof(agent_to_cm_fenced_UDF_status_report));
-    if (ret != 0) {
-        write_runlog(ERROR, "cm_client_send_msg send cn fail, 2!\n");
-        CloseConnToCmserver();
-        return;
-    }
-
-    write_runlog(DEBUG5,
-        "cm_client_send_msg send the fenced UDF status type is %d,node is %u\n",
-        report_msg.msg_type,
-        report_msg.nodeid);
+    write_runlog(DEBUG5, "node(%u) fenced UDF status will send to cms.\n", reportMsg.nodeid);
+    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_fenced_UDF_status_report), "fenced UDF status");
 }
 
 void InitReportMsg(agent_to_cm_datanode_status_report *reportMsg, int index)
 {
-    errno_t rc = 0;
-    rc = memset_s(reportMsg, sizeof(agent_to_cm_datanode_status_report), 0, sizeof(agent_to_cm_datanode_status_report));
+    errno_t rc =
+        memset_s(reportMsg, sizeof(agent_to_cm_datanode_status_report), 0, sizeof(agent_to_cm_datanode_status_report));
     securec_check_errno(rc, (void)rc);
     reportMsg->msg_type = MSG_AGENT_CM_DATA_INSTANCE_REPORT_STATUS;
     reportMsg->node = g_currentNode->node;
@@ -1017,17 +980,86 @@ static void ChangeLocalRoleInBackup(int dnIdx, int *localDnRole)
     }
 }
 
-void* DNStatusCheckMain(void * const arg)
+static void SendAlarmMsg(int alarmIndex, const char* logicClusterName, const char *instanceName, AlarmType type)
+{
+    AlarmAdditionalParam tempAdditionalParam;
+    if ((g_abnormalAlarmList != NULL) && (!g_suppressAlarm)) {
+        /* fill the alarm message */
+        if (type == ALM_AT_Resume) {
+            WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                instanceName, "", "", logicClusterName,
+                &(g_abnormalAlarmList[alarmIndex]), ALM_AT_Resume);
+            /* report the alarm */
+            AlarmReporter(&(g_abnormalAlarmList[alarmIndex]), ALM_AT_Resume, &tempAdditionalParam);
+        } else {
+            WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                instanceName, "", "", logicClusterName,
+                &(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, instanceName);
+            /* report the alarm */
+            AlarmReporter(&(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, &tempAdditionalParam);
+        }
+    }
+    return;
+}
+
+static void CheckAlmLocalPrimary(
+    DnStatus *dnStatus, int alarmIndex, const char *logicClusterName, const char *instanceName)
+{
+    bool peerRoleStandby = (dnStatus->reportMsg.sender_status[0].peer_role == INSTANCE_ROLE_STANDBY ||
+        (agent_backup_open == CLUSTER_STREAMING_STANDBY &&
+        dnStatus->reportMsg.sender_status[0].peer_role == INSTANCE_ROLE_CASCADE_STANDBY));
+
+    if (peerRoleStandby) {
+        /* the primary dn and standby dn instance are NORMAL */
+        if ((dnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
+            ((dnStatus->reportMsg.sender_status[0].peer_state == INSTANCE_HA_STATE_NORMAL) ||
+            (dnStatus->reportMsg.sender_status[0].peer_state == INSTANCE_HA_STATE_CATCH_UP))) {
+            SendAlarmMsg(alarmIndex, logicClusterName, instanceName, ALM_AT_Resume);
+        } else {
+            SendAlarmMsg(alarmIndex, logicClusterName, instanceName, ALM_AT_Fault);
+        }
+    } else {
+        if (dnStatus->reportMsg.sender_status[0].peer_role != INSTANCE_ROLE_PENDING) {
+            SendAlarmMsg(alarmIndex, logicClusterName, instanceName, ALM_AT_Fault);
+        }
+    }
+    return;
+}
+
+static void CheckAlmLocalStandby(
+    DnStatus *dnStatus, int alarmIndex, const char *logicClusterName, const char *instanceName)
+{
+    bool peerRolePrimary = (dnStatus->reportMsg.receive_status.peer_role == INSTANCE_ROLE_PRIMARY ||
+        (agent_backup_open == CLUSTER_STREAMING_STANDBY &&
+        dnStatus->reportMsg.receive_status.peer_role == INSTANCE_ROLE_MAIN_STANDBY));
+
+    if (peerRolePrimary) {
+        /* the standby dn and primary dn instance are NORMAL */
+        if ((dnStatus->reportMsg.receive_status.peer_state == INSTANCE_HA_STATE_NORMAL) &&
+            ((dnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_NORMAL) ||
+            (dnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_CATCH_UP))) {
+            SendAlarmMsg(alarmIndex, logicClusterName, instanceName, ALM_AT_Resume);
+        } else {
+            SendAlarmMsg(alarmIndex, logicClusterName, instanceName, ALM_AT_Fault);
+        }
+    } else {
+        if (dnStatus->reportMsg.receive_status.peer_role != INSTANCE_ROLE_PENDING) {
+            SendAlarmMsg(alarmIndex, logicClusterName, instanceName, ALM_AT_Fault);
+        }
+    }
+    return;
+}
+
+void* DNStatusCheckMain(void *arg)
 {
     DnStatus dnStatus;
-    int i = *(int*)arg;
+    int32 i = *(int32*)arg;
     errno_t rc;
     pthread_t threadId = pthread_self();
     uint32 dn_restart_count_check_time = 0;
     uint32 dn_restart_count_check_time_in_hour = 0;
     g_dnReportMsg[i].dnStatus.reportMsg.dn_restart_counts = 0;
     uint32 check_dn_sql5_timer = g_check_dn_sql5_interval;
-    AlarmAdditionalParam tempAdditionalParam;
     char* logicClusterName = NULL;
     char instanceName[CM_NODE_NAME] = {0};
     int alarmIndex = i;
@@ -1039,20 +1071,21 @@ void* DNStatusCheckMain(void * const arg)
     int ret = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1,
         "%s_%u", "dn", g_currentNode->datanode[i].datanodeId);
     securec_check_intval(ret, (void)ret);
+    int runing = PROCESS_UNKNOWN;
 
     for (;;) {
         set_thread_state(threadId);
         struct stat instance_stat_buf = {0};
         struct stat cluster_stat_buf = {0};
 
-        if (g_shutdownRequest) {
+        if (g_shutdownRequest || g_exitFlag) {
             cm_sleep(5);
             continue;
         }
 
         InitDNStatus(&dnStatus, i);
         if (g_currentNode->datanode[i].datanodeRole != DUMMY_STANDBY_DN) {
-            ret = DatanodeStatusCheck(&dnStatus, i);
+            ret = DatanodeStatusCheck(&dnStatus, (uint32)i);
         }
 
         if (ret < 0 || g_currentNode->datanode[i].datanodeRole == DUMMY_STANDBY_DN) {
@@ -1060,10 +1093,10 @@ void* DNStatusCheckMain(void * const arg)
                 write_runlog(ERROR, "DatanodeStatusCheck failed, ret=%d\n", ret);
             }
 
-            int runing = check_one_instance_status(GetDnProcessName(), g_currentNode->datanode[i].datanodeLocalDataPath,
+            runing = check_one_instance_status(GetDnProcessName(), g_currentNode->datanode[i].datanodeLocalDataPath,
                 NULL);
             if (g_currentNode->datanode[i].datanodeRole == DUMMY_STANDBY_DN &&
-                dnStatus.reportMsg.processStatus != INSTANCE_PROCESS_RUNNING && PROCESS_RUNNING != runing) {
+                dnStatus.reportMsg.processStatus != INSTANCE_PROCESS_RUNNING && runing != PROCESS_RUNNING) {
                 checkDummyTimes = CHECK_DUMMY_STATE_TIMES;
             }
             if (runing == PROCESS_RUNNING) {
@@ -1119,96 +1152,27 @@ void* DNStatusCheckMain(void * const arg)
         if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
             /* In streaming buackup cluster, role shoule change to primary and standby for arbitrate */
             ChangeLocalRoleInBackup(i, &dnStatus.reportMsg.local_status.local_role);
-            if (dnStatus.reportMsg.local_status.db_state == INSTANCE_HA_STATE_NEED_REPAIR &&
+            if (dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+                dnStatus.reportMsg.local_status.db_state == INSTANCE_HA_STATE_NEED_REPAIR &&
                 dnStatus.reportMsg.local_status.buildReason == INSTANCE_HA_DATANODE_BUILD_REASON_DISCONNECT) {
                 ReportStreamingDRAlarm(ALM_AT_Fault, instanceName, alarmIndex, instanceName);
             } else {
                 ReportStreamingDRAlarm(ALM_AT_Resume, instanceName, alarmIndex, NULL);
             }
+        } else {
+            ReportStreamingDRAlarm(ALM_AT_Resume, instanceName, alarmIndex, NULL);
         }
         if (g_clusterType != V3SingleInstCluster &&
             dnStatus.reportMsg.connectStatus == AGENT_TO_INSTANCE_CONNECTION_OK &&
             g_currentNode->datanode[i].datanodeRole != DUMMY_STANDBY_DN) {
             logicClusterName = get_logicClusterName_by_dnInstanceId(dnStatus.reportMsg.instanceId);
-            if (dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY) {
-                /*
-                 * if instance is primary dn
-                 * whether the standby dn instance is NORMAL
-                 */
-                if (dnStatus.reportMsg.sender_status[0].peer_role == INSTANCE_ROLE_STANDBY) {
-                    /* the primary dn and standby dn instance are NORMAL */
-                    if ((dnStatus.reportMsg.local_status.db_state == INSTANCE_HA_STATE_NORMAL) && 
-                        ((dnStatus.reportMsg.sender_status[0].peer_state == INSTANCE_HA_STATE_NORMAL) ||
-                        (dnStatus.reportMsg.sender_status[0].peer_state == INSTANCE_HA_STATE_CATCH_UP))) {
-                        if ((g_abnormalAlarmList != NULL) && (g_suppressAlarm == false)) {
-                            /* fill the alarm message */
-                            WriteAlarmAdditionalInfoForLC(&tempAdditionalParam,
-                                instanceName, "", "", logicClusterName,
-                                &(g_abnormalAlarmList[alarmIndex]), ALM_AT_Resume);
-                            /* report the alarm */
-                            AlarmReporter(&(g_abnormalAlarmList[alarmIndex]), ALM_AT_Resume, &tempAdditionalParam);
-                        }
-                    } else {
-                        if ((g_abnormalAlarmList != NULL) && (g_suppressAlarm == false)) {
-                            /* fill the alarm message */
-                            WriteAlarmAdditionalInfoForLC(&tempAdditionalParam,
-                                instanceName, "", "", logicClusterName,
-                                &(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, instanceName);
-                            /* report the alarm */
-                            AlarmReporter(&(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, &tempAdditionalParam);
-                        }
-                    }
-                } else {
-                    if (dnStatus.reportMsg.sender_status[0].peer_role != INSTANCE_ROLE_PENDING) {
-                        if ((g_abnormalAlarmList != NULL) && (g_suppressAlarm == false)) {
-                            /* fill the alarm message */
-                            WriteAlarmAdditionalInfoForLC(&tempAdditionalParam,
-                                instanceName, "", "", logicClusterName,
-                                &(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, instanceName);
-                            /* report the alarm */
-                            AlarmReporter(&(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, &tempAdditionalParam);
-                        }
-                    }
-                }
-            } else if (dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_STANDBY) {
-                /*
-                 * if instance is standby dn
-                 * whether the primary dn instance is NORMAL
-                 */
-                if (dnStatus.reportMsg.receive_status.peer_role == INSTANCE_ROLE_PRIMARY) {
-                    /* the standby dn and primary dn instance are NORMAL */
-                    if ((dnStatus.reportMsg.receive_status.peer_state == INSTANCE_HA_STATE_NORMAL) &&
-                        ((dnStatus.reportMsg.local_status.db_state == INSTANCE_HA_STATE_NORMAL) ||
-                        (dnStatus.reportMsg.local_status.db_state == INSTANCE_HA_STATE_CATCH_UP))) {
-                        if ((g_abnormalAlarmList != NULL) && (g_suppressAlarm == false)) {
-                            /* fill the alarm message */
-                            WriteAlarmAdditionalInfoForLC(&tempAdditionalParam,
-                                instanceName, "", "", logicClusterName,
-                                &(g_abnormalAlarmList[alarmIndex]), ALM_AT_Resume);
-                            /* report the alarm */
-                            AlarmReporter(&(g_abnormalAlarmList[alarmIndex]), ALM_AT_Resume, &tempAdditionalParam);
-                        }
-                    } else {
-                        if ((g_abnormalAlarmList != NULL) && (g_suppressAlarm == false)) {
-                            /* fill the alarm message */
-                            WriteAlarmAdditionalInfoForLC(&tempAdditionalParam,
-                                instanceName, "", "", logicClusterName,
-                                &(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, instanceName);
-                            /* report the alarm */
-                            AlarmReporter(&(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, &tempAdditionalParam);
-                        }
-                    }
-                } else {
-                    if (dnStatus.reportMsg.receive_status.peer_role != INSTANCE_ROLE_PENDING) {
-                        if ((g_abnormalAlarmList != NULL) && (g_suppressAlarm == false)) {
-                            /* fill the alarm message */
-                            WriteAlarmAdditionalInfoForLC(&tempAdditionalParam,
-                                instanceName, "", "", logicClusterName,
-                                &(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, instanceName);
-                            /* report the alarm */
-                            AlarmReporter(&(g_abnormalAlarmList[alarmIndex]), ALM_AT_Fault, &tempAdditionalParam);
-                        }
-                    }
+            if (strcmp(g_agentEnableDcf, "on") != 0) {
+                if (dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+                    CheckAlmLocalPrimary(
+                        &dnStatus, alarmIndex, (const char *)logicClusterName, (const char *)instanceName);
+                } else if (dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_STANDBY) {
+                    CheckAlmLocalStandby(
+                        &dnStatus, alarmIndex, (const char *)logicClusterName, (const char *)instanceName);
                 }
             }
         }
@@ -1239,12 +1203,9 @@ void* DNStatusCheckMain(void * const arg)
             report_build_fail_alarm(ALM_AT_Resume, instanceName, i);
         }
 
-        write_runlog(DEBUG5,
-          "DatanodeStatusCheck: local role is %d, db state is %d, build reason is %d\n",
-          dnStatus.reportMsg.local_status.local_role,
-          dnStatus.reportMsg.local_status.db_state,
-          dnStatus.reportMsg.local_status.buildReason);
-
+        write_runlog(DEBUG5, "DatanodeStatusCheck: local role is %d, db state is %d, build reason is %d\n",
+            dnStatus.reportMsg.local_status.local_role, dnStatus.reportMsg.local_status.db_state,
+            dnStatus.reportMsg.local_status.buildReason);
         (void)pthread_rwlock_wrlock(&(g_dnReportMsg[i].lk_lock));
         rc = memcpy_s((void *)&(g_dnReportMsg[i].dnStatus.lpInfo), sizeof(AgentCmDnLocalPeer),
             (void *)&dnStatus.lpInfo, sizeof(AgentCmDnLocalPeer));
@@ -1267,7 +1228,6 @@ uint32 check_kerberos_state(const char* username)
     /* commad: $GAUSSHOME/bin/kinit -k -t $KRB_HOME/kerberos/omm.keytab omm/opengauss.org@OPENGAUSS.ORG */
     if (check_one_instance_status("krb5kdc", "krb5kdc", NULL) == PROCESS_RUNNING) {
         char actualCmd[MAX_PATH_LEN] = {0};
-        int ret = 0;
         char kerberosCommandPath[MAX_PATH_LEN] = {0};
         pid_t status;
         int rcs = cmagent_getenv("KRB_HOME", kerberosCommandPath, sizeof(kerberosCommandPath));
@@ -1276,8 +1236,8 @@ uint32 check_kerberos_state(const char* username)
             return KERBEROS_STATUS_UNKNOWN;
         } else {
             check_input_for_security(kerberosCommandPath);
-            ret = snprintf_s(actualCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-                "%s/bin/kinit -k -t %s/kerberos/%s.keytab %s/opengauss.org@OPENGAUSS.ORG",  
+            int32 ret = snprintf_s(actualCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+                "%s/bin/kinit -k -t %s/kerberos/%s.keytab %s/opengauss.org@OPENGAUSS.ORG",
                 kerberosCommandPath, kerberosCommandPath, username, username);
             securec_check_intval(ret, (void)ret);
             check_input_for_security(actualCmd);
@@ -1305,7 +1265,7 @@ uint32 check_kerberos_state(const char* username)
 /* get kerberos ip and port */
 void get_kerberosConfigFile_info(const char* kerberosConfigFile, char* kerberosIp, uint32* kerberosPort, int* roleFlag)
 {
-    FILE* kerberos_config_fd = NULL;
+    FILE* kerberos_config_fd;
     char buff[MAX_BUFF] = {0};
     char validstring[MAX_BUFF] = {0};
     errno_t rc;
@@ -1322,11 +1282,11 @@ void get_kerberosConfigFile_info(const char* kerberosConfigFile, char* kerberosI
                 /* acquire kerberos ip and port */
                 rcs = sscanf_s(buff, "%[^1-9]%[^:]%*c%d", validstring, MAX_BUFF, ip, CM_IP_LENGTH, &port);
                 check_sscanf_s_result(rcs, 3);
-                securec_check_intval(rcs, fclose(kerberos_config_fd));
+                securec_check_intval(rcs, (void)fclose(kerberos_config_fd));
                 if (strcmp(ip, g_currentNode->backIps[0]) == 0 && port != 0) {
                     rc = strncpy_s(kerberosIp, CM_IP_LENGTH, ip, strlen(ip));
-                    securec_check_errno(rc, fclose(kerberos_config_fd));
-                    *kerberosPort = port;
+                    securec_check_errno(rc, (void)fclose(kerberos_config_fd));
+                    *kerberosPort = (uint32)port;
                     break;
                 }
                 *roleFlag = *roleFlag + 1;
@@ -1335,7 +1295,7 @@ void get_kerberosConfigFile_info(const char* kerberosConfigFile, char* kerberosI
         if (port == 0) {
             write_runlog(LOG, "Please reinstall kerberos!\n");
         }
-        fclose(kerberos_config_fd);
+        (void)fclose(kerberos_config_fd);
         return;
     } else {
         write_runlog(LOG, "kerberos config open error !\n");
@@ -1343,7 +1303,7 @@ void get_kerberosConfigFile_info(const char* kerberosConfigFile, char* kerberosI
     }
 }
 /* kerberos thread main funcation */
-void* KerberosStatusCheckMain(void* const arg)
+void* KerberosStatusCheckMain(void* arg)
 {
     agent_to_cm_kerberos_status_report report_msg;
     errno_t rc;
@@ -1359,7 +1319,7 @@ void* KerberosStatusCheckMain(void* const arg)
         &report_msg, sizeof(agent_to_cm_kerberos_status_report), 0, sizeof(agent_to_cm_kerberos_status_report));
     securec_check_errno(rc, (void)rc);
     report_msg.msg_type = MSG_AGENT_CM_KERBEROS_STATUS;
-    int isKerberos = cmagent_getenv("MPPDB_KRB5_FILE_PATH", kerberos_config_path, sizeof(kerberos_config_path)); 
+    int isKerberos = cmagent_getenv("MPPDB_KRB5_FILE_PATH", kerberos_config_path, sizeof(kerberos_config_path));
     if (isKerberos != EOK) {
         write_runlog(DEBUG1, "KerberosStatusCheckMain: MPPDB_KRB5_FILE_PATH get fail.\n");
         return NULL;
@@ -1377,7 +1337,7 @@ void* KerberosStatusCheckMain(void* const arg)
     securec_check_errno(rc, (void)rc);
 
     /* get kerberos ip and port and primary or standby */
-    get_kerberosConfigFile_info(kerberos_config_path, kerberosIp, &kerberosPort, &roleFlag); 
+    get_kerberosConfigFile_info(kerberos_config_path, kerberosIp, &kerberosPort, &roleFlag);
     rc = strncpy_s(report_msg.kerberos_ip, CM_IP_LENGTH, kerberosIp, strlen(kerberosIp));
     securec_check_errno(rc, (void)rc);
 
@@ -1395,7 +1355,7 @@ void* KerberosStatusCheckMain(void* const arg)
             cm_sleep(5);
             continue;
         }
-            
+
         /* get kerberos status */
         report_msg.status = check_kerberos_state(pw->pw_name);
 
@@ -1422,112 +1382,29 @@ void* KerberosStatusCheckMain(void* const arg)
     }
 }
 
-static void CheckOneResInstStatus(const CmResConfList *resConf, CmResourceStatus *resStat, uint32 timeout)
-{
-    errno_t rc = strcpy_s(resStat->resName, CM_MAX_RES_NAME, resConf->resName);
-    securec_check_errno(rc, (void)rc);
-    ResStatus ret = CheckOneResInst(resConf->script, resConf->resInstanceId, timeout);
-    if (ret == CM_RES_STAT_ONLINE) {
-        resStat->status = (uint32)CM_RES_ONLINE;
-    } else if (ret == CM_RES_STAT_OFFLINE) {
-        resStat->status = (uint32)CM_RES_OFFLINE;
-    } else {
-        resStat->status = (uint32)CM_RES_UNKNOWN;
-    }
-}
-
-static void DoCheckResourceStatus(CmResConfList *resConf, CmResourceStatus *resStat)
-{
-    static uint32 lastResStatus = 0;
-    long currTime = time(NULL);
-    if (resConf->checkInfo.checkTime == 0) {
-        CheckOneResInstStatus(resConf, resStat, resConf->checkInfo.timeOut);
-        lastResStatus = resStat->status;
-        resConf->checkInfo.checkTime = currTime;
-        return;
-    }
-    if((currTime - resConf->checkInfo.checkTime) < resConf->checkInfo.checkInterval) {
-        resStat->status = lastResStatus;
-        return;
-    }
-    CheckOneResInstStatus(resConf, resStat, resConf->checkInfo.timeOut);
-    resConf->checkInfo.checkTime = currTime;
-    lastResStatus = resStat->status;
-}
-
-void CheckResourceState(OneNodeResourceStatus *nodeStat)
-{
-    nodeStat->node = g_currentNode->node;
-    for (uint32 i = 0; i < (uint32)g_resConf.size(); ++i) {
-        errno_t rc = strcpy_s(nodeStat->status[i].resName, CM_MAX_RES_NAME, g_resConf[i].resName);
-        securec_check_errno(rc, (void)rc);
-        nodeStat->status[i].nodeId = g_resConf[i].nodeId;
-        nodeStat->status[i].cmInstanceId = g_resConf[i].cmInstanceId;
-        nodeStat->status[i].resInstanceId = g_resConf[i].resInstanceId;
-        DoCheckResourceStatus(&g_resConf[i], &nodeStat->status[i]);
-        nodeStat->status[i].isWorkMember = g_resConf[i].isWorkMember;
-    }
-    nodeStat->count = (uint32)g_resConf.size();
-
-    return;
-}
-
-void *ResourceStatusCheckMain(void * const arg)
-{
-    OneNodeResourceStatus nodeStat = {0};
-    write_runlog(LOG, "Resource status check thread start.\n");
-    for (;;) {
-        if (g_shutdownRequest || g_node_num > CM_MAX_RES_NODE_COUNT) {
-            cm_sleep(5);
-            continue;
-        }
-
-        CheckResourceState(&nodeStat);
-        SendResStatReportMsg(&nodeStat);
-
-        errno_t rc = memset_s(&nodeStat, sizeof(OneNodeResourceStatus), 0, sizeof(OneNodeResourceStatus));
-        securec_check_errno(rc, (void)rc);
-
-        cm_sleep(agent_check_interval);
-    }
-
-    return NULL;
-}
-
-
 /**
  * @brief Get DN node log path disk usage and datapath disk usage, send them to the CMS
  *
  */
-void CheckDiskForDNDataPathAndReport(int logLevel)
+void CheckDiskForDNDataPath()
 {
-    int ret;
-    uint32 ii;
+    for (uint32 ii = 0; ii < g_currentNode->datanodeCount; ii++) {
+        AgentToCmDiskUsageStatusReport status;
+        status.msgType = (int)MSG_AGENT_CM_DISKUSAGE_STATUS;
+        status.instanceId = g_currentNode->datanode[ii].datanodeId;
+        status.logPathUsage = CheckDiskForLogPath();
+        status.dataPathUsage = GetDiskUsageForPath(g_currentNode->datanode[ii].datanodeLocalDataPath);
+        status.readOnly = g_dnReadOnly[ii];
+        status.instanceType = INSTANCE_TYPE_DATANODE;
 
-    for (ii = 0; ii < g_currentNode->datanodeCount; ii++) {
-        if (agent_cm_server_connect == NULL) {
-            continue;
-        }
+        write_runlog(DEBUG1, "[%s] msgType:%d, instanceId:%u, logPathUsage:%u, dataPathUsage:%u.\n",
+            __FUNCTION__, status.msgType, status.instanceId, status.logPathUsage, status.dataPathUsage);
 
-        AgentToCMS_DiskUsageStatusReport reportMsg;
-        reportMsg.msgType = MSG_AGENT_CM_DISKUSAGE_STATUS;
-        reportMsg.instanceId = g_currentNode->datanode[ii].datanodeId;
-        reportMsg.logPathUsage = CheckDiskForLogPath();
-        reportMsg.dataPathUsage = GetDiskUsageForPath(g_currentNode->datanode[ii].datanodeLocalDataPath);
-
-        write_runlog(logLevel,
-            "[%s][line:%d] CheckDiskForDNDataPathAndReport send dn disk usage status to CMS. "
-            "msgType:%u, instanceId:%u, logPathUsage:%u, dataPathUsage:%u.\n",
-            __FUNCTION__, __LINE__,
-            reportMsg.msgType, reportMsg.instanceId, reportMsg.logPathUsage, reportMsg.dataPathUsage);
-        ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&reportMsg,
-                                sizeof(AgentToCMS_DiskUsageStatusReport));
-        if (ret != 0) {
-            write_runlog(ERROR,
-                "[%s][line:%d] CheckDiskForDNDataPathAndReport send dn disk usage to cms fail !\n",
-                __FUNCTION__, __LINE__);
-            CloseConnToCmserver();
-        }
+        (void)pthread_rwlock_wrlock(&(g_dnReportMsg[ii].lk_lock));
+        errno_t rc = memcpy_s((void *)&(g_dnReportMsg[ii].dnStatus.diskUsageMsg),
+            sizeof(AgentToCmDiskUsageStatusReport), (void *)&status, sizeof(AgentToCmDiskUsageStatusReport));
+        securec_check_errno(rc, (void)rc);
+        (void)pthread_rwlock_unlock(&(g_dnReportMsg[ii].lk_lock));
     }
 }
 
@@ -1564,7 +1441,7 @@ static void PingPeerIP(int* count, const char localIP[CM_IP_LENGTH], const char 
     return;
 }
 
-void* DNConnectionStatusCheckMain(void * const arg)
+void* DNConnectionStatusCheckMain(void *arg)
 {
     int i = *(int*)arg;
     pthread_t threadId = pthread_self();
@@ -1600,7 +1477,7 @@ void* DNConnectionStatusCheckMain(void * const arg)
                     g_currentNode->datanode[i].datanodePeer2HAIP[0]);
             }
             if (count == 0) {
-                write_runlog(LOG, "dn(%d) is disconnected from other dn.\n", g_currentNode->datanode[i].datanodeId);
+                write_runlog(LOG, "dn(%u) is disconnected from other dn.\n", g_currentNode->datanode[i].datanodeId);
                 g_dnPingFault[i] = true;
                 if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY) {
                     immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
@@ -1825,7 +1702,7 @@ static void CheckDiskIoHave(const char *deviceName, int disk)
     cpuNum = GetCpuCount();
     diskIoHave = (int)ReadDiskIOStat(deviceName, cpuNum, &ioStatus, false);
     if (diskIoHave > disk) {
-        write_runlog(LOG, "{\"CMA – disk IO is more than threshold\":"
+        write_runlog(LOG, "{\"CMA disk IO is more than threshold\":"
             "{\"disk IO\":{\"name\":\"%s\",\"actual\":\"%d%%\", \"threshold\":\"%d%%\"}}}\n",
             deviceName, diskIoHave, disk);
     }
@@ -1859,7 +1736,7 @@ static void CheckSysStatus(const EnvThreshold &threshold)
 
     isOverflow = (memHave > threshold.mem) || (cpuHave > threshold.cpu);
     if (isOverflow) {
-        write_runlog(LOG, "{\"CMA – physical resource is more than threshold\":"
+        write_runlog(LOG, "{\"CMA physical resource is more than threshold\":"
             "{\"memory\":{\"actual\":\"%d%%\",\"threshold\":\"%d%%\"},"
             "\"CPU\":{\"actual\":\"%d%%\",\"threshold\":\"%d%%\"}}}\n",
             memHave, threshold.mem, cpuHave, threshold.cpu);
@@ -1966,7 +1843,7 @@ static void StopCurrentETCD(void)
 {
     char command[MAXPGPATH];
     int ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, "echo -e %s > %s; chmod 600 %s",
-        CM_AGENT_NAME, g_cmEtcdManualStartPath, g_cmEtcdManualStartPath);
+        CM_AGENT_BIN_NAME, g_cmEtcdManualStartPath, g_cmEtcdManualStartPath);
     securec_check_intval(ret, (void)ret);
     ret = system(command);
     if (ret != 0) {
@@ -2008,13 +1885,13 @@ static bool IsEtcdStopByCmAgent(const char* path)
         return false;
     }
     (void)fclose(fd);
-    if (strcmp(stopType, CM_AGENT_NAME) == 0) {
+    if (strcmp(stopType, CM_AGENT_BIN_NAME) == 0) {
         return true;
     }
     return false;
 }
 
-void* ETCDConnectionStatusCheckMain(void* const arg)
+void* ETCDConnectionStatusCheckMain(void* arg)
 {
     pthread_t threadId = pthread_self();
     write_runlog(LOG, "etcd connection status check thread start, threadid %lu.\n", threadId);
@@ -2022,7 +1899,7 @@ void* ETCDConnectionStatusCheckMain(void* const arg)
     DDB_ROLE etcdRole = DDB_ROLE_UNKNOWN;
     for (;;) {
         set_thread_state(threadId);
-        if (g_shutdownRequest) {
+        if (g_shutdownRequest || g_exitFlag) {
             cm_sleep(5);
             continue;
         }

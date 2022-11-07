@@ -27,13 +27,14 @@
 #include "cms_ddb_adapter.h"
 #include "cms_common.h"
 
+
 /**
  * @brief
  *
  * @param  con              My Param doc
  * @param  switchoverMsg    My Param doc
  */
-void ProcessCtlToCmSwitchoverMsg(CM_Connection *con, const ctl_to_cm_switchover *switchoverMsg)
+void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switchover *switchoverMsg)
 {
     int ret;
     int memberIndex = 0;
@@ -42,14 +43,14 @@ void ProcessCtlToCmSwitchoverMsg(CM_Connection *con, const ctl_to_cm_switchover 
 
     if (backup_open != CLUSTER_PRIMARY) {
         ackMsg.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)cm_server_send_msg(con, 'S', (char*)(&ackMsg), sizeof(cm_to_ctl_command_ack));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(cm_to_ctl_command_ack));
         return;
     }
 
     ret = find_node_in_dynamic_configure(switchoverMsg->node, switchoverMsg->instanceId, &groupIndex, &memberIndex);
     if (ret != 0) {
-        write_runlog(LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchoverMsg->node,
-            switchoverMsg->instanceId);
+        write_runlog(
+            LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchoverMsg->node, switchoverMsg->instanceId);
         return;
     }
 
@@ -85,7 +86,7 @@ void ProcessCtlToCmSwitchoverMsg(CM_Connection *con, const ctl_to_cm_switchover 
             ackMsg.command_result = CM_INVALID_COMMAND;
             write_runlog(LOG, "switchover the datanode instance(node =%u  instanceid =%u) is not standby, but is %s, "
                 "echeck is %d, peerInst is %u.\n", switchoverMsg->node, switchoverMsg->instanceId,
-                datanode_role_int_to_string(localRole), echeck, dnReport->dnLp.peerInst);
+                datanode_role_int_to_string(localRole), (int)echeck, dnReport->dnLp.peerInst);
         }
         if (IsBoolCmParamTrue(g_enableDcf) && dnReport->receive_status.local_role != (int)DCF_ROLE_FOLLOWER) {
             ackMsg.command_result = CM_INVALID_COMMAND;
@@ -103,14 +104,13 @@ void ProcessCtlToCmSwitchoverMsg(CM_Connection *con, const ctl_to_cm_switchover 
 
     if (!CheckCanDoSwitchover(groupIndex, memberIndex, &(ackMsg.pengding_command), str)) {
         ackMsg.command_result = CM_ANOTHER_COMMAND_RUNNING;
-        (void)cm_server_send_msg(con, 'S', (char *)(&ackMsg), sizeof(ackMsg));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
         return;
     }
 
     // tell cm_ctl will switchover to primary or standby
     ackMsg.pengding_command = localRole;
-    (void)cm_server_send_msg(con, 'S', (char*)(&ackMsg), sizeof(ackMsg));
-
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
     if (ackMsg.command_result == CM_INVALID_COMMAND) {
         return;
     }
@@ -126,48 +126,38 @@ void ProcessCtlToCmSwitchoverMsg(CM_Connection *con, const ctl_to_cm_switchover 
     return;
 }
 
-/**
- * @brief
- *
- * @param  groupIndex      My Param doc
- * @param  ackMsg          My Param doc
- * @param  con             My Param doc
- * @param  buildMsg        My Param doc
- * @return true
- * @return false
- */
-static bool ExistAnotherCommandRunning(uint32 groupIndex, cm_to_ctl_command_ack ackMsg,
-    CM_Connection *con, const ctl_to_cm_build *buildMsg)
+static bool ExistAnotherCommandRunning(uint32 groupIndex, cm_to_ctl_command_ack ackMsg, MsgRecvInfo* recvMsgInfo,
+    const ctl_to_cm_build *buildMsg)
 {
     /* if cluster is multi az, the cluster will have more standby than one */
-    int i = 0;
     bool isAnotherCommandRunning = false;
-    for (i = 0; i < g_instance_role_group_ptr[groupIndex].count; i++) {
+    for (int i = 0; i < g_instance_role_group_ptr[groupIndex].count; i++) {
         if (!g_multi_az_cluster) {
-            if (INSTANCE_NONE_COMMAND !=
-                g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[i].command_status) {
+            if (g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[i].command_status !=
+                INSTANCE_NONE_COMMAND) {
                 isAnotherCommandRunning = true;
             }
         } else {
-            if (g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[i]
-                    .pengding_command == MSG_CM_AGENT_SWITCHOVER ||
-                g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[i]
-                    .pengding_command == MSG_CM_AGENT_FAILOVER) {
+            if (g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[i].pengding_command ==
+                (int32)MSG_CM_AGENT_SWITCHOVER ||
+                g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[i].pengding_command ==
+                (int32)MSG_CM_AGENT_FAILOVER) {
                 isAnotherCommandRunning = true;
             }
         }
         /* if one instance is building in dcf, can not send build msg */
-        if (IsBoolCmParamTrue(g_enableDcf) && g_instance_group_report_status_ptr[groupIndex].instance_status
-            .command_member[i].pengding_command == MSG_CM_AGENT_BUILD) {
+        if (IsBoolCmParamTrue(g_enableDcf) &&
+            g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[i].pengding_command ==
+            (int)MSG_CM_AGENT_BUILD) {
             isAnotherCommandRunning = true;
             ackMsg.pengding_command = MSG_CM_AGENT_BUILD;
         }
         if (isAnotherCommandRunning) {
-            write_runlog(LOG, "instance(node =%u instanceId =%u) is executing another command (%d)\n",
-                buildMsg->node, buildMsg->instanceId,
+            write_runlog(LOG, "instance(node =%u instanceId =%u) is executing another command (%d)\n", buildMsg->node,
+                buildMsg->instanceId,
                 g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[i].pengding_command);
             ackMsg.command_result = CM_ANOTHER_COMMAND_RUNNING;
-            (void)cm_server_send_msg(con, 'S', (char*)(&ackMsg), sizeof(ackMsg));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
             return isAnotherCommandRunning;
         }
     }
@@ -252,7 +242,8 @@ static status_t CopyDccDataToRemote(uint32 nodeId)
     return CM_ERROR;
 }
 
-static void ProcessCmsBuild(CM_Connection *con, uint32 nodeId, CmsBuildStep step, cm_to_ctl_command_ack *ackMsg)
+static void ProcessCmsBuild(
+    MsgRecvInfo* recvMsgInfo, uint32 nodeId, CmsBuildStep step, cm_to_ctl_command_ack *ackMsg)
 {
     ackMsg->msg_type = (int)MSG_CM_CTL_COMMAND_ACK;
     ackMsg->isCmsBuildStepSuccess = false;
@@ -286,7 +277,7 @@ static void ProcessCmsBuild(CM_Connection *con, uint32 nodeId, CmsBuildStep step
             write_runlog(LOG, "[build cms] cms can't do unknown step.\n");
             break;
     }
-    (void)cm_server_send_msg(con, 'S', (char*)ackMsg, sizeof(cm_to_ctl_command_ack));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)ackMsg, sizeof(cm_to_ctl_command_ack));
 
     return;
 }
@@ -297,20 +288,25 @@ static void ProcessCmsBuild(CM_Connection *con, uint32 nodeId, CmsBuildStep step
  * @param  con         My Param doc
  * @param  buildMsg    My Param doc
  */
-void ProcessCtlToCmBuildMsg(CM_Connection *con, ctl_to_cm_build *buildMsg)
+void ProcessCtlToCmBuildMsg(MsgRecvInfo* recvMsgInfo, ctl_to_cm_build *buildMsg)
 {
     int memberIndex = 0;
     uint32 groupIndex = 0;
     cm_to_ctl_command_ack ackMsg = { 0 };
 
+    if (g_enableSharedStorage) {
+        write_runlog(LOG, "can't do build, in shared storage mode.\n");
+        return;
+    }
+
     if (backup_open != CLUSTER_PRIMARY) {
         ackMsg.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)cm_server_send_msg(con, 'S', (char*)(&ackMsg), sizeof(cm_to_ctl_command_ack));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(cm_to_ctl_command_ack));
         return;
     }
 
     if (buildMsg->cmsBuildStep != CMS_BUILD_NONE) {
-        ProcessCmsBuild(con, buildMsg->node, buildMsg->cmsBuildStep, &ackMsg);
+        ProcessCmsBuild(recvMsgInfo, buildMsg->node, buildMsg->cmsBuildStep, &ackMsg);
         return;
     }
 
@@ -345,13 +341,13 @@ void ProcessCtlToCmBuildMsg(CM_Connection *con, ctl_to_cm_build *buildMsg)
     ackMsg.pengding_command = instStatus->command_member[memberIndex].pengding_command;
 
     /* if cluster is multi az, the cluster will have more standby than one */
-    if (ExistAnotherCommandRunning(groupIndex, ackMsg, con, buildMsg)) {
+    if (ExistAnotherCommandRunning(groupIndex, ackMsg, recvMsgInfo, buildMsg)) {
         write_runlog(DEBUG1, "exist another command running.\n");
         return;
     }
 
     if (ackMsg.command_result == CM_INVALID_COMMAND) {
-        (void)cm_server_send_msg(con, 'S', (char*)(&ackMsg), sizeof(ackMsg));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
         return;
     }
 
@@ -359,14 +355,13 @@ void ProcessCtlToCmBuildMsg(CM_Connection *con, ctl_to_cm_build *buildMsg)
         (instStatus->data_node_member[memberIndex].local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
         (buildMsg->force_build != CM_CTL_FORCE_BUILD)) {
         ackMsg.command_result = CM_DN_NORMAL_STATE;
-        (void)cm_server_send_msg(con, 'S', (char*)(&ackMsg), sizeof(ackMsg));
-        write_runlog(LOG,
-            "the instance %u is standby and normal, will do nothing for build request without -f from cm_ctl.\n",
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&ackMsg), sizeof(ackMsg));
+        write_runlog(LOG, "instance %u is normal standby, will do nothing for build request without -f from cm_ctl.\n",
             instInfo->instanceId);
         return;
     }
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&ackMsg), sizeof(ackMsg));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
     write_runlog(LOG, "set the instance %u to do build by cm_ctl.\n", instInfo->instanceId);
 
     (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[groupIndex].lk_lock));
@@ -392,16 +387,15 @@ void ProcessCtlToCmBuildMsg(CM_Connection *con, ctl_to_cm_build *buildMsg)
  * @return false
  */
 static bool process_ctl_to_cm_switchover_incomplete_msg(
-    CM_Connection* con, int noNeedDoGtmNum, int needDoGtmNum, int noNeedDoDnNum, int needDoDnNum)
+    MsgRecvInfo* recvMsgInfo, int noNeedDoGtmNum, int needDoGtmNum, int noNeedDoDnNum, int needDoDnNum)
 {
     bool hasWarning = false;
     cm_switchover_incomplete_msg switchover_incomplete_msg = {0};
     const int one = 1;
 
     if ((noNeedDoGtmNum + needDoGtmNum) != one && !g_only_dn_cluster) {
-        int rcs = snprintf_s(switchover_incomplete_msg.errMsg,
-            CM_MSG_ERR_INFORMATION_LENGTH, CM_MSG_ERR_INFORMATION_LENGTH - 1,
-            "need do 1 gtm and %u dn for switchover, but only find %d gtm",
+        int rcs = snprintf_s(switchover_incomplete_msg.errMsg, CM_MSG_ERR_INFORMATION_LENGTH,
+            CM_MSG_ERR_INFORMATION_LENGTH - 1, "need do 1 gtm and %u dn for switchover, but only find %d gtm",
             g_datanode_instance_count, (noNeedDoGtmNum + needDoGtmNum));
         securec_check_intval(rcs, (void)rcs);
         hasWarning = true;
@@ -410,22 +404,23 @@ static bool process_ctl_to_cm_switchover_incomplete_msg(
         if ((noNeedDoGtmNum + needDoGtmNum) != one) {
             size_t len = strlen(switchover_incomplete_msg.errMsg);
             if (len < (CM_MSG_ERR_INFORMATION_LENGTH - 1)) {
-                int rcs = snprintf_s(switchover_incomplete_msg.errMsg + len, CM_MSG_ERR_INFORMATION_LENGTH - len,
-                    (CM_MSG_ERR_INFORMATION_LENGTH - 1) - len, "need do %d dn for switchover, but only find %d dn", g_datanode_instance_count, (noNeedDoDnNum + needDoDnNum));
+                int rcs = snprintf_s(switchover_incomplete_msg.errMsg + len,
+                    CM_MSG_ERR_INFORMATION_LENGTH - len, (CM_MSG_ERR_INFORMATION_LENGTH - 1) - len,
+                    "need do %d dn for switchover, but only find %d dn", g_datanode_instance_count,
+                    (noNeedDoDnNum + needDoDnNum));
                 securec_check_intval(rcs, (void)rcs);
             }
         } else {
-            int rcs = snprintf_s(switchover_incomplete_msg.errMsg,
-                CM_MSG_ERR_INFORMATION_LENGTH, CM_MSG_ERR_INFORMATION_LENGTH - 1,
-                "need do 1 gtm and %u dn for switchover, but only find %d dn", g_datanode_instance_count,
-                (noNeedDoDnNum + needDoDnNum));
+            int rcs = snprintf_s(switchover_incomplete_msg.errMsg, CM_MSG_ERR_INFORMATION_LENGTH,
+                CM_MSG_ERR_INFORMATION_LENGTH - 1, "need do 1 gtm and %u dn for switchover, but only find %d dn",
+                g_datanode_instance_count, (noNeedDoDnNum + needDoDnNum));
             securec_check_intval(rcs, (void)rcs);
         }
         hasWarning = true;
     }
     if (hasWarning) {
         switchover_incomplete_msg.msg_type = MSG_CM_CTL_SWITCHOVER_INCOMPLETE_ACK;
-        (void)cm_server_send_msg(con, 'S', (char*)(&switchover_incomplete_msg), sizeof(switchover_incomplete_msg));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&switchover_incomplete_msg), sizeof(switchover_incomplete_msg));
     }
 
     return hasWarning;
@@ -438,16 +433,17 @@ static void process_single_instance_switchover_info(switchover_instance *instanc
     cm_instance_report_status *instReport = &(g_instance_group_report_status_ptr[i].instance_status);
     cm_instance_command_status *cmd = &(instReport->command_member[j]);
     cmd->command_status = INSTANCE_COMMAND_WAIT_EXEC;
-    cmd->pengding_command = MSG_CM_AGENT_SWITCHOVER;
+    cmd->pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
     cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
     cmd->cmdSour = INSTANCE_ROLE_STANDBY;
     cmd->peerInstId = GetPeerInstId(i, j);
     cmd->time_out = ctl_to_cm_swithover_ptr->wait_seconds;
     write_runlog(LOG, "full switchover instanceid %u\n", g_instance_role_group_ptr[i].instanceMember[j].instanceId);
     int32 localRole = instReport->data_node_member[j].local_status.local_role;
-    write_runlog(LOG, "instd(%u) localRole is (%d: %s), cmd[cmdPur(%d: %s), cmdSour(%d: %s)].\n",
+    write_runlog(LOG, "instd(%u) localRole is (%d: %s), cmd[cmdPur(%d: %s), cmdSour(%d: %s), peerInstId: %u].\n",
         GetInstanceIdInGroup(i, j), localRole, datanode_role_int_to_string(localRole), cmd->cmdPur,
-        datanode_role_int_to_string(cmd->cmdPur), cmd->cmdSour, datanode_role_int_to_string(cmd->cmdSour));
+        datanode_role_int_to_string(cmd->cmdPur), cmd->cmdSour, datanode_role_int_to_string(cmd->cmdSour),
+        cmd->peerInstId);
     /* clear peer comand status */
     for (int k = 0; k < g_instance_role_group_ptr[i].count; k++) {
         if (j != k) {
@@ -498,8 +494,8 @@ bool IsInCatchUpState(uint32 ptrIndex, int memberIndex)
     return false;
 }
 
-static bool CanDoSwitchoverInAllShard(
-    CM_Connection *con, cm_to_ctl_command_ack *msg, const ctl_to_cm_switchover *swithoverPtr, const char *str)
+static bool CanDoSwitchoverInAllShard(MsgRecvInfo* recvMsgInfo, cm_to_ctl_command_ack *msg,
+    const ctl_to_cm_switchover *swithoverPtr, const char *str)
 {
     int32 instType = 0;
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
@@ -515,16 +511,16 @@ static bool CanDoSwitchoverInAllShard(
                 msg->pengding_command = cmd->pengding_command;
                 write_runlog(LOG, "do %s instance(node =%u  instanceid =%u) is executing another command (%d)\n",
                     str, swithoverPtr->node, swithoverPtr->instanceId, msg->pengding_command);
-                (void)cm_server_send_msg(con, 'S', (const char *)(msg), sizeof(cm_to_ctl_command_ack));
+                (void)RespondMsg(recvMsgInfo, 'S', (const char *)(msg), sizeof(cm_to_ctl_command_ack));
                 return false;
             }
         }
         if (CheckInstInSyncList(i, 0, str) == SYNCLIST_IS_NOT_SAME) {
             msg->command_result = CM_ANOTHER_COMMAND_RUNNING;
-            msg->pengding_command = MSG_CM_AGENT_DN_SYNC_LIST;
+            msg->pengding_command = (int)MSG_CM_AGENT_DN_SYNC_LIST;
             write_runlog(LOG, "do %s instance(node =%u  instanceid =%u) is executing another command (%d)\n",
-                str, swithoverPtr->node, swithoverPtr->instanceId, MSG_CM_AGENT_DN_SYNC_LIST);
-            (void)cm_server_send_msg(con, 'S', (const char *)(msg), sizeof(cm_to_ctl_command_ack));
+                str, swithoverPtr->node, swithoverPtr->instanceId, (int)MSG_CM_AGENT_DN_SYNC_LIST);
+            (void)RespondMsg(recvMsgInfo, 'S', (const char *)(msg), sizeof(cm_to_ctl_command_ack));
             return false;
         }
     }
@@ -546,7 +542,8 @@ static void CheckSwitchoverInstance(const ctl_to_cm_switchover* swithoverPtr, co
  * @param  con              My Param doc
  * @param  ctl_to_cm_swithover_ptrMy Param doc
  */
-void process_ctl_to_cm_switchover_full_msg(CM_Connection* con, const ctl_to_cm_switchover* ctl_to_cm_swithover_ptr)
+void process_ctl_to_cm_switchover_full_msg(
+    MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switchover *ctl_to_cm_swithover_ptr)
 {
     int instanceType = 0;
     switchover_instance instance;
@@ -555,15 +552,16 @@ void process_ctl_to_cm_switchover_full_msg(CM_Connection* con, const ctl_to_cm_s
 
     if (CheckEnableFlag()) {
         msgSwitchoverFullAck.command_result = CM_INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
         return;
     }
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverFullAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
         return;
     }
-    if (!CanDoSwitchoverInAllShard(con, &msgSwitchoverFullAck, ctl_to_cm_swithover_ptr, "switchover_full_msg")) {
+    if (!CanDoSwitchoverInAllShard(
+        recvMsgInfo, &msgSwitchoverFullAck, ctl_to_cm_swithover_ptr, "switchover_full_msg")) {
         return;
     }
 
@@ -623,12 +621,12 @@ void process_ctl_to_cm_switchover_full_msg(CM_Connection* con, const ctl_to_cm_s
         (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
     }
 
-    (void)process_ctl_to_cm_switchover_incomplete_msg(con, noNeedDoGtmNum, needDoGtmNum, noNeedDoDnNum, needDoDnNum);
+    (void)process_ctl_to_cm_switchover_incomplete_msg(
+        recvMsgInfo, noNeedDoGtmNum, needDoGtmNum, noNeedDoDnNum, needDoDnNum);
     CheckSwitchoverInstance(ctl_to_cm_swithover_ptr, "[process_ctl_to_cm_switchover_full_msg]");
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullAck), sizeof(msgSwitchoverFullAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgSwitchoverFullAck), sizeof(msgSwitchoverFullAck));
 }
-
 
 /**
  * @brief cm server process the msg from cm_ctl to do a az switchover
@@ -636,23 +634,15 @@ void process_ctl_to_cm_switchover_full_msg(CM_Connection* con, const ctl_to_cm_s
  * @param  con              My Param doc
  * @param  ctl_to_cm_swithover_ptrMy Param doc
  */
-void ProcessCtlToCmSwitchoverAzMsg(CM_Connection* con, ctl_to_cm_switchover* ctl_to_cm_swithover_ptr)
+void ProcessCtlToCmSwitchoverAzMsg(MsgRecvInfo* recvMsgInfo, ctl_to_cm_switchover* ctl_to_cm_swithover_ptr)
 {
     ctl_to_cm_swithover_ptr->azName[CM_AZ_NAME - 1] = '\0';
     int instanceType = 0;
-
-    cm_to_ctl_switchover_az_check_ack msgSwitchoverAZAck;
-    msgSwitchoverAZAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_ACK;
-
-    if (CheckEnableFlag()) {
-        msgSwitchoverAZAck.switchoverDone = INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
-        return;
-    }
+    cm_msg_type msgSwitchoverAZAck;
 
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverAZAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZAck), sizeof(cm_msg_type));
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgSwitchoverAZAck), sizeof(cm_msg_type));
         return;
     }
 
@@ -670,19 +660,19 @@ void ProcessCtlToCmSwitchoverAzMsg(CM_Connection* con, ctl_to_cm_switchover* ctl
 
     /* check if another cm_ctl switchover -z is running */
     (void)pthread_rwlock_wrlock(&(switchover_az_rwlock));
-    if (switchoverAZInProgress == true) {
-        msgSwitchoverAZAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_DENIED;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
+    if (switchoverAZInProgress) {
+        msgSwitchoverAZAck.msg_type = (int)MSG_CM_CTL_SWITCHOVER_AZ_DENIED;
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
         (void)pthread_rwlock_unlock(&(switchover_az_rwlock));
         return;
     } else if (isVoteAz) {
-        msgSwitchoverAZAck.msg_type = MSG_CM_CTL_INVALID_COMMAND_ACK;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
+        msgSwitchoverAZAck.msg_type = (int)MSG_CM_CTL_INVALID_COMMAND_ACK;
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
         (void)pthread_rwlock_unlock(&(switchover_az_rwlock));
         return;
     } else if (!CheckAllDnShardSynclist("[ProcessCtlToCmSwitchoverAzMsg]")) {
-        msgSwitchoverAZAck.msg_type = MSG_CM_AGENT_DN_SYNC_LIST;
-        (void)cm_server_send_msg(con, 'S', (char *)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
+        msgSwitchoverAZAck.msg_type = (int)MSG_CM_AGENT_DN_SYNC_LIST;
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
         (void)pthread_rwlock_unlock(&(switchover_az_rwlock));
         return;
     } else {
@@ -708,17 +698,17 @@ void ProcessCtlToCmSwitchoverAzMsg(CM_Connection* con, ctl_to_cm_switchover* ctl
                 (strcmp(ctl_to_cm_swithover_ptr->azName, g_instance_role_group_ptr[i].instanceMember[j].azName) == 0);
             if (g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_GTM &&
                 g_instance_group_report_status_ptr[i].instance_status.gtm_member[j].local_status.local_role ==
-                    INSTANCE_ROLE_PRIMARY && sameAz) {
-                    primaryInstanceInTargetAZ = true;
-                    noNeedDoGtmNum++;
-                    checkSwitchoverInstance = true;
-                    break;
+                INSTANCE_ROLE_PRIMARY && sameAz) {
+                primaryInstanceInTargetAZ = true;
+                noNeedDoGtmNum++;
+                checkSwitchoverInstance = true;
+                break;
             } else if (g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_DATANODE &&
                 ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[j]
-                    .local_status.local_role == INSTANCE_ROLE_PRIMARY && sameAz))) {
-                    primaryInstanceInTargetAZ = true;
-                    noNeedDoDnNum++;
-                    checkSwitchoverInstance = true;
+                .local_status.local_role == INSTANCE_ROLE_PRIMARY && sameAz))) {
+                primaryInstanceInTargetAZ = true;
+                noNeedDoDnNum++;
+                checkSwitchoverInstance = true;
                 break;
             }
         }
@@ -736,9 +726,8 @@ void ProcessCtlToCmSwitchoverAzMsg(CM_Connection* con, ctl_to_cm_switchover* ctl
                         if (g_instance_group_report_status_ptr[i].instance_status.gtm_member[j]
                             .local_status.local_role == INSTANCE_ROLE_STANDBY &&
                             g_instance_group_report_status_ptr[i].instance_status.gtm_member[j]
-                                .local_status.connect_status == CON_OK) {
+                            .local_status.connect_status == CON_OK) {
                             SwitchOverSetting(ctl_to_cm_swithover_ptr->wait_seconds, instanceType, i, j);
-
                             switchedInstanceInTargetAZ = true;
                             checkSwitchoverInstance = true;
                             needDoGtmNum++;
@@ -776,11 +765,12 @@ void ProcessCtlToCmSwitchoverAzMsg(CM_Connection* con, ctl_to_cm_switchover* ctl
         (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
     }
 
-    (void)process_ctl_to_cm_switchover_incomplete_msg(con, noNeedDoGtmNum, needDoGtmNum, noNeedDoDnNum, needDoDnNum);
+    (void)process_ctl_to_cm_switchover_incomplete_msg(
+        recvMsgInfo, noNeedDoGtmNum, needDoGtmNum, noNeedDoDnNum, needDoDnNum);
     CheckSwitchoverInstance(ctl_to_cm_swithover_ptr, "[ProcessCtlToCmSwitchoverAzMsg]");
 
     msgSwitchoverAZAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_ACK;
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
 }
 
 /**
@@ -797,7 +787,7 @@ static void SetSwitchoverInSwitchoverDone(uint32 groupIdx, int memIdx, bool isNe
     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
 }
 
-/**
+/* *
  * @brief check cm_ctl switchover -a done
  *        if switchover DONE return true
  *            1. no MSG_CM_AGENT_SWITCHOVER pending command
@@ -825,12 +815,11 @@ static int SwitchoverDone(void)
             instanceId = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
             switch (instanceType) {
                 case INSTANCE_TYPE_GTM: {
-                    int gtmLocalRole =
-                        g_instance_group_report_status_ptr[i].instance_status.gtm_member[j].local_status.local_role;
+                    const cm_gtm_replconninfo *gtmLocalStat =
+                        &g_instance_group_report_status_ptr[i].instance_status.gtm_member[j].local_status;
+                    int gtmLocalRole = gtmLocalStat->local_role;
                     if (initRole == INSTANCE_ROLE_PRIMARY && gtmLocalRole != INSTANCE_ROLE_PRIMARY &&
-                        *command != MSG_CM_AGENT_SWITCHOVER &&
-                        g_instance_group_report_status_ptr[i].instance_status.gtm_member[j]
-                                .local_status.connect_status == CON_OK) {
+                        *command != (int32)MSG_CM_AGENT_SWITCHOVER && gtmLocalStat->connect_status == CON_OK) {
                         SetSwitchoverInSwitchoverDone(i, j, false);
                         return SWITCHOVER_EXECING;
                     }
@@ -865,7 +854,7 @@ static int SwitchoverDone(void)
                         .local_status.local_role;
                     bool enCheck = (CheckInstInSyncList(i, j, str) == SYNCLIST_IS_FINISTH);
                     if (initRole == INSTANCE_ROLE_PRIMARY && dnLocalRole != INSTANCE_ROLE_PRIMARY &&
-                        *command != MSG_CM_AGENT_SWITCHOVER && enCheck) {
+                        *command != (int)MSG_CM_AGENT_SWITCHOVER && enCheck) {
                         if (localStatus == INSTANCE_HA_STATE_NORMAL) {
                             set_pending_command(i, j, MSG_CM_AGENT_SWITCHOVER, SWITCHOVER_DEFAULT_WAIT);
                             write_runlog(LOG, "%s: add switchover instanceid %u.\n", str,
@@ -934,20 +923,20 @@ static int SwitchoverDone(void)
  *
  * @param  con              My Param doc
  */
-void ProcessCtlToCmSwitchoverFullCheckMsg(CM_Connection* con)
+void ProcessCtlToCmSwitchoverFullCheckMsg(MsgRecvInfo* recvMsgInfo)
 {
     cm_to_ctl_switchover_full_check_ack msgSwitchoverFullCheckAck;
     msgSwitchoverFullCheckAck.msg_type = MSG_CM_CTL_SWITCHOVER_FULL_CHECK_ACK;
 
     if (CheckEnableFlag()) {
         msgSwitchoverFullCheckAck.switchoverDone = INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullCheckAck), sizeof(msgSwitchoverFullCheckAck));
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgSwitchoverFullCheckAck), sizeof(msgSwitchoverFullCheckAck));
         return;
     }
     int32 switchoverDone = GetSwitchoverDone("[ProcessCtlToCmSwitchoverFullCheckMsg]");
     msgSwitchoverFullCheckAck.switchoverDone = switchoverDone;
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullCheckAck), sizeof(msgSwitchoverFullCheckAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverFullCheckAck), sizeof(msgSwitchoverFullCheckAck));
 
     /* delete the data and clear the flag. */
     if ((switchoverDone == SWITCHOVER_SUCCESS) || (switchoverDone == SWITCHOVER_PARTLY_SUCCESS)) {
@@ -964,20 +953,20 @@ void ProcessCtlToCmSwitchoverFullCheckMsg(CM_Connection* con)
  *
  * @param  con              My Param doc
  */
-void ProcessCtlToCmSwitchoverAzCheckMsg(CM_Connection* con)
+void ProcessCtlToCmSwitchoverAzCheckMsg(MsgRecvInfo* recvMsgInfo)
 {
     cm_to_ctl_switchover_az_check_ack msgSwitchoverAZCheckAck;
     msgSwitchoverAZCheckAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_CHECK_ACK;
 
     if (CheckEnableFlag()) {
         msgSwitchoverAZCheckAck.switchoverDone = INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZCheckAck), sizeof(msgSwitchoverAZCheckAck));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAZCheckAck), sizeof(msgSwitchoverAZCheckAck));
         return;
     }
     int32 switchoverDone = GetSwitchoverDone("[ProcessCtlToCmSwitchoverAzCheckMsg]");
     msgSwitchoverAZCheckAck.switchoverDone = switchoverDone;
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZCheckAck), sizeof(msgSwitchoverAZCheckAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAZCheckAck), sizeof(msgSwitchoverAZCheckAck));
 
     /* delete the data and clear the flag. */
     if ((switchoverDone == SWITCHOVER_SUCCESS) || (switchoverDone == SWITCHOVER_PARTLY_SUCCESS)) {
@@ -994,12 +983,12 @@ void ProcessCtlToCmSwitchoverAzCheckMsg(CM_Connection* con)
  *
  * @param  con              My Param doc
  */
-void ProcessCtlToCmSwitchoverFullTimeoutMsg(CM_Connection* con)
+void ProcessCtlToCmSwitchoverFullTimeoutMsg(MsgRecvInfo* recvMsgInfo)
 {
     cm_msg_type msgSwitchoverFullTimeoutAck;
     msgSwitchoverFullTimeoutAck.msg_type = MSG_CM_CTL_SWITCHOVER_FULL_TIMEOUT_ACK;
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullTimeoutAck), sizeof(msgSwitchoverFullTimeoutAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverFullTimeoutAck), sizeof(msgSwitchoverFullTimeoutAck));
 
     /* delete the data and clear the flag. */
     switchOverInstances.clear();
@@ -1012,12 +1001,12 @@ void ProcessCtlToCmSwitchoverFullTimeoutMsg(CM_Connection* con)
  *
  * @param  con              My Param doc
  */
-void process_ctl_to_cm_switchover_az_timeout_msg(CM_Connection* con)
+void process_ctl_to_cm_switchover_az_timeout_msg(MsgRecvInfo* recvMsgInfo)
 {
     cm_msg_type msgSwitchoverAZTimeoutAck;
 
     msgSwitchoverAZTimeoutAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_TIMEOUT_ACK;
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZTimeoutAck), sizeof(msgSwitchoverAZTimeoutAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAZTimeoutAck), sizeof(msgSwitchoverAZTimeoutAck));
 
     /* delete the data and clear the flag. */
     switchOverInstances.clear();
@@ -1031,7 +1020,7 @@ void process_ctl_to_cm_switchover_az_timeout_msg(CM_Connection* con)
  *
  * @param  con              My Param doc
  */
-void process_ctl_to_cm_balance_check_msg(CM_Connection* con)
+void process_ctl_to_cm_balance_check_msg(MsgRecvInfo* recvMsgInfo)
 {
     cm_to_ctl_balance_check_ack msgBalanceCheckAck;
 
@@ -1047,7 +1036,7 @@ void process_ctl_to_cm_balance_check_msg(CM_Connection* con)
     }
 #endif
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgBalanceCheckAck), sizeof(msgBalanceCheckAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgBalanceCheckAck), sizeof(msgBalanceCheckAck));
 }
 
 /**
@@ -1056,13 +1045,12 @@ void process_ctl_to_cm_balance_check_msg(CM_Connection* con)
  * @param  con              My Param doc
  * @param  ctl_to_cm_set_ptrMy Param doc
  */
-void ProcessCtlToCmSetMsg(CM_Connection* con, const ctl_to_cm_set* ctl_to_cm_set_ptr)
+void ProcessCtlToCmSetMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_set* ctl_to_cm_set_ptr)
 {
     cm_msg_type msgSetAck;
 
     if (ctl_to_cm_set_ptr->log_level > 0) {
-        write_runlog(
-            LOG, "log_min_messages has changed from %d to %d\n", log_min_messages, ctl_to_cm_set_ptr->log_level);
+        write_runlog(LOG, "log_min_messages changed from %d to %d\n", log_min_messages, ctl_to_cm_set_ptr->log_level);
         log_min_messages = ctl_to_cm_set_ptr->log_level;
     } else {
         write_runlog(ERROR, "invalid log level %d\n", ctl_to_cm_set_ptr->log_level);
@@ -1091,7 +1079,7 @@ void ProcessCtlToCmSetMsg(CM_Connection* con, const ctl_to_cm_set* ctl_to_cm_set
     }
 
     msgSetAck.msg_type = MSG_CM_CTL_SET_ACK;
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgSetAck), sizeof(msgSetAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSetAck), sizeof(msgSetAck));
 }
 
 static void HdlGtmBlanceAndAbnormal(const ctl_to_cm_query *ctlToCmQry, uint32 ii, bool *isSkip)
@@ -1103,13 +1091,13 @@ static void HdlGtmBlanceAndAbnormal(const ctl_to_cm_query *ctlToCmQry, uint32 ii
             ctlToCmQry->detail == CLUSTER_ABNORMAL_BALANCE_COUPLE_DETAIL_STATUS_QUERY) &&
             g_instance_role_group_ptr[ii].instanceMember[i].instanceRoleInit == INSTANCE_ROLE_PRIMARY &&
             g_instance_group_report_status_ptr[ii].instance_status.gtm_member[i]
-                .local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+            .local_status.local_role == INSTANCE_ROLE_PRIMARY) {
             gtmBlance = true;
         }
         if ((ctlToCmQry->detail == CLUSTER_ABNORMAL_COUPLE_DETAIL_STATUS_QUERY ||
-                ctlToCmQry->detail == CLUSTER_ABNORMAL_BALANCE_COUPLE_DETAIL_STATUS_QUERY) &&
-            g_instance_group_report_status_ptr[ii].instance_status.gtm_member[i]
-                    .local_status.connect_status != CON_OK) {
+            ctlToCmQry->detail == CLUSTER_ABNORMAL_BALANCE_COUPLE_DETAIL_STATUS_QUERY) &&
+            g_instance_group_report_status_ptr[ii].instance_status.gtm_member[i].local_status.connect_status !=
+            CON_OK) {
             gtmAbnormal = true;
         }
     }
@@ -1126,16 +1114,16 @@ static void HdlDnBlanceAndAbnormal(const ctl_to_cm_query *ctlToCmQry, uint32 ii,
     bool dnBalance = false;
     bool dnAbnormal = false;
     if ((ctlToCmQry->detail == CLUSTER_BALANCE_COUPLE_DETAIL_STATUS_QUERY ||
-         ctlToCmQry->detail == CLUSTER_ABNORMAL_BALANCE_COUPLE_DETAIL_STATUS_QUERY) &&
-         g_instance_group_report_status_ptr[ii].instance_status.data_node_member[0]
-            .local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+        ctlToCmQry->detail == CLUSTER_ABNORMAL_BALANCE_COUPLE_DETAIL_STATUS_QUERY) &&
+        g_instance_group_report_status_ptr[ii].instance_status.data_node_member[0].local_status.local_role ==
+        INSTANCE_ROLE_PRIMARY) {
         dnBalance = true;
     }
     for (int i = 0; i < g_instance_role_group_ptr[ii].count; i++) {
         if ((ctlToCmQry->detail == CLUSTER_ABNORMAL_COUPLE_DETAIL_STATUS_QUERY ||
-             ctlToCmQry->detail == CLUSTER_ABNORMAL_BALANCE_COUPLE_DETAIL_STATUS_QUERY) &&
-             g_instance_group_report_status_ptr[ii].instance_status.data_node_member[i]
-                .local_status.db_state != INSTANCE_HA_STATE_NORMAL) {
+            ctlToCmQry->detail == CLUSTER_ABNORMAL_BALANCE_COUPLE_DETAIL_STATUS_QUERY) &&
+            g_instance_group_report_status_ptr[ii].instance_status.data_node_member[i].local_status.db_state !=
+            INSTANCE_HA_STATE_NORMAL) {
             dnAbnormal = true;
             break;
         }
@@ -1225,33 +1213,30 @@ static void FillCm2CtlRsp4CnGroup(uint32 ii, cm_to_ctl_instance_status *cmToCtlS
         cmToCtlStatusContent->coordinatemember.status = INSTANCE_ROLE_UNKNOWN;
     } else {
         if (g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.status.status ==
-                INSTANCE_ROLE_NORMAL &&
+            INSTANCE_ROLE_NORMAL &&
             g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.status.db_state ==
-                INSTANCE_HA_STATE_STARTING) {
+            INSTANCE_HA_STATE_STARTING) {
             cmToCtlStatusContent->coordinatemember.status = INSTANCE_ROLE_INIT;
         } else if (g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.status.status ==
-                INSTANCE_ROLE_NORMAL &&
-                checkReadOnlyStatus(cmToCtlStatusContent->instanceId)) {
+            INSTANCE_ROLE_NORMAL &&
+            CheckReadOnlyStatus(cmToCtlStatusContent->instanceId)) {
             cmToCtlStatusContent->coordinatemember.status = INSTANCE_ROLE_READONLY;
         } else {
             cmToCtlStatusContent->coordinatemember.status =
                 g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.status.status;
         }
     }
-    if (undocumentedVersion == 0 || undocumentedVersion >= 92515) {
-        cmToCtlStatusContent->data_node_member.local_status.db_state = INSTANCE_HA_STATE_NORMAL;
-        if (backup_open == CLUSTER_STREAMING_STANDBY) {
-            cmToCtlStatusContent->data_node_member.local_status.db_state =
-                g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.status.db_state;
-            cmToCtlStatusContent->data_node_member.local_status.buildReason =
-                g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.buildReason;
-        }
+    cmToCtlStatusContent->data_node_member.local_status.db_state = INSTANCE_HA_STATE_NORMAL;
+    if (backup_open == CLUSTER_STREAMING_STANDBY) {
+        cmToCtlStatusContent->data_node_member.local_status.db_state =
+            g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.status.db_state;
+        cmToCtlStatusContent->data_node_member.local_status.buildReason =
+            g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.buildReason;
     }
     cmToCtlStatusContent->coordinatemember.group_mode =
         g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.group_mode;
     (void)pthread_mutex_lock(&g_centralNode.mt_lock);
-    if (g_centralNode.instanceId != 0 &&
-        g_centralNode.instanceId == cmToCtlStatusContent->instanceId) {
+    if (g_centralNode.instanceId != 0 && g_centralNode.instanceId == cmToCtlStatusContent->instanceId) {
         cmToCtlStatusContent->is_central = 1;
     }
     (void)pthread_mutex_unlock(&g_centralNode.mt_lock);
@@ -1290,7 +1275,7 @@ static void FillCm2CtlRsp4DnGroup(uint32 ii, uint32 jj, cm_to_ctl_instance_statu
         sizeof(cm_to_ctl_instance_datanode_status));
     securec_check_errno(rc, (void)rc);
     if (cmToCtlStatusContent->data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL &&
-        checkReadOnlyStatus(cmToCtlStatusContent->instanceId)) {
+        CheckReadOnlyStatus(cmToCtlStatusContent->instanceId)) {
         cmToCtlStatusContent->data_node_member.local_status.db_state = INSTANCE_HA_STATE_READ_ONLY;
     }
     if (GetIsSharedStorageMode()) {
@@ -1302,7 +1287,7 @@ static void FillCm2CtlRsp4DnGroup(uint32 ii, uint32 jj, cm_to_ctl_instance_statu
     }
 }
 
-static status_t FillCm2CtlRsp4InstGroup(CM_Connection *con, const ctl_to_cm_query *ctlToCmQry,
+static status_t FillCm2CtlRsp4InstGroup(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
     uint32 ii, int type, uint32 group_index, cm_to_ctl_instance_status *cmToCtlStatusContent)
 {
     for (int jj = 0; jj < g_instance_role_group_ptr[ii].count; jj++) {
@@ -1334,19 +1319,13 @@ static status_t FillCm2CtlRsp4InstGroup(CM_Connection *con, const ctl_to_cm_quer
         write_runlog(DEBUG5, "send the instance query result (node =%u  instanceid =%u)\n",
             g_instance_role_group_ptr[ii].instanceMember[jj].node,
             g_instance_role_group_ptr[ii].instanceMember[jj].instanceId);
-        (void)cm_server_send_msg(con, 'S', (char*)cmToCtlStatusContent, sizeof(cm_to_ctl_instance_status), DEBUG5);
+        (void)RespondMsg(
+            recvMsgInfo, 'S', (char *)cmToCtlStatusContent, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
     }
     return CM_SUCCESS;
 }
 
-/**
- * @brief
- *
- * @param  con              My Param doc
- * @param  ctlToCmQry       My Param doc
- * @param  type             My Param doc
- */
-static void ProcessCtlToCmOneTypeQryMsg(CM_Connection *con, const ctl_to_cm_query *ctlToCmQry, int type)
+static void ProcessCtlToCmOneTypeQryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry, int type)
 {
     cm_to_ctl_instance_status cmToCtlStatusContent;
     uint32 ii;
@@ -1356,10 +1335,9 @@ static void ProcessCtlToCmOneTypeQryMsg(CM_Connection *con, const ctl_to_cm_quer
     bool isSkip;
 
     if (ctlToCmQry->relation == 1) {
-        if (find_node_in_dynamic_configure(ctlToCmQry->node, ctlToCmQry->instanceId,
-            &group_index, &member_index) != 0) {
-            write_runlog(LOG, "can't find the instance(nodeId=%u, instanceId=%u)\n", ctlToCmQry->node,
-                ctlToCmQry->instanceId);
+        if (find_node_in_dynamic_configure(ctlToCmQry->node, ctlToCmQry->instanceId, &group_index, &member_index) !=
+            0) {
+            write_runlog(LOG, "can't find instance(nodeId=%u, instId=%u)\n", ctlToCmQry->node, ctlToCmQry->instanceId);
             return;
         }
     }
@@ -1380,7 +1358,7 @@ static void ProcessCtlToCmOneTypeQryMsg(CM_Connection *con, const ctl_to_cm_quer
             ctlToCmQry->detail == CLUSTER_ABNORMAL_BALANCE_COUPLE_DETAIL_STATUS_QUERY) &&
             g_instance_role_group_ptr[ii].instanceMember[0].instanceType == INSTANCE_TYPE_DATANODE &&
             g_instance_group_report_status_ptr[ii].instance_status.data_node_member[0].local_status.local_role ==
-                INSTANCE_ROLE_NORMAL &&
+            INSTANCE_ROLE_NORMAL &&
             g_single_node_cluster) {
             continue;
         }
@@ -1394,7 +1372,7 @@ static void ProcessCtlToCmOneTypeQryMsg(CM_Connection *con, const ctl_to_cm_quer
         if (isSkip) {
             continue;
         }
-        int ret = FillCm2CtlRsp4InstGroup(con, ctlToCmQry, ii, type, group_index, &cmToCtlStatusContent);
+        status_t ret = FillCm2CtlRsp4InstGroup(recvMsgInfo, ctlToCmQry, ii, type, group_index, &cmToCtlStatusContent);
         if (ret != CM_SUCCESS) {
             return;
         }
@@ -1402,10 +1380,10 @@ static void ProcessCtlToCmOneTypeQryMsg(CM_Connection *con, const ctl_to_cm_quer
     cmToCtlStatusContent.msg_type = MSG_CM_CTL_NODE_END;
     cmToCtlStatusContent.instance_type = type;
 
-    (void)cm_server_send_msg(con, 'S', (char*)&(cmToCtlStatusContent), sizeof(cm_to_ctl_instance_status), DEBUG5);
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)&(cmToCtlStatusContent), sizeof(cm_to_ctl_instance_status), DEBUG5);
 }
 
-/**
+/* *
  * @brief
  *
  * @param  con              My Param doc
@@ -1413,7 +1391,8 @@ static void ProcessCtlToCmOneTypeQryMsg(CM_Connection *con, const ctl_to_cm_quer
  * @param  instanceId       My Param doc
  * @param  instanceType     My Param doc
  */
-static void ProcessCtlToCmOneInstanceQueryMsg(CM_Connection* con, uint32 node, uint32 instanceId, int instanceType)
+static void ProcessCtlToCmOneInstanceQueryMsg(
+    MsgRecvInfo* recvMsgInfo, uint32 node, uint32 instanceId, int instanceType)
 {
     uint32 groupIndex = 0;
     int memberIndex = 0;
@@ -1453,20 +1432,18 @@ static void ProcessCtlToCmOneInstanceQueryMsg(CM_Connection* con, uint32 node, u
                 instStatus->coordinatemember.status.db_state == INSTANCE_HA_STATE_STARTING) {
                 statusMsg.coordinatemember.status = INSTANCE_ROLE_INIT;
             } else if (instStatus->coordinatemember.status.status == INSTANCE_ROLE_NORMAL &&
-                checkReadOnlyStatus(statusMsg.instanceId)) {
+                CheckReadOnlyStatus(statusMsg.instanceId)) {
                 statusMsg.coordinatemember.status = INSTANCE_ROLE_READONLY;
             } else {
                 statusMsg.coordinatemember.status = instStatus->coordinatemember.status.status;
             }
         }
-        if (undocumentedVersion == 0 || undocumentedVersion >= 92515) {
-            statusMsg.data_node_member.local_status.db_state = INSTANCE_HA_STATE_NORMAL;
-            if (backup_open == CLUSTER_STREAMING_STANDBY) {
-                statusMsg.data_node_member.local_status.db_state =
-                    g_instance_group_report_status_ptr[groupIndex].instance_status.coordinatemember.status.db_state;
-                statusMsg.data_node_member.local_status.buildReason =
-                    g_instance_group_report_status_ptr[groupIndex].instance_status.coordinatemember.buildReason;
-            }
+        statusMsg.data_node_member.local_status.db_state = INSTANCE_HA_STATE_NORMAL;
+        if (backup_open == CLUSTER_STREAMING_STANDBY) {
+            statusMsg.data_node_member.local_status.db_state =
+                g_instance_group_report_status_ptr[groupIndex].instance_status.coordinatemember.status.db_state;
+            statusMsg.data_node_member.local_status.buildReason =
+                g_instance_group_report_status_ptr[groupIndex].instance_status.coordinatemember.buildReason;
         }
         statusMsg.coordinatemember.group_mode = instStatus->coordinatemember.group_mode;
 
@@ -1495,7 +1472,7 @@ static void ProcessCtlToCmOneInstanceQueryMsg(CM_Connection* con, uint32 node, u
             }
         } else {
             if (statusMsg.data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL &&
-                checkReadOnlyStatus(statusMsg.instanceId)) {
+                CheckReadOnlyStatus(statusMsg.instanceId)) {
                 statusMsg.data_node_member.local_status.db_state = INSTANCE_HA_STATE_READ_ONLY;
             }
             if (GetIsSharedStorageMode()) {
@@ -1506,21 +1483,16 @@ static void ProcessCtlToCmOneInstanceQueryMsg(CM_Connection* con, uint32 node, u
             }
         }
     } else {
-        write_runlog(ERROR,
-            "can't find the instance(node=%u, instanceId=%u) type(%d) is unknown\n", node, instanceId, instType);
+        write_runlog(ERROR, "can't find instance=%u node=%u, type(%d) is unknown\n", instanceId, node, instType);
         return;
     }
     write_runlog(DEBUG5, "send the instance query result (node=%u, instanceId=%u)\n", node, instanceId);
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&statusMsg), sizeof(statusMsg), DEBUG5);
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&statusMsg), sizeof(statusMsg));  // XXXX:DEBUG5
 
     return;
 }
 
-/**
- * @brief
- *
- */
 static void check_logic_cluster_status()
 {
     uint32 i;
@@ -1537,64 +1509,65 @@ static void check_logic_cluster_status()
             if (g_instance_role_group_ptr[i].count >= 3) {
                 logicClusterId =
                     get_logicClusterId_by_dynamic_dataNodeId(g_instance_role_group_ptr[i].instanceMember[0].instanceId);
-                if (logicClusterId < 0 || logicClusterId >= LOGIC_CLUSTER_NUMBER)
+                if (logicClusterId < 0 || logicClusterId >= LOGIC_CLUSTER_NUMBER) {
                     continue;
+                }
 
                 if ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                        .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
+                    .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
                     (g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                        .local_status.local_role == INSTANCE_ROLE_STANDBY) &&
+                    .local_status.local_role == INSTANCE_ROLE_STANDBY) &&
                     (g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                        .local_status.db_state == INSTANCE_HA_STATE_NORMAL ||
+                    .local_status.db_state == INSTANCE_HA_STATE_NORMAL ||
                     g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                        .local_status.db_state == INSTANCE_HA_STATE_CATCH_UP) &&
+                    .local_status.db_state == INSTANCE_HA_STATE_CATCH_UP) &&
                     (g_instance_group_report_status_ptr[i].instance_status.data_node_member[2]
-                        .local_status.local_role == INSTANCE_ROLE_DUMMY_STANDBY)) {
+                    .local_status.local_role == INSTANCE_ROLE_DUMMY_STANDBY)) {
                 } else if ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                                .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
+                            .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.local_role == INSTANCE_ROLE_STANDBY) &&
+                            .local_status.local_role == INSTANCE_ROLE_STANDBY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.db_state == INSTANCE_HA_STATE_NORMAL ||
+                            .local_status.db_state == INSTANCE_HA_STATE_NORMAL ||
                             g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.db_state == INSTANCE_HA_STATE_CATCH_UP) &&
+                            .local_status.db_state == INSTANCE_HA_STATE_CATCH_UP) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[2]
-                                .local_status.local_role == INSTANCE_ROLE_DUMMY_STANDBY)) {
+                            .local_status.local_role == INSTANCE_ROLE_DUMMY_STANDBY)) {
                 } else if ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
+                            .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                                .local_status.local_role == INSTANCE_ROLE_STANDBY) &&
+                            .local_status.local_role == INSTANCE_ROLE_STANDBY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                                .local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
+                            .local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[2]
-                                .local_status.local_role == INSTANCE_ROLE_UNKNOWN)) {
+                            .local_status.local_role == INSTANCE_ROLE_UNKNOWN)) {
                     g_logicClusterStaticConfig[logicClusterId].LogicClusterStatus = CM_STATUS_DEGRADE;
                 } else if ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                                .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
+                            .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.local_role == INSTANCE_ROLE_STANDBY) &&
+                            .local_status.local_role == INSTANCE_ROLE_STANDBY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.db_state = INSTANCE_HA_STATE_NORMAL) &&
+                                .local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[2]
-                                .local_status.local_role == INSTANCE_ROLE_UNKNOWN)) {
+                            .local_status.local_role == INSTANCE_ROLE_UNKNOWN)) {
                     g_logicClusterStaticConfig[logicClusterId].LogicClusterStatus = CM_STATUS_DEGRADE;
                 } else if ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
+                            .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
+                            .local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                                .local_status.local_role != INSTANCE_ROLE_PRIMARY) &&
+                            .local_status.local_role != INSTANCE_ROLE_PRIMARY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[2]
-                                .local_status.local_role == INSTANCE_ROLE_DUMMY_STANDBY)) {
+                            .local_status.local_role == INSTANCE_ROLE_DUMMY_STANDBY)) {
                     g_logicClusterStaticConfig[logicClusterId].LogicClusterStatus = CM_STATUS_DEGRADE;
                 } else if ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                                .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
+                            .local_status.local_role == INSTANCE_ROLE_PRIMARY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[1]
-                                .local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
+                            .local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[0]
-                                .local_status.local_role != INSTANCE_ROLE_PRIMARY) &&
+                            .local_status.local_role != INSTANCE_ROLE_PRIMARY) &&
                            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[2]
-                                .local_status.local_role == INSTANCE_ROLE_DUMMY_STANDBY)) {
+                            .local_status.local_role == INSTANCE_ROLE_DUMMY_STANDBY)) {
                     g_logicClusterStaticConfig[logicClusterId].LogicClusterStatus = CM_STATUS_DEGRADE;
                 } else {
                     write_runlog(LOG,
@@ -1615,27 +1588,24 @@ static void check_logic_cluster_status()
         } else if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE) {
             for (j = 0; j < g_logic_cluster_count; j++) {
                 if (strcmp(g_instance_group_report_status_ptr[i].instance_status.coordinatemember.logicClusterName,
-                    g_logicClusterStaticConfig[j].LogicClusterName) == 0)
+                    g_logicClusterStaticConfig[j].LogicClusterName) == 0) {
                     g_logicClusterStaticConfig[j].isRedistribution = true;
+                }
             }
             if (strcmp(g_instance_group_report_status_ptr[i].instance_status.coordinatemember.logicClusterName,
-                (char*)ELASTICGROUP) == 0)
+                ELASTICGROUP) == 0) {
                 g_logicClusterStaticConfig[LOGIC_CLUSTER_NUMBER - 1].isRedistribution = true;
+            }
         } else {
             /* do nothing */
         }
     }
 }
 
-/**
- * @brief Get the Dn Relation State object
- *
- * @param  instanceId       My Param doc
- */
 static void getDnRelationState(uint32 instanceId)
 {
-    uint32 i = 0;
-    int j = 0;
+    uint32 i;
+    int j;
     bool find = false;
     g_HA_status->status = CM_STATUS_NORMAL;
     g_HA_status->is_all_group_mode_pending = false;
@@ -1646,12 +1616,12 @@ static void getDnRelationState(uint32 instanceId)
                 break;
             }
         }
-        if (find == true) {
+        if (find) {
             break;
         }
     }
 
-    if (find == false) {
+    if (!find) {
         write_runlog(LOG, "unexpected instanceId %u.\n", instanceId);
         return;
     }
@@ -1661,21 +1631,22 @@ static void getDnRelationState(uint32 instanceId)
     int demotingPrimaryDatanodeCount = 0;
 
     for (j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-        if (INSTANCE_ROLE_PRIMARY ==
-            g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.local_role) {
-            if (INSTANCE_HA_STATE_NORMAL ==
-                g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.db_state) {
+        if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.local_role ==
+            INSTANCE_ROLE_PRIMARY) {
+            if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.db_state ==
+                INSTANCE_HA_STATE_NORMAL) {
                 normalPrimaryDatanodeCount++;
-            } else if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].
-                local_status.db_state == INSTANCE_HA_STATE_DEMOTING) {
+            }
+            if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.db_state ==
+                INSTANCE_HA_STATE_DEMOTING) {
                 demotingPrimaryDatanodeCount++;
             }
-        } else if (INSTANCE_ROLE_STANDBY ==
-            g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.local_role &&
-            (INSTANCE_HA_STATE_NORMAL ==
-            g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.db_state ||
-            INSTANCE_HA_STATE_CATCH_UP ==
-            g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.db_state)) {
+        } else if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.local_role ==
+            INSTANCE_ROLE_STANDBY &&
+            (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.db_state ==
+            INSTANCE_HA_STATE_NORMAL ||
+            g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.db_state ==
+            INSTANCE_HA_STATE_CATCH_UP)) {
             normalStandbyDatanodeCount++;
         }
     }
@@ -1688,14 +1659,14 @@ static void getDnRelationState(uint32 instanceId)
             g_HA_status->status = CM_STATUS_DEGRADE;
         }
     } else if (normalPrimaryDatanodeCount == 1 && normalStandbyDatanodeCount < g_instance_role_group_ptr[i].count - 1 &&
-               ((normalStandbyDatanodeCount >= 0 && g_instance_role_group_ptr[i].count == 2) ||
-                   (normalStandbyDatanodeCount > 0 && g_instance_role_group_ptr[i].count == 3) ||
-               (normalStandbyDatanodeCount > 1 && g_instance_role_group_ptr[i].count == 4))) {
+        ((normalStandbyDatanodeCount >= 0 && g_instance_role_group_ptr[i].count == 2) ||
+        (normalStandbyDatanodeCount > 0 && g_instance_role_group_ptr[i].count == 3) ||
+        (normalStandbyDatanodeCount > 1 && g_instance_role_group_ptr[i].count == 4))) {
         g_HA_status->status = CM_STATUS_DEGRADE;
     } else {
         write_runlog(LOG,
-            "check_datanode_status: DN[%d][0]: local_role=%d, db_state=%d;  DN[%d][1]: local_role=%d, db_state=%d;  "
-            "DN[%d][2]: local_role=%d\n",
+            "check_datanode_status: DN[%u][0]: local_role=%d, db_state=%d; DN[%u][1]: local_role=%d, "
+            "db_state=%d; DN[%u][2]: local_role=%d\n",
             i, g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.local_role,
             g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.db_state, i,
             g_instance_group_report_status_ptr[i].instance_status.data_node_member[1].local_status.local_role,
@@ -1706,7 +1677,7 @@ static void getDnRelationState(uint32 instanceId)
         return;
     }
 }
-/**
+/* *
  * @brief
  *
  * @param  instanceId       My Param doc
@@ -1714,10 +1685,9 @@ static void getDnRelationState(uint32 instanceId)
  */
 static int isDnRelationBalanced(uint32 instanceId)
 {
-    uint32 i = 0;
-    int j = 0;
+    uint32 i;
+    int j;
     bool find = false;
-    int switchoverCount = 0;
     for (i = 0; i < g_dynamic_header->relationCount; i++) {
         for (j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             if (instanceId == g_instance_role_group_ptr[i].instanceMember[j].instanceId) {
@@ -1725,16 +1695,16 @@ static int isDnRelationBalanced(uint32 instanceId)
                 break;
             }
         }
-        if (find == true) {
+        if (find) {
             break;
         }
     }
 
-    if (find == false) {
+    if (!find) {
         write_runlog(LOG, "unexpected instanceId %u.\n", instanceId);
         return 1;
     }
-
+    int switchoverCount = 0;
     for (j = 0; j < g_instance_role_group_ptr[i].count; j++) {
         const int dynamic_role =
             g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.local_role;
@@ -1749,7 +1719,7 @@ static int isDnRelationBalanced(uint32 instanceId)
     return switchoverCount;
 }
 
-static void HdlCtlToCmOneInstanceQryMsg(CM_Connection *con, const ctl_to_cm_query *ctlToCmQry)
+static void HdlCtlToCmOneInstanceQryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry)
 {
     uint32 groupIndex = 0;
     int memberIndex = 0;
@@ -1763,8 +1733,7 @@ static void HdlCtlToCmOneInstanceQryMsg(CM_Connection *con, const ctl_to_cm_quer
 
     ret = find_node_in_dynamic_configure(ctlToCmQry->node, ctlToCmQry->instanceId, &groupIndex, &memberIndex);
     if (ret != 0) {
-        write_runlog(LOG, "can't find the instance(node =%u instanceid =%u)\n",
-            ctlToCmQry->node, ctlToCmQry->instanceId);
+        write_runlog(LOG, "can't find the instance=%u node=%u\n", ctlToCmQry->instanceId, ctlToCmQry->node);
         return;
     }
     const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[groupIndex].instance_status;
@@ -1782,14 +1751,14 @@ static void HdlCtlToCmOneInstanceQryMsg(CM_Connection *con, const ctl_to_cm_quer
         cm_msg_type sendMsg;
         if (g_instance_manual_start_file_exist < MAX_QUERY_DOWN_COUNTS) {
             sendMsg.msg_type = MSG_CM_BUILD_DOING;
-            (void)cm_server_send_msg(con, 'S', (char *)(&sendMsg), sizeof(cm_msg_type));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&sendMsg), sizeof(cm_msg_type));
         } else {
             g_instance_manual_start_file_exist = 0;
             (void)pthread_rwlock_wrlock(&g_instance_group_report_status_ptr[groupIndex].lk_lock);
             CleanCommand(groupIndex, memberIndex);
             (void)pthread_rwlock_unlock(&g_instance_group_report_status_ptr[groupIndex].lk_lock);
             sendMsg.msg_type = MSG_CM_BUILD_DOWN;
-            (void)cm_server_send_msg(con, 'S', (char *)(&sendMsg), sizeof(cm_msg_type));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&sendMsg), sizeof(cm_msg_type));
         }
         return;
     }
@@ -1799,10 +1768,10 @@ static void HdlCtlToCmOneInstanceQryMsg(CM_Connection *con, const ctl_to_cm_quer
         return;
     }
 
-    ProcessCtlToCmOneInstanceQueryMsg(con, ctlToCmQry->node, ctlToCmQry->instanceId, ctlToCmQry->instance_type);
+    ProcessCtlToCmOneInstanceQueryMsg(recvMsgInfo, ctlToCmQry->node, ctlToCmQry->instanceId, ctlToCmQry->instance_type);
 }
 
-static void HdlCtlToCmStartStatQry(CM_Connection *con, const ctl_to_cm_query *ctlToCmQry,
+static void HdlCtlToCmStartStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
     cm_to_ctl_instance_status *instStat, cm_to_ctl_cluster_status *clusterStat)
 {
     set_cluster_status();
@@ -1814,7 +1783,7 @@ static void HdlCtlToCmStartStatQry(CM_Connection *con, const ctl_to_cm_query *ct
     } else if (backup_open != CLUSTER_PRIMARY) {
         clusterStat->cluster_status = g_HA_status->status;
     } else {
-        clusterStat->cluster_status = (g_HA_status->status == CM_STATUS_NORMAL && checkReadOnlyStatus(DATANODE_ALL)) ?
+        clusterStat->cluster_status = (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatus(DATANODE_ALL)) ?
             CM_STATUS_DEGRADE : g_HA_status->status;
     }
     if (clusterStat->inReloading) {
@@ -1822,7 +1791,7 @@ static void HdlCtlToCmStartStatQry(CM_Connection *con, const ctl_to_cm_query *ct
     } else {
         clusterStat->is_all_group_mode_pending = g_HA_status->is_all_group_mode_pending;
     }
-    (void)cm_server_send_msg(con, 'S', (char *)clusterStat, sizeof(cm_to_ctl_cluster_status));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)clusterStat, sizeof(cm_to_ctl_cluster_status));
     if (ctlToCmQry->relation == 0) {
         for (uint32 i = 0; i < g_node_num; i++) {
             if ((ctlToCmQry->node != 0) && (ctlToCmQry->node != INVALID_NODE_NUM) &&
@@ -1831,16 +1800,16 @@ static void HdlCtlToCmStartStatQry(CM_Connection *con, const ctl_to_cm_query *ct
             }
             if (g_node[i].coordinate == 1) {
                 ProcessCtlToCmOneInstanceQueryMsg(
-                    con, g_node[i].node, g_node[i].coordinateId, INSTANCE_TYPE_COORDINATE);
+                    recvMsgInfo, g_node[i].node, g_node[i].coordinateId, INSTANCE_TYPE_COORDINATE);
             }
         }
     }
     /* Send CN status information in end message. */
     instStat->msg_type = MSG_CM_CTL_DATA_END;
-    (void)cm_server_send_msg(con, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
 }
 
-static void HdlCtlToCmLogicCpleDetStatQry(CM_Connection *con, cm_to_ctl_instance_status *instStat,
+static void HdlCtlToCmLogicCpleDetStatQry(MsgRecvInfo* recvMsgInfo, cm_to_ctl_instance_status *instStat,
     cm_to_ctl_cluster_status *clusterStat, bool *isQryDone)
 {
     cm_to_ctl_logic_cluster_status logicClusterStat;
@@ -1853,7 +1822,7 @@ static void HdlCtlToCmLogicCpleDetStatQry(CM_Connection *con, cm_to_ctl_instance
         clusterStat->cluster_status = g_HA_status->status;
     } else {
         logicClusterStat.cluster_status =
-            (g_HA_status->status == CM_STATUS_NORMAL && checkReadOnlyStatus(DATANODE_ALL)) ?
+            (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatus(DATANODE_ALL)) ?
             CM_STATUS_DEGRADE : g_HA_status->status;
     }
     logicClusterStat.is_all_group_mode_pending = g_HA_status->is_all_group_mode_pending;
@@ -1872,14 +1841,14 @@ static void HdlCtlToCmLogicCpleDetStatQry(CM_Connection *con, cm_to_ctl_instance
         logicClusterStat.logic_cluster_status[LOGIC_CLUSTER_NUMBER - 1] =
             (int)g_logicClusterStaticConfig[LOGIC_CLUSTER_NUMBER - 1].LogicClusterStatus;
         logicClusterStat.logic_is_all_group_mode_pending[LOGIC_CLUSTER_NUMBER - 1] =
-            (int)g_logicClusterStaticConfig[LOGIC_CLUSTER_NUMBER - 1].isRedistribution;
+            g_logicClusterStaticConfig[LOGIC_CLUSTER_NUMBER - 1].isRedistribution;
     } else {
         logicClusterStat.logic_switchedCount[LOGIC_CLUSTER_NUMBER - 1] = -1;
     }
-    (void)cm_server_send_msg(con, 'S', (char*)&(logicClusterStat), sizeof(cm_to_ctl_logic_cluster_status));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)&(logicClusterStat), sizeof(cm_to_ctl_logic_cluster_status));
     if (logicClusterStat.inReloading) {
         instStat->msg_type = MSG_CM_CTL_DATA_END;
-        (void)cm_server_send_msg(con, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
         *isQryDone = true;
         return;
     }
@@ -1930,7 +1899,7 @@ static void UpdateAzNodeIdxOfClusterStat(cm_to_ctl_cluster_status *clusterStat)
     clusterStat->node_id = azNodeIndex;
 }
 
-static void HdlCtlToCmNonBalOrLgcCpleDetStatQry(CM_Connection *con, const ctl_to_cm_query *ctlToCmQry,
+static void HdlCtlToCmNonBalOrLgcCpleDetStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
     cm_to_ctl_instance_status *instStat, cm_to_ctl_cluster_status *clusterStat, bool *isQryDone)
 {
     set_cluster_status();
@@ -1945,7 +1914,7 @@ static void HdlCtlToCmNonBalOrLgcCpleDetStatQry(CM_Connection *con, const ctl_to
             clusterStat->cluster_status = g_HA_status->status;
         } else {
             clusterStat->cluster_status =
-                (g_HA_status->status == CM_STATUS_NORMAL && checkReadOnlyStatus(DATANODE_ALL)) ?
+                (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatus(DATANODE_ALL)) ?
                 CM_STATUS_DEGRADE : g_HA_status->status;
         }
         clusterStat->switchedCount = isDnRelationBalanced(ctlToCmQry->instanceId);
@@ -1957,22 +1926,22 @@ static void HdlCtlToCmNonBalOrLgcCpleDetStatQry(CM_Connection *con, const ctl_to
             clusterStat->cluster_status = g_HA_status->status;
         } else {
             clusterStat->cluster_status =
-                (g_HA_status->status == CM_STATUS_NORMAL && checkReadOnlyStatus(DATANODE_ALL)) ?
+                (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatus(DATANODE_ALL)) ?
                 CM_STATUS_DEGRADE : g_HA_status->status;
         }
         clusterStat->is_all_group_mode_pending = g_HA_status->is_all_group_mode_pending;
         clusterStat->switchedCount = isNodeBalanced(NULL);
     }
-    (void)cm_server_send_msg(con, 'S', (char *)clusterStat, sizeof(cm_to_ctl_cluster_status));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)clusterStat, sizeof(cm_to_ctl_cluster_status));
     if (clusterStat->inReloading) {
         instStat->msg_type = MSG_CM_CTL_DATA_END;
-        (void)cm_server_send_msg(con, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
         *isQryDone = true;
         return;
     }
 }
 
-static status_t HdlCtlToCmClusDetStatQry(CM_Connection *con, const ctl_to_cm_query *ctlToCmQry,
+static status_t HdlCtlToCmClusDetStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
     cm_to_ctl_instance_status *instStat)
 {
     for (uint32 i = 0; i < g_node_num && ctlToCmQry->relation == 0; i++) {
@@ -1981,16 +1950,17 @@ static status_t HdlCtlToCmClusDetStatQry(CM_Connection *con, const ctl_to_cm_que
         }
 
         if (g_node[i].coordinate == 1) {
-            ProcessCtlToCmOneInstanceQueryMsg(con, g_node[i].node, g_node[i].coordinateId, INSTANCE_TYPE_COORDINATE);
+            ProcessCtlToCmOneInstanceQueryMsg(
+                recvMsgInfo, g_node[i].node, g_node[i].coordinateId, INSTANCE_TYPE_COORDINATE);
         }
 
         if (g_node[i].gtm == 1) {
-            ProcessCtlToCmOneInstanceQueryMsg(con, g_node[i].node, g_node[i].gtmId, INSTANCE_TYPE_GTM);
+            ProcessCtlToCmOneInstanceQueryMsg(recvMsgInfo, g_node[i].node, g_node[i].gtmId, INSTANCE_TYPE_GTM);
         }
 
         for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
             ProcessCtlToCmOneInstanceQueryMsg(
-                con, g_node[i].node, g_node[i].datanode[j].datanodeId, INSTANCE_TYPE_DATANODE);
+                recvMsgInfo, g_node[i].node, g_node[i].datanode[j].datanodeId, INSTANCE_TYPE_DATANODE);
         }
 
         if (g_clusterType != V3SingleInstCluster) {
@@ -2001,11 +1971,11 @@ static status_t HdlCtlToCmClusDetStatQry(CM_Connection *con, const ctl_to_cm_que
             instStat->member_index = 0;
             instStat->is_central = 0;
             instStat->fenced_UDF_status = g_fenced_UDF_report_status_ptr[i].status;
-            (void)cm_server_send_msg(con, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status), DEBUG5);
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
         }
 
         instStat->msg_type = MSG_CM_CTL_NODE_END;
-        (void)cm_server_send_msg(con, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status), DEBUG5);
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
     }
 
     if (ctlToCmQry->relation == 1) {
@@ -2033,12 +2003,12 @@ static status_t HdlCtlToCmClusDetStatQry(CM_Connection *con, const ctl_to_cm_que
                 if (group_index != group_index_in) {
                     continue;
                 }
-                ProcessCtlToCmOneInstanceQueryMsg(con, g_node[i].node, g_node[i].datanode[j].datanodeId,
+                ProcessCtlToCmOneInstanceQueryMsg(recvMsgInfo, g_node[i].node, g_node[i].datanode[j].datanodeId,
                     INSTANCE_TYPE_DATANODE);
                 find = true;
                 break;
             }
-            if (find == false) {
+            if (!find) {
                 continue;
             }
             instStat->msg_type = MSG_CM_CTL_DATA;
@@ -2048,21 +2018,21 @@ static status_t HdlCtlToCmClusDetStatQry(CM_Connection *con, const ctl_to_cm_que
             instStat->member_index = 0;
             instStat->is_central = 0;
             instStat->fenced_UDF_status = g_fenced_UDF_report_status_ptr[i].status;
-            (void)cm_server_send_msg(con, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status), DEBUG5);
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
 
             instStat->msg_type = MSG_CM_CTL_NODE_END;
-            (void)cm_server_send_msg(con, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status), DEBUG5);
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
         }
     }
     return CM_SUCCESS;
 }
 
-static void HdlCtlToCmClusRestStatQry(CM_Connection *con, const ctl_to_cm_query *ctlToCmQry,
+static void HdlCtlToCmClusRestStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
     cm_to_ctl_instance_status *instStat)
 {
-    ProcessCtlToCmOneTypeQryMsg(con, ctlToCmQry, INSTANCE_TYPE_COORDINATE);
-    ProcessCtlToCmOneTypeQryMsg(con, ctlToCmQry, INSTANCE_TYPE_GTM);
-    ProcessCtlToCmOneTypeQryMsg(con, ctlToCmQry, INSTANCE_TYPE_DATANODE);
+    ProcessCtlToCmOneTypeQryMsg(recvMsgInfo, ctlToCmQry, INSTANCE_TYPE_COORDINATE);
+    ProcessCtlToCmOneTypeQryMsg(recvMsgInfo, ctlToCmQry, INSTANCE_TYPE_GTM);
+    ProcessCtlToCmOneTypeQryMsg(recvMsgInfo, ctlToCmQry, INSTANCE_TYPE_DATANODE);
     for (uint32 i = 0; i < g_node_num; i++) {
         instStat->msg_type = MSG_CM_CTL_DATA;
         instStat->node = g_node[i].node;
@@ -2071,7 +2041,7 @@ static void HdlCtlToCmClusRestStatQry(CM_Connection *con, const ctl_to_cm_query 
         instStat->member_index = 0;
         instStat->is_central = 0;
         instStat->fenced_UDF_status = g_fenced_UDF_report_status_ptr[i].status;
-        (void)cm_server_send_msg(con, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status), DEBUG5);
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
     }
 }
 
@@ -2081,7 +2051,7 @@ static void HdlCtlToCmClusRestStatQry(CM_Connection *con, const ctl_to_cm_query 
  * @param  con              My Param doc
  * @param  ctlToCmQry       My Param doc
  */
-void ProcessCtlToCmQueryMsg(CM_Connection *con, const ctl_to_cm_query *ctlToCmQry)
+void ProcessCtlToCmQueryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry)
 {
     cm_to_ctl_instance_status instStat;
     cm_to_ctl_cluster_status clusterStat;
@@ -2093,23 +2063,23 @@ void ProcessCtlToCmQueryMsg(CM_Connection *con, const ctl_to_cm_query *ctlToCmQr
 
     if ((ctlToCmQryTmp.node != 0) && (ctlToCmQryTmp.node != INVALID_NODE_NUM) &&
         (ctlToCmQryTmp.instanceId != INVALID_INSTACNE_NUM) && ctlToCmQryTmp.relation == 0) {
-        HdlCtlToCmOneInstanceQryMsg(con, &ctlToCmQryTmp);
+        HdlCtlToCmOneInstanceQryMsg(recvMsgInfo, &ctlToCmQryTmp);
         return;
     }
 
     if (ctlToCmQryTmp.detail == CLUSTER_START_STATUS_QUERY) {
-        HdlCtlToCmStartStatQry(con, &ctlToCmQryTmp, &instStat, &clusterStat);
+        HdlCtlToCmStartStatQry(recvMsgInfo, &ctlToCmQryTmp, &instStat, &clusterStat);
         return;
     }
 
     if (ctlToCmQryTmp.detail == CLUSTER_LOGIC_COUPLE_DETAIL_STATUS_QUERY) {
-        HdlCtlToCmLogicCpleDetStatQry(con, &instStat, &clusterStat, &isQryDone);
-        if (isQryDone == true) {
+        HdlCtlToCmLogicCpleDetStatQry(recvMsgInfo, &instStat, &clusterStat, &isQryDone);
+        if (isQryDone) {
             return;
         }
     } else if (ctlToCmQryTmp.detail != CLUSTER_BALANCE_COUPLE_DETAIL_STATUS_QUERY) {
-        HdlCtlToCmNonBalOrLgcCpleDetStatQry(con, &ctlToCmQryTmp, &instStat, &clusterStat, &isQryDone);
-        if (isQryDone == true) {
+        HdlCtlToCmNonBalOrLgcCpleDetStatQry(recvMsgInfo, &ctlToCmQryTmp, &instStat, &clusterStat, &isQryDone);
+        if (isQryDone) {
             return;
         }
     }
@@ -2121,16 +2091,16 @@ void ProcessCtlToCmQueryMsg(CM_Connection *con, const ctl_to_cm_query *ctlToCmQr
     }
 
     if (ctlToCmQryTmp.detail == CLUSTER_DETAIL_STATUS_QUERY) {
-        int ret = HdlCtlToCmClusDetStatQry(con, &ctlToCmQryTmp, &instStat);
+        status_t ret = HdlCtlToCmClusDetStatQry(recvMsgInfo, &ctlToCmQryTmp, &instStat);
         if (ret != CM_SUCCESS) {
             return;
         }
     } else {
-        HdlCtlToCmClusRestStatQry(con, &ctlToCmQryTmp, &instStat);
+        HdlCtlToCmClusRestStatQry(recvMsgInfo, &ctlToCmQryTmp, &instStat);
     }
 
     instStat.msg_type = MSG_CM_CTL_DATA_END;
-    (void)cm_server_send_msg(con, 'S', (char*)&(instStat), sizeof(cm_to_ctl_instance_status));
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)&(instStat), sizeof(cm_to_ctl_instance_status));
     return;
 }
 
@@ -2139,7 +2109,7 @@ void ProcessCtlToCmQueryMsg(CM_Connection *con, const ctl_to_cm_query *ctlToCmQr
  *
  * @param  con              My Param doc
  */
-void process_ctl_to_cm_setmode(CM_Connection* con)
+void process_ctl_to_cm_setmode(MsgRecvInfo* recvMsgInfo)
 {
     int instanceType = 0;
 
@@ -2161,7 +2131,7 @@ void process_ctl_to_cm_setmode(CM_Connection* con)
 
     cm_msg_type msgSetmodeAck;
     msgSetmodeAck.msg_type = MSG_CM_CTL_SETMODE_ACK;
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgSetmodeAck), sizeof(msgSetmodeAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSetmodeAck), sizeof(msgSetmodeAck));
 }
 
 /**
@@ -2178,28 +2148,22 @@ static void SetSwitchoverInSwitchoverProcess(uint32 ptrIndex, int memIdx, int wa
     SetSwitchoverPendingCmd(ptrIndex, memIdx, waitSecond, "[SetSwitchoverInSwitchoverProcess]");
 }
 
-/**
- * @brief
- *
- * @param  con              My Param doc
- * @param  switchoverMsg    My Param doc
- */
-void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchover *switchoverMsg)
+void ProcessCtlToCmSwitchoverAllMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switchover *switchoverMsg)
 {
-    cm_to_ctl_command_ack msgSwitchoverAllAck = {0};
+    cm_to_ctl_command_ack msgSwitchoverAllAck = { 0 };
 
     msgSwitchoverAllAck.msg_type = MSG_CM_CTL_SWITCHOVER_ALL_ACK;
     if (CheckEnableFlag()) {
         msgSwitchoverAllAck.command_result = CM_INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));
         return;
     }
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverAllAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));
         return;
     }
-    if (!CanDoSwitchoverInAllShard(con, &msgSwitchoverAllAck, switchoverMsg, "switchover_all_msg")) {
+    if (!CanDoSwitchoverInAllShard(recvMsgInfo, &msgSwitchoverAllAck, switchoverMsg, "switchover_all_msg")) {
         return;
     }
     const char *str = "[ProcessCtlToCmSwitchoverAllMsg]";
@@ -2240,8 +2204,8 @@ void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchov
                             instanceId, datanode_dbstate_int_to_string(INSTANCE_ROLE_PRIMARY));
                         noNeedDoGtmNum++;
                     } else if (initRole == INSTANCE_ROLE_PRIMARY && isInVoteAz) {
-                        write_runlog(LOG, "gtm instance=%u status=%s, will not switchover in vote AZ.\n",
-                            instanceId, datanode_dbstate_int_to_string(INSTANCE_ROLE_PRIMARY));
+                        write_runlog(LOG, "gtm instance=%u status=%s, will not switchover in vote AZ.\n", instanceId,
+                            datanode_dbstate_int_to_string(INSTANCE_ROLE_PRIMARY));
                         noNeedDoGtmNum++;
                     }
                     break;
@@ -2252,8 +2216,8 @@ void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchov
                     bool isCatchUp = IsInCatchUpState(i, j);
                     bool isCheckSyncList = (CheckInstInSyncList(i, j, str) == SYNCLIST_IS_FINISTH);
                     if ((dnLocalRole == INSTANCE_ROLE_STANDBY || dnLocalRole == INSTANCE_ROLE_CASCADE_STANDBY) &&
-                        initRole == INSTANCE_ROLE_PRIMARY && localStatus == INSTANCE_HA_STATE_NORMAL &&
-                        !isInVoteAz && !isCatchUp && isCheckSyncList) {
+                        initRole == INSTANCE_ROLE_PRIMARY && localStatus == INSTANCE_HA_STATE_NORMAL && !isInVoteAz &&
+                        !isCatchUp && isCheckSyncList) {
                         SetSwitchoverInSwitchoverProcess(i, j, switchoverMsg->wait_seconds);
                         needDoDnNum++;
                     } else if (initRole == INSTANCE_ROLE_PRIMARY && localStatus != INSTANCE_HA_STATE_NORMAL) {
@@ -2267,11 +2231,12 @@ void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchov
                             instanceId, datanode_dbstate_int_to_string(localStatus));
                         noNeedDoDnNum++;
                     } else if (initRole == INSTANCE_ROLE_PRIMARY && isInVoteAz && isCheckSyncList) {
-                        write_runlog(LOG, "dn instance=%u status=%s, will not switchover in vote AZ.\n",
-                            instanceId, datanode_dbstate_int_to_string(localStatus));
+                        write_runlog(LOG, "dn instance=%u status=%s, will not switchover in vote AZ.\n", instanceId,
+                            datanode_dbstate_int_to_string(localStatus));
                         noNeedDoDnNum++;
                     } else if (initRole == INSTANCE_ROLE_PRIMARY && isCatchUp) {
-                        write_runlog(LOG, "dn instance=%u status=%s, will not switchover for the xlog location gap"
+                        write_runlog(LOG,
+                            "dn instance=%u status=%s, will not switchover for the xlog location gap"
                             "between the primary and standby is too large.\n",
                             instanceId, datanode_dbstate_int_to_string(localStatus));
                         if (dnLocalRole == INSTANCE_ROLE_STANDBY && initRole == INSTANCE_ROLE_PRIMARY) {
@@ -2280,8 +2245,8 @@ void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchov
                         noNeedDoDnNum++;
                     } else if (initRole == INSTANCE_ROLE_PRIMARY && isCheckSyncList) {
                         write_runlog(LOG,
-                            "dn instance=%u status=%s, will not switchover for the inst not in synclist.\n",
-                            instanceId, datanode_dbstate_int_to_string(localStatus));
+                            "dn instance=%u status=%s, will not switchover for the inst not in synclist.\n", instanceId,
+                            datanode_dbstate_int_to_string(localStatus));
                         if (dnLocalRole == INSTANCE_ROLE_STANDBY && initRole == INSTANCE_ROLE_PRIMARY) {
                             msgBalanceResult.instances[imbalanceIndex++] = instanceId;
                         }
@@ -2296,81 +2261,86 @@ void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchov
         (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
     }
 
-    bool incomplete =
-        process_ctl_to_cm_switchover_incomplete_msg(con, noNeedDoGtmNum, needDoGtmNum, noNeedDoDnNum, needDoDnNum);
+    bool incomplete = process_ctl_to_cm_switchover_incomplete_msg(
+        recvMsgInfo, noNeedDoGtmNum, needDoGtmNum, noNeedDoDnNum, needDoDnNum);
     if (!incomplete && needDoDnNum == 0 && needDoGtmNum == 0 && voteAZIndex == AZ_ALL_INDEX) {
         write_runlog(LOG, "no need to do switchover, the broken gtm and dn num is: %d.\n", imbalanceIndex);
         msgBalanceResult.imbalanceCount = imbalanceIndex;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgBalanceResult), sizeof(msgBalanceResult));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgBalanceResult), sizeof(msgBalanceResult));
     } else {
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAllAck), sizeof(msgSwitchoverAllAck));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAllAck), sizeof(msgSwitchoverAllAck));
     }
 }
 
-/**
+/* *
  * @brief
  *
  * @param  con              My Param doc
  * @param  ctl_to_cm_datanode_relation_info_ptrMy Param doc
  */
 void process_ctl_to_cm_get_datanode_relation_msg(
-    CM_Connection* con, const ctl_to_cm_datanode_relation_info* ctl_to_cm_datanode_relation_info_ptr)
+    MsgRecvInfo* recvMsgInfo, const ctl_to_cm_datanode_relation_info *info_ptr)
 {
     uint32 group_index = 0;
     int member_index = 0;
     int instanceType;
     int ret;
-    int i = 0;
-    cm_to_ctl_get_datanode_relation_ack cm_to_ctl_get_datanode_relation_ack_content;
+    cm_to_ctl_get_datanode_relation_ack ack;
 
-    ret = find_node_in_dynamic_configure(ctl_to_cm_datanode_relation_info_ptr->node,
-        ctl_to_cm_datanode_relation_info_ptr->instanceId, &group_index, &member_index);
+    ret = find_node_in_dynamic_configure(info_ptr->node,
+        info_ptr->instanceId, &group_index, &member_index);
     if (ret != 0) {
         write_runlog(LOG, "can't find the instance(nodeId=%u, instanceId=%u)\n",
-            ctl_to_cm_datanode_relation_info_ptr->node, ctl_to_cm_datanode_relation_info_ptr->instanceId);
+            info_ptr->node, info_ptr->instanceId);
         return;
     }
 
     instanceType = g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceType;
 
     if (instanceType == INSTANCE_TYPE_DATANODE) {
-        if (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index]
-                .local_status.local_role == INSTANCE_ROLE_STANDBY) {
-            cm_to_ctl_get_datanode_relation_ack_content.command_result = CM_CAN_PRCESS_COMMAND;
+        if (g_instance_group_report_status_ptr[group_index]
+            .instance_status.data_node_member[member_index]
+            .local_status.local_role == INSTANCE_ROLE_STANDBY) {
+            ack.command_result = CM_CAN_PRCESS_COMMAND;
         } else {
-            cm_to_ctl_get_datanode_relation_ack_content.command_result = CM_INVALID_COMMAND;
-            write_runlog(LOG, "quick switchover the datanode instance(node =%u  instanceid =%u) is not standby \n",
-                ctl_to_cm_datanode_relation_info_ptr->node,
-                ctl_to_cm_datanode_relation_info_ptr->instanceId);
+            ack.command_result = CM_INVALID_COMMAND;
+            write_runlog(LOG,
+                "quick switchover the datanode instance(node =%u  instanceid =%u) is not standby \n",
+                info_ptr->node,
+                info_ptr->instanceId);
         }
     } else if (instanceType == INSTANCE_TYPE_GTM) {
         if (g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[member_index]
                 .local_status.local_role == INSTANCE_ROLE_STANDBY) {
-            cm_to_ctl_get_datanode_relation_ack_content.command_result = CM_CAN_PRCESS_COMMAND;
+            ack.command_result = CM_CAN_PRCESS_COMMAND;
         } else {
-            cm_to_ctl_get_datanode_relation_ack_content.command_result = CM_INVALID_COMMAND;
-            write_runlog(LOG, "quick switchover the datanode instance(node =%u  instanceid =%u) is not standby \n",
-                ctl_to_cm_datanode_relation_info_ptr->node, ctl_to_cm_datanode_relation_info_ptr->instanceId);
+            ack.command_result = CM_INVALID_COMMAND;
+            write_runlog(LOG,
+                "quick switchover the datanode instance(node =%u  instanceid =%u) is not standby \n",
+                info_ptr->node,
+                info_ptr->instanceId);
         }
     } else {
-        cm_to_ctl_get_datanode_relation_ack_content.command_result = CM_INVALID_COMMAND;
-        write_runlog(LOG, "switchover can't find the instance(nodeId=%u, instanceId=%u) type is %d\n",
-            ctl_to_cm_datanode_relation_info_ptr->node, ctl_to_cm_datanode_relation_info_ptr->instanceId,
+        ack.command_result = CM_INVALID_COMMAND;
+        write_runlog(LOG,
+            "switchover can't find the instance(nodeId=%u, instanceId=%u) type is %d\n",
+            info_ptr->node,
+            info_ptr->instanceId,
             g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceType);
     }
 
-    cm_to_ctl_get_datanode_relation_ack_content.member_index = member_index;
+    ack.member_index = member_index;
 
-    for (i = 0; i < CM_PRIMARY_STANDBY_MAX_NUM; i++) {
-        cm_to_ctl_get_datanode_relation_ack_content.instanceMember[i] =
+    for (int i = 0; i < CM_PRIMARY_STANDBY_MAX_NUM; i++) {
+        ack.instanceMember[i] =
             g_instance_role_group_ptr[group_index].instanceMember[i];
-        cm_to_ctl_get_datanode_relation_ack_content.data_node_member[i] =
+        ack.data_node_member[i] =
             g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i];
-        cm_to_ctl_get_datanode_relation_ack_content.gtm_member[i] =
+        ack.gtm_member[i] =
             g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[i];
     }
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&cm_to_ctl_get_datanode_relation_ack_content),
-        sizeof(cm_to_ctl_get_datanode_relation_ack_content));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ack), sizeof(ack));
+
     return;
 }

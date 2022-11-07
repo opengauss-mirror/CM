@@ -39,7 +39,7 @@ int isLogFile(const char* fileName)
 {
     uint32 i;
     for (i = 0; i < g_logLen; i++) {
-        if (NULL != strstr(fileName, g_logPattern[i].patternName)) {
+        if (strstr(fileName, g_logPattern[i].patternName) != NULL) {
             return 1;
         }
     }
@@ -50,7 +50,7 @@ static int isDirectoryProccessed(const char *basePath, const char * const allBas
 {
     uint32 i;
     for (i = 0; i < cnt; i++) {
-        if (0 == strcmp(basePath, allBasePath[i])) {
+        if (strcmp(basePath, allBasePath[i]) == 0) {
             return 0;
         }
     }
@@ -83,8 +83,9 @@ int quickSort(LogFile* logFile, int low, int high)
 
     /* swap the values */
     while (low < high) {
-        while (low < high && strcmp(logFile[high].timestamp, tempTimeStamp) >= 0)
+        while (low < high && strcmp(logFile[high].timestamp, tempTimeStamp) >= 0) {
             high--;
+        }
         rc = strcpy_s(logFile[low].fileName, MAX_PATH_LEN, logFile[high].fileName);
         securec_check_errno(rc, (void)rc);
         rc = strcpy_s(logFile[low].basePath, MAX_PATH_LEN, logFile[high].basePath);
@@ -95,8 +96,9 @@ int quickSort(LogFile* logFile, int low, int high)
         securec_check_errno(rc, (void)rc);
         rc = memcpy_s(&logFile[low].fileSize, sizeof(int64), &logFile[high].fileSize, sizeof(int64));
         securec_check_errno(rc, (void)rc);
-        while (low < high && strcmp(logFile[low].timestamp, tempTimeStamp) <= 0)
+        while (low < high && strcmp(logFile[low].timestamp, tempTimeStamp) <= 0) {
             low++;
+        }
         rc = strcpy_s(logFile[high].fileName, MAX_PATH_LEN, logFile[low].fileName);
         securec_check_errno(rc, (void)rc);
         rc = strcpy_s(logFile[high].basePath, MAX_PATH_LEN, logFile[low].basePath);
@@ -128,40 +130,50 @@ int quickSort(LogFile* logFile, int low, int high)
  */
 int get_log_pattern()
 {
-    errno_t rc;
-    char* subStr = NULL;
-    char* saveptr1 = NULL;
-    
+    const char *logPatternName[] = {
+        "cm_client-", "cm_ctl-", "gs_clean-", "gs_ctl-", "gs_guc-", "gs_dump-",
+        "gs_dumpall-", "gs_restore-", "gs_upgrade-", "gs_initcm-", "gs_initdb-",
+        "cm_agent-", "system_call-", "cm_server-", "om_monitor-", "gs_local-",
+        "gs_preinstall-", "gs_install-", "gs_replace-", "gs_uninstall-", "gs_om-", "pssh-",
+        "gs_upgradectl-", "gs_expand-", "gs_shrink-", "gs_postuninstall-", "gs_backup-",
+        "gs_checkos-", "gs_collector-", "GaussReplace-", "GaussOM-", "gs_checkperf-", "gs_check-",
+        "roach_agent-", "roach_controller-", "sync-", "postgresql-", "sessionstat-",
+        "system_alarm-", "pg_perf-", "slow_query_log-", "asp-", "etcd-", "gs_cgroup-", "pscp-",
+        "gs_hotpatch-", "cmd_sender-", "uploader-", "checkRunStatus-", "ffic_gaussdb-", "key_event-",
+        "mem_log-",
 #ifdef ENABLE_MULTIPLE_NODES
-    char logPatternName[MAX_PATH_LEN * 2] = "cm_client-,cm_ctl-,gs_clean-,gs_ctl-,gs_guc-,gs_dump-,\
-gs_dumpall-,gs_restore-,gs_upgrade-,gs_initcm-,gs_initdb-,gs_initgtm-,\
-gtm_ctl-,cm_agent-,system_call-,cm_server-,om_monitor-,gs_local-,\
-gs_preinstall-,gs_install-,gs_replace-,gs_uninstall-,gs_om-,pssh-,\
-gs_upgradectl-,gs_expand-,gs_shrink-,gs_postuninstall-,gs_backup-,\
-gs_checkos-,gs_collector-,GaussReplace-,GaussOM-,gs_checkperf-,gs_check-,\
-roach_agent-,roach_controller-,sync-,postgresql-,gtm-,sessionstat-,\
-system_alarm-,pg_perf-,slow_query_log-,asp-,etcd-,gs_cgroup-,pscp-,\
-gs_hotpatch-,cmd_sender-,uploader-,checkRunStatus-,ffic_gaussdb-,key_event-";
-#else
-    char logPatternName[MAX_PATH_LEN * 2] = "cm_client-,cm_ctl-,gs_clean-,gs_ctl-,gs_guc-,gs_dump-,\
-gs_dumpall-,gs_restore-,gs_upgrade-,gs_initcm-,gs_initdb-,\
-cm_agent-,system_call-,cm_server-,om_monitor-,gs_local-,\
-gs_preinstall-,gs_install-,gs_replace-,gs_uninstall-,gs_om-,pssh-,\
-gs_upgradectl-,gs_expand-,gs_shrink-,gs_postuninstall-,gs_backup-,\
-gs_checkos-,gs_collector-,GaussReplace-,GaussOM-,gs_checkperf-,gs_check-,\
-roach_agent-,roach_controller-,sync-,postgresql-,sessionstat-,\
-system_alarm-,pg_perf-,slow_query_log-,asp-,etcd-,gs_cgroup-,pscp-,\
-gs_hotpatch-,cmd_sender-,uploader-,checkRunStatus-,ffic_gaussdb-,key_event-";
+        "gs_initgtm-", "gtm_ctl-", "gtm-",
 #endif
+        };
 
-    subStr = logPatternName;
-    subStr = strtok_r(subStr, ",", &saveptr1);
-    while (subStr) {
-        rc = memcpy_s(g_logPattern[g_logLen].patternName, MAX_PATH_LEN, subStr, strlen(subStr) + 1);
-        securec_check_errno(rc, (void)rc);
-        g_logLen++;
-        subStr = strtok_r(NULL, ",", &saveptr1);
+    size_t arrLen = sizeof(logPatternName) / sizeof(logPatternName[0]);
+    size_t resCount = (size_t)CusResCount();
+    size_t mallocLen = sizeof(LogPattern) * (arrLen + resCount);
+    g_logPattern = (LogPattern *)malloc(mallocLen);
+    if (g_logPattern == NULL) {
+        write_runlog(FATAL, "out of memory, mallocLen is %lu!\n", mallocLen);
+        return -1;
     }
+    errno_t rc = memset_s(g_logPattern, mallocLen, 0, sizeof(mallocLen));
+    securec_check_errno(rc, (void)rc);
+    for (size_t i = 0; i < arrLen; ++i) {
+        g_logPattern[g_logLen].patternName = logPatternName[i];
+        g_logLen++;
+    }
+    for (size_t i = 0; i < resCount; ++i) {
+        char resLog[MAX_PATH_LEN] = {0};
+        int ret = sprintf_s(resLog, MAX_PATH_LEN, "%s-", g_resStatus[i].status.resName);
+        securec_check_intval(ret, (void)ret);
+        char *tmp = strdup(resLog);
+        if (tmp == NULL) {
+            write_runlog(ERROR, "[get_log_pattern], out of memory, resName(%s).\n", g_resStatus[i].status.resName);
+            continue;
+        }
+        g_logPattern[g_logLen].patternName = tmp;
+        g_logLen++;
+    }
+    write_runlog(LOG, "[get_log_pattern] arrLen is %lu, mallocLen is %lu, and g_logLen is %u.\n",
+        (arrLen + resCount), mallocLen, g_logLen);
 
     return 0;
 }
@@ -202,7 +214,7 @@ int GZCompress(char *inpath, uint32 inLen, char *outpath, uint32 outLen)
     /* Read buffer from trace and write to gun zip trace */
     if ((gzfOutput = gzopen(outpath, "wb")) != NULL) {
         char* cBuffer = (char*)malloc(GZ_BUFFER_LEN + 1);
-        if (NULL == cBuffer) {
+        if (cBuffer == NULL) {
             (void)gzclose(gzfOutput);
             (void)gzclose(gzfInput);
             write_runlog(ERROR, "malloc for cBuffer failed!\n");
@@ -213,7 +225,7 @@ int GZCompress(char *inpath, uint32 inLen, char *outpath, uint32 outLen)
 
         iLen = gzread(gzfInput, cBuffer, GZ_BUFFER_LEN);
         while (iLen > 0) {
-            rLen = gzwrite(gzfOutput, cBuffer, iLen);
+            rLen = gzwrite(gzfOutput, cBuffer, (size_t)iLen);
             if (rLen != iLen) {
 #ifndef ENABLE_LLT
                 FREE_AND_RESET(cBuffer);
@@ -248,11 +260,10 @@ void groupByDirectoryAndPattern(LogFile* logFile, LogFile* sortLogFile, const ch
     errno_t rc;
     char outpath[MAX_PATH_LEN] = {'\0'};
     int32 cnt = 0;
-    uint32 jj = 0;
 
-    for (jj = 0; jj < count; jj++) {
-        if (0 == strcmp(logFile[jj].pattern, pattern) && 0 == strcmp(logFile[jj].basePath, basePath) &&
-            NULL == strstr(logFile[jj].fileName, ".gz")) {
+    for (uint32 jj = 0; jj < count; jj++) {
+        if (strcmp(logFile[jj].pattern, pattern) == 0 && strcmp(logFile[jj].basePath, basePath) == 0 &&
+            strstr(logFile[jj].fileName, ".gz") == NULL) {
             rc = memcpy_s(sortLogFile[cnt].fileName, MAX_PATH_LEN, logFile[jj].fileName, MAX_PATH_LEN);
             securec_check_errno(rc, (void)rc);
             rc = memcpy_s(sortLogFile[cnt].basePath, MAX_PATH_LEN, logFile[jj].basePath, MAX_PATH_LEN);
@@ -268,7 +279,7 @@ void groupByDirectoryAndPattern(LogFile* logFile, LogFile* sortLogFile, const ch
 
     /* current log will not be compressed,the last trace is current trace */
     if (cnt > 1) {
-        for (jj = 0; jj < (uint32)(cnt - 1); jj++) {
+        for (uint32 jj = 0; jj < (uint32)(cnt - 1); jj++) {
             rc = snprintf_s(outpath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s%s", sortLogFile[jj].fileName, ".gz");
             securec_check_intval(rc, (void)rc);
             if (GZCompress(sortLogFile[jj].fileName, MAX_PATH_LEN, outpath, MAX_PATH_LEN) == 0) {
@@ -315,7 +326,6 @@ static void gzCompressLogFile(const char *pattern)
     char* basePath = NULL;
     errno_t rc;
     uint32 cnt = 0;
-    uint32 jj = 0;
     uint32 count = 0;
     int64 totalSize = 0;
     uint32 totalCount = 0;
@@ -369,10 +379,10 @@ static void gzCompressLogFile(const char *pattern)
     }
     
     /* Find traces of one directory */
-    for (jj = 0; jj < count; jj++) {
-        if (0 == strcmp(logFile[jj].pattern, pattern) && NULL == strstr(logFile[jj].fileName, ".gz")) {
+    for (uint32 jj = 0; jj < count; jj++) {
+        if (strcmp(logFile[jj].pattern, pattern) == 0 && strstr(logFile[jj].fileName, ".gz") == NULL) {
             /* Skip directory that be processed	*/
-            if (0 == isDirectoryProccessed(logFile[jj].basePath, allBasePath, cnt)) {
+            if (isDirectoryProccessed(logFile[jj].basePath, allBasePath, cnt) == 0) {
                 continue;
             }
 
@@ -432,7 +442,7 @@ static void removeLogFileByCapacity()
         FREE_AND_RESET(logFile);
         return;
     }
-    sortLogFileByTimeAsc(logFile, 0, count - 1);
+    sortLogFileByTimeAsc(logFile, 0, (int)(count - 1));
 
     /* compare total bytes of all traces and threshold,remove the oldest gun zip traces until less than threshold */
     write_runlog(
@@ -447,7 +457,7 @@ static void removeLogFileByCapacity()
                 if (unlink(logFile[jj].fileName) == 0) {
                     totalSize -= logFile[jj].fileSize;
                     if (totalSize <= LOG_COMPRESS_THRESHOLD) {
-                        write_runlog(LOG, "Total size is less than threshold,stop deleting.Threshold=%ld,Total Size=%ld\n",
+                        write_runlog(LOG, "Total size less than threshold,stop deleting.Threshold=%ld,Total Size=%ld\n",
                             LOG_COMPRESS_THRESHOLD, totalSize);
                         break;
                     }
@@ -497,16 +507,15 @@ static void removeLogFileBySavedTotality()
         FREE_AND_RESET(logFile);
         return;
     }
-    sortLogFileByTimeAsc(logFile, 0, count - 1);
+    sortLogFileByTimeAsc(logFile, 0, (int)(count - 1));
     leftCnt = count;
 
     /* Transfer current time to integer */
     char current_localtime[LOG_MAX_TIMELEN] = {0};
     pg_time_t current_time;
-    struct tm* systm = NULL;
     struct tm systm2 = {0};
     current_time = time(NULL);
-    systm = localtime(&current_time);
+    struct tm *systm = localtime(&current_time);
     if (systm != NULL) {
         (void)strftime(current_localtime, LOG_MAX_TIMELEN, "%Y%m%d%H%M%S", systm);
     }
@@ -577,12 +586,12 @@ void* CompressAndRemoveLogFile(void* arg)
         /* Compress trace first */
         write_runlog(LOG, "gzCompressLogByPattern begin.\n");
         gzCompressLogByPattern();
-        /* Remove trace by total capacity, which is defined by LOG_COMPRESS_THRESHOLD*/
+        /* Remove trace by total capacity, which is defined by LOG_COMPRESS_THRESHOLD */
         write_runlog(LOG, "removeLogFileByCapacity begin.\n");
         removeLogFileByCapacity();
-        /* 
+        /*
          * Remove trace by number of traces.Save days will affect this operation
-         * log_max_count = -1, means removing traces only by capacity(defined by LOG_COMPRESS_THRESHOLD).  
+         * log_max_count = -1, means removing traces only by capacity(defined by LOG_COMPRESS_THRESHOLD).
          */
         if (log_max_count > 0) {
             write_runlog(LOG, "removeLogFileBySavedTotality begin.\n");

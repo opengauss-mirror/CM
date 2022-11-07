@@ -26,20 +26,21 @@
 
 #include <limits.h>
 
+#include "elog.h"
 #include "cm/pqexpbuffer.h"
 
 /* All "broken" PQExpBuffers point to this string. */
-static const char oom_buffer[1] = "";
+static const char oomBuf[1] = "";
 
 /*
  * markPQExpBufferBroken
  *
  * Put a PQExpBuffer in "broken" state if it isn't already.
  */
-static void markPQExpBufferBroken(PQExpBuffer str)
+static void markPQExpBufferBroken(PQExpBuffer strBuf)
 {
-    if (str->data != oom_buffer) {
-        FREE_AND_RESET(str->data);
+    if (strBuf->data != oomBuf) {
+        FREE_AND_RESET(strBuf->data);
     }
     /*
      * Casting away const here is a bit ugly, but it seems preferable to
@@ -47,9 +48,9 @@ static void markPQExpBufferBroken(PQExpBuffer str)
      * compiler to put oom_buffer in read-only storage, so that anyone who
      * tries to scribble on a broken PQExpBuffer will get a failure.
      */
-    str->data = (char*)oom_buffer;
-    str->len = 0;
-    str->maxlen = 0;
+    strBuf->data = (char*)oomBuf;
+    strBuf->len = 0;
+    strBuf->maxlen = 0;
 }
 
 /*
@@ -58,35 +59,35 @@ static void markPQExpBufferBroken(PQExpBuffer str)
  * Initialize a PQExpBufferData struct (with previously undefined contents)
  * to describe an empty string.
  */
-void initCMPQExpBuffer(PQExpBuffer str)
+void initCMPQExpBuffer(PQExpBuffer strBuf)
 {
-    str->data = (char*)malloc(INITIAL_EXPBUFFER_SIZE);
-    if (str->data == NULL) {
-        str->data = (char*)oom_buffer; /* see comment above */
-        str->maxlen = 0;
-        str->len = 0;
+    strBuf->data = (char*)malloc(INITIAL_EXPBUFFER_SIZE);
+    if (strBuf->data == NULL) {
+        strBuf->data = (char*)oomBuf; /* see comment above */
+        strBuf->maxlen = 0;
+        strBuf->len = 0;
     } else {
-        str->maxlen = INITIAL_EXPBUFFER_SIZE;
-        str->len = 0;
-        str->data[0] = '\0';
+        strBuf->maxlen = INITIAL_EXPBUFFER_SIZE;
+        strBuf->len = 0;
+        strBuf->data[0] = '\0';
     }
 }
 
 /*
- * termCMPQExpBuffer(str)
+ * termCMPQExpBuffer(strBuf)
  *		free()s the data buffer but not the PQExpBufferData itself.
  *		This is the inverse of initCMPQExpBuffer().
  */
-void termCMPQExpBuffer(PQExpBuffer str)
+void termCMPQExpBuffer(PQExpBuffer strBuf)
 {
-    if (str->data != oom_buffer) {
-        FREE_AND_RESET(str->data);
+    if (strBuf->data != oomBuf) {
+        FREE_AND_RESET(strBuf->data);
     }
 
     /* just for luck, make the buffer validly empty. */
-    str->data = (char*)oom_buffer; /* see comment above */
-    str->maxlen = 0;
-    str->len = 0;
+    strBuf->data = (char*)oomBuf; /* see comment above */
+    strBuf->maxlen = 0;
+    strBuf->len = 0;
 }
 
 /*
@@ -95,15 +96,15 @@ void termCMPQExpBuffer(PQExpBuffer str)
  *
  * Note: if possible, a "broken" PQExpBuffer is returned to normal.
  */
-void resetCMPQExpBuffer(PQExpBuffer str)
+void resetCMPQExpBuffer(PQExpBuffer strBuf)
 {
-    if (str != NULL) {
-        if ((str->data != NULL) && str->data != oom_buffer) {
-            str->len = 0;
-            str->data[0] = '\0';
+    if (strBuf != NULL) {
+        if ((strBuf->data != NULL) && strBuf->data != oomBuf) {
+            strBuf->len = 0;
+            strBuf->data[0] = '\0';
         } else {
             /* try to reinitialize to valid state */
-            initCMPQExpBuffer(str);
+            initCMPQExpBuffer(strBuf);
         }
     }
 }
@@ -116,28 +117,28 @@ void resetCMPQExpBuffer(PQExpBuffer str)
  * Returns 1 if OK, 0 if failed to enlarge buffer.  (In the latter case
  * the buffer is left in "broken" state.)
  */
-int enlargeCMPQExpBuffer(PQExpBuffer str, size_t needed)
+int enlargeCMPQExpBuffer(PQExpBuffer strBuf, size_t needed)
 {
     size_t newlen;
-    char* newdata = NULL;
 
-    if (PQExpBufferBroken(str))
+    if (PQExpBufferBroken(strBuf)) {
         return 0; /* already failed */
+    }
 
     /*
      * Guard against ridiculous "needed" values, which can occur if we're fed
      * bogus data.	Without this, we can get an overflow or infinite loop in
      * the following.
      */
-    if (needed >= ((size_t)INT_MAX - str->len)) {
-        markPQExpBufferBroken(str);
+    if (needed >= ((size_t)INT_MAX - strBuf->len)) {
+        markPQExpBufferBroken(strBuf);
         return 0;
     }
 
-    needed += str->len + 1; /* total space required now */
+    needed += strBuf->len + 1; /* total space required now */
 
     /* Because of the above test, we now have needed <= INT_MAX */
-    if (needed <= str->maxlen) {
+    if (needed <= strBuf->maxlen) {
         return 1; /* got enough space already */
     }
 
@@ -146,7 +147,7 @@ int enlargeCMPQExpBuffer(PQExpBuffer str, size_t needed)
      * for efficiency, double the buffer size each time it overflows.
      * Actually, we might need to more than double it if 'needed' is big...
      */
-    newlen = (str->maxlen > 0) ? (2 * str->maxlen) : 64;
+    newlen = (strBuf->maxlen > 0) ? (2 * strBuf->maxlen) : 64;
     while (needed > newlen) {
         newlen = 2 * newlen;
     }
@@ -160,39 +161,38 @@ int enlargeCMPQExpBuffer(PQExpBuffer str, size_t needed)
         newlen = (size_t)INT_MAX;
     }
 
-    newdata = (char*)malloc(newlen);
+    char *newdata = (char*)malloc(newlen);
     if (newdata != NULL) {
-        if (str->data != NULL) {
-            errno_t rc;
-            rc = memcpy_s(newdata, newlen, str->data, str->maxlen);
-            securec_check_c(rc, "\0", "\0");
-            FREE_AND_RESET(str->data);
+        if (strBuf->data != NULL) {
+            errno_t rc = memcpy_s(newdata, newlen, strBuf->data, strBuf->maxlen);
+            securec_check_errno(rc, (void)rc);
+            FREE_AND_RESET(strBuf->data);
         }
-        str->data = newdata;
-        str->maxlen = newlen;
+        strBuf->data = newdata;
+        strBuf->maxlen = newlen;
         return 1;
     }
 
-    markPQExpBufferBroken(str);
+    markPQExpBufferBroken(strBuf);
     return 0;
 }
 
 /*
  * printfCMPQExpBuffer
  * Format text data under the control of fmt (an sprintf-like format string)
- * and insert it into str.	More space is allocated to str if necessary.
+ * and insert it into strBuf.	More space is allocated to strBuf if necessary.
  * This is a convenience routine that does the same thing as
  * resetCMPQExpBuffer() followed by appendCMPQExpBuffer().
  */
-void printfCMPQExpBuffer(PQExpBuffer str, const char* fmt, ...)
+void printfCMPQExpBuffer(PQExpBuffer strBuf, const char* fmt, ...)
 {
     va_list args;
     size_t avail;
     int nprinted;
 
-    resetCMPQExpBuffer(str);
+    resetCMPQExpBuffer(strBuf);
 
-    if (PQExpBufferBroken(str)) {
+    if (PQExpBufferBroken(strBuf)) {
         return; /* already failed */
     }
 
@@ -202,10 +202,10 @@ void printfCMPQExpBuffer(PQExpBuffer str, const char* fmt, ...)
          * there's hardly any space, don't bother trying, just fall through to
          * enlarge the buffer first.
          */
-        if (str->maxlen > str->len + 16) {
-            avail = str->maxlen - str->len - 1;
+        if (strBuf->maxlen > strBuf->len + 16) {
+            avail = strBuf->maxlen - strBuf->len - 1;
             va_start(args, fmt);
-            nprinted = vsnprintf_s(str->data + str->len, str->maxlen - str->len, avail, fmt, args);
+            nprinted = vsnprintf_s(strBuf->data + strBuf->len, strBuf->maxlen - strBuf->len, avail, fmt, args);
             va_end(args);
 
             /*
@@ -215,13 +215,14 @@ void printfCMPQExpBuffer(PQExpBuffer str, const char* fmt, ...)
              */
             if (nprinted >= 0 && nprinted < (int)avail - 1) {
                 /* Success.  Note nprinted does not include trailing null. */
-                str->len += nprinted;
+                strBuf->len += (size_t)nprinted;
                 break;
             }
         }
         /* Double the buffer size and try again. */
-        if (!enlargeCMPQExpBuffer(str, str->maxlen))
+        if (!enlargeCMPQExpBuffer(strBuf, strBuf->maxlen)) {
             return; /* oops, out of memory */
+        }
     }
 }
 
@@ -233,13 +234,13 @@ void printfCMPQExpBuffer(PQExpBuffer str, const char* fmt, ...)
  * to str if necessary.  This is sort of like a combination of sprintf and
  * strcat.
  */
-void appendCMPQExpBuffer(PQExpBuffer str, const char* fmt, ...)
+void appendCMPQExpBuffer(PQExpBuffer strBuf, const char* fmt, ...)
 {
     va_list args;
     size_t avail;
     int nprinted;
 
-    if (PQExpBufferBroken(str)) {
+    if (PQExpBufferBroken(strBuf)) {
         return; /* already failed */
     }
 
@@ -249,10 +250,10 @@ void appendCMPQExpBuffer(PQExpBuffer str, const char* fmt, ...)
          * there's hardly any space, don't bother trying, just fall through to
          * enlarge the buffer first.
          */
-        if (str->maxlen > str->len + 16) {
-            avail = str->maxlen - str->len - 1;
+        if (strBuf->maxlen > strBuf->len + 16) {
+            avail = strBuf->maxlen - strBuf->len - 1;
             va_start(args, fmt);
-            nprinted = vsnprintf_s(str->data + str->len, str->maxlen - str->len, avail, fmt, args);
+            nprinted = vsnprintf_s(strBuf->data + strBuf->len, strBuf->maxlen - strBuf->len, avail, fmt, args);
             va_end(args);
 
             /*
@@ -262,12 +263,12 @@ void appendCMPQExpBuffer(PQExpBuffer str, const char* fmt, ...)
              */
             if (nprinted >= 0 && nprinted < (int)avail - 1) {
                 /* Success.  Note nprinted does not include trailing null. */
-                str->len += nprinted;
+                strBuf->len += (size_t)nprinted;
                 break;
             }
         }
         /* Double the buffer size and try again. */
-        if (!enlargeCMPQExpBuffer(str, str->maxlen)) {
+        if (!enlargeCMPQExpBuffer(strBuf, strBuf->maxlen)) {
             return; /* oops, out of memory */
         }
     }
@@ -279,22 +280,21 @@ void appendCMPQExpBuffer(PQExpBuffer str, const char* fmt, ...)
  * Append arbitrary binary data to a PQExpBuffer, allocating more space
  * if necessary.
  */
-void appendBinaryCMPQExpBuffer(PQExpBuffer str, const char* data, size_t datalen)
+void appendBinaryCMPQExpBuffer(PQExpBuffer strBuf, const char* data, size_t datalen)
 {
-    errno_t rc;
     /* Make more room if needed */
-    if (!enlargeCMPQExpBuffer(str, datalen)) {
+    if (!enlargeCMPQExpBuffer(strBuf, datalen)) {
         return;
     }
 
     /* OK, append the data */
-    rc = memcpy_s(str->data + str->len, str->maxlen - str->len, data, datalen);
-    securec_check_c(rc, "\0", "\0");
-    str->len += datalen;
+    errno_t rc = memcpy_s(strBuf->data + strBuf->len, strBuf->maxlen - strBuf->len, data, datalen);
+    securec_check_errno(rc, (void)rc);
+    strBuf->len += datalen;
 
     /*
      * Keep a trailing null in place, even though it's probably useless for
      * binary data...
      */
-    str->data[str->len] = '\0';
+    strBuf->data[strBuf->len] = '\0';
 }

@@ -30,10 +30,9 @@
 int CM_CreateHA(void);
 int CM_CreateMonitor(void);
 int CM_CreateMonitorStopNode(void);
-int CM_CreateThreadPool(int thrCount);
-CM_Thread* GetNextThread(int ctlThreadNum);
-CM_Thread* GetNextCtlThread(int threadNum);
-bool CreateDnGroupStatusCheckAndArbitrateThread(void);
+int CM_CreateWorkThreadPool(int thrCount);
+int CM_CreateIOThread();
+void CreateDnGroupStatusCheckAndArbitrateThread(void);
 void CreateDealGlobalBarrierThread(void);
 
 status_t CmsCreateThreads();

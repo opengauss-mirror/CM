@@ -36,10 +36,11 @@
 volatile bool g_arbitrationChangedFromMinority = false;
 const uint32 FIRST_DN = 6001;
 
-uint64 GetTimeMinus(struct timeval checkEnd, struct timeval checkBegin)
+uint64 GetTimeMinus(const struct timeval checkEnd, const struct timeval checkBegin)
 {
     const uint64 secTomicSec = 1000000;
-    return (uint64)((checkEnd.tv_sec - checkBegin.tv_sec) * secTomicSec + (checkEnd.tv_usec - checkBegin.tv_usec));
+    return (uint64)((checkEnd.tv_sec - checkBegin.tv_sec) * secTomicSec +
+        (uint64)(checkEnd.tv_usec - checkBegin.tv_usec));
 }
 
 static inline void UpdateStatusRoleByDdbValue(cm_instance_role_status *status, const char *valueOfDynConf);
@@ -52,7 +53,7 @@ static void SetSyncLock(uint32 groupIdx, bool allSuccess, int32 instanceType)
 {
     if (g_HA_status->local_role == CM_SERVER_PRIMARY && allSuccess) {
         while (!g_instance_group_report_status_ptr[groupIdx].instance_status.ddbSynced) {
-            (void)__sync_lock_test_and_set(&g_instance_group_report_status_ptr[groupIdx].instance_status.ddbSynced, 1);
+            __sync_lock_test_and_set(&g_instance_group_report_status_ptr[groupIdx].instance_status.ddbSynced, 1);
             write_runlog(LOG, "sync %s(%u) static role from ddb all success.\n", type_int_to_string(instanceType),
                 GetInstanceIdInGroup(groupIdx, 0));
         }
@@ -150,9 +151,8 @@ static status_t GetInstStatusKeyValueFromDdb(DrvKeyValue *keyValue, uint32 len, 
 static void SyncCnInstanceStatusFromDdb(uint32 groupIdx, bool *cmsSyncFromDdbFlag, DrvKeyValue *keyValue, uint32 len)
 {
     uint32 idx = 0;
-    status_t st = CM_SUCCESS;
     cm_instance_role_status *status = &g_instance_role_group_ptr[groupIdx].instanceMember[0];
-    st = GetIdxFromKeyValue(keyValue, len, status->instanceId, &idx);
+    status_t st = GetIdxFromKeyValue(keyValue, len, status->instanceId, &idx);
     if (st == CM_SUCCESS) {
         if (IsUpdateStRoleWithDdbRole(groupIdx, 0)) {
             (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
@@ -534,19 +534,19 @@ static void GetDatanodeDynamicConfigChangeFromDdbInShard(uint32 groupIdx)
         }
     }
     if (g_HA_status->local_role != CM_SERVER_PRIMARY) {
-        write_runlog(ERROR, "instd(%u) failed to get ddb value of DN, error info:%d\n", instd, dbResult);
+        write_runlog(ERROR, "instd(%u) failed to get ddb value of DN, error info:%d\n", instd, (int)dbResult);
         return;
     }
     if (!cmsSyncFromDdbFlag || (st != CM_SUCCESS && dbResult == CAN_NOT_FIND_THE_KEY)) {
         write_runlog(LOG, "instd(%u) cmsSyncFromDdbFlag is %d, st is %d, dbResult is %d.\n",
-            instd, cmsSyncFromDdbFlag, st, dbResult);
+            instd, cmsSyncFromDdbFlag, (int)st, (int)dbResult);
         cmsSyncFromDdbFlag = true;
         SetStaticRoleToDdb(groupIdx, INSTANCE_TYPE_DATANODE);
     } else {
         cmsSyncFromDdbFlag = false;
     }
     write_runlog(ERROR, "instd(%u) failed to get ddb value of DN, cmsSyncFromDdbFlag is %d, error info:%d\n",
-        instd, cmsSyncFromDdbFlag, dbResult);
+        instd, cmsSyncFromDdbFlag, (int)dbResult);
     SetSyncLock(groupIdx, cmsSyncFromDdbFlag, INSTANCE_TYPE_DATANODE);
 }
 
@@ -809,12 +809,11 @@ static void ResetSyncDoneFlag(uint32 groupIdx)
 
 bool SetGroupExpectSyncList(uint32 groupIndex, const CurrentInstanceStatus *statusInstance)
 {
-    errno_t rc = 0;
     char statusKey[MAX_PATH_LEN] = {0};
     char statusValue[MAX_PATH_LEN] = {0};
     uint32 instanceId = g_instance_role_group_ptr[groupIndex].instanceMember[0].instanceId;
     cm_instance_report_status *dnReportStautus = &g_instance_group_report_status_ptr[groupIndex].instance_status;
-    rc = snprintf_s(statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/DnExpectSyncList", pw->pw_name);
+    errno_t rc = snprintf_s(statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/DnExpectSyncList", pw->pw_name);
     securec_check_intval(rc, (void)rc);
     int doResult = SetExceptSyncListStatusValue(statusValue, sizeof(statusValue), groupIndex, statusInstance);
     if (doResult == -1) {
@@ -990,7 +989,6 @@ static bool CheckCurrentTermValid(uint32 groupIndex)
 
 static uint32 ReadTermByMinority()
 {
-    uint32 term = InvalidTerm;
     (void)pthread_rwlock_wrlock(&term_update_rwlock);
     write_runlog(LOG,
         "Minority AZ Force Starting. In ReadTermFromDdb() read term in minority mode. current_term:%u/%u\n",
@@ -1005,7 +1003,7 @@ static uint32 ReadTermByMinority()
         }
     }
     g_dynamic_header->term++;
-    term = g_dynamic_header->term;
+    uint32 term = g_dynamic_header->term;
     (void)pthread_rwlock_unlock(&term_update_rwlock);
     /* update term value into dynamic config file */
     return term;
@@ -1199,9 +1197,8 @@ int SetFirstTermToDdb()
 int IncrementTermToDdb()
 {
     uint32 term = 0;
-    int ret = 0;
     bool firstStart = false;
-    ret = GetTermFromDdb(&term, firstStart);
+    int ret = GetTermFromDdb(&term, firstStart);
     if (ret != 0) {
         if (firstStart && SetFirstTermToDdb() == 0) {
             g_needIncTermToDdbAgain = false;
@@ -1227,100 +1224,6 @@ int IncrementTermToDdb()
         LOG, "Success set term to ddb, ddb term is %u, current term is %u\n", term, g_dynamic_header->term);
 
     return 0;
-}
-
-bool GetDnFailStatusFromDdb(int *statusOnline, int len)
-{
-    char statusKey[MAX_PATH_LEN] = {0};
-    int rc;
-    char value[DDB_MIN_VALUE_LEN] = {0};
-    status_t st = CM_SUCCESS;
-    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
-    for (int i = 0; i < len; i++) {
-        rc = snprintf_s(
-            statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/azdnstatus/%d", pw->pw_name, i);
-        securec_check_intval(rc, (void)rc);
-        st = GetKVFromDDb(statusKey, MAX_PATH_LEN, value, DDB_MIN_VALUE_LEN, &dbResult);
-        if (st != CM_SUCCESS) {
-            write_runlog(ERROR, "GetDnFailStatusFromDdb failed %d\n", dbResult);
-            return false;
-        }
-        if (statusOnline != NULL) {
-            *(statusOnline + i) = (int)strtol(value, NULL, 10);
-        }
-    }
-
-    return true;
-}
-
-bool SetDnFailStatusToDdb(const int *statusOnline, int len)
-{
-    char statusKey[MAX_PATH_LEN] = {0};
-    char value[DDB_MIN_VALUE_LEN] = {0};
-    int rc = -1;
-
-    status_t st = CM_SUCCESS;
-    for (int i = 0; i < len; i++) {
-        rc = snprintf_s(
-            statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/azdnstatus/%d", pw->pw_name, i);
-        securec_check_intval(rc, (void)rc);
-        write_runlog(LOG, "set dn fail status of az to ddb, az num %d, online num %d.\n", i, *(statusOnline + i));
-        rc = snprintf_s(value, DDB_MIN_VALUE_LEN, DDB_MIN_VALUE_LEN - 1, "%d", *(statusOnline + i));
-        securec_check_intval(rc, (void)rc);
-        st = SetKV2Ddb(statusKey, MAX_PATH_LEN, value, DDB_MIN_VALUE_LEN, NULL);
-        if (st != CM_SUCCESS) {
-            write_runlog(ERROR, "ddb set(SetDnFailStatusToDdb) failed. key=%s, value=%s.\n", statusKey, value);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool GetOnlineStatusFromDdb(int *statusOnline, int len)
-{
-    char statusKey[MAX_PATH_LEN];
-    int rc;
-    char value[DDB_MIN_VALUE_LEN] = {0};
-
-    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
-    status_t st = CM_SUCCESS;
-    for (int i = 0; i < len; i++) {
-        rc = snprintf_s(
-            statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/azstatus/%d", pw->pw_name, i);
-        securec_check_intval(rc, (void)rc);
-        st = GetKVFromDDb(statusKey, MAX_PATH_LEN, value, DDB_MIN_VALUE_LEN, &dbResult);
-        if (st != CM_SUCCESS) {
-            write_runlog(ERROR, "GetOnlineStatusFromDdb failed, %d\n", dbResult);
-            return false;
-        }
-        if (statusOnline != NULL) {
-            *(statusOnline + i) = (int)strtol(value, NULL, 10);
-        }
-    }
-    return true;
-}
-
-bool SetOnlineStatusToDdb(const int* statusOnline, int len)
-{
-    char statusKey[MAX_PATH_LEN] = {0};
-    char value[MAX_PATH_LEN] = {0};
-    int rc = -1;
-
-    status_t st = CM_SUCCESS;
-    for (int i = 0; i < len; i++) {
-        rc = snprintf_s(
-            statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/azstatus/%d", pw->pw_name, i);
-        securec_check_intval(rc, (void)rc);
-        write_runlog(LOG, "set online status of az to ddb, az num %d, online num %d.\n", i, *(statusOnline + i));
-        rc = snprintf_s(value, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%d", *(statusOnline + i));
-        securec_check_intval(rc, (void)rc);
-        st = SetKV2Ddb(statusKey, MAX_PATH_LEN, value, MAX_PATH_LEN, NULL);
-        if (st != CM_SUCCESS) {
-            write_runlog(ERROR, "ddb set(SetOnlineStatusToDdb) failed. key=%s, value=%s.\n", statusKey, value);
-            return false;
-        }
-    }
-    return true;
 }
 
 /* set static primary role and set other gtm static standby role, keep atomicity */
@@ -1358,12 +1261,11 @@ bool IsGetGtmKVFromDdb(uint32 groupIndex)
 static void SyncGtmStaticRole(uint32 groupIdx, DrvKeyValue *keyValue, uint32 len)
 {
     uint32 idx = 0;
-    status_t st = CM_SUCCESS;
     bool allSuccess = true;
     int32 logLevel = (g_HA_status->local_role == CM_SERVER_PRIMARY) ? LOG : DEBUG1;
     for (int i = 0; i < g_instance_role_group_ptr[groupIdx].count; i++) {
         cm_instance_role_status* status = &g_instance_role_group_ptr[groupIdx].instanceMember[i];
-        st = GetIdxFromKeyValue(keyValue, len, status->instanceId, &idx);
+        status_t st = GetIdxFromKeyValue(keyValue, len, status->instanceId, &idx);
         if (st == CM_SUCCESS) {
             if (!IsUpdateStRoleWithDdbRole(groupIdx, i)) {
                 continue;
@@ -1690,90 +1592,61 @@ int SetReplaceCnStatusToDdb()
     return 0;
 }
 
-void Hex2Bin(const char *source, char *dest, size_t len)
+void GetReadOnlyDdbValue(const char *cnValue, const char *dnValue)
 {
-    errno_t rc;
-    uint32 i = 0;
-    const char dict[17][5] = {
-        "0000", "0001", "0010", "0011",
-        "0100", "0101", "0110", "0111",
-        "1000", "1001", "1010", "1011",
-        "1100", "1101", "1110", "1111",
-        "\0",
-    };
-    for (i = 0; i < (uint32)len; i++) {
-        int n = 16;
-        if (source[i] >= 'a' && source[i] <= 'f') {
-            n = source[i] - 'a' + 10;
-        }
-        if (source[i] >= 'A' && source[i] <= 'F') {
-            n = source[i] - 'A' + 10;
-        }
-        if (source[i] >= '0' && source[i] <= '9') {
-            n = source[i] - '0';
-        }
-        rc = memcpy_s(&dest[i * BYTENUM], BYTENUM, dict[n], BYTENUM);
-        securec_check_errno(rc, (void)rc);
-    }
-    return;
-}
-
-void Bin2Hex(const char *sSrc, char *sDest, size_t nSrcLen)
-{
-    errno_t rc;
-    int rci = 0;
-    const uint32 times = (uint32)nSrcLen / 4;
-    char temp[times];
-    int x = 0;
-    for (uint32 i = 0; i < times; i++) {
-        x = 8 * (sSrc[i * 4] - '0');
-        x += 4 * (sSrc[i * 4 + 1] - '0');
-        x += 2 * (sSrc[i * 4 + 2] - '0');
-        x += sSrc[i * 4 + 3] - '0';
-        rci = snprintf_s(temp + i, BYTENUM, BYTENUM, "%1x", x);
-        securec_check_intval(rci, (void)rci);
-    }
-    rc = memcpy_s(sDest, nSrcLen / 4, temp, nSrcLen / 4);
-    securec_check_errno(rc, (void)rc);
-}
-
-int GetNodeReadOnlyStatusFromDdb()
-{
-    uint32 i = 0;
-    uint32 j = 0;
-    uint32 bitIndex = 0;
-    int rci;
-    char keyOfReadOnlyStatus[MAX_PATH_LEN] = {0};
-    char valueOfReadOnlyStatus[MAX_PATH_LEN] = {0};
-    char bitsString[MAX_PATH_LEN] = {0};
-
-    rci = snprintf_s(keyOfReadOnlyStatus, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/StorageReadOnlyStatus", pw->pw_name);
-    securec_check_intval(rci, (void)rci);
-
-    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
-    status_t st = GetKVFromDDb(keyOfReadOnlyStatus, MAX_PATH_LEN, valueOfReadOnlyStatus, MAX_PATH_LEN, &dbResult);
-    if (st != CM_SUCCESS) {
-        if (dbResult == CAN_NOT_FIND_THE_KEY) {
-            write_runlog(LOG, "[%s] can't find key(%s)\n", __FUNCTION__, keyOfReadOnlyStatus);
-            return 0;
-        } else {
-            write_runlog(ERROR, "[%s] get key(%s) failed\n", __FUNCTION__, keyOfReadOnlyStatus);
-            return -1;
-        }
-    }
-    Hex2Bin(valueOfReadOnlyStatus, bitsString, strlen(valueOfReadOnlyStatus));
-    write_runlog(LOG, "[%s][line:%d] bitsString:%s, valueOfReadOnlyStatus:%s, strlen(valueOfReadOnlyStatus):%lu\n",
-        __FUNCTION__, __LINE__, bitsString, valueOfReadOnlyStatus, strlen(valueOfReadOnlyStatus));
-    for (i = 0; i < g_node_num; i++) {
+    int cnIndex = 0;
+    int dnIndex = 0;
+    for (uint32 i = 0; i < g_node_num; i++) {
+        DynamicNodeReadOnlyInfo *curNodeInfo = &g_dynamicNodeReadOnlyInfo[i];
+        /* CN */
         if (g_node[i].coordinate == 1) {
-            g_dynamicNodeReadOnlyInfo[i].coordinateNode.lastReadOnly = (uint32)((int)bitsString[bitIndex++] - '0');
+            if (cnValue[cnIndex] != '\0') {
+                curNodeInfo->coordinateNode.ddbValue = cnValue[cnIndex] - '0';
+                cnIndex++;
+            } else {
+                curNodeInfo->coordinateNode.ddbValue = 0;
+            }
         }
-        for (j = 0; j < g_dynamicNodeReadOnlyInfo[i].dataNodeCount; j++) {
-            g_dynamicNodeReadOnlyInfo[i].dataNode[j].lastReadOnly = (uint32)((int)bitsString[bitIndex++] - '0');
+
+        /* DN */
+        for (uint32 j = 0; j < curNodeInfo->dataNodeCount; j++) {
+            DataNodeReadOnlyInfo *curDn = &curNodeInfo->dataNode[j];
+            if (dnValue[dnIndex] != '\0') {
+                curDn->ddbValue = dnValue[dnIndex] - '0';
+                dnIndex++;
+            } else {
+                curDn->ddbValue = 0;
+            }
         }
     }
-    write_runlog(LOG, "[%s][line:%d] bitIndex:[%u]\n", __FUNCTION__, __LINE__, bitIndex);
-    return 0;
+}
+
+status_t GetNodeReadOnlyStatusFromDdb()
+{
+    char cnValue[MAX_PATH_LEN] = {0};
+    char dnValue[MAX_PATH_LEN] = {0};
+    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
+
+    char dnKey[MAX_PATH_LEN] = {0};
+    errno_t rc = snprintf_s(dnKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/DnReadOnlyStatus", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+    status_t st = GetKVFromDDb(dnKey, MAX_PATH_LEN, dnValue, MAX_PATH_LEN, &dbResult);
+    if (st != CM_SUCCESS && dbResult == FAILED_GET_VALUE) {
+        write_runlog(LOG, "[%s] key:[%s] error:[%d]\n", __FUNCTION__, dnKey, (int)dbResult);
+        return CM_ERROR;
+    }
+#ifdef ENABLE_MULTIPLE_NODES
+    char cnKey[MAX_PATH_LEN] = {0};
+    rc = snprintf_s(cnKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/CnReadOnlyStatus", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+    st = GetKVFromDDb(cnKey, MAX_PATH_LEN, cnValue, MAX_PATH_LEN, &dbResult);
+    if (st != CM_SUCCESS && dbResult == FAILED_GET_VALUE) {
+        write_runlog(LOG, "[%s] key:[%s] error:[%d]\n", __FUNCTION__, cnKey, (int)dbResult);
+        return CM_ERROR;
+    }
+#endif
+    GetReadOnlyDdbValue(cnValue, dnValue);
+    return CM_SUCCESS;
 }
 
 static status_t GetKerberosValueFromDDb(char *value, uint32 len, int32 idx)
@@ -1922,47 +1795,57 @@ bool GetFinishRedoFlagFromDdbNew()
     return true;
 }
 
-status_t SetNodeReadOnlyStatusToDdb(const char* bitsString, int logLevel)
+void SetReadOnlyDdbValue(char *cnValue, int cnValueLen, char *dnValue, int dnValueLen)
 {
-    char keyOfReadOnlyStatus[MAX_PATH_LEN] = {0};
-    char valueOfReadOnlyStatus[MAX_PATH_LEN] = {0};
-    char valueOfReadOnlyStatusOld[MAX_PATH_LEN] = {0};
+    int cnIndex = 0;
+    int dnIndex = 0;
+    for (uint32 i = 0; i < g_node_num; i++) {
+        DynamicNodeReadOnlyInfo *curNodeInfo = &g_dynamicNodeReadOnlyInfo[i];
+        /* CN */
+        if (g_node[i].coordinate == 1) {
+            if (cnIndex < cnValueLen - 1) {
+                cnValue[cnIndex] = curNodeInfo->coordinateNode.ddbValue + '0';
+                cnIndex++;
+            }
+        }
 
-    if (bitsString == NULL) {
-        write_runlog(ERROR, "[%s][line:%d] bitsString is null!\n", __FUNCTION__, __LINE__);
-        return CM_ERROR;
-    }
-
-    int rci = snprintf_s(keyOfReadOnlyStatus, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/StorageReadOnlyStatus",
-        pw->pw_name);
-    securec_check_intval(rci, (void)rci);
-
-    Bin2Hex(bitsString, valueOfReadOnlyStatus, strlen(bitsString));
-
-    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
-    status_t st = GetKVFromDDb(keyOfReadOnlyStatus, MAX_PATH_LEN, valueOfReadOnlyStatusOld, MAX_PATH_LEN, &ddbResult);
-    if (st != CM_SUCCESS) {
-        // get kv only for log level, we should continue even got error.
-        int logLvl = (ddbResult == CAN_NOT_FIND_THE_KEY) ? LOG : ERROR;
-        write_runlog(logLvl, "failed to get value with key(%s).\n", keyOfReadOnlyStatus);
-    } else {
-        if (strcmp(valueOfReadOnlyStatusOld, valueOfReadOnlyStatus) != 0) {
-            logLevel = LOG;
-            write_runlog(logLevel, "[%s][line:%d] valueOfReadOnlyStatus in ddb is:%s\n",
-                __FUNCTION__, __LINE__, valueOfReadOnlyStatusOld);
+        /* DN */
+        for (uint32 j = 0; j < curNodeInfo->dataNodeCount; j++) {
+            DataNodeReadOnlyInfo *curDn = &curNodeInfo->dataNode[j];
+            if (dnIndex < dnValueLen - 1) {
+                dnValue[dnIndex] = curDn->ddbValue + '0';
+                dnIndex++;
+            }
         }
     }
+    cnValue[cnIndex] = '\0';
+    dnValue[dnIndex] = '\0';
+}
 
-    write_runlog(logLevel, "[%s][line:%d] bitsString:%s, valueOfReadOnlyStatus:%s, strlen(bitsString):%lu\n",
-        __FUNCTION__, __LINE__, bitsString, valueOfReadOnlyStatus, strlen(bitsString));
+void SetNodeReadOnlyStatusToDdb()
+{
+    char dnValue[MAX_PATH_LEN] = {0};
+    char cnValue[MAX_PATH_LEN] = {0};
 
-    st = SetKV2Ddb(keyOfReadOnlyStatus, MAX_PATH_LEN, valueOfReadOnlyStatus, MAX_PATH_LEN, NULL);
+    char dnKey[MAX_PATH_LEN] = {0};
+    errno_t rc = snprintf_s(dnKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/DnReadOnlyStatus", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+
+    SetReadOnlyDdbValue(cnValue, MAX_PATH_LEN, dnValue, MAX_PATH_LEN);
+    status_t st = SetKV2Ddb(dnKey, MAX_PATH_LEN, dnValue, MAX_PATH_LEN, NULL);
     if (st != CM_SUCCESS) {
-        write_runlog(ERROR,
-            "[%s][line:%d]: ddb set failed. key = %s, readonly = %s.\n",
-            __FUNCTION__, __LINE__, keyOfReadOnlyStatus, valueOfReadOnlyStatus);
+        write_runlog(ERROR, "[%s] ddb set failed. key = %s, dn_read_only = %s.\n", __FUNCTION__, dnKey, dnValue);
     }
-    return st;
+#ifdef ENABLE_MULTIPLE_NODES
+    char cnKey[MAX_PATH_LEN] = {0};
+    rc = snprintf_s(cnKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/CnReadOnlyStatus", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+    st = SetKV2Ddb(cnKey, MAX_PATH_LEN, cnValue, MAX_PATH_LEN, NULL);
+    if (st != CM_SUCCESS) {
+        write_runlog(ERROR, "[%s] ddb set failed. key = %s, cn_read_only = %s.\n", __FUNCTION__, cnKey, cnValue);
+    }
+#endif
+    return;
 }
 
 status_t TryDdbGet(const char *key, char *value, int32 maxSize, int32 tryTimes, int32 logLevel)

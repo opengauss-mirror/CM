@@ -14,7 +14,7 @@
  * -------------------------------------------------------------------------
  *
  * ctl_start.cpp
- *    cm_ctl start [-z AVAILABILITY_ZONE [--cm_arbitration_mode=ARBITRATION_MODE]] 
+ *    cm_ctl start [-z AVAILABILITY_ZONE [--cm_arbitration_mode=ARBITRATION_MODE]]
  *                    [-n NODEID] [-D DATADIR] [-m resume] [-t SECS] [-R]
  *
  * IDENTIFICATION
@@ -30,9 +30,9 @@
 #include "cm/cm_msg.h"
 #include "cm/libpq-int.h"
 #include "cm_ddb_adapter.h"
+#include "ctl_common_res.h"
 
 #define EXPECTED_CLUSTER_START_TIME 120
-#define START_DEFAULT_WAIT 600
 #define ETCD_START_WAIT 90
 #define INSTANCE_START_CONFIRM_TIME 3
 #define START_AZ_TRY_HEARTBEAT 20
@@ -81,6 +81,7 @@ static int g_az_start_status = CM_STATUS_UNKNOWN;
 static int g_instance_start_status = CM_STATUS_UNKNOWN;
 static int g_node_start_status = CM_STATUS_UNKNOWN;
 static int g_dn_relation_start_status = CM_STATUS_UNKNOWN;
+static int g_resStartStatus = CM_STATUS_UNKNOWN;
 
 static int startaz_try_heartbeat = START_AZ_TRY_HEARTBEAT;
 static struct timespec g_startTime;
@@ -110,31 +111,46 @@ extern uint32 g_nodeId;
 extern char* cm_arbitration_mode_set;
 extern const char* g_progname;
 extern CM_Conn* CmServer_conn;
-extern CtlCommand ctl_command;
 extern uint32 g_commandOperationInstanceId;
-static void StartResourceInstance();
 
-status_t DoCheckAndStartRes()
+static int StartResInstCheck(uint32 instId)
 {
-    /* check whether cm_agent is running */
-    if (GetAgentStatus() != PROCESS_RUNNING) {
-        write_runlog(ERROR, "The state of cm_agent is abnormal, maybe the cluster is not running.\n");
-        return CM_ERROR;
+    if (GetResInstStatus(instId) == CM_RES_STAT_ONLINE) {
+        return CM_STATUS_NORMAL;
     }
+    return CM_STATUS_UNKNOWN;
+}
 
-    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
-        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
-            if (g_resStatus[i].status.resStat[j].cmInstanceId == g_commandOperationInstanceId) {
-                StartResourceInstance();
-                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
-                return CM_SUCCESS;
-            }
-        }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+static void StartResInst(uint32 nodeId, uint32 instId)
+{
+    char instStartFile[MAX_PATH_LEN] = {0};
+    int ret = snprintf_s(instStartFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/instance_manual_start_%u",
+        g_appPath, instId);
+    securec_check_intval(ret, (void)ret);
+
+    char command[MAX_PATH_LEN] = {0};
+    ret = snprintf_s(command, MAX_PATH_LEN, MAX_PATH_LEN - 1, SYSTEMQUOTE "rm -f %s < \"%s\" 2>&1" SYSTEMQUOTE,
+        instStartFile, DEVNULL);
+    securec_check_intval(ret, (void)ret);
+
+    ret = runCmdByNodeId(command, nodeId);
+    if (ret != 0) {
+        write_runlog(DEBUG1, "Failed to start the resource instance with executing the command: command=\"%s\", "
+            "nodeId=%u, instId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
+            command, nodeId, instId, ret, SHELL_RETURN_CODE(ret), errno);
     }
-    write_runlog(FATAL, "instanceId specified is illegal.\n");
-    return CM_ERROR;
+}
+
+static void StartAllResInstByNode(uint32 nodeId)
+{
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        for (uint32 k = 0; k < g_resStatus[i].status.instanceCount; ++k) {
+            if (g_resStatus[i].status.resStat[k].nodeId != nodeId) {
+                continue;
+            }
+            StartResInst(nodeId, g_resStatus[i].status.resStat[k].cmInstanceId);
+        }
+    }
 }
 
 status_t StartWholeCluster()
@@ -216,6 +232,7 @@ static bool CheckOfflineInstance(uint32 node)
 
 status_t do_start(void)
 {
+    CtlGetCmJsonConf();
     int ret;
     pthread_t thr_id;
 #ifndef ENABLE_MULTIPLE_NODES
@@ -228,13 +245,9 @@ status_t do_start(void)
         return CM_ERROR;
     }
 
-    if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
-        return DoCheckAndStartRes();
-    }
-
     (void)clock_gettime(CLOCK_MONOTONIC, &g_startTime);
     /* start the whole cluster */
-    if (NULL == g_command_operation_azName && 0 == g_commandOperationNodeId) {
+    if (g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
 #ifdef ENABLE_MULTIPLE_NODES
         if (cn_resumes_restart) {
             write_stderr(_("%s: enable resuming the fault CN.\n"), g_progname);
@@ -243,7 +256,7 @@ status_t do_start(void)
         }
 #endif
         CM_RETURN_IFERR(StartWholeCluster());
-    } else if (NULL != g_command_operation_azName) {
+    } else if (g_command_operation_azName != NULL) {
         if (cm_arbitration_mode_set != NULL) {
             if (isMinority(cm_arbitration_mode_set)) {
                 if (g_currentNode->cmServerLevel != 1) {
@@ -309,7 +322,15 @@ status_t do_start(void)
         /* start a az with availability zone name */
         write_runlog(LOG, "start the availability zone: %s. \n", g_command_operation_azName);
         start_az(g_command_operation_azName);
-    } else if ('\0' == g_cmData[0]) {
+    } else if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
+        if (CheckResInstInfo(g_commandOperationNodeId, g_commandOperationInstanceId) != CM_SUCCESS) {
+            write_runlog(ERROR, "can't do start resource instance, instId:%u.\n", g_commandOperationInstanceId);
+            return CM_ERROR;
+        }
+        write_runlog(LOG, "start resource instance, instId:%u.\n", g_commandOperationInstanceId);
+        StartAllResInstByNode(g_commandOperationNodeId);
+    } else if (g_cmData[0] == '\0') {
+        // start all instance of one node
 #ifndef ENABLE_MULTIPLE_NODES
         if (stat(g_libnetManualStartFile, &libnetManualStat) == 0) {
             write_runlog(LOG, "start ltran process. \n");
@@ -373,51 +394,19 @@ status_t do_start(void)
         start_instance(g_commandOperationNodeId, g_cmData);
     }
 
-    /* creaet a thread to check cluster' status */
+    /* create a thread to check cluster's status */
     ret = pthread_create(&thr_id, NULL, &check_cluster_start_status, NULL);
     if (ret != 0) {
         write_runlog(FATAL, "failed to create thread to check if cluster started.\n");
         return CM_ERROR;
     }
 
-    if (HAS_RES_DEFINED_ONLY) {
-        write_runlog(LOG, "resource start command execute sucessfully.\n");
-        return CM_SUCCESS;
-    }
-
     /* check node's status */
-    if (0 != start_check()) {
+    if (start_check() != 0) {
         return CM_ERROR;
     }
 
     return CM_SUCCESS;
-}
-
-static void StartResourceInstance()
-{
-    errno_t rcs;
-    int ret;
-    char command[MAX_PATH_LEN] = {0};
-    char instanceStartFile[MAX_PATH_LEN] = {'\0'};
-
-    rcs = snprintf_s(instanceStartFile, sizeof(instanceStartFile), sizeof(instanceStartFile) - 1,
-        "%s/bin/instance_manual_start_%u", g_appPath, g_commandOperationInstanceId);
-    securec_check_intval(rcs, (void)rcs);
-
-    ret = snprintf_s(command, sizeof(command), sizeof(command) - 1, SYSTEMQUOTE "rm %s < \"%s\" 2>&1" SYSTEMQUOTE,
-        instanceStartFile, DEVNULL);
-    securec_check_intval(ret, (void)ret);
-
-    write_runlog(LOG, "start resource instance, nodeid: %d, instanceid %d\n", g_commandOperationNodeId, g_commandOperationInstanceId);
-
-    ret = runCmdByNodeId(command, g_commandOperationNodeId);
-    if (ret != 0) {
-        write_runlog(ERROR, "Failed to start the resource instance with executing the command: command=\"%s\", "
-            "nodeId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
-            command, g_commandOperationNodeId, ret, SHELL_RETURN_CODE(ret), errno);
-    } else {
-        write_runlog(LOG, "Start resource instance successfully.\n");
-    }
 }
 
 /*
@@ -450,7 +439,7 @@ static void start_and_check_etcd_cluster()
     if (ii == ETCD_START_WAIT) {
         write_runlog(ERROR, "failed to start the ETCD cluster.\n");
         if (g_multi_az_cluster && isMinority(cm_arbitration_mode_set)) {
-        /* for one-primary-multi-standby, do minority start (az1 and az2 are fault, force to start az3, 
+        /* for one-primary-multi-standby, do minority start (az1 and az2 are fault, force to start az3,
         az3 has only one etcd/dn/cn/gtm/cms/cma), when etcd start failed, continue to start other instance */
         } else {
             stop_etcd_cluster();
@@ -479,7 +468,7 @@ static void start_cluster(void)
      * ssh.
      */
     if (g_single_node_cluster) {
-        if ('\0' == mpp_env_separate_file[0]) {
+        if (mpp_env_separate_file[0] == '\0') {
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
@@ -496,7 +485,7 @@ static void start_cluster(void)
                 instance_manual_start_file);
         }
     } else {
-        if ('\0' == mpp_env_separate_file[0]) {
+        if (mpp_env_separate_file[0] == '\0') {
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
@@ -568,12 +557,12 @@ static void start_etcd_cluster(void)
  *
  * @out: count of etcd which is running
  */
-uint32 get_alive_etcd_node_count()
+static uint32 get_alive_etcd_node_count()
 {
     uint32 alive_count = 0;
 
     for (uint32 i = 0; i < g_node_num; i++) {
-        if (g_node[i].etcd && CM_STATUS_NORMAL == start_check_instance(i, "etcd")) {
+        if (g_node[i].etcd && start_check_instance(i, "etcd") == CM_STATUS_NORMAL) {
             alive_count++;
         }
     }
@@ -662,7 +651,7 @@ static bool ExecCheckCmd(const char* printStr, const char* cmd, const uint32 cmd
     char buf[MAXPGPATH];
     if (cmd != NULL) {
         int rcs = memcpy_s(checkCmd, MAXPGPATH, cmd, cmdCount);
-        securec_check_c(rcs, "\0", "\0");
+        securec_check_c(rcs, "", "");
         write_runlog(DEBUG1, "cheak_libnet %s command is %s.\n", printStr, checkCmd);
     }
 
@@ -724,7 +713,7 @@ static bool CheckLibosKniIsOk()
     rc = snprintf_s(checPingCmd,
         MAXPGPATH,
         MAXPGPATH - 1,
-        "ping -c 1 -w 1 %s  > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;", 
+        "ping -c 1 -w 1 %s  > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
         g_currentNode->cmAgentIP);
     securec_check_intval(rc, (void)rc);
     write_runlog(DEBUG1, "cheak_libnet ping command is %s.\n", checPingCmd);
@@ -746,14 +735,14 @@ static bool CheckLibosKniIsOk()
  */
 static void start_and_check_etcd_az(const char* azName)
 {
-    uint32 ii = 0;
+    uint32 ii;
     uint32 etcd_count = 0;
-    uint32 etcd_alive_count = 0;
+    uint32 etcd_alive_count;
     uint32 wait_count = 0;
     write_runlog(LOG, "start ETCD in availability zone, availability zone name: %s.\n", azName);
 
     for (ii = 0; ii < g_node_num; ii++) {
-        if (0 == strcmp(g_node[ii].azName, azName)) {
+        if (strcmp(g_node[ii].azName, azName) == 0) {
             if (g_node[ii].etcd) {
                 start_etcd_node(g_node[ii].node);
                 etcd_count++;
@@ -767,9 +756,9 @@ static void start_and_check_etcd_az(const char* azName)
         etcd_alive_count = 0;
 
         for (ii = 0; ii < g_node_num; ii++) {
-            if (0 == strcmp(g_node[ii].azName, azName)) {
+            if (strcmp(g_node[ii].azName, azName) == 0) {
                 if (g_node[ii].etcd) {
-                    if (CM_STATUS_NORMAL == start_check_instance(ii, "etcd")) {
+                    if (start_check_instance(ii, "etcd") == CM_STATUS_NORMAL) {
                         etcd_alive_count++;
                     }
                 }
@@ -787,7 +776,7 @@ static void start_and_check_etcd_az(const char* azName)
     if (wait_count == ETCD_START_WAIT) {
         write_runlog(LOG, "failed to start all ETCD in this availability zone.\n");
         for (ii = 0; ii < g_node_num; ii++) {
-            if (0 == strcmp(g_node[ii].azName, azName)) {
+            if (strcmp(g_node[ii].azName, azName) == 0) {
                 if (g_node[ii].etcd) {
                     stop_etcd_node(g_node[ii].node);
                 }
@@ -861,7 +850,7 @@ static int StartCheckLtranProcess(uint32 nodeIdCheck, const char* datapath)
                 nodeIdCheck, command, &result, flag ? result_path : checkLtranProcessResultPath, mpp_env_separate_file);
         }
         if (fd > 0) {
-            close(fd);
+            (void)close(fd);
         }
         (void)unlink(flag ? result_path : checkLtranProcessResultPath);
         return (result == PROCESS_RUNNING) ? CM_STATUS_NORMAL : CM_STATUS_UNKNOWN;
@@ -955,13 +944,13 @@ static int start_check_instance(uint32 node_id_check, const char* datapath)
                     mpp_env_separate_file);
             }
             if (fd > 0) {
-                close(fd);
+                (void)close(fd);
             }
             (void)unlink(flag ? result_path : checkEtcdProcessResultPath);
             return (result == PROCESS_RUNNING) ? CM_STATUS_NORMAL : CM_STATUS_UNKNOWN;
         }
         if (fd > 0) {
-            close(fd);
+            (void)close(fd);
         }
         (void)unlink(flag ? result_path : checkEtcdProcessResultPath);
     }
@@ -982,7 +971,7 @@ static void check_etcd_cluster_status()
     if (g_etcd_num == 0) {
         return;
     }
-    uint32 ii = 0;
+    uint32 ii;
 
     /*
      * etcd node just started up and etcd cluster can't be healthy right now.
@@ -1027,11 +1016,11 @@ static void MinorityStartPreSetGTM(uint32 nodeIdx)
 
     // set local gtm and the other gtm sync mode
     for (unsigned int i = 0; i < g_node_num; i++) {
-        if (0 != strcmp(g_node[i].azName, g_node[nodeIdx].azName) || i == nodeIdx) {
+        if (strcmp(g_node[i].azName, g_node[nodeIdx].azName) != 0 || i == nodeIdx) {
             continue;
         }
 
-        if (1 == g_node[i].gtm) {
+        if (g_node[i].gtm == 1) {
             if (g_currentNode->node == g_node[nodeIdx].node) {
                 ret = snprintf_s(command_opts,
                     MAXPGPATH,
@@ -1113,11 +1102,11 @@ static void MinorityStartPreSetServer(uint32 nodeIdx)
 static void MinorityStartPreSet(uint32 nodeIdx, uint32 repNumInAZ)
 {
     // modify cm_server for minority start
-    if (1 == g_node[nodeIdx].cmServerLevel) {
+    if (g_node[nodeIdx].cmServerLevel == 1) {
         MinorityStartPreSetServer(nodeIdx);
     }
 
-    if (1 == g_node[nodeIdx].gtm) {
+    if (g_node[nodeIdx].gtm == 1) {
         MinorityStartPreSetGTM(nodeIdx);
     }
 
@@ -1172,11 +1161,11 @@ static void MajorityStartPreSetGTM(uint32 nodeIdx)
 static void MajorityStartPreSet(uint32 nodeIdx, uint32 repNumInAZ, const char *azAllStr)
 {
     // modify cm_server for majority start
-    if (1 == g_node[nodeIdx].cmServerLevel) {
+    if (g_node[nodeIdx].cmServerLevel == 1) {
         MajorityStartPreSetServer(nodeIdx);
     }
 
-    if (1 == g_node[nodeIdx].gtm) {
+    if (g_node[nodeIdx].gtm == 1) {
         MajorityStartPreSetGTM(nodeIdx);
     }
 
@@ -1229,7 +1218,7 @@ static void StartAz4Force(const char* azName)
 
     for (uint32 ii = 0; ii < g_node_num; ii++) {
         // find pointed az
-        if (0 == strcmp(g_node[ii].azName, azName)) {
+        if (strcmp(g_node[ii].azName, azName) == 0) {
             // minority start
             if (isMinority(cm_arbitration_mode_set)) {
                 MinorityStartPreSet(ii, repNumInAZ);
@@ -1289,7 +1278,7 @@ static void start_az(char *azName)
  */
 static void start_and_check_etcd_node(uint32 nodeId)
 {
-    uint32 ii = 0;
+    uint32 ii;
 
     for (ii = 0; ii < g_node_num; ii++) {
         if (g_node[ii].node == nodeId) {
@@ -1309,7 +1298,7 @@ static void start_and_check_etcd_node(uint32 nodeId)
             (void)sleep(1);
             write_runlog(LOG, ".");
 
-            if (CM_STATUS_NORMAL == start_check_instance(ii, "etcd")) {
+            if (start_check_instance(ii, "etcd") == CM_STATUS_NORMAL) {
                 write_runlog(LOG, "the ETCD instance in this node starts successfully done.\n");
                 return;
             }
@@ -1329,9 +1318,8 @@ static void start_node(uint32 nodeid)
         return;
     }
     char command[MAXPGPATH];
-    uint32 ii = 0;
-    errno_t rc = 0;
-
+    uint32 ii;
+    errno_t rc;
     rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE "rm -f %s %s %s_* < \"%s\" 2>&1 &" SYSTEMQUOTE,
         manual_start_file, etcd_manual_start_file, instance_manual_start_file, DEVNULL);
     securec_check_intval(rc, (void)rc);
@@ -1366,21 +1354,16 @@ static void start_node(uint32 nodeid)
 
 static void StartInstanceByInstanceid(uint32 instanceId)
 {
-    bool find = false;
     for (uint32 i = 0; i < g_node_num; i++) {
         for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
             if (instanceId == g_node[i].datanode[j].datanodeId) {
-                find = true;
                 start_instance(g_node[i].node, g_node[i].datanode[j].datanodeLocalDataPath);
                 write_runlog(LOG,
                     "start the node:%u,datapath:%s. \n",
                     g_node[i].node,
                     g_node[i].datanode[j].datanodeLocalDataPath);
-                break;
+                return;
             }
-        }
-        if (find == true) {
-            break;
         }
     }
 }
@@ -1451,7 +1434,7 @@ static void* check_cluster_start_status(void* arg)
             exit(0);
         } else if (g_az_start_status == CM_STATUS_NORMAL) {
             for (uint32 ii = 0; ii < g_node_num; ii++) {
-                if (g_command_operation_azName != NULL && 0 == strcmp(g_node[ii].azName, g_command_operation_azName)) {
+                if (g_command_operation_azName != NULL && strcmp(g_node[ii].azName, g_command_operation_azName) == 0) {
                     write_runlog(LOG, "start node successfully, nodeid: %u. \n", g_node[ii].node);
                 }
             }
@@ -1460,7 +1443,7 @@ static void* check_cluster_start_status(void* arg)
             exit(0);
         } else if (g_az_start_status == CM_STATUS_NORMAL_WITH_CN_DELETED) {
             for (uint32 ii = 0; ii < g_node_num; ii++) {
-                if (g_command_operation_azName != NULL && 0 == strcmp(g_node[ii].azName, g_command_operation_azName)) {
+                if (g_command_operation_azName != NULL && strcmp(g_node[ii].azName, g_command_operation_azName) == 0) {
                     write_runlog(LOG, "start node successfully, nodeid: %u. \n", g_node[ii].node);
                 }
             }
@@ -1488,6 +1471,10 @@ static void* check_cluster_start_status(void* arg)
             write_runlog(LOG, "start relation datanodes successfully(node:%u, path:%s).\n",
                          g_commandOperationNodeId, g_cmData);
             exit(0);
+        } else if (g_resStartStatus == CM_STATUS_NORMAL) {
+            write_runlog(LOG, "start resource instance successfully(nodeId:%u, instId:%u).\n",
+                g_commandOperationNodeId, g_commandOperationInstanceId);
+            exit(0);
         } else {
             count = 0;
         }
@@ -1499,7 +1486,7 @@ static void* check_cluster_start_status(void* arg)
         startingTime = (g_endTime.tv_sec - g_startTime.tv_sec);
         if (startingTime > EXPECTED_CLUSTER_START_TIME && startingTime % CLUSTER_STATE_CHECK_INTERVAL == 0) {
             write_runlog(DEBUG1, "starting exceeds 2 mins, instance status:g_cluster_start_status=%d,"
-                "g_az_start_status=%d,g_node_start_status=%d,g_instance_start_status=%d\n", 
+                "g_az_start_status=%d,g_node_start_status=%d,g_instance_start_status=%d\n",
                 g_cluster_start_status, g_az_start_status, g_node_start_status, g_instance_start_status);
         }
     }
@@ -1507,54 +1494,63 @@ static void* check_cluster_start_status(void* arg)
     /* query cluster and report when start failed */
     StartFailQueryAndReport();
 
-    if ((g_command_operation_azName == NULL) && !g_commandOperationNodeId && ('\0' == g_cmData[0]) &&
-        g_cluster_start_status != CM_STATUS_NORMAL && g_cluster_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
+    if ((g_command_operation_azName == NULL) && !g_commandOperationNodeId && (g_cmData[0] == '\0') &&
+        g_cluster_start_status != CM_STATUS_NORMAL && g_cluster_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED) {
         write_runlog(ERROR,
             "start cluster failed in (%d)s!\n\n"
             "HINT: Maybe the cluster is continually being started in the background.\n"
-            "You can wait for a while and check whether the cluster starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            "You can wait for a while and check whether the cluster starts, or increase the value of parameter \"-t\", "
+            "e.g -t 600.\n",
             g_waitSeconds);
-    else if (!g_commandOperationNodeId && ('\0' == g_cmData[0]) && g_az_start_status != CM_STATUS_NORMAL &&
-             g_az_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
+    } else if (!g_commandOperationNodeId && (g_cmData[0] == '\0') && g_az_start_status != CM_STATUS_NORMAL &&
+        g_az_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED) {
         write_runlog(ERROR,
             "start availability zone failed in (%d)s!\n\n"
             "HINT: Maybe the availability zone is continually being started in the background.\n"
-            "You can wait for a while and check whether the availability zone starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            "You can wait for a while and check whether the availability zone starts, or increase the value of "
+            "parameter \"-t\", e.g -t 600.\n",
             g_waitSeconds);
-    else if (('\0' == g_cmData[0]) && g_node_start_status != CM_STATUS_NORMAL &&
-             g_node_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
+    } else if ((g_commandOperationNodeId > 0) && (g_commandOperationInstanceId > 0) &&
+        (g_resStartStatus != CM_STATUS_NORMAL)) {
+        write_runlog(ERROR,
+            "start resource instance failed in (%d)s!\n\n"
+            "HINT: Maybe the node is continually being started in the background.\n"
+            "You can wait for a while and check whether the node starts, or increase the value of parameter \"-t\", "
+            "e.g -t 600.\n",
+            g_waitSeconds);
+    } else if ((g_cmData[0] == '\0') && g_node_start_status != CM_STATUS_NORMAL &&
+        g_node_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED) {
         write_runlog(ERROR,
             "start node failed in (%d)s!\n\n"
             "HINT: Maybe the node is continually being started in the background.\n"
-            "You can wait for a while and check whether the node starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            "You can wait for a while and check whether the node starts, or increase the value of parameter \"-t\", "
+            "e.g -t 600.\n",
             g_waitSeconds);
-    else if (g_instance_start_status != CM_STATUS_NORMAL)
+    } else if (g_instance_start_status != CM_STATUS_NORMAL) {
         write_runlog(ERROR,
             "start instance failed in (%d)s!\n\n"
             "HINT: Maybe the instance is continually being started in the background.\n"
-            "You can wait for a while and check whether the instance starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            "You can wait for a while and check whether the instance starts, or increase the value of parameter "
+            "\"-t\", e.g -t 600.\n",
             g_waitSeconds);
+    }
 
     exit(-1);
 }
 
 /* exce command: cm_ctl query -Cv to report cluster starting status, and print cluster status info to log */
-static void StartFailQueryAndReport() 
+static void StartFailQueryAndReport()
 {
     char queryCommand[MAXPGPATH] = {0};
     char log_file_name[MAXPGPATH] = {0};
-    DIR* dir = NULL;
-    struct dirent* de = NULL;
     char* name_ptr = NULL;
     bool is_exist = false;
-    if (sys_log_path == NULL) {
-        write_runlog(DEBUG1, "start_query_and_report: log file path is null!\n");
-        return;
-    }
-    if ((dir = opendir(sys_log_path)) == NULL) {
+    DIR *dir = opendir(sys_log_path);
+    if (dir == NULL) {
         write_runlog(DEBUG1, "start_query_and_report: log dir open failed!\n");
         return;
     }
+    struct dirent *de;
     while ((de = readdir(dir)) != NULL) {
         if (strstr(de->d_name, prefix_name) != NULL) {
             name_ptr = strstr(de->d_name, "-current.log");
@@ -1591,12 +1587,14 @@ static int start_check()
     uint32 ii;
 
     for (;;) {
-        if (NULL == g_command_operation_azName && 0 == g_commandOperationNodeId) {
+        if (g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
             g_cluster_start_status = start_check_cluster();
-        } else if (NULL != g_command_operation_azName) {
+        } else if (g_command_operation_azName != NULL) {
             g_az_start_status = start_check_az(g_command_operation_azName);
             startaz_try_heartbeat--;
-        } else if ('\0' == g_cmData[0]) {
+        } else if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
+            g_resStartStatus = StartResInstCheck(g_commandOperationInstanceId);
+        } else if (g_cmData[0] == '\0') {
             for (ii = 0; ii < g_node_num; ii++) {
                 if (g_node[ii].node == g_commandOperationNodeId) {
                     break;
@@ -1644,6 +1642,18 @@ static void NotifyCMSClusterStarting()
     return;
 }
 
+static bool IsTimeOut(const cmTime_t *lastTime, const char *str)
+{
+    cmTime_t curTime = {0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &curTime);
+    const long maxTimeInterval = 60;
+    if (curTime.tv_sec - lastTime->tv_sec > maxTimeInterval) {
+        write_runlog(DEBUG1, "%s this has timeout(%ld), it will exit.\n", str, maxTimeInterval);
+        return true;
+    }
+    return false;
+}
+
 static int start_check_cluster()
 {
     ctl_to_cm_query cm_ctl_cm_query_content;
@@ -1656,7 +1666,8 @@ static int start_check_cluster()
 
     int ret;
     int cluster_status = CM_STATUS_UNKNOWN;
-
+    cmTime_t tv;
+    (void)clock_gettime(CLOCK_MONOTONIC, &tv);
     if (CmServer_conn != NULL) {
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
@@ -1676,7 +1687,7 @@ static int start_check_cluster()
     }
     NotifyCMSClusterStarting();
 
-    cm_ctl_cm_query_content.msg_type = MSG_CTL_CM_QUERY;
+    cm_ctl_cm_query_content.msg_type = (int)MSG_CTL_CM_QUERY;
     cm_ctl_cm_query_content.node = INVALID_NODE_NUM;
     cm_ctl_cm_query_content.instanceId = INVALID_INSTACNE_NUM;
     cm_ctl_cm_query_content.wait_seconds = DEFAULT_WAIT;
@@ -1698,7 +1709,7 @@ static int start_check_cluster()
             CmServer_conn = NULL;
             return -1;
         }
-
+        CM_BREAK_IF_TRUE(IsTimeOut(&tv, "[start_check_cluster]"));
         receive_msg = recv_cm_server_cmd(CmServer_conn);
         while (receive_msg != NULL) {
             cm_msg_type_ptr = (cm_msg_type*)receive_msg;
@@ -1733,9 +1744,8 @@ static int start_check_cluster()
                             if (local_role != INSTANCE_ROLE_PRIMARY && local_role != INSTANCE_ROLE_STANDBY) {
                                 cnt_abnormal++;
                             }
-                        } else if (INSTANCE_TYPE_DATANODE == cm_to_ctl_instance_status_ptr->instance_type) {
+                        } else if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_DATANODE) {
                             int local_role = cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role;
-
                             if (local_role != INSTANCE_ROLE_PRIMARY && local_role != INSTANCE_ROLE_STANDBY &&
                                 local_role != INSTANCE_ROLE_DUMMY_STANDBY) {
                                 cnt_abnormal++;
@@ -1769,6 +1779,24 @@ static int start_check_cluster()
     return cluster_status;
 }
 
+static bool IsAllResInstStarted(uint32 nodeId)
+{
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            if (g_resStatus[i].status.resStat[j].nodeId != nodeId) {
+                continue;
+            }
+            if (GetResInstStatus(g_resStatus[i].status.resStat[j].cmInstanceId) != CM_RES_STAT_ONLINE) {
+                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+                return false;
+            }
+        }
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+    }
+    return true;
+}
+
 static int start_check_node(uint32 node_id_check)
 {
     uint32 ii;
@@ -1783,7 +1811,7 @@ static int start_check_node(uint32 node_id_check)
     char command[MAXPGPATH] = {0};
     char cmBinPath[MAXPGPATH] = {0};
 
-    if (0 != checkStaticConfigExist(node_id_check)) {
+    if (checkStaticConfigExist(node_id_check) != 0) {
         write_runlog(
             ERROR, "the cluster static config file does not exist on the node: %u.\n", g_node[node_id_check].node);
         write_runlog(FATAL, "failed to check the node instances start status.\n");
@@ -1819,7 +1847,7 @@ static int start_check_node(uint32 node_id_check)
                 }
             }
 
-            cm_ctl_cm_query_content.msg_type = MSG_CTL_CM_QUERY;
+            cm_ctl_cm_query_content.msg_type = (int)MSG_CTL_CM_QUERY;
             cm_ctl_cm_query_content.node = g_node[node_id_check].node;
             cm_ctl_cm_query_content.instanceId = g_node[node_id_check].coordinateId;
             cm_ctl_cm_query_content.instance_type = INSTANCE_TYPE_COORDINATE;
@@ -1848,9 +1876,9 @@ static int start_check_node(uint32 node_id_check)
                     switch (cm_msg_type_ptr->msg_type) {
                         case MSG_CM_CTL_DATA_BEGIN:
                             break;
-                        case MSG_CM_CTL_DATA:
-                            cm_to_ctl_instance_status* cm_to_ctl_instance_status_ptr;
-                            cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status*)receive_msg;
+                        case MSG_CM_CTL_DATA: {
+                            cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr =
+                                (cm_to_ctl_instance_status *)receive_msg;
                             if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_COORDINATE &&
                                 g_node[node_id_check].node == cm_to_ctl_instance_status_ptr->node &&
                                 cm_to_ctl_instance_status_ptr->coordinatemember.status == INSTANCE_ROLE_DELETED) {
@@ -1858,9 +1886,14 @@ static int start_check_node(uint32 node_id_check)
                             }
                             rec_data_end = true;
                             break;
+                        }
                         case MSG_CM_CTL_NODE_END:
                             break;
                         case MSG_CM_CTL_DATA_END:
+                            break;
+                        case MSG_CM_BUILD_DOING:
+                        case MSG_CM_BUILD_DOWN:
+                            rec_data_end = true;
                             break;
                         default:
                             write_runlog(ERROR, "unknown the msg type is %d.\n", cm_msg_type_ptr->msg_type);
@@ -1936,12 +1969,13 @@ static int start_check_node(uint32 node_id_check)
                 flag ? result_path : checkCmserverProcessResultPath, mpp_env_separate_file);
         }
 
-        if (PROCESS_RUNNING == result)
+        if (result == PROCESS_RUNNING) {
             cnt++;
+        }
     }
 
     if (fd > 0) {
-        close(fd);
+        (void)close(fd);
     }
     (void)unlink(flag ? result_path : checkCmserverProcessResultPath);
 
@@ -1949,13 +1983,20 @@ static int start_check_node(uint32 node_id_check)
     if (g_node[node_id_check].gtm == 1) {
         cnt_base++;
         CheckGtmNodeStatusById(node_id_check, &result);
-        if (result == PROCESS_RUNNING)
+        if (result == PROCESS_RUNNING) {
             cnt++;
+        }
+    }
+
+    /* resource */
+    ++cnt_base;
+    if (IsAllResInstStarted(g_node[node_id_check].node)) {
+        ++cnt;
     }
 
     if (cnt < cnt_base) {
         if (cnt_base == cnt + cnt_deleted && cnt_deleted >= 1) {
-            return CM_STATUS_NORMAL_WITH_CN_DELETED;            
+            return CM_STATUS_NORMAL_WITH_CN_DELETED;
         } else {
             return CM_STATUS_UNKNOWN;
         }
@@ -1988,13 +2029,13 @@ static int start_check_dn_relation(uint32 node, const char *dataPath)
 
 /**
  * @param allAzLists    str of all az names like "AZ1,AZ2,AZ3". NULL means it's in minority
- * 
+ *
  * @param repNum    rep number in pointe az, 1 means we should change 'most_available_sync'
- * 
+ *
  * @param nodeIndex     which node.
- * 
+ *
  */
-void ExecuteGsGuc(const char *allAzLists, bool isSingleRep, uint32 repNum, uint32 nodeIndex)
+static void ExecuteGsGuc(const char *allAzLists, bool isSingleRep, uint32 repNum, uint32 nodeIndex)
 {
     char command[MAXPGPATH];
     int ret;
@@ -2087,7 +2128,7 @@ static uint32 GetAliveEtcdNumOfAz(const char* azName)
     for (uint32 ii = 0; ii < g_node_num; ii++) {
         if (strcmp(g_node[ii].azName, azName) == 0) {
             if (g_node[ii].etcd) {
-                if (CM_STATUS_NORMAL == start_check_instance(ii, "etcd")) {
+                if (start_check_instance(ii, "etcd") == CM_STATUS_NORMAL) {
                     aliveEtcdNumOfAz++;
                 }
             }
@@ -2100,7 +2141,7 @@ static uint32 GetAliveEtcdNumOfAz(const char* azName)
 static void start_az_try_more_one(const char* azName)
 {
     for (uint32 ii = 0; ii < g_node_num; ii++) {
-        if (0 == strcmp(g_node[ii].azName, azName)) {
+        if (strcmp(g_node[ii].azName, azName) == 0) {
             start_node(g_node[ii].node);
         }
     }
@@ -2111,7 +2152,7 @@ static int start_check_az(const char* azName)
     int ret = CM_STATUS_UNKNOWN;
 
     for (uint32 ii = 0; ii < g_node_num; ii++) {
-        if (0 == strcmp(g_node[ii].azName, azName)) {
+        if (strcmp(g_node[ii].azName, azName) == 0) {
             int node_status;
 
             node_status = start_check_node(ii);

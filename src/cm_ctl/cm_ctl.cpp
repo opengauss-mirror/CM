@@ -21,16 +21,16 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <fcntl.h>
 #include "postgres_fe.h"
 #include "cm/libpq-fe.h"
 #include "cm/libpq-int.h"
 #include "cm/pqsignal.h"
-#include <fcntl.h>
 
-#include "getopt_long.h"
 #include <arpa/inet.h>
-#include "securec.h"
 #include <unordered_map>
+#include "getopt_long.h"
+#include "securec.h"
 
 #include "common/config/cm_config.h"
 #include "cm/cm_agent/cma_main.h"
@@ -38,17 +38,13 @@
 #include "cm_ddb_adapter.h"
 
 #include "hotpatch/hotpatch_client.h"
-#include "cm/etcdapi.h"
 #include "ctl_common.h"
 #include "config.h"
 #include "cm_util.h"
 #include "ctl_help.h"
 
-#define ELASTICGROUP "elastic_group"
 #define ETCD_NUM_UPPER_LIMIT 50
 
-#define LOGIC_CLUSTER_LIST "logic_cluster_name.txt"
-#define STATIC_CONFIG_FILE "cluster_static_config"
 #define CLUSTER_MANUAL_START "cluster_manual_start"
 #define INSTANCE_MANUAL_START "instance_manual_start"
 #define ETCD_MANUAL_START "etcd_manual_start"
@@ -81,11 +77,11 @@ bool g_availabilityZoneCommand = false;
 bool switchover_all_quick = false;
 int do_force = 0;
 int g_fencedUdfQuery = 0;
-int shutdown_level = 0;                     /*cm_ctl stop single instance, single node or all nodes*/
+int shutdown_level = 0;  // cm_ctl stop single instance, single node or all nodes
 extern bool g_logFileSet;
 bool g_nodeIdSet = false;
 char g_cmdLine[MAX_PATH_LEN] = {0};
-ShutdownMode shutdown_mode_num = FAST_MODE; /*cm_ctl stop -m smart, fast, immediate */
+ShutdownMode shutdown_mode_num = FAST_MODE;  // cm_ctl stop -m smart, fast, immediate
 
 bool wait_seconds_set = false;
 int g_waitSeconds = DEFAULT_WAIT;
@@ -160,7 +156,6 @@ uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM] = {INVALID_NODE_NUM,
 // we should make sure g_cmServerState str array's inited len >= 9
 const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM  + 1] = {
     "Init", "Init", "Init", "Init", "Init", "Init", "Init", "Init", "Init"};
-static char* cm_app = "cm_server";
 static bool g_execute_cmctl_success = false;
 char result_path[MAXPGPATH] = {0};
 char hosts_path[MAXPGPATH] = {0};
@@ -184,6 +179,15 @@ const int CM_SWITCH_ROLLBACK = 14;
 const int CM_SET_PARAM = 15;
 const int DCF_GROUP = 16;
 const int DCF_PRIORITY = 17;
+const int RES_ADD = 18;
+const int RES_EDIT = 19;
+const int RES_DEL = 20;
+const int RES_CONF_CHECK = 21;
+const int RES_NAME = 22;
+const int RES_ATTR = 23;
+const int RES_ADD_INST = 24;
+const int RES_DEL_INST = 25;
+const int RES_TYPE = 26;
 const int ErrorCode = -2;
 
 unordered_map<string, CtlCommand> g_optToCommand {
@@ -213,7 +217,9 @@ unordered_map<string, CtlCommand> g_optToCommand {
     {"changerole", CM_DCF_CHANGEROLE_COMMAND},
     {"changemember", CM_DCF_CHANGEMEMBER_COMMAND},
 #endif
-    {"switchover", CM_SWITCHOVER_COMMAND}
+    {"switchover", CM_SWITCHOVER_COMMAND},
+    {"res", CM_RES_COMMAND},
+    {"show", CM_SHOW_COMMAND}
 };
 
 static void InitializeCmServerNodeIndex(void)
@@ -238,12 +244,10 @@ uint32 *GetCmsNodeIndex()
  */
 static int read_config_file_check()
 {
-    uint32 node_index = 0;
-    int status = 0;
     int err_no = 0;
 
     if (access(cluster_static_config, F_OK) != 0) {
-        write_runlog2(ERROR, errcode(ERRCODE_OPEN_FILE_FAILURE), 
+        write_runlog2(ERROR, errcode(ERRCODE_OPEN_FILE_FAILURE),
             errmsg("Fail to access the cluster static config file."),
             errdetail("The cluster static config file does not exist."), errmodule(MOD_CMCTL),
             errcause("The cluster static config file is not generated or is manually deleted."),
@@ -252,13 +256,13 @@ static int read_config_file_check()
     }
 
     /* parse config file. */
-    status = read_config_file(cluster_static_config, &err_no);
+    int status = read_config_file(cluster_static_config, &err_no);
     char errBuffer[ERROR_LIMIT_LEN] = {0};
     switch (status) {
         case OPEN_FILE_ERROR: {
             write_runlog2(ERROR, errcode(ERRCODE_OPEN_FILE_FAILURE), errmsg("Fail to open the cluster static file."),
                 errdetail("[errno %d] %s.", err_no, strerror_r(err_no, errBuffer, ERROR_LIMIT_LEN)),
-                errmodule(MOD_CMCTL), 
+                errmodule(MOD_CMCTL),
                 errcause("The cluster static config file is not generated or is manually deleted."),
                 erraction("Please check the cluster static config file."));
             return 1;
@@ -272,7 +276,7 @@ static int read_config_file_check()
         }
         case OUT_OF_MEMORY:
             write_runlog2(ERROR, errcode(ERRCODE_OUT_OF_MEMORY), errmsg("Failed to read the static config file."),
-                errdetail("N/A"), errmodule(MOD_CMCTL), errcause("out of memeory."), 
+                errdetail("N/A"), errmodule(MOD_CMCTL), errcause("out of memeory."),
                 erraction("Please check the system memory and try again."));
 
             return 1;
@@ -280,11 +284,11 @@ static int read_config_file_check()
             break;
     }
 
-    node_index = get_node_index(g_nodeHeader.node);
+    uint32 node_index = get_node_index(g_nodeHeader.node);
     if (node_index >= g_node_num) {
         write_runlog2(ERROR, errcode(ERRCODE_CONFIG_FILE_FAILURE),
             errmsg("Could not find the current node in the cluster by the node id %u.", g_nodeHeader.node),
-            errdetail("N/A"), errmodule(MOD_CMCTL), 
+            errdetail("N/A"), errmodule(MOD_CMCTL),
             errcause("The static config file probably contained content error."),
             erraction("Please check static config file."));
         return 1;
@@ -300,7 +304,7 @@ static int read_config_file_check()
         char errBuff[ERROR_LIMIT_LEN] = {0};
         switch (status) {
             case OPEN_FILE_ERROR: {
-                write_runlog2(ERROR, errcode(ERRCODE_OPEN_FILE_FAILURE), 
+                write_runlog2(ERROR, errcode(ERRCODE_OPEN_FILE_FAILURE),
                     errmsg("Failed to open the logic config file."),
                     errdetail("[errno %d] %s", err_no, strerror_r(err_no, errBuff, ERROR_LIMIT_LEN)),
                     errmodule(MOD_CMCTL), errcause("The logic config file is not generated or is manually deleted."),
@@ -308,10 +312,10 @@ static int read_config_file_check()
                 return 1;
             }
             case READ_FILE_ERROR: {
-                write_runlog2(ERROR, errcode(ERRCODE_READ_FILE_FAILURE), 
+                write_runlog2(ERROR, errcode(ERRCODE_READ_FILE_FAILURE),
                     errmsg("Fail to read the logic static config file."),
                     errdetail("[errno %d] %s", err_no, strerror_r(err_no, errBuff, ERROR_LIMIT_LEN)),
-                    errmodule(MOD_CMCTL), errcause("The logic static config file permission is insufficient."), 
+                    errmodule(MOD_CMCTL), errcause("The logic static config file permission is insufficient."),
                     erraction("Please check the logic static config file."));
                 return 1;
             }
@@ -354,24 +358,24 @@ static bool SetOutputFile(bool logFileSet, const char* logFile)
 
 static void RecordCommonInfo()
 {
-    fprintf(g_logFilePtr, "NodeHeader:\n");
-    fprintf(g_logFilePtr, "version:%u\n", g_nodeHeader.version);
-    fprintf(g_logFilePtr, "time:%ld\n", g_nodeHeader.time);
-    fprintf(g_logFilePtr, "nodeCount:%u\n", g_nodeHeader.nodeCount);
-    fprintf(g_logFilePtr, "node:%u\n", g_nodeHeader.node);
+    (void)fprintf(g_logFilePtr, "NodeHeader:\n");
+    (void)fprintf(g_logFilePtr, "version:%u\n", g_nodeHeader.version);
+    (void)fprintf(g_logFilePtr, "time:%ld\n", g_nodeHeader.time);
+    (void)fprintf(g_logFilePtr, "nodeCount:%u\n", g_nodeHeader.nodeCount);
+    (void)fprintf(g_logFilePtr, "node:%u\n", g_nodeHeader.node);
 }
 
 static void RecordNodeInfo(uint32 nodeId)
 {
     if (g_multi_az_cluster) {
-        fprintf(g_logFilePtr, "azName:%s\n", g_node[nodeId].azName);
-        fprintf(g_logFilePtr, "azPriority:%u\n", g_node[nodeId].azPriority);
+        (void)fprintf(g_logFilePtr, "azName:%s\n", g_node[nodeId].azName);
+        (void)fprintf(g_logFilePtr, "azPriority:%u\n", g_node[nodeId].azPriority);
     }
-    fprintf(g_logFilePtr, "node :%u\n", g_node[nodeId].node);
-    fprintf(g_logFilePtr, "nodeName:%s\n", g_node[nodeId].nodeName);
-    fprintf(g_logFilePtr, "ssh channel :\n");
+    (void)fprintf(g_logFilePtr, "node :%u\n", g_node[nodeId].node);
+    (void)fprintf(g_logFilePtr, "nodeName:%s\n", g_node[nodeId].nodeName);
+    (void)fprintf(g_logFilePtr, "ssh channel :\n");
     for (uint32 jj = 0; jj < g_node[nodeId].sshCount; jj++) {
-        fprintf(g_logFilePtr, "sshChannel %u:%s\n", jj + 1, g_node[nodeId].sshChannel[jj]);
+        (void)fprintf(g_logFilePtr, "sshChannel %u:%s\n", jj + 1, g_node[nodeId].sshChannel[jj]);
     }
 }
 
@@ -381,98 +385,98 @@ static void RecordCmsInfo(uint32 nodeId)
         return;
     }
     if (g_detailQuery || g_nodeIdSet) {
-        fprintf(g_logFilePtr, "cmseverInstanceID :%u\n", g_node[nodeId].cmServerId);
+        (void)fprintf(g_logFilePtr, "cmseverInstanceID :%u\n", g_node[nodeId].cmServerId);
     }
-    fprintf(g_logFilePtr, "cmDataPath :%s\n", g_node[nodeId].cmDataPath);
+    (void)fprintf(g_logFilePtr, "cmDataPath :%s\n", g_node[nodeId].cmDataPath);
     for (uint32 i = 0; i < g_node[nodeId].cmServerListenCount; i++) {
-        fprintf(g_logFilePtr, "cmServer %u:%s\n", i + 1, g_node[nodeId].cmServer[i]);
+        (void)fprintf(g_logFilePtr, "cmServer %u:%s\n", i + 1, g_node[nodeId].cmServer[i]);
     }
-    fprintf(g_logFilePtr, "port :%u\n", g_node[nodeId].port);
+    (void)fprintf(g_logFilePtr, "port :%u\n", g_node[nodeId].port);
     for (uint32 i = 0; i < g_node[nodeId].cmServerLocalHAListenCount; i++) {
-        fprintf(g_logFilePtr, "cmServerLocalHAIP %u:%s\n", i + 1, g_node[nodeId].cmServerLocalHAIP[i]);
+        (void)fprintf(g_logFilePtr, "cmServerLocalHAIP %u:%s\n", i + 1, g_node[nodeId].cmServerLocalHAIP[i]);
     }
-    fprintf(g_logFilePtr, "cmServerLocalHAPort :%u\n", g_node[nodeId].cmServerLocalHAPort);
+    (void)fprintf(g_logFilePtr, "cmServerLocalHAPort :%u\n", g_node[nodeId].cmServerLocalHAPort);
     for (uint32 i = 0; i < g_node[nodeId].cmServerPeerHAListenCount; i++) {
-        fprintf(g_logFilePtr, "cmServerPeerHAIP %u:%s\n", i + 1, g_node[nodeId].cmServerPeerHAIP[i]);
+        (void)fprintf(g_logFilePtr, "cmServerPeerHAIP %u:%s\n", i + 1, g_node[nodeId].cmServerPeerHAIP[i]);
     }
-    fprintf(g_logFilePtr, "cmServerPeerHAPort :%u\n", g_node[nodeId].cmServerPeerHAPort);
+    (void)fprintf(g_logFilePtr, "cmServerPeerHAPort :%u\n", g_node[nodeId].cmServerPeerHAPort);
 }
 static void RecordCmaInfo(uint32 nodeId)
 {
     for (uint32 i = 0; i < g_node[nodeId].cmAgentListenCount; i++) {
-        fprintf(g_logFilePtr, "cmAgentIP :%s\n", g_node[nodeId].cmAgentIP[i]);
+        (void)fprintf(g_logFilePtr, "cmAgentIP :%s\n", g_node[nodeId].cmAgentIP[i]);
     }
 }
 
 static void RecordDnInfo(uint32 nodeId)
 {
-    uint32 kk = 0;
     if (g_node[nodeId].datanodeCount == 0) {
         return;
     }
-    fprintf(g_logFilePtr, "datanodeCount :%u\n", g_node[nodeId].datanodeCount);
-    for (kk = 0; kk < g_node[nodeId].datanodeCount; kk++) {
-        fprintf(g_logFilePtr, "datanode %u:\n", kk + 1);
+    (void)fprintf(g_logFilePtr, "datanodeCount :%u\n", g_node[nodeId].datanodeCount);
+    for (uint32 kk = 0; kk < g_node[nodeId].datanodeCount; kk++) {
+        (void)fprintf(g_logFilePtr, "datanode %u:\n", kk + 1);
         if (g_detailQuery || g_nodeIdSet) {
-            fprintf(g_logFilePtr, "datanodeInstanceID :%u\n", g_node[nodeId].datanode[kk].datanodeId);
+            (void)fprintf(g_logFilePtr, "datanodeInstanceID :%u\n", g_node[nodeId].datanode[kk].datanodeId);
         }
-        fprintf(g_logFilePtr, "datanodeLocalDataPath :%s\n", g_node[nodeId].datanode[kk].datanodeLocalDataPath);
-        fprintf(g_logFilePtr, "datanodeXlogPath :%s\n", g_node[nodeId].datanode[kk].datanodeXlogPath);
+        (void)fprintf(g_logFilePtr, "datanodeLocalDataPath :%s\n", g_node[nodeId].datanode[kk].datanodeLocalDataPath);
+        (void)fprintf(g_logFilePtr, "datanodeXlogPath :%s\n", g_node[nodeId].datanode[kk].datanodeXlogPath);
         for (uint32 tt = 0; tt < g_node[nodeId].datanode[kk].datanodeListenCount; tt++) {
-            fprintf(g_logFilePtr, "datanodeListenIP %u:%s\n", tt + 1, g_node[nodeId].datanode[kk].datanodeListenIP[tt]);
+            (void)fprintf(g_logFilePtr, "datanodeListenIP %u:%s\n",
+                tt + 1, g_node[nodeId].datanode[kk].datanodeListenIP[tt]);
         }
-        fprintf(g_logFilePtr, "datanodePort :%u\n", g_node[nodeId].datanode[kk].datanodePort);
+        (void)fprintf(g_logFilePtr, "datanodePort :%u\n", g_node[nodeId].datanode[kk].datanodePort);
         for (uint32 tt = 0; tt < g_node[nodeId].datanode[kk].datanodeLocalHAListenCount; tt++) {
-            fprintf(
+            (void)fprintf(
                 g_logFilePtr, "datanodeLocalHAIP %u:%s\n", tt + 1, g_node[nodeId].datanode[kk].datanodeLocalHAIP[tt]);
         }
-        fprintf(g_logFilePtr, "datanodeLocalHAPort :%u\n", g_node[nodeId].datanode[kk].datanodeLocalHAPort);
+        (void)fprintf(g_logFilePtr, "datanodeLocalHAPort :%u\n", g_node[nodeId].datanode[kk].datanodeLocalHAPort);
         if (g_multi_az_cluster) {
-            fprintf(g_logFilePtr, "dn_replication_num: %u\n", g_dn_replication_num);
+            (void)fprintf(g_logFilePtr, "dn_replication_num: %u\n", g_dn_replication_num);
             for (uint32 dnId = 0; dnId < g_dn_replication_num - 1; dnId++) {
-                fprintf(g_logFilePtr, "datanodePeer%uDataPath :%s\n", dnId,
+                (void)fprintf(g_logFilePtr, "datanodePeer%uDataPath :%s\n", dnId,
                     g_node[nodeId].datanode[kk].peerDatanodes[dnId].datanodePeerDataPath);
                 for (uint32 tt = 0; tt < g_node[nodeId].datanode[kk].peerDatanodes[dnId].datanodePeerHAListenCount;
                      tt++) {
-                    fprintf(g_logFilePtr, "datanodePeer%uHAIP %u:%s\n", dnId, tt + 1,
+                    (void)fprintf(g_logFilePtr, "datanodePeer%uHAIP %u:%s\n", dnId, tt + 1,
                         g_node[nodeId].datanode[kk].peerDatanodes[dnId].datanodePeerHAIP[tt]);
                 }
-                fprintf(g_logFilePtr, "datanodePeer%uHAPort :%u\n", dnId,
+                (void)fprintf(g_logFilePtr, "datanodePeer%uHAPort :%u\n", dnId,
                     g_node[nodeId].datanode[kk].peerDatanodes[dnId].datanodePeerHAPort);
             }
         } else {
-            fprintf(g_logFilePtr, "datanodePeerDataPath :%s\n", g_node[nodeId].datanode[kk].datanodePeerDataPath);
+            (void)fprintf(g_logFilePtr, "datanodePeerDataPath :%s\n", g_node[nodeId].datanode[kk].datanodePeerDataPath);
             for (uint32 tt = 0; tt < g_node[nodeId].datanode[kk].datanodePeerHAListenCount; tt++) {
-                fprintf(
+                (void)fprintf(
                     g_logFilePtr, "datanodePeerHAIP %u:%s\n", tt + 1, g_node[nodeId].datanode[kk].datanodePeerHAIP[tt]);
             }
-            fprintf(g_logFilePtr, "datanodePeerHAPort :%u\n", g_node[nodeId].datanode[kk].datanodePeerHAPort);
-            fprintf(g_logFilePtr, "datanodePeer2DataPath :%s\n", g_node[nodeId].datanode[kk].datanodePeer2DataPath);
+            (void)fprintf(g_logFilePtr, "datanodePeerHAPort :%u\n", g_node[nodeId].datanode[kk].datanodePeerHAPort);
+            (void)fprintf(g_logFilePtr, "datanodePeer2DataPath :%s\n",
+                g_node[nodeId].datanode[kk].datanodePeer2DataPath);
             for (uint32 tt = 0; tt < g_node[nodeId].datanode[kk].datanodePeer2HAListenCount; tt++) {
-                fprintf(g_logFilePtr, "datanodePeer2HAIP %u:%s\n", tt + 1,
+                (void)fprintf(g_logFilePtr, "datanodePeer2HAIP %u:%s\n", tt + 1,
                     g_node[nodeId].datanode[kk].datanodePeer2HAIP[tt]);
             }
-            fprintf(g_logFilePtr, "datanodePeer2HAPort :%u\n", g_node[nodeId].datanode[kk].datanodePeer2HAPort);
+            (void)fprintf(g_logFilePtr, "datanodePeer2HAPort :%u\n", g_node[nodeId].datanode[kk].datanodePeer2HAPort);
         }
     }
 }
 
 static void RecordEtcdInfo(uint32 nodeId)
 {
-    uint32 kk = 0;
     if (g_node[nodeId].etcd != 1) {
         return;
     }
-    fprintf(g_logFilePtr, "etcdName :%s\n", g_node[nodeId].etcdName);
-    fprintf(g_logFilePtr, "etcdDataPath :%s\n", g_node[nodeId].etcdDataPath);
-    for (kk = 0; kk < g_node[nodeId].etcdClientListenIPCount; kk++) {
-        fprintf(g_logFilePtr, "etcdClientListenIPs %u:%s\n", kk + 1, g_node[nodeId].etcdClientListenIPs[kk]);
+    (void)fprintf(g_logFilePtr, "etcdName :%s\n", g_node[nodeId].etcdName);
+    (void)fprintf(g_logFilePtr, "etcdDataPath :%s\n", g_node[nodeId].etcdDataPath);
+    for (uint32 kk = 0; kk < g_node[nodeId].etcdClientListenIPCount; kk++) {
+        (void)fprintf(g_logFilePtr, "etcdClientListenIPs %u:%s\n", kk + 1, g_node[nodeId].etcdClientListenIPs[kk]);
     }
-    fprintf(g_logFilePtr, "etcdClientListenPort :%u\n", g_node[nodeId].etcdClientListenPort);
-    for (kk = 0; kk < g_node[nodeId].etcdHAListenIPCount; kk++) {
-        fprintf(g_logFilePtr, "etcdHAListenIPs %u:%s\n", kk + 1, g_node[nodeId].etcdHAListenIPs[kk]);
+    (void)fprintf(g_logFilePtr, "etcdClientListenPort :%u\n", g_node[nodeId].etcdClientListenPort);
+    for (uint32 kk = 0; kk < g_node[nodeId].etcdHAListenIPCount; kk++) {
+        (void)fprintf(g_logFilePtr, "etcdHAListenIPs %u:%s\n", kk + 1, g_node[nodeId].etcdHAListenIPs[kk]);
     }
-    fprintf(g_logFilePtr, "etcdHAListenPort :%u\n", g_node[nodeId].etcdHAListenPort);
+    (void)fprintf(g_logFilePtr, "etcdHAListenPort :%u\n", g_node[nodeId].etcdHAListenPort);
 }
 
 static void do_view()
@@ -506,14 +510,8 @@ static void do_view()
 bool do_dynamic_view()
 {
     int fd;
-    size_t header_size = 0;
-    size_t header_aglinment_size = 0;
-    size_t cms_state_timeline_size = 0;
     ssize_t returnCode;
     char clusterDynamicConfig[MAXPGPATH] = {0};
-    dynamicConfigHeader *g_dynamic_header = NULL;
-    cm_instance_role_group *g_instance_role_group_ptr = NULL;
-    dynamic_cms_timeline *g_timeline = NULL;
 
     int ret = snprintf_s(clusterDynamicConfig, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, DYNAMC_CONFIG_FILE);
     securec_check_intval(ret, (void)ret);
@@ -532,10 +530,10 @@ bool do_dynamic_view()
         return false;
     }
 
-    header_size = sizeof(dynamicConfigHeader);
-    header_aglinment_size =
+    size_t header_size = sizeof(dynamicConfigHeader);
+    size_t header_aglinment_size =
         (header_size / AGLINMENT_SIZE + ((header_size % AGLINMENT_SIZE == 0) ? 0 : 1)) * AGLINMENT_SIZE;
-    g_dynamic_header = (dynamicConfigHeader *)malloc(header_aglinment_size);
+    dynamicConfigHeader *g_dynamic_header = (dynamicConfigHeader *)malloc(header_aglinment_size);
     if (g_dynamic_header == NULL) {
         write_runlog2(FATAL, errcode(ERRCODE_OUT_OF_MEMORY),
             errmsg("Failed to malloc memory, size = %lu.", header_aglinment_size),
@@ -560,8 +558,8 @@ bool do_dynamic_view()
         FREE_AND_RESET(g_dynamic_header);
         return false;
     }
-    cms_state_timeline_size = sizeof(dynamic_cms_timeline);
-    g_timeline = (dynamic_cms_timeline *)malloc(cms_state_timeline_size);
+    size_t cms_state_timeline_size = sizeof(dynamic_cms_timeline);
+    dynamic_cms_timeline *g_timeline = (dynamic_cms_timeline *)malloc(cms_state_timeline_size);
     if (g_timeline == NULL) {
         write_runlog2(FATAL,
             errcode(ERRCODE_OUT_OF_MEMORY), errmsg("Failed to malloc memory, size = %lu.", cms_state_timeline_size),
@@ -588,7 +586,7 @@ bool do_dynamic_view()
         return false;
     }
 
-    g_instance_role_group_ptr =
+    cm_instance_role_group *g_instance_role_group_ptr =
         (cm_instance_role_group *)malloc(sizeof(cm_instance_role_group) * g_dynamic_header->relationCount);
     if (g_instance_role_group_ptr == NULL) {
         write_runlog2(FATAL, errcode(ERRCODE_OUT_OF_MEMORY),
@@ -616,7 +614,7 @@ bool do_dynamic_view()
     (void)close(fd);
 
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        if (INSTANCE_TYPE_COORDINATE == g_instance_role_group_ptr[i].instanceMember[0].instanceType) {
+        if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE) {
             (void)printf("node                      : %u\n", g_instance_role_group_ptr[i].instanceMember[0].node);
             (void)printf("instance_id               : %u\n", g_instance_role_group_ptr[i].instanceMember[0].instanceId);
             if (g_instance_role_group_ptr[i].instanceMember[0].role == INSTANCE_ROLE_DELETED) {
@@ -638,21 +636,18 @@ bool do_dynamic_view()
  */
 static void checkCmdAZName(const char* azName)
 {
-    bool found = false;
-
     for (uint32 i = 0; i < g_node_num; i++) {
         if (strcmp(g_node[i].azName, azName) == 0) {
             g_command_operation_azName = xstrdup(azName);
-            found = true;
             return;
         }
     }
 
-    if (!found && strcmp("ALL", azName) == 0) {
+    if (strcmp("ALL", azName) == 0) {
         g_availabilityZoneCommand = true;
     } else {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("unrecognized AZ name \"%s\".", azName),
-            errdetail("N/A"), errmodule(MOD_CMCTL), 
+            errdetail("N/A"), errmodule(MOD_CMCTL),
             errcause("The parameter(%s) entered by the user is incorrect.", azName),
             erraction("Please check the parameter entered by the user and try again."));
         if (g_logFileSet && (g_logFilePtr != NULL)) {
@@ -675,12 +670,12 @@ static void CheckMinorityAZName(const char *azName)
             FREE_AND_RESET(g_commandMinortityAzName);
             g_commandMinortityAzName = xstrdup(azName);
             found = true;
-            return;
+            break;
         }
     }
 
     if (!found) {
-        write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), 
+        write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
             errmsg("unrecognized minorityAz name \"%s\".", azName),
             errdetail("N/A"), errmodule(MOD_CMCTL),
             errcause("The parameter(%s) entered by the user is incorrect.", azName),
@@ -698,7 +693,7 @@ static bool checkAZNameInCluster(const char* azName)
     bool isAzNameInCluster = false;
 
     for (i = 0; i < g_node_num; i++) {
-        if (0 == strcmp(g_node[i].azName, azName)) {
+        if (strcmp(g_node[i].azName, azName) == 0) {
             isAzNameInCluster = true;
             break;
         }
@@ -714,7 +709,6 @@ static bool checkAZNameInCluster(const char* azName)
  */
 static void InitializeLogger()
 {
-    int ret = 0;
     char logPath[MAXPGPATH] = {0};
 
     /* Get the program name. */
@@ -724,8 +718,8 @@ static void InitializeLogger()
     (void)logfile_init();
 
     /* Set the log path. */
-    ret = cmctl_getenv("GAUSSLOG", logPath, MAXPGPATH - 1);
-    if (EOK == ret) {
+    int ret = cmctl_getenv("GAUSSLOG", logPath, MAXPGPATH - 1);
+    if (ret == EOK) {
         check_input_for_security(logPath);
 
         ret = snprintf_s(sys_log_path, MAXPGPATH, MAXPGPATH - 1, "%s/cm/%s/", logPath, "cm_ctl");
@@ -760,9 +754,8 @@ static bool CtlIsSharedStorageMode()
 
 static void init_ctl_global_variable()
 {
-    int ret = 0;
-    ret = GetHomePath(g_appPath, sizeof(g_appPath), DEBUG5);
-    if (EOK == ret) {
+    int ret = GetHomePath(g_appPath, sizeof(g_appPath), DEBUG5);
+    if (ret == EOK) {
         ret =
             snprintf_s(g_logicClusterListPath, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, LOGIC_CLUSTER_LIST);
         securec_check_intval(ret, (void)ret);
@@ -794,7 +787,7 @@ static void init_ctl_global_variable()
         securec_check_intval(ret, (void)ret);
         ret = snprintf_s(cluster_dynamic_config, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, DYNAMC_CONFIG_FILE);
         securec_check_intval(ret, (void)ret);
-        ret = snprintf_s(cm_server_bin, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, cm_app);
+        ret = snprintf_s(cm_server_bin, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, CM_SERVER_BIN_NAME);
         securec_check_intval(ret, (void)ret);
         ret = snprintf_s(result_path, MAXPGPATH, MAXPGPATH - 1, "%s/bin/result", g_appPath);
         securec_check_intval(ret, (void)ret);
@@ -807,10 +800,10 @@ static void init_ctl_global_variable()
         ret = snprintf_s(g_tlsPath.caFile, ETCD_MAX_PATH_LEN, ETCD_MAX_PATH_LEN - 1,
             "%s/share/sslcert/etcd/etcdca.crt", g_appPath);
         securec_check_intval(ret, (void)ret);
-        ret = snprintf_s(g_tlsPath.crtFile, ETCD_MAX_PATH_LEN, ETCD_MAX_PATH_LEN - 1, 
+        ret = snprintf_s(g_tlsPath.crtFile, ETCD_MAX_PATH_LEN, ETCD_MAX_PATH_LEN - 1,
             "%s/share/sslcert/etcd/client.crt", g_appPath);
         securec_check_intval(ret, (void)ret);
-        ret = snprintf_s(g_tlsPath.keyFile, ETCD_MAX_PATH_LEN, ETCD_MAX_PATH_LEN - 1, 
+        ret = snprintf_s(g_tlsPath.keyFile, ETCD_MAX_PATH_LEN, ETCD_MAX_PATH_LEN - 1,
             "%s/share/sslcert/etcd/client.key", g_appPath);
         securec_check_intval(ret, (void)ret);
     } else {
@@ -825,12 +818,12 @@ static void init_ctl_global_variable()
     InitializeLogger();
 
     ret = cmctl_getenv("MPPDB_ENV_SEPARATE_PATH", mpp_env_separate_file, sizeof(mpp_env_separate_file));
-    if (EOK == ret) {
+    if (ret == EOK) {
         check_input_for_security(mpp_env_separate_file);
     }
 
     pw = getpwuid(getuid());
-    if (NULL == pw || NULL == pw->pw_name) {
+    if (pw == NULL || pw->pw_name == NULL) {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("Get current user name failed."),
             errdetail("N/A"), errmodule(MOD_CMCTL), errcause("N/A"), erraction("Please check the environment."));
         exit(1);
@@ -861,7 +854,7 @@ static int CheckInputParameter()
 
 static int CheckStopParameter()
 {
-    bool cond = (STOP_COMMAND == ctl_command) && (SMART_MODE == shutdown_mode_num) && (g_commandOperationNodeId > 0);
+    bool cond = (ctl_command == STOP_COMMAND) && (shutdown_mode_num == SMART_MODE) && (g_commandOperationNodeId > 0);
     if (cond) {
         write_runlog2(ERROR,
             errcode(ERRCODE_PARAMETER_FAILURE), errmsg("can't stop one node or instance with -m normal."),
@@ -870,7 +863,7 @@ static int CheckStopParameter()
         return 1;
     }
 
-    cond = (STOP_COMMAND == ctl_command) && (RESUME_MODE == shutdown_mode_num) && (g_commandOperationNodeId > 0);
+    cond = (ctl_command == STOP_COMMAND) && (shutdown_mode_num == RESUME_MODE) && (g_commandOperationNodeId > 0);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
             errmsg("can't stop one node or instance with -m resume."),
@@ -880,8 +873,8 @@ static int CheckStopParameter()
         return 1;
     }
 
-    cond = (STOP_COMMAND == ctl_command) && (RESUME_MODE == shutdown_mode_num) &&
-        (NULL != g_command_operation_azName);
+    cond = (ctl_command == STOP_COMMAND) && (shutdown_mode_num == RESUME_MODE) &&
+        (g_command_operation_azName != NULL);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
             errmsg("can't stop one availability zone with -m resume."),
@@ -896,20 +889,20 @@ static int CheckStopParameter()
 static int SetAndGetCheckParameter()
 {
     bool cond = (log_level_set == NULL) && (cm_arbitration_mode_set == NULL) && (cm_switchover_az_mode_set == NULL) &&
-        (cm_logic_cluster_restart_mode_set == NULL) && (g_cmsPromoteMode == NULL) && (CM_SET_COMMAND == ctl_command);
+        (cm_logic_cluster_restart_mode_set == NULL) && (g_cmsPromoteMode == NULL) && (ctl_command == CM_SET_COMMAND);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("log level or cm server arbitration mode must be specified."), errdetail("N/A"), 
+            errmsg("log level or cm server arbitration mode must be specified."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
     }
 
     cond = ((log_level_set != NULL) || (cm_arbitration_mode_set != NULL) || (cm_switchover_az_mode_set != NULL) ||
-        (cm_logic_cluster_restart_mode_set != NULL)) && (g_cmsPromoteMode == NULL) && (CM_GET_COMMAND == ctl_command);
+        (cm_logic_cluster_restart_mode_set != NULL)) && (g_cmsPromoteMode == NULL) && (ctl_command == CM_GET_COMMAND);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("log level or cm server arbitration mode need not be specified."), errdetail("N/A"), 
+            errmsg("log level or cm server arbitration mode need not be specified."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -919,38 +912,38 @@ static int SetAndGetCheckParameter()
 
 static int QueryCheckParameter(const CtlOption *ctx)
 {
-    bool cond = (ctl_command == CM_QUERY_COMMAND) && ('\0' != g_cmData[0]) && !g_commandRelationship &&
-        (0 != g_commandOperationNodeId);
+    bool cond = (ctl_command == CM_QUERY_COMMAND) && (g_cmData[0] != '\0') && !g_commandRelationship &&
+        (g_commandOperationNodeId != 0);
     if (cond) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-R is needed."), errdetail("N/A"), 
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-R is needed."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
     }
 
-    cond = (ctl_command == CM_QUERY_COMMAND) && ('\0' == g_cmData[0]) && g_commandRelationship &&
-        (0 != g_commandOperationNodeId);
+    cond = (ctl_command == CM_QUERY_COMMAND) && (g_cmData[0] == '\0') && g_commandRelationship &&
+        (g_commandOperationNodeId != 0);
     if (cond) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-D is needed."), errdetail("N/A"), 
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-D is needed."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
     }
 
-    cond = (ctl_command == CM_QUERY_COMMAND) && ('\0' != g_cmData[0]) && !g_commandRelationship &&
-        (0 == g_commandOperationNodeId);
+    cond = (ctl_command == CM_QUERY_COMMAND) && (g_cmData[0] != '\0') && !g_commandRelationship &&
+        (g_commandOperationNodeId == 0);
     if (cond) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n and -R are needed."), errdetail("N/A"), 
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n and -R are needed."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
     }
 
-    cond = (ctl_command == CM_QUERY_COMMAND) && ('\0' == g_cmData[0]) && g_commandRelationship &&
-        (0 == g_commandOperationNodeId);
+    cond = (ctl_command == CM_QUERY_COMMAND) && (g_cmData[0] == '\0') && g_commandRelationship &&
+        (g_commandOperationNodeId == 0);
     if (cond) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n and -D are needed."), errdetail("N/A"), 
-        errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n and -D are needed."), errdetail("N/A"),
+            errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
     }
@@ -975,8 +968,12 @@ static int CheckAbnormal(const CtlOption *ctx)
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
     }
-
-    if (ctx->comm.nodeId > g_node_num) {
+    /* 0 indicates that no node is specified */
+    if (ctx->comm.nodeId == 0) {
+        return 0;
+    }
+    uint32 nodeIndex = get_node_index(ctx->comm.nodeId);
+    if (nodeIndex == INVALID_NODE_NUM) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
             errmsg("-n node(%u) is invalid.", ctx->comm.nodeId),
             errdetail("N/A"), errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
@@ -988,11 +985,11 @@ static int CheckAbnormal(const CtlOption *ctx)
 
 static int CheckCommandNotSwitchoverAll(const CtlOption *ctx)
 {
-    bool cond = (g_commandOperationNodeId <= 0) ||
+    bool cond = (g_commandOperationNodeId == 0) ||
         (get_node_index(g_commandOperationNodeId) >= g_nodeHeader.nodeCount);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("-n node(%d) is invalid.", g_commandOperationNodeId),
+            errmsg("-n node(%u) is invalid.", g_commandOperationNodeId),
             errdetail("N/A"), errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -1029,12 +1026,12 @@ static int CheckCommandQueryLcOperation(void)
     }
     if (ctl_command == CM_QUERY_COMMAND && lc_operation) {
         if (g_detailQuery) {
-            write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-C is needed."), errdetail("N/A"), 
+            write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-C is needed."), errdetail("N/A"),
                 errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
                 erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         } else {
             write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-Cv is needed."),
-                errdetail("N/A"), errmodule(MOD_CMCTL), 
+                errdetail("N/A"), errmodule(MOD_CMCTL),
                 errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
                 erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         }
@@ -1046,10 +1043,10 @@ static int CheckCommandQueryLcOperation(void)
 static int CheckCommandQuery(void)
 {
     bool cond = (ctl_command == CM_QUERY_COMMAND) && (!g_availabilityZoneCommand) &&
-        (NULL != g_command_operation_azName);
+        (g_command_operation_azName != NULL);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("-z value must be \"ALL\" when query mppdb cluster."), errdetail("N/A"), 
+            errmsg("-z value must be \"ALL\" when query mppdb cluster."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -1057,7 +1054,7 @@ static int CheckCommandQuery(void)
 
     cond = (g_coupleQuery && !g_detailQuery) || (g_paralleRedoState && !g_detailQuery);
     if (cond) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-v is needed."), errdetail("N/A"), 
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-v is needed."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -1066,10 +1063,10 @@ static int CheckCommandQuery(void)
     CM_RETURN_INT_IFERR(CheckCommandQueryLcOperation());
 
     cond = (ctl_command == CM_QUERY_COMMAND) && !logic_cluster_query &&
-        (NULL != g_command_operation_lcName) && (g_logic_cluster_count > 0);
+        (g_command_operation_lcName != NULL) && (g_logic_cluster_count > 0);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("-L value must be \"ALL\" when query logic cluster."), errdetail("N/A"), 
+            errmsg("-L value must be \"ALL\" when query logic cluster."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -1082,14 +1079,14 @@ static int CheckCommandExceptSwitchover()
     bool cond = (g_commandOperationNodeId > 0) &&
         (get_node_index(g_commandOperationNodeId) >= g_nodeHeader.nodeCount);
     if (cond) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), 
-            errmsg("-n node(%d) is invalid.", g_commandOperationNodeId),
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
+            errmsg("-n node(%u) is invalid.", g_commandOperationNodeId),
             errdetail("N/A"), errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
     }
 
-    cond = ('\0' != g_cmData[0]) && !g_commandOperationNodeId;
+    cond = (g_cmData[0] != '\0') && !g_commandOperationNodeId;
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n node is needed."),
             errdetail("N/A"), errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
@@ -1110,11 +1107,11 @@ static int CheckCommandExceptSwitchover()
 
     CM_RETURN_INT_IFERR(CheckCommandQuery());
 
-    cond = (ctl_command == RESTART_COMMAND) && !logic_cluster_restart && (NULL != g_command_operation_lcName) &&
+    cond = (ctl_command == RESTART_COMMAND) && !logic_cluster_restart && (g_command_operation_lcName != NULL) &&
         (g_logic_cluster_count > 0);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("unrecognized LC name \"%s\".", g_command_operation_lcName), errdetail("N/A"), 
+            errmsg("unrecognized LC name \"%s\".", g_command_operation_lcName), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -1144,17 +1141,17 @@ static int CheckCommandCore(const CtlOption *ctx)
 
 static void CheckCommandOperationNodeId(void)
 {
-    if (('\0' == g_cmData[0]) && 0 != g_commandOperationNodeId) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-D is needed."), errdetail("N/A"), 
+    if ((g_cmData[0] == '\0') && g_commandOperationNodeId != 0) {
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-D is needed."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
-    } else if (('\0' != g_cmData[0]) && 0 == g_commandOperationNodeId) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n is needed."), errdetail("N/A"), 
+    } else if ((g_cmData[0] != '\0') && g_commandOperationNodeId == 0) {
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n is needed."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
     } else {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n and -D are needed."), 
-            errdetail("N/A"), errmodule(MOD_CMCTL), 
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n and -D are needed."),
+            errdetail("N/A"), errmodule(MOD_CMCTL),
             errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
     }
@@ -1162,10 +1159,10 @@ static void CheckCommandOperationNodeId(void)
 
 static int CheckCommandRelationship(const CtlOption *ctx)
 {
-    bool cond = (ctl_command == CM_QUERY_COMMAND) && ('\0' != g_cmData[0]) && g_commandRelationship &&
+    bool cond = (ctl_command == CM_QUERY_COMMAND) && (g_cmData[0] != '\0') && g_commandRelationship &&
         (g_commandOperationNodeId == 0);
     if (cond) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n is needed."), errdetail("N/A"), 
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-n is needed."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -1173,7 +1170,7 @@ static int CheckCommandRelationship(const CtlOption *ctx)
 
     CM_RETURN_INT_IFERR(QueryCheckParameter(ctx));
 
-    cond = g_commandRelationship && (('\0' == g_cmData[0]) || 0 == g_commandOperationNodeId);
+    cond = g_commandRelationship && ((g_cmData[0] == '\0') || g_commandOperationNodeId == 0);
     if (cond) {
         CheckCommandOperationNodeId();
         return 1;
@@ -1195,9 +1192,9 @@ static int CheckForOtherCommands(const CtlOption *ctx)
         return 1;
     }
 
-    cond = NULL != g_command_operation_azName && g_commandOperationNodeId;
+    cond = ((g_command_operation_azName != NULL) && g_commandOperationNodeId);
     if (cond) {
-        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), 
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
             errmsg("-n and -z cannot be specified at the same time."),
             errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
@@ -1208,7 +1205,7 @@ static int CheckForOtherCommands(const CtlOption *ctx)
     cond = cn_resumes_restart && (g_command_operation_azName != NULL || g_commandOperationNodeId);
     if (cond) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("-m cannot be specified at the same time with -n or -z."), errdetail("N/A"), 
+            errmsg("-m cannot be specified at the same time with -n or -z."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -1231,10 +1228,10 @@ static int CheckForOtherCommands(const CtlOption *ctx)
 
 static int CheckCtlInputAzName(void)
 {
-    bool condition = (NULL != g_command_operation_azName) && !checkAZNameInCluster(g_command_operation_azName);
+    bool condition = (g_command_operation_azName != NULL) && !checkAZNameInCluster(g_command_operation_azName);
     if (condition) {
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("There is no \"%s\" information in cluster.", g_command_operation_azName), errdetail("N/A"), 
+            errmsg("There is no \"%s\" information in cluster.", g_command_operation_azName), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
@@ -1253,7 +1250,7 @@ static int CheckCtlInputParameter(const CtlOption *ctx)
         ctl_command == CM_STARTCM_COMMAND || ctl_command == CM_STOPCM_COMMAND || ctl_command == CM_DISABLE_COMMAND ||
         ctl_command == CM_ENCRYPT_COMMAND;
     if (condition) {
-        if ('\0' == g_cmData[0]) {
+        if (g_cmData[0] == '\0') {
             write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("no data directory specified."),
                 errdetail("N/A"), errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
                 erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
@@ -1262,13 +1259,13 @@ static int CheckCtlInputParameter(const CtlOption *ctx)
     }
 
     /* check other commands except 'CM_CHECK_COMMAND' */
-    if (CM_CHECK_COMMAND != ctl_command) {
+    if (ctl_command != CM_CHECK_COMMAND) {
         CM_RETURN_INT_IFERR(CheckForOtherCommands(ctx));
     } else {
         CM_RETURN_INT_IFERR(CheckInputParameter());
     }
 
-    /*Check if user input az name is in the cluster */
+    /* Check if user input az name is in the cluster */
     CM_RETURN_INT_IFERR(CheckCtlInputAzName());
 
     return 0;
@@ -1312,6 +1309,7 @@ static void ReleaseResource()
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
     }
+    FreeSslOpton();
     FREE_AND_RESET(g_logFile);
 
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
@@ -1337,7 +1335,6 @@ static status_t GetCtlCommand(int argc, char **argv)
     }
 
     unordered_map<string, CtlCommand>::iterator it = g_optToCommand.find(argv[optind]);
-
     if (it != g_optToCommand.end()) {
         ctl_command = it->second;
     } else {
@@ -1356,28 +1353,10 @@ static status_t GetCtlCommand(int argc, char **argv)
 
 void InitCtlOptionParams(CtlOption *ctx)
 {
-    ctx->comm.nodeId = 0;
+    errno_t rc = memset_s(ctx, sizeof(CtlOption), 0, sizeof(CtlOption));
+    securec_check_errno(rc, (void)rc);
 
-    ctx->guc.gucCommand = UNKNOWN_COMMAND;
-    ctx->guc.nodeType = NODE_TYPE_UNDEF;
-    ctx->guc.parameter = NULL;
-    ctx->guc.value = NULL;
     ctx->guc.keyMod = SERVER_MODE;
-    ctx->guc.needDoGuc = false;
-
-    ctx->build.isNeedCmsBuild = false;
-    ctx->build.doFullBuild = 0;
-    ctx->build.parallel = 0;
-
-    ctx->switchover.switchoverAll = false;
-    ctx->switchover.switchoverFull = false;
-    ctx->switchover.switchoverFast = false;
-
-    ctx->switchOption.ddbType = NULL;
-    ctx->switchOption.isCommit = false;
-    ctx->switchOption.isRollback = false;
-
-    ctx->dcfOption.role = NULL;
     ctx->dcfOption.group = -1;
     ctx->dcfOption.priority = -1;
 }
@@ -1440,7 +1419,7 @@ static void CheckArgcType(int argc, const char * const *argv)
             DoHelp(g_progname);
             exit(0);
         } else if (strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0) {
-            puts("cm_ctl " DEF_CM_VERSION);
+            (void)puts("cm_ctl " DEF_CM_VERSION);
             exit(0);
         }
     }
@@ -1500,10 +1479,9 @@ static void MatchCmdArgb(CtlOption *ctlCtx)
 static void MatchCmdArgD(bool *setDataPath)
 {
     if (optarg != NULL) {
-        char* cmDataPath = NULL;
         if (strlen(optarg) > (MAX_PATH_LEN - 1)) {
             write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
-                errmsg("-D path is too long.\n"), errdetail("N/A"), errmodule(MOD_CMCTL), 
+                errmsg("-D path is too long.\n"), errdetail("N/A"), errmodule(MOD_CMCTL),
                 errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
                 erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
             exit(1);
@@ -1512,7 +1490,7 @@ static void MatchCmdArgD(bool *setDataPath)
         char* envVar = (char*)pg_malloc(strlen(optarg) + 8);
         *setDataPath = true;
 
-        cmDataPath = xstrdup(optarg);
+        char *cmDataPath = xstrdup(optarg);
         check_input_for_security(cmDataPath);
         /* check '/' in the cmDataPath */
         char outPath[MAX_PATH_LEN] = {0};
@@ -1538,7 +1516,7 @@ static void MatchCmdArgD(bool *setDataPath)
     } else {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
             errmsg("-D path is invalid."),
-            errdetail("N/A"), errmodule(MOD_CMCTL), 
+            errdetail("N/A"), errmodule(MOD_CMCTL),
             errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         DoAdvice();
@@ -1550,8 +1528,8 @@ static void MatchCmdArgn(CtlOption *ctlCtx)
 {
     if (CM_is_str_all_digit(optarg) != 0 || CmAtoi(optarg, 0) == 0) {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("-n node(%s) is invalid.", optarg), errdetail("N/A"), 
-            errmodule(MOD_CMCTL), 
+            errmsg("-n node(%s) is invalid.", optarg), errdetail("N/A"),
+            errmodule(MOD_CMCTL),
             errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         DoAdvice();
@@ -1590,8 +1568,8 @@ static void MatchCmdArgI(void)
 {
     if (CM_is_str_all_digit(optarg) != 0 || CmAtoi(optarg, 0) == 0) {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
-            errmsg("-I instance(%s) is invalid.", optarg), errdetail("N/A"), 
-            errmodule(MOD_CMCTL), 
+            errmsg("-I instance(%s) is invalid.", optarg), errdetail("N/A"),
+            errmodule(MOD_CMCTL),
             errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         DoAdvice();
@@ -1607,7 +1585,7 @@ static void MatchCmdArgR(void)
     if (g_only_dn_cluster) {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
             errmsg("-R only support when the cluster is single-inst."), errdetail("N/A"),
-            errmodule(MOD_CMCTL), 
+            errmodule(MOD_CMCTL),
             errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         exit(1);
@@ -1617,7 +1595,7 @@ static void MatchCmdArgR(void)
 
 static void MatchCmdArgt(void)
 {
-    if (0 != CM_is_str_all_digit(optarg)) {
+    if (CM_is_str_all_digit(optarg) != 0) {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
             errmsg("-t time is invalid."), errdetail("N/A"), errmodule(MOD_CMCTL),
             errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
@@ -1689,9 +1667,9 @@ static void MatchCmdArgDcfXmode(void)
 
 static void MatchCmdArgDcfVoteNum(void)
 {
-    if (0 != CM_is_str_all_digit(optarg)) {
-        write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-votenum is invalid."), 
-            errdetail("N/A"), errmodule(MOD_CMCTL), 
+    if (CM_is_str_all_digit(optarg) != 0) {
+        write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-votenum is invalid."),
+            errdetail("N/A"), errmodule(MOD_CMCTL),
             errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         DoAdvice();
@@ -1743,6 +1721,18 @@ static void MatchCmdArgCmsPmode(void)
         FREE_AND_RESET(g_cmsPromoteMode);
         g_cmsPromoteMode = xstrdup(optarg);
     }
+}
+
+static void MatchCmdArgResType(CtlOption *ctlCtx)
+{
+    for (int32 i = 0; i < (int32)RES_TYPE_CEIL; ++i) {
+        if (strcmp(optarg, g_resTypeMap[i].typeStr) == 0) {
+            ctlCtx->resOpt.type = g_resTypeMap[i].type;
+            return;
+        }
+    }
+    ctlCtx->resOpt.type = RES_TYPE_APP;
+    write_runlog(WARNING, "cannot find the --res_type(%s).\n", optarg);
 }
 
 static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
@@ -1931,6 +1921,36 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
         case DCF_PRIORITY:
             MatchCmdArgDcfPriority(ctlCtx);
             break;
+        case RES_ADD:
+            ctlCtx->resOpt.mode = RES_ADD_CONF;
+            break;
+        case RES_EDIT:
+            ctlCtx->resOpt.mode = RES_EDIT_CONF;
+            break;
+        case RES_DEL:
+            ctlCtx->resOpt.mode = RES_DEL_CONF;
+            break;
+        case RES_CONF_CHECK:
+            ctlCtx->resOpt.mode = RES_CHECK_CONF;
+            break;
+        case RES_NAME:
+            ctlCtx->resOpt.resName = xstrdup(optarg);
+            break;
+        case RES_ATTR:
+            ctlCtx->resOpt.resAttr = xstrdup(optarg);
+            ctlCtx->resOpt.editMode = RES_EDIT_RES_CONF;
+            break;
+        case RES_ADD_INST:
+            ctlCtx->resOpt.addInstStr = xstrdup(optarg);
+            ctlCtx->resOpt.editMode = RES_ADD_INST_CONF;
+            break;
+        case RES_DEL_INST:
+            ctlCtx->resOpt.delInstStr = xstrdup(optarg);
+            ctlCtx->resOpt.editMode = RES_DEL_INST_CONF;
+            break;
+        case RES_TYPE:
+            MatchCmdArgResType(ctlCtx);
+            break;
         default:
             /* getopt_long already issued a suitable error message */
             DoAdvice();
@@ -1943,7 +1963,7 @@ static void SetCommonDataPath(bool setDataPath, CtlOption *ctlCtx)
     int ret;
     if (setDataPath) {
         ret = cmctl_getenv("CMDATA", g_cmData, sizeof(g_cmData));
-        if (EOK != ret) {
+        if (ret != EOK) {
             write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
                 errmsg("no cm directory specified."), errdetail("N/A"),
                 errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
@@ -1981,7 +2001,7 @@ static void SetLogicClusterName(void)
 
 static void CtlCheckComandType(void)
 {
-    if (CM_CHECK_COMMAND != ctl_command) {
+    if (ctl_command != CM_CHECK_COMMAND) {
         SetLogicClusterName();
 
         if (g_etcd_num > 0 && g_etcd_num < ETCD_NUM_UPPER_LIMIT) {
@@ -2012,8 +2032,7 @@ static void ExitFlagForCommand(void)
 
 static void CtlCheckOther(const CtlOption *ctlCtx)
 {
-    /*check input parameter*/
-    if (0 != CheckCtlInputParameter(ctlCtx)) {
+    if (CheckCtlInputParameter(ctlCtx) != 0) {
         DoAdvice();
         exit(1);
     }
@@ -2030,22 +2049,6 @@ static void CtlCheckOther(const CtlOption *ctlCtx)
     ExitFlagForCommand();
 }
 
-void GetClusterWorkMode(void)
-{
-    if (g_dn_replication_num > 0) {
-#ifdef ENABLE_MULTIPLE_NODES
-        g_cluster_work_mode = g_resStatus.empty() ? CM_INNER_DISTRIBUTE : CM_INNER_DISTRIBUTE_AND_DEFINED;
-#else
-        g_cluster_work_mode = g_resStatus.empty() ? CM_INNER_CENTRALIZE : CM_INNER_CENTRALIZE_AND_DEFINED;
-#endif
-        return;
-    }
-
-    if (!g_resStatus.empty()) {
-        g_cluster_work_mode = CM_SELF_DEFINED_ONLY;
-    }
-}
-
 #ifdef ENABLE_MULTIPLE_NODES
 static void DoRestartCommand(void)
 {
@@ -2053,13 +2056,13 @@ static void DoRestartCommand(void)
         do_logic_cluster_restart();
     } else if (g_logic_cluster_count == 0) {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("restart logic cluster failed."),
-            errdetail("there are no logic clusters, can't do restart."), errmodule(MOD_CMCTL), 
+            errdetail("there are no logic clusters, can't do restart."), errmodule(MOD_CMCTL),
             errcause("The cmdline entered by the user is incorrect."),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         exit(1);
     } else {
-        write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("restart logic cluster failed"), 
-            errdetail("-L is need."), errmodule(MOD_CMCTL), 
+        write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("restart logic cluster failed"),
+            errdetail("-L is need."), errmodule(MOD_CMCTL),
             errcause("The cmdline entered by the user is incorrect."),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         exit(1);
@@ -2135,7 +2138,7 @@ static void CtlCommandProcessCore(int *status, CtlOption *ctlCtx)
             *status = DoBuild(ctlCtx);
             break;
         case STOP_COMMAND:
-            do_stop();
+            *status = DoStop();
             break;
         case CM_QUERY_COMMAND:
             DoQueryCommand(status);
@@ -2192,8 +2195,14 @@ static void CtlCommandProcessCore(int *status, CtlOption *ctlCtx)
         case CM_SWITCH_COMMAND:
             *status = DoSwitch(ctlCtx);
             break;
+        case CM_RES_COMMAND:
+            *status = DoResCommand(ctlCtx);
+            break;
+        case CM_SHOW_COMMAND:
+            *status = DoShowCommand();
+            break;
         default:
-            write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("The option parameter is not specified."), 
+            write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("The option parameter is not specified."),
                 errdetail("N/A"), errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
                 erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
             break;
@@ -2279,6 +2288,15 @@ int main(int argc, char** argv)
         {"commit", no_argument, NULL, CM_SWITCH_COMMIT},
         {"rollback", no_argument, NULL, CM_SWITCH_ROLLBACK},
         {"param", no_argument, NULL, CM_SET_PARAM},
+        {"add", no_argument, NULL, RES_ADD},
+        {"edit", no_argument, NULL, RES_EDIT},
+        {"del", no_argument, NULL, RES_DEL},
+        {"check", no_argument, NULL, RES_CONF_CHECK},
+        {"res_name", required_argument, NULL, RES_NAME},
+        {"res_attr", required_argument, NULL, RES_ATTR},
+        {"add_inst", required_argument, NULL, RES_ADD_INST},
+        {"del_inst", required_argument, NULL, RES_DEL_INST},
+        {"res_type", required_argument, NULL, RES_TYPE},
 
         {NULL, 0, NULL, 0}};
 
@@ -2299,13 +2317,11 @@ int main(int argc, char** argv)
         exit(1);
     }
 
-    /*init cm_ctl part gloable variable*/
-    (void)init_ctl_global_variable();
+    /* init cm_ctl part global variable */
+    init_ctl_global_variable();
 
     /* Set up signal handlers and masks. */
     setup_signal_handle(SIGPIPE, SIG_IGN); /* ignored */
-
-    (void)pthread_mutex_init(&read_cipher_lock, NULL);
 
     /*
      * save argv[0] so do_start() can look for the postmaster if necessary. we
@@ -2320,10 +2336,10 @@ int main(int argc, char** argv)
         exit(-1);
     }
     (void)read_logic_cluster_name(g_logicClusterListPath, lcList, &err_no);
-    if (ReadResourceDefConfig(false) != CM_SUCCESS) {
+    if (CmSSlConfigInit(true) != 0) {
+        write_runlog(ERROR, "CmSSlConfigInit init failed.\n");
         exit(-1);
     }
-
     /* support cm_ctl ddb */
     CtlDccCommand(argc, argv);
     if (!RecordCommands(argc, argv)) {
@@ -2358,8 +2374,6 @@ int main(int argc, char** argv)
 
     /* check other */
     CtlCheckOther(&ctlCtx);
-
-    GetClusterWorkMode();
 
     /* dealing with every clt commands */
     CtlCommandProcessCore(&status, &ctlCtx);

@@ -41,7 +41,7 @@
 #endif
 
 #ifndef BoolGetDatum
-#define BoolGetDatum(X) /*lint -e506*/ ((Datum)((X) ? 1 : 0)) /*lint +e506*/
+#define BoolGetDatum(X) ((Datum)((X) ? 1 : 0))
 #endif
 
 #ifndef PointerGetDatum

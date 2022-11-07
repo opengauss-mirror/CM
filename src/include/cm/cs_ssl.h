@@ -162,7 +162,6 @@ status_t cm_cs_ssl_wait(ssl_link_t *link, uint32 wait_for, int32 timeout, bool *
   @retval CM_ERROR   Failed to verify
 */
 
-bool cm_file_exist(const char *file_path);
 
 status_t cm_ssl_verify_file_stat(const char *file_name);
 

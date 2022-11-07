@@ -96,45 +96,8 @@
 #endif
 #endif
 
-/* ----------
- * New-style error reporting API: to be used in this way:
- *		ereport(ERROR,
- *				(errcode(ERRCODE_UNDEFINED_CURSOR),
- *				 errmsg("portal \"%s\" not found", stmt->portalname),
- *				 ... other errxxx() fields as needed ...));
- *
- * The error level is required, and so is a primary error message (errmsg
- * or errmsg_internal).  All else is optional.	errcode() defaults to
- * ERRCODE_INTERNAL_ERROR if elevel is ERROR or more, ERRCODE_WARNING
- * if elevel is WARNING, or ERRCODE_SUCCESSFUL_COMPLETION if elevel is
- * NOTICE or below.
- *
- * ereport_domain() allows a message domain to be specified, for modules that
- * wish to use a different message catalog from the backend's.	To avoid having
- * one copy of the default text domain per .o file, we define it as NULL here
- * and have errstart insert the default text domain.  Modules can either use
- * ereport_domain() directly, or preferably they can override the TEXTDOMAIN
- * macro.
- * ----------
- */
-#define ereport_domain(elevel, domain, rest) \
-    (errstart(elevel, __FILE__, __LINE__, PG_FUNCNAME_MACRO, domain) ? (errfinish rest) : (void)0)
-
-#ifdef PC_LINT
-#define ereport(elevel, rest)  \
-    do {                       \
-        if (elevel >= ERROR)   \
-            exit((int)(rest)); \
-    } while (0)
-
-#else
-#define ereport(elevel, rest) ereport_domain(elevel, TEXTDOMAIN, rest)
-#endif /*PCLINT_CHECK*/
-
 #define TEXTDOMAIN NULL
 
-extern bool errstart(int elevel, const char* filename, int lineno, const char* funcname, const char* domain);
-extern void errfinish(int dummy, ...);
 #ifdef PC_LINT
 #define errcode(sqlerrcode) (1 == (int)(sqlerrcode))
 #else
@@ -241,27 +204,6 @@ extern void save_error_message(void);
 extern int handle_in_client(bool handle);
 extern int ignore_interrupt(bool ignore);
 
-/* ----------
- * Old-style error reporting API: to be used in this way:
- *		elog(ERROR, "portal \"%s\" not found", stmt->portalname);
- * ----------
- */
-
-#ifdef PC_LINT
-#define elog(level, ...)    \
-    do {                    \
-        if (level >= ERROR) \
-            exit(0);        \
-    } while (0)
-#else
-#define elog elog_start(__FILE__, __LINE__, PG_FUNCNAME_MACRO), elog_finish
-#endif /* PCLINT_CHECK */
-
-extern void elog_start(const char* filename, int lineno, const char* funcname);
-extern void elog_finish(int elevel, const char* fmt, ...)
-    /* This extension allows gcc to check the format string for consistency with
-       the supplied arguments. */
-    __attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 
 /* Support for constructing error strings separately from ereport() calls */
 
@@ -279,78 +221,6 @@ typedef struct ErrorContextCallback {
     void* arg;
 } ErrorContextCallback;
 
-#ifndef FRONTEND
-#define securec_check(errno, charList, ...)                                                                            \
-    {                                                                                                                  \
-        if (EOK != errno) {                                                                                            \
-            freeSecurityFuncSpace(static_cast<char*>(charList), ##__VA_ARGS__);                                        \
-            switch (errno) {                                                                                           \
-                case EINVAL:                                                                                           \
-                    elog(ERROR,                                                                                        \
-                        "%s : %d : The destination buffer is NULL or not terminated. The second case only occures in " \
-                        "function strcat_s/strncat_s.",                                                                \
-                        __FILE__,                                                                                      \
-                        __LINE__);                                                                                     \
-                    break;                                                                                             \
-                case EINVAL_AND_RESET:                                                                                 \
-                    elog(ERROR, "%s : %d : The Source Buffer is NULL.", __FILE__, __LINE__);                           \
-                    break;                                                                                             \
-                case ERANGE:                                                                                           \
-                    elog(ERROR,                                                                                        \
-                        "%s : %d : The parameter destMax is equal to zero or larger than the macro : "                 \
-                        "SECUREC_STRING_MAX_LEN.",                                                                     \
-                        __FILE__,                                                                                      \
-                        __LINE__);                                                                                     \
-                    break;                                                                                             \
-                case ERANGE_AND_RESET:                                                                                 \
-                    elog(ERROR,                                                                                        \
-                        "%s : %d : The parameter destMax is too small or parameter count is larger than macro "        \
-                        "parameter SECUREC_STRING_MAX_LEN. The second case only occures in functions "                 \
-                        "strncat_s/strncpy_s.",                                                                        \
-                        __FILE__,                                                                                      \
-                        __LINE__);                                                                                     \
-                    break;                                                                                             \
-                case EOVERLAP_AND_RESET:                                                                               \
-                    elog(ERROR,                                                                                        \
-                        "%s : %d : The destination buffer and source buffer are overlapped.",                          \
-                        __FILE__,                                                                                      \
-                        __LINE__);                                                                                     \
-                    break;                                                                                             \
-                default:                                                                                               \
-                    elog(ERROR, "%s : %d : Unrecognized return type.", __FILE__, __LINE__);                            \
-                    break;                                                                                             \
-            }                                                                                                          \
-        }                                                                                                              \
-    }
-
-#else
-
-#define securec_check(errno, charList, ...)                                                                          \
-    {                                                                                                                \
-        if (errno == -1) {                                                                                           \
-            freeSecurityFuncSpace_c(static_cast<char*>(charList), ##__VA_ARGS__);                                    \
-            printf("ERROR at %s : %d : The destination buffer or format is a NULL pointer or the invalid parameter " \
-                   "handle is invoked..\n",                                                                          \
-                __FILE__,                                                                                            \
-                __LINE__);                                                                                           \
-            exit(1);                                                                                                 \
-        }                                                                                                            \
-    }
-
-#endif
-
-/* Only used in sprintf_s or scanf_s cluster function */
-#define securec_check_ss(errno, charList, ...)                                                                     \
-    {                                                                                                              \
-        if (errno == -1) {                                                                                         \
-            freeSecurityFuncSpace(static_cast<char*>(charList), ##__VA_ARGS__);                                    \
-            elog(ERROR,                                                                                            \
-                "%s : %d : The destination buffer or format is a NULL pointer or the invalid parameter handle is " \
-                "invoked.",                                                                                        \
-                __FILE__,                                                                                          \
-                __LINE__);                                                                                         \
-        }                                                                                                          \
-    }
 
 /* ----------
  * API for catching ereport(ERROR) exits.  Use these macros like so:
@@ -578,48 +448,5 @@ void freeSecurityFuncSpace(char* charList, ...);
 
 extern void SimpleLogToServer(int elevel, bool silent, const char* fmt, ...)
     __attribute__((format(PG_PRINTF_ATTRIBUTE, 3, 4)));
-
-/* helpful macro */
-#define AssertEreport(condition, module, msg)                                                   \
-    do {                                                                                        \
-        Assert(condition);                                                                      \
-        if (unlikely(!(condition)))                                                             \
-            ereport(ERROR,                                                                      \
-                (errmodule(module),                                                             \
-                    errcode(ERRORCODE_ASSERT_FAILED),                                           \
-                    errmsg("failed on assertion in %s line %d. %s", __FILE__, __LINE__, msg))); \
-    } while (0)
-
-/* This Macro reports an error when touching distributed features in single node DB */
-#define DISTRIBUTED_FEATURE_NOT_SUPPORTED()                                            \
-    do {                                                                               \
-        ereport(ERROR,                                                                 \
-            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),                                   \
-                errmsg("Un-support feature"),                                          \
-                errdetail("The distributed capability is not supported currently."))); \
-    } while (0)
-
-#define IPC_PERFORMANCE_LOG_OUTPUT(errorMessage) \
-    do \
-        if (module_logging_is_on(MOD_COMM_IPC) && \
-            (t_thrd.proc && t_thrd.proc->workingVersionNum >= 92060)) { \
-            ereport(LOG, (errmodule(MOD_COMM_IPC), errmsg((char*)errorMessage))); \
-        } \
-    while (0)
-
-#define IPC_PERFORMANCE_LOG_COLLECT(msgLog, buffer, bufferLen, remoteNode, fd, msgOpr) \
-    do \
-        if (module_logging_is_on(MOD_COMM_IPC) && bufferLen > 0 && \
-            (t_thrd.proc && t_thrd.proc->workingVersionNum >= 92060)) { \
-            msgLog = gs_comm_ipc_performance(msgLog, buffer, bufferLen, remoteNode, fd, msgOpr); \
-        } \
-    while (0)
-
-#define MODULE_LOG_TRACE(trace_mode, ...)                                                                          \
-    do \
-        if (module_logging_is_on(trace_mode)) {                                                                    \
-            ereport(LOG, (errmodule(trace_mode), errmsg(__VA_ARGS__)));                                            \
-        }                                                                                                          \
-    while (0)                                                                                                      \
 
 #endif /* ELOG_H */

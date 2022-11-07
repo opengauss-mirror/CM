@@ -33,14 +33,20 @@ void CreateDNConnectionStatusCheckThread(int* i);
 void CreateDNCheckSyncListThread(int *idx);
 void CreateFaultDetectThread();
 void CreateConnCmsPThread();
-void CreateSendCmsMsgThread();
 void CreateKerberosStatusCheckThread();
-void CreateLogFileCompressAndRemoveThread();
+int CreateLogFileCompressAndRemoveThread();
 void CreateCheckUpgradeModeThread();
 void CreateDefResStatusCheckThread(void);
+void CreateCusResIsregCheckThread(void);
 void CreateRecvClientMessageThread(void);
 void CreateSendMessageToClientThread(void);
 void CreateProcessMessageThread(void);
 void CreateETCDConnectionStatusCheckThread(void);
+int CreateSendAndRecvCmsMsgThread();
+int CreateProcessSendCmsMsgThread();
+int CreateProcessRecvCmsMsgThread();
+void CreateVotingDiskThread();
+void CreateDiskUsageCheckThread();
+int CreateCheckNetworkThread(void);
 
 #endif

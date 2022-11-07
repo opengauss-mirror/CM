@@ -24,15 +24,16 @@
 #include "securec.h"
 #include "cm/cm_elog.h"
 #include "cm/cm_msg.h"
+#include "cma_common.h"
 #include "cma_global_params.h"
 #include "cma_client.h"
 #include "cma_status_check.h"
 #include "cma_connect.h"
-#include "cma_common.h"
-#include "cma_process_messages.h"
-#include "cma_process_messages_hadr.h"
 #include "cma_process_messages_client.h"
 #include "cma_instance_management.h"
+#include "cma_instance_check.h"
+#include "cma_mes.h"
+#include "cma_process_messages.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
 #include "cma_cn_process_message.h"
@@ -45,8 +46,6 @@
 
 static void InstancesStatusCheckAndReport(void)
 {
-    int ret;
-
     if (g_shutdownRequest) {
         return;
     }
@@ -60,71 +59,23 @@ static void InstancesStatusCheckAndReport(void)
     fenced_UDF_status_check_and_report();
     etcd_status_check_and_report();
     kerberos_status_check_and_report();
-
-    ret = cm_client_flush_msg(agent_cm_server_connect);
-    if (ret < 0) {
-        CloseConnToCmserver();
-    }
+    SendResStatReportMsg();
+    SendResIsregReportMsg();
 }
 
 static void AgentSendHeartbeat()
 {
-    int ret;
-    agent_to_cm_heartbeat heartbeat_msg;
-    errno_t rc;
-
-    if (agent_cm_server_connect == NULL || agent_cm_server_connect->status != CONNECTION_OK) {
-        return;
-    }
-
-    rc = memset_s(&heartbeat_msg, sizeof(heartbeat_msg), 0, sizeof(heartbeat_msg));
-    securec_check_errno(rc, (void)rc);
-    heartbeat_msg.msg_type = MSG_AGENT_CM_HEARTBEAT;
-    heartbeat_msg.node = g_currentNode->node;
-    heartbeat_msg.instanceType = CM_AGENT;
-
+    agent_to_cm_heartbeat hbMsg = {0};
+    hbMsg.msg_type = (int)MSG_AGENT_CM_HEARTBEAT;
+    hbMsg.node = g_currentNode->node;
+    hbMsg.instanceType = CM_AGENT;
     /*
      * After pg_pool_validate execute successfully, we will request the cluster
      * status until it is normal.
      */
-    if (g_poolerPingEndRequest)
-        heartbeat_msg.cluster_status_request = 1;
-    else
-        heartbeat_msg.cluster_status_request = 0;
+    hbMsg.cluster_status_request = g_poolerPingEndRequest ? 1 : 0;
 
-    ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&heartbeat_msg, sizeof(heartbeat_msg));
-    if (ret != 0) {
-        write_runlog(ERROR, "send cm_agent heartbeat failed!\n");
-        CloseConnToCmserver();
-        return;
-    }
-    write_runlog(DEBUG5, "send cm_agent heartbeat.\n");
-}
-
-/**
- * @brief Check the current node data disk capacity usage and log disk capacity usage to cm_server
- * @note Check and report the disk usage per 1 minute (60s).
- *
- */
-static void DiskUsageCheckAndReport(int logLevel)
-{
-    int32 ret;
-    if (g_shutdownRequest) {
-        return;
-    }
-
-    write_runlog(logLevel, "[%s][line:%d] Disk Usage status check thread start.\n", __FUNCTION__, __LINE__);
-
-#ifdef ENABLE_MULTIPLE_NODES
-    CheckDiskForCNDataPathAndReport(logLevel);
-#endif
-    CheckDiskForDNDataPathAndReport(logLevel);
-
-    ret = cm_client_flush_msg(agent_cm_server_connect);
-    if (ret < 0) {
-        write_runlog(ERROR, "[%s][line:%d] send cm_agent disk usage failed!\n", __FUNCTION__, __LINE__);
-        CloseConnToCmserver();
-    }
+    PushMsgToCmsSendQue((char *)&hbMsg, (uint32)sizeof(agent_to_cm_heartbeat), "cma heartbeat");
 }
 
 bool FindIndexByLocalPath(const char* data_path, uint32* node_index)
@@ -153,6 +104,7 @@ bool FindIndexByLocalPath(const char* data_path, uint32* node_index)
 void ResetPhonyDeadCount(const char* data_path, InstanceTypes ins_type)
 {
     uint32 node_index = 0;
+    int phonyDead = PROCESS_UNKNOWN;
     switch (ins_type) {
 #ifdef ENABLE_MULTIPLE_NODES
         case INSTANCE_CN:
@@ -163,7 +115,8 @@ void ResetPhonyDeadCount(const char* data_path, InstanceTypes ins_type)
             break;
 #endif
         case INSTANCE_DN:
-            if (FindIndexByLocalPath(data_path, &node_index)) {
+            (void)check_one_instance_status(GetDnProcessName(), data_path, &phonyDead);
+            if (phonyDead != PROCESS_PHONY_DEAD_D && FindIndexByLocalPath(data_path, &node_index)) {
                 g_dnPhonyDeadTimes[node_index] = 0;
             }
             break;
@@ -187,7 +140,6 @@ void kill_instance_force(const char* data_path, InstanceTypes ins_type)
     int ret;
     char system_cmdexten[] = {"\" | grep -v grep | awk '{print $1}'  | xargs kill -9 "};
     char cmdexten[] = {"\")  print $(NF-2)}' | awk -F/ '{print $3 }' | xargs kill -9 "};
-    struct stat stat_buf = {0};
     errno_t rc;
     int rcs;
 
@@ -200,14 +152,14 @@ void kill_instance_force(const char* data_path, InstanceTypes ins_type)
     securec_check_intval(rcs, (void)rcs);
     write_runlog(LOG, "killing %s by force ...\n", type_int_to_str_name(ins_type));
 
-    if (strcmp(data_path, "fenced") && strcmp(data_path, "krb5kdc")) {
-        (void)realpath(data_path, Lrealpath);
-    } else if (!strcmp(data_path, "krb5kdc")) {
-        rcs = snprintf_s(Lrealpath, PATH_MAX, PATH_MAX - 1, "%s", "krb5kdc");
-        securec_check_intval(rcs, (void)rcs);
+    if (strcmp(data_path, "fenced") == 0) {
+        rcs = strcpy_s(Lrealpath, PATH_MAX, "fenced");
+        securec_check_errno(rcs, (void)rcs);
+    } else if (strcmp(data_path, "krb5kdc") == 0) {
+        rcs = strcpy_s(Lrealpath, PATH_MAX, "krb5kdc");
+        securec_check_errno(rcs, (void)rcs);
     } else {
-        rcs = snprintf_s(Lrealpath, PATH_MAX, PATH_MAX - 1, "%s", "fenced");
-        securec_check_intval(rcs, (void)rcs);
+        (void)realpath(data_path, Lrealpath);
     }
 
     rc = strncat_s(cmd, CM_PATH_LENGTH, Lrealpath, strlen(Lrealpath));
@@ -224,7 +176,7 @@ void kill_instance_force(const char* data_path, InstanceTypes ins_type)
     rc = strncat_s(system_cmd, CM_PATH_LENGTH, system_cmdexten, strlen(system_cmdexten));
     securec_check_errno(rc, (void)rc);
 
-    if (stat(system_call_log, &stat_buf) == 0) {
+    if (access(system_call_log, W_OK) == 0) {
         /* redirect to system_call.log */
         rc = strncat_s(cmd, CM_PATH_LENGTH, ">> ", strlen(">> "));
         securec_check_errno(rc, (void)rc);
@@ -248,14 +200,17 @@ void kill_instance_force(const char* data_path, InstanceTypes ins_type)
     if (ret != 0) {
         write_runlog(ERROR, "kill_instance_force: run system command failed! %s, errno=%d.\n", system_cmd, errno);
 
-        if (ExecuteCmd(cmd, timeOut)) {
-            write_runlog(LOG, "kill_instance_force: execute command failed. %s \n", cmd);
-            return;
+        ret = killInstanceByPid(type_int_to_str_binname(ins_type), data_path);
+        if (ret != 0) {
+            ret = ExecuteCmd(cmd, timeOut);
+            if (ret != 0) {
+                write_runlog(LOG, "kill_instance_force: execute command failed. %s, errno=%d.\n", cmd, errno);
+                return;
+            }
         }
-    } else {
-        /* if kill cn/dn/gtm success by syscmd, clear some obsoleted paramter. */
-        ResetPhonyDeadCount(data_path, ins_type);
     }
+    /* if kill cn/dn/gtm success by syscmd, clear some obsoleted paramter. */
+    ResetPhonyDeadCount(data_path, ins_type);
 
     write_runlog(LOG, "%s stopped.\n", type_int_to_str_name(ins_type));
     return;
@@ -393,7 +348,7 @@ static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint
             /* Initialize the alarm item structure(typedef struct Alarm) */
             AlarmItemInitialize(&(alarm[0]), ALM_AI_GTMSwitchOver, ALM_AS_Normal, NULL);
             /* fill the alarm message */
-            WriteAlarmAdditionalInfo(&alarmParam, instanceName, "", "", alarm, ALM_AT_Event, instanceName);
+            WriteAlarmAdditionalInfo(&alarmParam, instanceName, "", "", "", alarm, ALM_AT_Event, instanceName);
             /* report the alarm */
             ReportCMAEventAlarm(alarm, &alarmParam);
             break;
@@ -420,7 +375,7 @@ static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint
             /* Initialize the alarm item structure(typedef struct Alarm) */
             AlarmItemInitialize(&(alarm[0]), ALM_AI_DatanodeSwitchOver, ALM_AS_Normal, NULL);
             /* fill the alarm message */
-            WriteAlarmAdditionalInfoForLC(&alarmParam, instanceName, "", "", lcName, alarm, ALM_AT_Event, instanceName);
+            WriteAlarmAdditionalInfo(&alarmParam, instanceName, "", "", lcName, alarm, ALM_AT_Event, instanceName);
             /* report the alarm */
             ReportCMAEventAlarm(alarm, &alarmParam);
             break;
@@ -484,7 +439,7 @@ static void process_failover_command(const char* dataDir, int instanceType, uint
             AlarmItemInitialize(&(AlarmFailOver[0]), ALM_AI_GTMFailOver, ALM_AS_Normal, NULL);
             /* fill the alarm message */
             WriteAlarmAdditionalInfo(
-                &tempAdditionalParam, instanceName, "", "", AlarmFailOver, ALM_AT_Event, instanceName);
+                &tempAdditionalParam, instanceName, "", "", "", AlarmFailOver, ALM_AT_Event, instanceName);
             /* report the alarm */
             ReportCMAEventAlarm(AlarmFailOver, &tempAdditionalParam);
             break;
@@ -497,7 +452,7 @@ static void process_failover_command(const char* dataDir, int instanceType, uint
             /* Initialize the alarm item structure(typedef struct Alarm) */
             AlarmItemInitialize(&(AlarmFailOver[0]), ALM_AI_DatanodeFailOver, ALM_AS_Normal, NULL);
             /* fill the alarm message */
-            WriteAlarmAdditionalInfoForLC(&tempAdditionalParam,
+            WriteAlarmAdditionalInfo(&tempAdditionalParam,
                 instanceName,
                 "",
                 "",
@@ -544,7 +499,7 @@ static void process_finish_redo_command(const char* dataDir, uint32 instd, bool 
         /* Initialize the alarm item structure(typedef struct Alarm) */
         AlarmItemInitialize(&(AlarmFinishRedo[0]), ALM_AI_ForceFinishRedo, ALM_AS_Reported, NULL);
         /* fill the alarm message */
-        WriteAlarmAdditionalInfoForLC(&tempAdditionalParam, instanceName, "", "", logicClusterName,
+        WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", logicClusterName,
             AlarmFinishRedo, ALM_AT_Event, instanceName);
         /* report the alarm */
         ReportCMAEventAlarm(AlarmFinishRedo, &tempAdditionalParam);
@@ -624,17 +579,21 @@ static status_t ExecuteCommand(const char *cmd)
 }
 
 static void ExecuteBuildDatanodeCommand(bool is_single_node, BuildMode build_mode, const char *data_dir,
-    time_t wait_seconds, uint32 term)
+    const cm_to_agent_build *buildMsg)
 {
     char command[MAXPGPATH] = {0};
     char build_mode_str[MAXPGPATH];
     char termStr[MAX_TIME_LEN] = {0};
     int rc = 0;
+    const char *buildOptr = "";
+    if (buildMsg->role == INSTANCE_ROLE_CASCADE_STANDBY) {
+        buildOptr = " -M cascade_standby ";
+    }
 
     if (IsBoolCmParamTrue(g_agentEnableDcf)) {
         build_mode = FULL_BUILD;
     }
-    
+
     if (build_mode == FULL_BUILD) {
         rc = strncpy_s(build_mode_str, MAXPGPATH, "-b full", strlen("-b full"));
     } else if (build_mode == INC_BUILD) {
@@ -644,21 +603,21 @@ static void ExecuteBuildDatanodeCommand(bool is_single_node, BuildMode build_mod
     }
     securec_check_errno(rc, (void)rc);
 
-    rc = snprintf_s(termStr, MAX_TIME_LEN, MAX_TIME_LEN - 1, "-T %u", term);
+    rc = snprintf_s(termStr, MAX_TIME_LEN, MAX_TIME_LEN - 1, "-T %u", buildMsg->term);
     securec_check_intval(rc, (void)rc);
 
 #ifdef ENABLE_MULTIPLE_NODES
     rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
-    SYSTEMQUOTE "%s build -Z %s %s %s -D %s %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE,
-    PG_CTL_NAME, is_single_node ? "single_node" : "datanode",
-    build_mode_str, security_mode ? "-o \"--securitymode\"" : "", data_dir,
-    termStr, wait_seconds, system_call_log);
+        SYSTEMQUOTE "%s build -Z %s %s %s %s -D %s %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE,
+        PG_CTL_NAME, is_single_node ? "single_node" : "datanode",
+        build_mode_str, security_mode ? "-o \"--securitymode\"" : "", buildOptr, data_dir,
+        termStr, buildMsg->wait_seconds, system_call_log);
 #else
     rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
-    SYSTEMQUOTE "%s build %s %s -D %s %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE,
-    PG_CTL_NAME,
-    build_mode_str, security_mode ? "-o \"--securitymode\"" : "", data_dir,
-    termStr, wait_seconds, system_call_log);
+        SYSTEMQUOTE "%s build %s %s %s -D %s %s -r %d >> \"%s\" 2>&1 &" SYSTEMQUOTE,
+        PG_CTL_NAME,
+        build_mode_str, security_mode ? "-o \"--securitymode\"" : "", buildOptr, data_dir,
+        termStr, buildMsg->wait_seconds, system_call_log);
 #endif
     securec_check_intval(rc, (void)rc);
 
@@ -774,7 +733,7 @@ static void BuildDatanode(const char *dataDir, const cm_to_agent_build *buildMsg
         } else {
             buildMode = FULL_BUILD;
         }
-        ExecuteBuildDatanodeCommand(true, buildMode, dataDir, buildMsg->wait_seconds, buildMsg->term);
+        ExecuteBuildDatanodeCommand(true, buildMode, dataDir, buildMsg);
     } else if (g_multi_az_cluster) {
         if (buildMsg->full_build == 1) {
             buildMode = FULL_BUILD;
@@ -783,7 +742,7 @@ static void BuildDatanode(const char *dataDir, const cm_to_agent_build *buildMsg
         } else {
             buildMode = FULL_BUILD;
         }
-        ExecuteBuildDatanodeCommand(false, buildMode, dataDir, buildMsg->wait_seconds, buildMsg->term);
+        ExecuteBuildDatanodeCommand(false, buildMode, dataDir, buildMsg);
     }  else {
         if (buildMsg->full_build == 1) {
             buildMode = FULL_BUILD;
@@ -792,7 +751,7 @@ static void BuildDatanode(const char *dataDir, const cm_to_agent_build *buildMsg
         } else {
             buildMode = AUTO_BUILD;
         }
-        ExecuteBuildDatanodeCommand(false, buildMode, dataDir, buildMsg->wait_seconds, buildMsg->term);
+        ExecuteBuildDatanodeCommand(false, buildMode, dataDir, buildMsg);
     }
 
     return;
@@ -851,7 +810,6 @@ static void BuildZengine(uint32 dnIndex, const char *dataDir, const cm_to_agent_
  *         Currently, all shell commands in this function are executed in the background. Therefore,
  *         this function cannot obtain the actual return value of the shell command.
  *         An alarm is reported before the build operation is performed.
- * 
  * @param  dataDir          The instance data path.
  * @param  instanceType     The instance type.
  * @param  buildMsg         The build msg from cm server.
@@ -878,7 +836,7 @@ static void ProcessBuildCommand(const char *dataDir, int instanceType, const cm_
         write_runlog(LOG, "delete dn instance manual start file failed, can't do build.\n");
         return;
     }
-    
+
     char instanceName[CM_NODE_NAME] = {0};
     Alarm AlarmBuild[1];
     AlarmAdditionalParam tempAdditionalParam;
@@ -889,7 +847,7 @@ static void ProcessBuildCommand(const char *dataDir, int instanceType, const cm_
     /* Initialize the alarm item structure(typedef struct Alarm). */
     AlarmItemInitialize(&(AlarmBuild[0]), ALM_AI_Build, ALM_AS_Normal, NULL);
     /* fill the alarm message. */
-    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", AlarmBuild, ALM_AT_Event, instanceName);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "", AlarmBuild, ALM_AT_Event, instanceName);
     /* report the alarm. */
     ReportCMAEventAlarm(AlarmBuild, &tempAdditionalParam);
 
@@ -915,14 +873,14 @@ static void ProcessBuildCommand(const char *dataDir, int instanceType, const cm_
  * @Description: process notify to cmagent
  * @IN notify: cancle user session notify from cm server
  * @Return: void
- * @See also:
  */
 static void process_cancle_session_command(const cm_to_agent_cancel_session* cancel_msg)
 {
     write_runlog(LOG, "process_cancle_session_command()\n");
 
-    if (g_currentNode->coordinate == 0)
+    if (g_currentNode->coordinate == 0) {
         return;
+    }
 
     write_runlog(LOG, "cm_agent notify cn %u to cancel session.\n", cancel_msg->instanceId);
 
@@ -987,23 +945,6 @@ static void process_rep_most_available_command(const char *dataDir, int instance
     return;
 }
 
-static void ChangeRoleToCasCade(const char *dataDir, bool isCasCade)
-{
-    uint32 i = 0;
-    for (i = 0; i < g_currentNode->datanodeCount; ++i) {
-        if (strcmp(g_currentNode->datanode[i].datanodeLocalDataPath, dataDir) == 0) {
-            break;
-        }
-    }
-    if (g_dnCascade[i] == isCasCade) {
-        return;
-    }
-    g_dnCascade[i] = isCasCade;
-    if (isCasCade) {
-        immediate_stop_one_instance(dataDir, INSTANCE_DN);
-    }
-}
-
 static void process_notify_command(const char* data_dir, int instance_type, int role, uint32 term)
 {
     char command[MAXPGPATH] = {0};
@@ -1020,15 +961,16 @@ static void process_notify_command(const char* data_dir, int instance_type, int 
                     SYSTEMQUOTE "%s notify -M %s -D %s -T %u -w -t 1 >> \"%s\" 2>&1 &" SYSTEMQUOTE,
                     PG_CTL_NAME, "primary", data_dir, term, system_call_log);
                 securec_check_intval(rc, (void)rc);
-                ChangeRoleToCasCade(data_dir, false);
             } else if (role == INSTANCE_ROLE_STANDBY) {
                 rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
                     SYSTEMQUOTE "%s notify -M %s -D %s -w -t 1 >> \"%s\" 2>&1 &" SYSTEMQUOTE,
                     PG_CTL_NAME, "standby", data_dir, system_call_log);
                 securec_check_intval(rc, (void)rc);
-                ChangeRoleToCasCade(data_dir, false);
             } else if (role == INSTANCE_ROLE_CASCADE_STANDBY) {
-                ChangeRoleToCasCade(data_dir, true);
+                rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+                    SYSTEMQUOTE "%s notify -M %s -D %s -w -t 1 >> \"%s\" 2>&1 &" SYSTEMQUOTE,
+                    PG_CTL_NAME, "cascade_standby", data_dir, system_call_log);
+                securec_check_intval(rc, (void)rc);
             } else {
                 write_runlog(
                     LOG, "the instance datadir(%s) instance type(%d) role is unknown role\n", data_dir, instance_type);
@@ -1284,18 +1226,14 @@ static void process_gs_guc_command(const cm_to_agent_gs_guc* gsGucPtr)
         result = false;
     }
 
-    agent_to_cm_gs_guc_feedback agent_to_cm_gs_guc_feedback_content;
-    agent_to_cm_gs_guc_feedback_content.msg_type = MSG_AGENT_CM_GS_GUC_ACK;
-    agent_to_cm_gs_guc_feedback_content.node = g_currentNode->node;
-    agent_to_cm_gs_guc_feedback_content.instanceId = gsGucPtr->instanceId;
-    agent_to_cm_gs_guc_feedback_content.type = syncMode;
-    agent_to_cm_gs_guc_feedback_content.status = result;
-    if (cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&agent_to_cm_gs_guc_feedback_content,
-        sizeof(agent_to_cm_gs_guc_feedback_content)) != 0) {
-        write_runlog(ERROR, "cm_client_send_msg send gs guc fail  1!\n");
-        CloseConnToCmserver();
-        return;
-    }
+    agent_to_cm_gs_guc_feedback gsGucFeedback = {0};
+    gsGucFeedback.msg_type = (int)MSG_AGENT_CM_GS_GUC_ACK;
+    gsGucFeedback.node = g_currentNode->node;
+    gsGucFeedback.instanceId = gsGucPtr->instanceId;
+    gsGucFeedback.type = syncMode;
+    gsGucFeedback.status = result;
+
+    PushMsgToCmsSendQue((char *)&gsGucFeedback, (uint32)sizeof(agent_to_cm_gs_guc_feedback), "cma feedback");
 }
 #endif
 
@@ -1353,30 +1291,38 @@ static void ProcessDdbOperFromCms(const CmSendDdbOperRes *msgDdbOper)
 
 static void ProcessSharedStorageModeFromCms(const CmsSharedStorageInfo *recvMsg)
 {
-    errno_t rc;
-
     if (strcmp(g_doradoIp, recvMsg->doradoIp) != 0) {
         write_runlog(LOG, "cma recv g_doradoIp has change from \"%s\" to \"%s\"\n", g_doradoIp, recvMsg->doradoIp);
+        errno_t rc = strcpy_s(g_doradoIp, CM_IP_LENGTH, recvMsg->doradoIp);
+        securec_check_errno(rc, (void)rc);
     } else {
-        write_runlog(DEBUG1, "cma recv g_doradoIp = %s\n", recvMsg->doradoIp);
+        write_runlog(DEBUG5, "cma recv g_doradoIp = %s\n", recvMsg->doradoIp);
     }
-
-    rc = strcpy_s(g_doradoIp, CM_IP_LENGTH, recvMsg->doradoIp);
-    securec_check_errno(rc, (void)rc);
+    return;
 }
 
-static void MsgCmAgentRestart(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static const char *CmGetMsgBytesPtr(const AgentMsgPkg *msg, uint32 dataLen)
 {
-    const cm_to_agent_restart* cmToAgentRestartPtr = NULL;
+    if (dataLen > msg->msgLen) {
+        write_runlog(ERROR,
+            "CmGetMsgBytesPtr: insufficient data left in message, dataLen=%u, msg->msgLen=%u.\n", dataLen, msg->msgLen);
+        return NULL;
+    }
+    return (const char*)(msg->msgPtr);
+}
+
+static void MsgCmAgentRestart(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type* msgTypePtr)
+{
     int instanceType;
     int ret;
 
-    cmToAgentRestartPtr = (const cm_to_agent_restart *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_restart));
+    const cm_to_agent_restart *cmToAgentRestartPtr =
+        (const cm_to_agent_restart *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_restart));
     if (cmToAgentRestartPtr == NULL) {
         return;
     }
     if (cmToAgentRestartPtr->node == 0 && cmToAgentRestartPtr->instanceId == 0) {
-        write_runlog(ERROR, "receive cmagent exit request.\n\n");
+        write_runlog(FATAL, "receive cmagent exit request.\n\n");
         exit(-1);
     }
     ret = FindInstancePathAndType(
@@ -1391,18 +1337,17 @@ static void MsgCmAgentRestart(const CM_Result* msg, char *dataPath, const cm_msg
     process_restart_command(dataPath, instanceType);
 }
 
-static void MsgCmAgentSwitchoverOrFast(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentSwitchoverOrFast(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
-    const cm_to_agent_switchover* msgTypeSwithoverPtr = NULL;
     int instanceType;
     int ret;
-    uint32 term = InvalidTerm;
 
-    msgTypeSwithoverPtr = (const cm_to_agent_switchover *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_switchover));
+    const cm_to_agent_switchover *msgTypeSwithoverPtr =
+        (const cm_to_agent_switchover *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_switchover));
     if (msgTypeSwithoverPtr == NULL) {
         return;
     }
-    term = msgTypeSwithoverPtr->term;
+    uint32 term = msgTypeSwithoverPtr->term;
     ret = FindInstancePathAndType(
         msgTypeSwithoverPtr->node, msgTypeSwithoverPtr->instanceId, dataPath, &instanceType);
     if (ret != 0) {
@@ -1419,18 +1364,17 @@ static void MsgCmAgentSwitchoverOrFast(const CM_Result* msg, char *dataPath, con
     }
 }
 
-static void MsgCmAgentFailover(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentFailover(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
-    const cm_to_agent_failover* msgTypeFailoverPtr = NULL;
     int instanceType;
     int ret;
-    uint32 term = InvalidTerm;
 
-    msgTypeFailoverPtr = (const cm_to_agent_failover *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_failover));
+    const cm_to_agent_failover *msgTypeFailoverPtr =
+        (const cm_to_agent_failover *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_failover));
     if (msgTypeFailoverPtr == NULL) {
         return;
     }
-    term = msgTypeFailoverPtr->term;
+    uint32 term = msgTypeFailoverPtr->term;
     ret = FindInstancePathAndType(
         msgTypeFailoverPtr->node, msgTypeFailoverPtr->instanceId, dataPath, &instanceType);
     if (ret != 0) {
@@ -1443,17 +1387,20 @@ static void MsgCmAgentFailover(const CM_Result* msg, char *dataPath, const cm_ms
     process_failover_command(dataPath, instanceType, msgTypeFailoverPtr->instanceId, term);
 }
 
-static void MsgCmAgentBuild(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentBuild(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
-    const cm_to_agent_build* msgTypeBuildPtr = NULL;
-    int instanceType;
-    int ret;
+    if (g_enableSharedStorage) {
+        write_runlog(LOG, "don't need do build, in shared storage mode.\n");
+        return;
+    }
 
-    msgTypeBuildPtr = (const cm_to_agent_build *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_build));
+    const cm_to_agent_build *msgTypeBuildPtr =
+        (const cm_to_agent_build *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_build));
     if (msgTypeBuildPtr == NULL) {
         return;
     }
-    ret = FindInstancePathAndType(
+    int instanceType;
+    int ret = FindInstancePathAndType(
         msgTypeBuildPtr->node, msgTypeBuildPtr->instanceId, dataPath, &instanceType);
     if (ret != 0) {
         write_runlog(ERROR,
@@ -1465,15 +1412,14 @@ static void MsgCmAgentBuild(const CM_Result* msg, char *dataPath, const cm_msg_t
     ProcessBuildCommand(dataPath, instanceType, msgTypeBuildPtr);
 }
 
-static void MsgCmAgentCancelSession(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentCancelSession(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
-    const cm_to_agent_cancel_session* msgTypeCancelSeesionPtr = NULL;
     int instanceType;
     int ret;
 
     write_runlog(LOG, "message type is MSG_CM_AGENT_CANCLE_SESSION.\n");
-    msgTypeCancelSeesionPtr = (const cm_to_agent_cancel_session *)CmGetmsgbytesPtr(msg,
-        sizeof(cm_to_agent_cancel_session));
+    const cm_to_agent_cancel_session *msgTypeCancelSeesionPtr =
+        (const cm_to_agent_cancel_session *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_cancel_session));
     if (msgTypeCancelSeesionPtr == NULL) {
         return;
     }
@@ -1495,17 +1441,17 @@ static void MsgCmAgentCancelSession(const CM_Result* msg, char *dataPath, const 
     process_cancle_session_command(msgTypeCancelSeesionPtr);
 }
 
-static void MsgCmAgentSync(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentSync(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     write_runlog(DEBUG1, "receive sync msg.\n");
 }
 
-static void MsgCmAgentRepSync(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentRepSync(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
-    const cm_to_agent_rep_sync* msgTypeRepSyncPtr = NULL;
     int instanceType;
     int ret;
-    msgTypeRepSyncPtr = (const cm_to_agent_rep_sync *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_rep_sync));
+    const cm_to_agent_rep_sync *msgTypeRepSyncPtr =
+        (const cm_to_agent_rep_sync *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_rep_sync));
     if (msgTypeRepSyncPtr == NULL) {
         return;
     }
@@ -1521,14 +1467,13 @@ static void MsgCmAgentRepSync(const CM_Result* msg, char *dataPath, const cm_msg
     process_rep_sync_command(dataPath, instanceType);
 }
 
-static void MsgCmAgentRepMostAvailable(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentRepMostAvailable(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
-    const cm_to_agent_rep_most_available* msgTypeRepMostAvailablePtr = NULL;
     int instanceType;
     int ret;
 
-    msgTypeRepMostAvailablePtr = (const cm_to_agent_rep_most_available *)CmGetmsgbytesPtr(msg,
-        sizeof(cm_to_agent_rep_most_available));
+    const cm_to_agent_rep_most_available *msgTypeRepMostAvailablePtr =
+        (const cm_to_agent_rep_most_available *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_rep_most_available));
     if (msgTypeRepMostAvailablePtr == NULL) {
         return;
     }
@@ -1546,17 +1491,16 @@ static void MsgCmAgentRepMostAvailable(const CM_Result* msg, char *dataPath, con
     process_rep_most_available_command(dataPath, instanceType);
 }
 
-static void MsgCmAgentNotify(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentNotify(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
-    const cm_to_agent_notify* msgTypeNotifyPtr = NULL;
     int instanceType;
     int ret;
-    uint32 term = InvalidTerm;
-    msgTypeNotifyPtr = (const cm_to_agent_notify *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_notify));
+    const cm_to_agent_notify *msgTypeNotifyPtr =
+        (const cm_to_agent_notify *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_notify));
     if (msgTypeNotifyPtr == NULL || g_clusterType == V3SingleInstCluster) {
         return;
     }
-    term = msgTypeNotifyPtr->term;
+    uint32 term = msgTypeNotifyPtr->term;
     ret = FindInstancePathAndType(
         msgTypeNotifyPtr->node, msgTypeNotifyPtr->instanceId, dataPath, &instanceType);
     if (ret != 0) {
@@ -1569,14 +1513,13 @@ static void MsgCmAgentNotify(const CM_Result* msg, char *dataPath, const cm_msg_
     process_notify_command(dataPath, instanceType, msgTypeNotifyPtr->role, term);
 }
 
-static void MsgCmAgentRestartByMode(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentRestartByMode(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
-    const cm_to_agent_restart_by_mode* msgTypeRestartByModePtr = NULL;
     int instanceType;
     int ret;
 
-    msgTypeRestartByModePtr = (const cm_to_agent_restart_by_mode *)CmGetmsgbytesPtr(msg,
-        sizeof(cm_to_agent_restart_by_mode));
+    const cm_to_agent_restart_by_mode *msgTypeRestartByModePtr =
+        (const cm_to_agent_restart_by_mode *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_restart_by_mode));
     if (msgTypeRestartByModePtr == NULL) {
         return;
     }
@@ -1595,10 +1538,10 @@ static void MsgCmAgentRestartByMode(const CM_Result* msg, char *dataPath, const 
         msgTypeRestartByModePtr->role_new);
 }
 
-static void MsgCmAgentHeartbeat(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentHeartbeat(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     const cm_to_agent_heartbeat* msgTypeHeartbeatPtr =
-        (const cm_to_agent_heartbeat *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_heartbeat));
+        (const cm_to_agent_heartbeat *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_heartbeat));
     if (msgTypeHeartbeatPtr == NULL) {
         return;
     }
@@ -1608,11 +1551,11 @@ static void MsgCmAgentHeartbeat(const CM_Result* msg, char *dataPath, const cm_m
     }
 }
 
-static void MsgCmAgentGsGuc(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentGsGuc(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
     const cm_to_agent_gs_guc* msgTypeGsGucPtr =
-        (const cm_to_agent_gs_guc *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_gs_guc));
+        (const cm_to_agent_gs_guc *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_gs_guc));
     if (msgTypeGsGucPtr == NULL) {
         return;
     }
@@ -1620,27 +1563,27 @@ static void MsgCmAgentGsGuc(const CM_Result* msg, char *dataPath, const cm_msg_t
 #endif
 }
 
-static void MsgCmCtlCmserver(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmCtlCmserver(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     const cm_to_ctl_cmserver_status* cmToCtlCmserverStatusPtr =
-        (const cm_to_ctl_cmserver_status *)CmGetmsgbytesPtr(msg, sizeof(cm_to_ctl_cmserver_status));
+        (const cm_to_ctl_cmserver_status *)CmGetMsgBytesPtr(msg, sizeof(cm_to_ctl_cmserver_status));
     if (cmToCtlCmserverStatusPtr == NULL) {
         return;
     }
     g_cmServerInstanceStatus = cmToCtlCmserverStatusPtr->local_role;
 }
 
-static void MsgCmServerRepairCnAck(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmServerRepairCnAck(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     g_cleanDropCnFlag = false;
     write_runlog(LOG, "receive repair cn ack msg.\n");
 }
 
-static void MsgCmAgentLockNoPrimary(const CM_Result *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+static void MsgCmAgentLockNoPrimary(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
 {
     int ret;
     const cm_to_agent_lock1 *msgTypeLock1Ptr =
-        (const cm_to_agent_lock1 *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_lock1));
+        (const cm_to_agent_lock1 *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_lock1));
     if (msgTypeLock1Ptr == NULL) {
         return;
     }
@@ -1650,11 +1593,11 @@ static void MsgCmAgentLockNoPrimary(const CM_Result *msg, char *dataPath, const 
     }
 }
 
-static void MsgCmAgentLockChosenPrimary(const CM_Result *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+static void MsgCmAgentLockChosenPrimary(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
 {
     int ret;
     const cm_to_agent_lock2 *msgTypeLock2Ptr =
-        (const cm_to_agent_lock2 *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_lock2));
+        (const cm_to_agent_lock2 *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_lock2));
     if (msgTypeLock2Ptr == NULL) {
         return;
     }
@@ -1664,11 +1607,11 @@ static void MsgCmAgentLockChosenPrimary(const CM_Result *msg, char *dataPath, co
     }
 }
 
-static void MsgCmAgentUnlock(const CM_Result *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+static void MsgCmAgentUnlock(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
 {
     int ret;
     const cm_to_agent_unlock *msgTypeUnlockPtr =
-        (const cm_to_agent_unlock *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_unlock));
+        (const cm_to_agent_unlock *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_unlock));
     if (msgTypeUnlockPtr == NULL) {
         return;
     }
@@ -1678,12 +1621,12 @@ static void MsgCmAgentUnlock(const CM_Result *msg, char *dataPath, const cm_msg_
     }
 }
 
-static void MsgCmAgentFinishRedo(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentFinishRedo(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     int ret;
     int instanceType;
     const cm_to_agent_finish_redo* msgTypeFinishRedoPtr =
-        (const cm_to_agent_finish_redo *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_finish_redo));
+        (const cm_to_agent_finish_redo *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_finish_redo));
     if (msgTypeFinishRedoPtr == NULL) {
         return;
     }
@@ -1696,12 +1639,12 @@ static void MsgCmAgentFinishRedo(const CM_Result* msg, char *dataPath, const cm_
     }
 }
 
-static void MsgCmAgentDnSyncList(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentDnSyncList(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
     int ret;
     const CmToAgentGsGucSyncList *msgTypeDoGsGuc =
-        (const CmToAgentGsGucSyncList *)CmGetmsgbytesPtr(msg, sizeof(CmToAgentGsGucSyncList));
+        (const CmToAgentGsGucSyncList *)CmGetMsgBytesPtr(msg, sizeof(CmToAgentGsGucSyncList));
     if (msgTypeDoGsGuc == NULL) {
         return;
     }
@@ -1713,47 +1656,42 @@ static void MsgCmAgentDnSyncList(const CM_Result* msg, char *dataPath, const cm_
 #endif
 }
 
-static void MsgCmAgentResStatusChanged(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentResStatusChanged(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     const CmsReportResStatList *msgResStatusList =
-        (const CmsReportResStatList *)CmGetmsgbytesPtr(msg, sizeof(CmsReportResStatList));
+        (const CmsReportResStatList *)CmGetMsgBytesPtr(msg, sizeof(CmsReportResStatList));
     if (msgResStatusList == NULL) {
         return;
     }
     ProcessResStatusChanged(msgResStatusList);
 }
 
-static void MsgCmAgentResStatusList(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentResStatusList(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     const CmsReportResStatList *msgResStatusList =
-        (const CmsReportResStatList *)CmGetmsgbytesPtr(msg, sizeof(CmsReportResStatList));
+        (const CmsReportResStatList *)CmGetMsgBytesPtr(msg, sizeof(CmsReportResStatList));
     if (msgResStatusList == NULL) {
         return;
     }
     ProcessResStatusList(msgResStatusList);
 }
 
-static void MsgCmAgentClientDdbOperAck(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentClientDdbOperAck(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     const CmSendDdbOperRes *msgDdbOper =
-        (const CmSendDdbOperRes *)CmGetmsgbytesPtr(msg, sizeof(CmSendDdbOperRes));
+        (const CmSendDdbOperRes *)CmGetMsgBytesPtr(msg, sizeof(CmSendDdbOperRes));
     if (msgDdbOper == NULL) {
         return;
     }
     ProcessDdbOperFromCms(msgDdbOper);
 }
 
-static void MsgCmsCmdOtherDefault(const cm_msg_type* msgTypePtr)
-{
-    write_runlog(LOG, "received command type %d is unknown \n", msgTypePtr->msg_type);
-}
-
-static void MsgCmAgentDnInstanceBarrier(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentDnInstanceBarrier(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     int ret;
     if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
-        cm_to_agent_barrier_info *barrierRespMsg =
-            (cm_to_agent_barrier_info *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_barrier_info));
+        const cm_to_agent_barrier_info *barrierRespMsg =
+            (const cm_to_agent_barrier_info *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_barrier_info));
         if (barrierRespMsg == NULL) {
             return;
         }
@@ -1767,24 +1705,51 @@ static void MsgCmAgentDnInstanceBarrier(const CM_Result* msg, char *dataPath, co
     }
 }
 
-static void MsgCmAgentGetSharedStorageModeAck(const CM_Result *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+static void MsgCmAgentGetSharedStorageModeAck(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
 {
     const CmsSharedStorageInfo *recvMsg =
-        (const CmsSharedStorageInfo*)CmGetmsgbytesPtr(msg, sizeof(CmsSharedStorageInfo));
+        (const CmsSharedStorageInfo*)CmGetMsgBytesPtr(msg, sizeof(CmsSharedStorageInfo));
     if (recvMsg == NULL) {
         return;
     }
     ProcessSharedStorageModeFromCms(recvMsg);
 }
 
+static void MsgCmAgentResLockAck(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+{
+    CmsReportLockResult *recvMsg = (CmsReportLockResult*)CmGetMsgBytesPtr(msg, sizeof(CmsReportLockResult));
+    if (recvMsg == NULL) {
+        return;
+    }
+    ProcessResLockAckFromCms(recvMsg);
+}
+
+static void MsgCmAgentResArbitrate(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+{
+    const CmsNotifyAgentRegMsg *recvMsg =
+        (const CmsNotifyAgentRegMsg *)CmGetMsgBytesPtr(msg, sizeof(CmsNotifyAgentRegMsg));
+    if (recvMsg == NULL) {
+        return;
+    }
+    ProcessResRegFromCms(recvMsg);
+}
+
+static void MsgCmAgentIsregCheckListChanged(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+{
+    const CmsFlushIsregCheckList *recvMsg =
+        (const CmsFlushIsregCheckList*)CmGetMsgBytesPtr(msg, sizeof(CmsFlushIsregCheckList));
+    CM_RETURN_IF_NULL(recvMsg);
+    ProcessIsregCheckListChanged(recvMsg);
+}
+
 #ifdef ENABLE_MULTIPLE_NODES
-static void MsgCmAgentNotifyCn(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentNotifyCn(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     int instanceType;
     int ret;
     bool status = false;
     const cm_to_agent_notify_cn *msgTypeNotifyCnPtr =
-        (const cm_to_agent_notify_cn *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_notify_cn));
+        (const cm_to_agent_notify_cn *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_notify_cn));
     if (msgTypeNotifyCnPtr == NULL) {
         return;
     }
@@ -1808,7 +1773,7 @@ static void MsgCmAgentNotifyCn(const CM_Result* msg, char *dataPath, const cm_ms
             write_runlog(ERROR, "notify cn find error, pgxc_node is not match.\n");
             return;
         }
-        status = process_notify_cn_command(msgTypeNotifyCnPtr, msg->gr_msglen);
+        status = process_notify_cn_command(msgTypeNotifyCnPtr, (int)msg->msgLen);
     } else {
         write_runlog(LOG,
             "agent_backup_open is true, we should ignore notify cn, instance is %u\n",
@@ -1819,25 +1784,25 @@ static void MsgCmAgentNotifyCn(const CM_Result* msg, char *dataPath, const cm_ms
         msgTypeNotifyCnPtr->instanceId, msgTypeNotifyCnPtr->notifyCount, status);
 }
 
-static void MsgCmAgentNotifyCnCentralNode(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentNotifyCnCentralNode(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     if (agent_backup_open == CLUSTER_PRIMARY) {
         const cm_to_agent_notify_cn_central_node *msgTypeNotifyCnCentralPtr =
-            (const cm_to_agent_notify_cn_central_node *)CmGetmsgbytesPtr(
+            (const cm_to_agent_notify_cn_central_node *)CmGetMsgBytesPtr(
                 msg, sizeof(cm_to_agent_notify_cn_central_node));
         if (msgTypeNotifyCnCentralPtr == NULL) {
             return;
         }
-        (void)process_notify_ccn_command(msgTypeNotifyCnCentralPtr);
+        process_notify_ccn_command(msgTypeNotifyCnCentralPtr);
     }
 }
 
-static void MsgCmAgentDropCn(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentDropCn(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     int ret;
     int instanceType;
     const cm_to_agent_drop_cn *msgTypeDropCnPtr =
-        (const cm_to_agent_drop_cn *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_drop_cn));
+        (const cm_to_agent_drop_cn *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_drop_cn));
     if (msgTypeDropCnPtr == NULL) {
         return;
     }
@@ -1858,26 +1823,26 @@ static void MsgCmAgentDropCn(const CM_Result* msg, char *dataPath, const cm_msg_
     process_drop_cn_command(msgTypeDropCnPtr, true);
 }
 
-static void MsgCmAgentDroppedCn(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentDroppedCn(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     const cm_to_agent_drop_cn *msgTypeDropCnPtr =
-        (const cm_to_agent_drop_cn *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_drop_cn));
+        (const cm_to_agent_drop_cn *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_drop_cn));
     if (msgTypeDropCnPtr == NULL) {
         return;
     }
-    if (g_syncDroppedCoordinator == false) {
+    if (!g_syncDroppedCoordinator) {
         write_runlog(LOG, "MSG_CM_AGENT_DROPPED_CN: sync_dropped_coordinator change to true.\n");
     }
     g_syncDroppedCoordinator = true;
     process_drop_cn_command(msgTypeDropCnPtr, false);
 }
 
-static void MsgCmAgentCnInstanceBarrier(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+static void MsgCmAgentCnInstanceBarrier(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     int ret;
     if (agent_backup_open == CLUSTER_STREAMING_STANDBY) {
-        cm_to_agent_barrier_info *barrierRespMsg =
-            (cm_to_agent_barrier_info *)CmGetmsgbytesPtr(msg, sizeof(cm_to_agent_barrier_info));
+        const cm_to_agent_barrier_info *barrierRespMsg =
+            (const cm_to_agent_barrier_info *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_barrier_info));
         if (barrierRespMsg == NULL) {
             return;
         }
@@ -1892,7 +1857,7 @@ static void MsgCmAgentCnInstanceBarrier(const CM_Result* msg, char *dataPath, co
 }
 #endif
 
-typedef void (*cms_cmd_proc_t)(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr);
+typedef void (*cms_cmd_proc_t)(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr);
 
 static cms_cmd_proc_t g_cmsCmdProcessor[MSG_CM_TYPE_CEIL] = {0};
 
@@ -1924,6 +1889,10 @@ void CmServerCmdProcessorInit(void)
     g_cmsCmdProcessor[MSG_CM_CLIENT_DDB_OPER_ACK]               = MsgCmAgentClientDdbOperAck;
     g_cmsCmdProcessor[MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER]   = MsgCmAgentDnInstanceBarrier;
     g_cmsCmdProcessor[MSG_GET_SHARED_STORAGE_INFO_ACK]          = MsgCmAgentGetSharedStorageModeAck;
+    g_cmsCmdProcessor[MSG_CM_RES_LOCK_ACK]                      = MsgCmAgentResLockAck;
+    g_cmsCmdProcessor[MSG_CM_RES_REG]                           = MsgCmAgentResArbitrate;
+    g_cmsCmdProcessor[MSG_CM_AGENT_FLOAT_IP_ACK]                = NULL;
+    g_cmsCmdProcessor[MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED]    = MsgCmAgentIsregCheckListChanged;
 #ifdef ENABLE_MULTIPLE_NODES
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN]                   = MsgCmAgentNotifyCn;
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN_CENTRAL_NODE]      = MsgCmAgentNotifyCnCentralNode;
@@ -1937,17 +1906,133 @@ void CmServerCmdProcessorInit(void)
 #endif
 }
 
-static void ProcessCmServerCmd(const CM_Result* msg)
+static void EtcdCurrentTimeReport(void)
 {
-    cm_msg_type* msgTypePtr = NULL;
-    char dataPath[MAXPGPATH];
-    errno_t rc = memset_s(dataPath, MAXPGPATH, 0, MAXPGPATH);
-    securec_check_errno(rc, (void)rc);
-
-    msgTypePtr = (cm_msg_type *)CmGetmsgbytesPtr(msg, sizeof(cm_msg_type));
-    if (msgTypePtr == NULL) {
+    if (agent_cm_server_connect == NULL || g_currentNode->etcd != 1) {
         return;
     }
+
+    agent_to_cm_current_time_report reportMsg = {0};
+    reportMsg.msg_type = (int)MSG_AGENT_CM_ETCD_CURRENT_TIME;
+    reportMsg.nodeid = g_nodeId;
+    reportMsg.etcd_time = (pg_time_t)time(NULL);
+
+    write_runlog(DEBUG5, "current etcd time = (%ld).\n", reportMsg.etcd_time);
+    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_current_time_report), "etcd time");
+}
+
+static bool IsServerHeartbeatTimeout()
+{
+    struct timespec now = {0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &now);
+
+    return (now.tv_sec - g_serverHeartbeatTime.tv_sec) >= (time_t)agent_heartbeat_timeout;
+}
+
+static void SendCmDdbOper()
+{
+    if (agent_cm_server_connect == NULL) {
+        return;
+    }
+    if (g_currentNode->coordinate == 0) {
+        return;
+    }
+    (void)pthread_rwlock_wrlock(&(g_gtmSendDdbOper.lock));
+    if (g_gtmSendDdbOper.sendOper == NULL) {
+        (void)pthread_rwlock_unlock(&(g_gtmSendDdbOper.lock));
+        return;
+    }
+    if (g_gtmSendDdbOper.sendOper->dbOper == DDB_INIT_OPER) {
+        (void)pthread_rwlock_unlock(&(g_gtmSendDdbOper.lock));
+        return;
+    }
+    CltSendDdbOper sendOper = {0};
+    errno_t rc = memcpy_s(&sendOper, sizeof(CltSendDdbOper), g_gtmSendDdbOper.sendOper, sizeof(CltSendDdbOper));
+    securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_unlock(&(g_gtmSendDdbOper.lock));
+
+    write_runlog(LOG, "ddb oper(%d), msgType(%d).\n", (int)sendOper.dbOper, sendOper.msgType);
+    PushMsgToCmsSendQue((char *)&sendOper, (uint32)sizeof(CltSendDdbOper), "ddb cmd");
+}
+
+static void GetDoradoIpFromCms()
+{
+    GetSharedStorageInfo sendMsg = {0};
+    sendMsg.msg_type = (int)MSG_GET_SHARED_STORAGE_INFO;
+
+    PushMsgToCmsSendQue((char *)&sendMsg, (uint32)sizeof(GetSharedStorageInfo), "dorado");
+}
+
+static void SendHbs()
+{
+    if (agent_cm_server_connect == NULL || g_currentNode->datanodeCount == 0) {
+        return;
+    }
+
+    CmRhbMsg hbMsg = {0};
+    GetHbs(hbMsg.hbs, &hbMsg.hwl);
+    hbMsg.msg_type = (int)MSG_CM_RHB;
+    hbMsg.nodeId = g_nodeHeader.node;
+
+    PushMsgToCmsSendQue((const char *)&hbMsg, (uint32)sizeof(CmRhbMsg), "SendHbs");
+    write_runlog(DEBUG5, "push cms msg to send queue, hbs msg.\n");
+}
+
+static void ReportInstanceStatus()
+{
+    InstancesStatusCheckAndReport();
+    AgentSendHeartbeat();
+    SendCmDdbOper();
+    if (GetIsSharedStorageMode()) {
+        GetDoradoIpFromCms();
+    }
+    SendHbs();
+}
+
+void *ProcessSendCmsMsgMain(void *arg)
+{
+    uint32 etcdTimeReportInterval = 0;
+    struct timespec lastReportTime = {0, 0};
+    struct timespec currentTime = {0, 0};
+    long expiredTime = 0;
+    (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
+    pthread_t threadId = pthread_self();
+    thread_name = "SendCmsMsg";
+    write_runlog(LOG, "SendCmsMsgMain will start, and threadId is %lu.\n", (unsigned long)threadId);
+    for (;;) {
+        set_thread_state(threadId);
+        if (g_shutdownRequest) {
+            cm_sleep(SHUTDOWN_SLEEP_TIME);
+            continue;
+        }
+        (void)clock_gettime(CLOCK_MONOTONIC, &currentTime);
+        expiredTime = (currentTime.tv_sec - lastReportTime.tv_sec);
+        write_runlog(DEBUG5, "send cms msg expiredTime=%ld,currentTime=%ld,lastReportTime=%ld\n", expiredTime,
+            currentTime.tv_sec, lastReportTime.tv_sec);
+        if (expiredTime >= 1) {
+            if ((agent_cm_server_connect != NULL) && IsServerHeartbeatTimeout()) {
+                write_runlog(LOG, "connection to cm_server %u seconds timeout expired .\n", agent_heartbeat_timeout);
+                g_cmServerNeedReconnect = true;
+            }
+            ReportInstanceStatus();
+            if (etcdTimeReportInterval >= AGENT_REPORT_ETCD_CYCLE || etcdTimeReportInterval == 0) {
+                EtcdCurrentTimeReport();
+                etcdTimeReportInterval = 0;
+            }
+            etcdTimeReportInterval++;
+            (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
+        }
+        CmUsleep(AGENT_RECV_CYCLE);
+    }
+    return NULL;
+}
+
+static void ProcessCmServerCmd(const AgentMsgPkg *msg)
+{
+    char dataPath[MAXPGPATH] = {0};
+
+    const cm_msg_type *msgTypePtr = (const cm_msg_type *)CmGetMsgBytesPtr(msg, sizeof(cm_msg_type));
+    CM_RETURN_IF_NULL(msgTypePtr);
     if (msgTypePtr->msg_type >= MSG_CM_TYPE_CEIL || msgTypePtr->msg_type < 0) {
         write_runlog(ERROR, "recv cms msg, msg_type=%d invalid.\n", msgTypePtr->msg_type);
         return;
@@ -1960,181 +2045,30 @@ static void ProcessCmServerCmd(const CM_Result* msg)
         return;
     }
 
-    MsgCmsCmdOtherDefault(msgTypePtr);
+    write_runlog(LOG, "received command type %d is unknown \n", msgTypePtr->msg_type);
 }
 
-static void RecvCmServerCmd(void)
+void *ProcessRecvCmsMsgMain(void *arg)
 {
-    CM_Result* res = NULL;
-    if (agent_cm_server_connect == NULL) {
-        write_runlog(DEBUG5, "cm_agent is not connect to the cm server \n");
-        return;
-    }
-    int ret = cmpqReadData(agent_cm_server_connect);
-    if (ret < 0) {
-        write_runlog(LOG,
-            "cm_agent is not connect to the cmserver ret=%d,errMsg:%s\n",
-            ret,
-            agent_cm_server_connect->errorMessage.data);
-        CloseConnToCmserver();
-        return;
-    }
-    if (ret > 0) {
-        do {
-            res = cmpqGetResult(agent_cm_server_connect);
-            if (res != NULL) {
-                ProcessCmServerCmd(res);
-            }
-        } while (res != NULL);
-    }
-}
+    thread_name = "ProcessCmsMsg";
+    write_runlog(LOG, "process cms msg thread begin, threadId:%lu.\n", (unsigned long)pthread_self());
 
-static void EtcdCurrentTimeReport(void)
-{
-    agent_to_cm_current_time_report report_msg;
-    int ret;
-
-    if (agent_cm_server_connect == NULL || g_currentNode->etcd != 1) {
-        return;
-    }
-
-    report_msg.msg_type = MSG_AGENT_CM_ETCD_CURRENT_TIME;
-    report_msg.nodeid = g_nodeId;
-    report_msg.etcd_time = (pg_time_t)time(NULL);
-
-    ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&report_msg, sizeof(agent_to_cm_current_time_report));
-    if (ret != 0) {
-        write_runlog(ERROR, "cm_client_send_msg the current time failed!\n");
-        CloseConnToCmserver();
-        return;
-    }
-
-    write_runlog(DEBUG5,
-        "cm_client_send_msg send the current time is %ld,node is %u\n",
-        report_msg.etcd_time,
-        report_msg.nodeid);
-}
-
-static bool IsServerHeartbeatTimeout()
-{
-    struct timespec now = {0};
-    (void)clock_gettime(CLOCK_MONOTONIC, &now);
-
-    return (now.tv_sec - g_serverHeartbeatTime.tv_sec) >= (time_t)agent_heartbeat_timeout;
-}
-
-static void CheckLogLevel(int diskUsageCheckTimes, int* logLevel)
-{
-    if (diskUsageCheckTimes == 0) {
-        *logLevel = LOG;
-    } else {
-        *logLevel = DEBUG1;
-    }
-}
-
-static void SendCmDdbOper()
-{
-    if (agent_cm_server_connect == NULL) {
-        return;
-    }
-    if (g_currentNode->coordinate == 0) {
-        return;
-    }
-    CltSendDdbOper sendOper = {0};
-    (void)pthread_rwlock_wrlock(&(g_gtmSendDdbOper.lock));
-    if (g_gtmSendDdbOper.sendOper == NULL) {
-        (void)pthread_rwlock_unlock(&(g_gtmSendDdbOper.lock));
-        return;
-    }
-    if (g_gtmSendDdbOper.sendOper->dbOper == DDB_INIT_OPER) {
-        (void)pthread_rwlock_unlock(&(g_gtmSendDdbOper.lock));
-        return;
-    }
-    errno_t rc = memcpy_s(&sendOper, sizeof(CltSendDdbOper), g_gtmSendDdbOper.sendOper, sizeof(CltSendDdbOper));
-    securec_check_errno(rc, (void)rc);
-    int32 ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&sendOper, sizeof(CltSendDdbOper));
-    if (ret != 0) {
-        write_runlog(ERROR, "send cm_agent ddb oper failed!\n");
-        CloseConnToCmserver();
-    }
-    (void)pthread_rwlock_unlock(&(g_gtmSendDdbOper.lock));
-    write_runlog(LOG, "send cm_agent ddb oper(%d), msgType is %d.\n", sendOper.dbOper, sendOper.msgType);
-}
-
-static void GetDoradoIpFromCms()
-{
-    if (!g_isNeedGetDoradoIp) {
-        return;
-    }
-    GetSharedStorageInfo sendMsg = {0};
-    sendMsg.msg_type = (int)MSG_GET_SHARED_STORAGE_INFO;
-    if (cm_client_send_msg(agent_cm_server_connect, 'C', (char*)&sendMsg, sizeof(sendMsg)) != 0) {
-        write_runlog(ERROR, "GetDoradoIpFromCms send msg to cms fail!\n");
-    }
-}
-
-static void ReportInstanceStatus()
-{
-    if (agent_cm_server_connect == NULL || agent_cm_server_connect->status != CONNECTION_OK) {
-        return;
-    }
-
-    InstancesStatusCheckAndReport();
-    AgentSendHeartbeat();
-    SendCmDdbOper();
-    GetDoradoIpFromCms();
-}
-
-void* SendCmsMsgMain(void* arg)
-{
-    uint32 etcdTimeReportInterval = 0;
-    uint32 diskCheckReportInterval = 0;
-    struct timespec lastReportTime = {0, 0};
-    struct timespec currentTime = {0, 0};
-    long expiredTime = 0;
-    (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
-    int diskUsageCheckTimes = 0;
-    int logLevel = DEBUG1;
     for (;;) {
         if (g_shutdownRequest) {
-            CloseConnToCmserver();
             cm_sleep(5);
             continue;
         }
-        (void)clock_gettime(CLOCK_MONOTONIC, &currentTime);
-        expiredTime = (currentTime.tv_sec - lastReportTime.tv_sec);
-        write_runlog(DEBUG5, "send cms msg expiredTime=%ld,currentTime=%ld,lastReportTime=%ld\n", expiredTime,
-            currentTime.tv_sec, lastReportTime.tv_sec);
-        if (expiredTime >= 1) {
-            if ((agent_cm_server_connect != NULL) && IsServerHeartbeatTimeout()) {
-                write_runlog(LOG, "connection to cm_server %u seconds timeout expired .\n",
-                    agent_heartbeat_timeout);
-                g_cmServerNeedReconnect = true;
-            }
-            if (g_cmServerNeedReconnect) {
-                CloseConnToCmserver();
-            }
-            ReportInstanceStatus();
-            /* Check and report the disk usage per 5s */
-            if (diskCheckReportInterval >= g_agentDiskUsageStatusCheckTimes) {
-                /* Report at level LOG per 1 minute */
-                diskUsageCheckTimes %= 12;
-                CheckLogLevel(diskUsageCheckTimes, &logLevel);
-                DiskUsageCheckAndReport(logLevel);
-                diskCheckReportInterval = 0;
-                diskUsageCheckTimes++;
-            }
-            diskCheckReportInterval++;
-            if (etcdTimeReportInterval >= AGENT_REPORT_ETCD_CYCLE || etcdTimeReportInterval == 0) {
-                EtcdCurrentTimeReport();
-                etcdTimeReportInterval = 0;
-            }
-            etcdTimeReportInterval++;
-            (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
+        MsgQueue &recvQueue = GetCmsRecvQueue();
+        (void)pthread_mutex_lock(&recvQueue.lock);
+        while (recvQueue.msg.empty()) {
+            (void)pthread_cond_wait(&recvQueue.cond, &recvQueue.lock);
         }
-        
-        RecvCmServerCmd();
-        cm_usleep(AGENT_RECV_CYCLE);
+        AgentMsgPkg msgPkg = recvQueue.msg.front();
+        recvQueue.msg.pop();
+        (void)pthread_mutex_unlock(&recvQueue.lock);
+        ProcessCmServerCmd(&msgPkg);
+        FreeBufFromMsgPool(msgPkg.msgPtr);
     }
+
     return NULL;
 }

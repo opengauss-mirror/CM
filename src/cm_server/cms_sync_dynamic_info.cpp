@@ -5,7 +5,7 @@
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *
- *          http://license.coscl.org.cn/MulanPSL2
+ * http://license.coscl.org.cn/MulanPSL2
  *
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
@@ -17,7 +17,7 @@
  *
  *
  * IDENTIFICATION
- *    src/cm_server/cms_sync_dynamic_info.cpp
+ * src/cm_server/cms_sync_dynamic_info.cpp
  *
  * -------------------------------------------------------------------------
  */
@@ -26,7 +26,7 @@
 #include "cms_global_params.h"
 #include "cms_write_dynamic_config.h"
 
-static bool IsCnStatusParameterValid(const char* cnId, const char* cnStatus) 
+static bool IsCnStatusParameterValid(const char *cnId, const char *cnStatus)
 {
     if (strlen(cnId) == 0 || strlen(cnStatus) == 0) {
         write_runlog(ERROR, "cnId or cnStatus is null, cnId=%s, cnStatus=%s.\n", cnId, cnStatus);
@@ -43,12 +43,12 @@ static int GetReplaceCnStatusFromFile()
 {
     uint32 coordinatorId = 0;
     uint32 count = 0;
-    const uint32 inputParaNum = 2;
+    const int inputParaNum = 2;
     int cnRole = 0;
     struct stat statBuf = {0};
     const uint32 strLength = 64;
     char cnId[strLength] = {0};
-    char cnStatus[strLength] = {0}; 
+    char cnStatus[strLength] = {0};
     const int bufLength = 1024;
     char buf[bufLength] = {'\0'};
 
@@ -57,11 +57,11 @@ static int GetReplaceCnStatusFromFile()
         return -1;
     }
 
-    FILE* fd = fopen(g_replaceCnStatusFile, "r");
+    FILE *fd = fopen(g_replaceCnStatusFile, "r");
     if (fd == NULL) {
         char errBuffer[ERROR_LIMIT_LEN] = {0};
-        write_runlog(ERROR, "open cn status file %s failed! errno=%d, errmsg=%s\n",
-            g_replaceCnStatusFile, errno, strerror_r(errno, errBuffer, ERROR_LIMIT_LEN));
+        write_runlog(ERROR, "open cn status file %s failed! errno=%d, errmsg=%s\n", g_replaceCnStatusFile, errno,
+            strerror_r(errno, errBuffer, ERROR_LIMIT_LEN));
         return -1;
     }
 
@@ -72,8 +72,8 @@ static int GetReplaceCnStatusFromFile()
         errno_t rcs = sscanf_s(buf, "%[^:]:%s", cnId, strLength, cnStatus, strLength);
         check_sscanf_s_result(rcs, inputParaNum);
 
-        if (IsCnStatusParameterValid(cnId, cnStatus) == false) {
-            fclose(fd);
+        if (!IsCnStatusParameterValid(cnId, cnStatus)) {
+            (void)fclose(fd);
             return -1;
         }
         coordinatorId = (uint32)strtol(cnId, NULL, 10);
@@ -85,9 +85,9 @@ static int GetReplaceCnStatusFromFile()
         write_runlog(LOG, "get replace cn status (%u:%s)\n", coordinatorId, cnStatus);
 
         for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-            if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE && 
+            if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE &&
                 g_instance_role_group_ptr[i].instanceMember[0].instanceId == coordinatorId) {
-                write_runlog(LOG, "get replace cn status: old status=%d, new status=%d.\n", 
+                write_runlog(LOG, "get replace cn status: old status=%d, new status=%d.\n",
                     g_instance_role_group_ptr[i].instanceMember[0].role, cnRole);
 
                 cm_instance_report_status* CnStatusForGroup = &(g_instance_group_report_status_ptr[i].instance_status);
@@ -104,7 +104,7 @@ static int GetReplaceCnStatusFromFile()
             }
         }
     }
-    fclose(fd);
+    (void)fclose(fd);
     write_runlog(LOG, "there are %u cn need to change status.\n", count);
     if (count == 0) {
         return -1;
@@ -114,27 +114,23 @@ static int GetReplaceCnStatusFromFile()
 
 void SyncReplaceCnStatusToDdb()
 {
-    if (g_SetReplaceCnStatus) {
+    if (g_SetReplaceCnStatus == 1) {
         write_runlog(LOG, "current cmserver is primary, sync replace cn status to Ddb.\n");
         int result = GetReplaceCnStatusFromFile();
         if (result != 0) { /* the file or cn status is invalid, do nothing and return */
-            g_SetReplaceCnStatus = false;
+            g_SetReplaceCnStatus = 0;
             return;
         }
 
         result = SetReplaceCnStatusToDdb();
         if (result == 0) {
             (void)WriteDynamicConfigFile(false);
-            g_SetReplaceCnStatus = false;
+            g_SetReplaceCnStatus = 0;
         }
         return;
     }
 }
 
-/**
- * @brief Get the kerberos info from ddb object
- * 
- */
 static void GetKerberosInfoFromDdb()
 {
     if (g_kerberos_check_cms_primary_standby) {
@@ -146,10 +142,6 @@ static void GetKerberosInfoFromDdb()
     return;
 }
 
-/**
- * @brief 
- * 
- */
 static void SyncAllDnFinishRedoFlagFromDdb()
 {
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
@@ -159,7 +151,7 @@ static void SyncAllDnFinishRedoFlagFromDdb()
             g_instance_group_report_status_ptr[i].instance_status.term = InvalidTerm;
             (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
 
-            if (GetFinishRedoFlagFromDdb(i) == false) {
+            if (!GetFinishRedoFlagFromDdb(i)) {
                 (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
                 g_instance_group_report_status_ptr[i].instance_status.finish_redo = false;
                 (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
@@ -168,15 +160,11 @@ static void SyncAllDnFinishRedoFlagFromDdb()
     }
 }
 
-/**
- * @brief 
- * 
- */
 static void CmsPrimarySyncDnFinishRedoFlagFromDdb()
 {
     if (g_syncDnFinishRedoFlagFromDdb) {
         if (undocumentedVersion == 0 || undocumentedVersion >= 92214) {
-            GetFinishRedoFlagFromDdbNew();
+            (void)GetFinishRedoFlagFromDdbNew();
         } else {
             SyncAllDnFinishRedoFlagFromDdb();
         }
@@ -186,33 +174,16 @@ static void CmsPrimarySyncDnFinishRedoFlagFromDdb()
     return;
 }
 
-/**
- * @brief In case of CMS primary, we need get Read-Only info from ddb
- * 
- */
-static void SyncReadOnlyStatusFromDdb()
-{
-    if (g_syncDNReadOnlyStatusFromDdb) {
-        /* readonly: get read only status from ddb. */
-        (void)GetNodeReadOnlyStatusFromDdb();
-        g_syncDNReadOnlyStatusFromDdb = false;
-        write_runlog(LOG, "[%s][line:%d] get read only status from ddb finished. \n", __FUNCTION__, __LINE__);
-    }
-    return;
-}
-
-/**
- * @brief 
- * 
- * @param  arg              My Param doc
- * @return void* 
- */
 void* SyncDynamicInfoFromDdb(void* arg)
 {
     uint32 i = 0;
     thread_name = "SYNC";
+    if (!IsNeedSyncDdb()) {
+        write_runlog(LOG, "We don't need SYNC thread, exit.\n");
+        return NULL;
+    }
     for (;;) {
-        if (got_stop) {
+        if (got_stop == 1) {
             break;
         }
 
@@ -237,7 +208,6 @@ void* SyncDynamicInfoFromDdb(void* arg)
             SyncReplaceCnStatusToDdb();
             GetKerberosInfoFromDdb();
             CmsPrimarySyncDnFinishRedoFlagFromDdb();
-            SyncReadOnlyStatusFromDdb();
             if (undocumentedVersion == 0 || undocumentedVersion >= 92214) {
                 GetCoordinatorDynamicConfigChangeFromDdbNew(0);
                 if (g_multi_az_cluster) {

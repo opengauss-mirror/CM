@@ -35,11 +35,6 @@ int SetTermIfArbitrationChanged(uint32 *term);
 bool SetHeartbeatToEtcd(char *key);
 bool GetFinishRedoFlagFromDdb(uint32 groupIdx);
 bool GetFinishRedoFlagFromDdbNew(void);
-bool GetDnFailStatusFromDdb(int *statusOnline, int len);
-bool SetDnFailStatusToDdb(const int *statusOnline, int len);
-
-bool GetOnlineStatusFromDdb(int *statusOnline, int len);
-bool SetOnlineStatusToDdb(const int *statusOnline, int len);
 
 void SetDynamicConfigChangeToDdb(uint32 groupIdx, int32 memIdx);
 void GetCoordinatorDynamicConfigChangeFromDdb(uint32 groupIdx);
@@ -49,11 +44,11 @@ void GetDatanodeDynamicConfigChangeFromDdbNew(uint32 groupIdx);
 void GetGtmDynamicConfigChangeFromDdb(uint32 groupIdx);
 void SetStaticPrimaryRole(const uint32 groupIndex, const int staticPrimaryIndex);
 int SetReplaceCnStatusToDdb(void);
-int GetNodeReadOnlyStatusFromDdb(void);
-status_t SetNodeReadOnlyStatusToDdb(const char *bitsString, int logLevel);
+status_t GetNodeReadOnlyStatusFromDdb();
+void SetNodeReadOnlyStatusToDdb();
 
 status_t TryDdbGet(const char *key, char *value, int32 maxSize, int32 tryTimes, int32 logLevel = ERROR);
-uint64 GetTimeMinus(struct timeval checkEnd, struct timeval checkBegin);
+uint64 GetTimeMinus(const struct timeval checkEnd, const struct timeval checkBegin);
 DDB_RESULT GetHistoryClusterCurSyncListFromDdb(void);
 DDB_RESULT GetHistoryClusterExceptSyncListFromDdb(void);
 bool SetGroupExpectSyncList(uint32 groupIndex, const CurrentInstanceStatus *statusInstance);

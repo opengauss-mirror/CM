@@ -34,6 +34,16 @@ extern "C" {
 #define CLIENT_API __declspec(dllexport)
 #endif
 
+typedef enum {
+    CM_RES_SUCCESS = 0,
+    CM_RES_CANNOT_DO = 1,
+    CM_RES_DDB_FAILED = 2,
+    CM_RES_VERSION_WRONG = 3,
+    CM_RES_CONNECT_ERROR = 4,
+    CM_RES_TIMEOUT = 5,
+    CM_RES_NO_LOCK_OWNER = 6,
+} cm_err_code;
+
 typedef void(*CmNotifyFunc)(void);
 
 /*
@@ -44,6 +54,12 @@ typedef void(*CmNotifyFunc)(void);
 * @return 0: success; -1 failed
 */
 CLIENT_API int CmInit(unsigned int instId, const char *resName, CmNotifyFunc func);
+
+/*
+* cm client finish function, close all cm_client thread.
+* @return
+ */
+CLIENT_API void __attribute__((destructor)) CmClientFini();
 
 /*
 * resource get instances stat list function
@@ -57,6 +73,32 @@ CLIENT_API char *CmGetResStats();
 * @return 0: success; -1 failed
 */
 CLIENT_API int CmFreeResStats(char *resStats);
+
+/*
+* resource get lock from cm
+* @return: cm_err_code
+ */
+CLIENT_API int CmResLock(const char *lockName);
+
+/*
+* lock owner unlock from cm
+* @return: cm_err_code
+ */
+CLIENT_API int CmResUnlock(const char *lockName);
+
+/*
+* get lock owner's res_instance_id from cm
+* @param [in&out] instId: lock owner's instance id
+* @return: cm_err_code
+ */
+CLIENT_API int CmResGetLockOwner(const char *lockName, unsigned int *instId);
+
+/*
+* lock owner transfer lock to other instance
+* @param [in] instId: new lock owner's instance id
+* @return: cm_err_code
+ */
+CLIENT_API int CmResTransLock(const char *lockName, unsigned int instId);
 
 #ifdef __cplusplus
 }

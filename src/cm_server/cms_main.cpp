@@ -29,31 +29,31 @@
 #include "cms_alarm.h"
 #include "cms_process_messages.h"
 #include "cms_threads.h"
-#include "cms_main.h"
 #include "cms_ddb.h"
-#include "cms_conn.h"
 #include "cms_common.h"
+#include "cms_common_res.h"
 #include "config.h"
 #include "cm/cs_ssl.h"
 #include "cm/cm_cipher.h"
+#include "cm/cm_json_config.h"
+#include "cms_rhb.h"
+#include "cms_main.h"
 
-#define gettid() syscall(__NR_gettid)
+static const char *g_force_start_file_str = "force_start.info";
 
-const char *g_force_start_file_str = "force_start.info";
-
-typedef struct unauth_connection {
+typedef struct unauth_connection_t {
     CM_Connection* conn;
-    struct unauth_connection* next;
+    struct unauth_connection_t* next;
 } unauth_connection;
 
 static unauth_connection* g_unauth_conn_list = NULL;
-volatile sig_atomic_t got_stop = false;
-volatile sig_atomic_t g_gotParameterReload = false;
-volatile sig_atomic_t g_SetReplaceCnStatus = false;
+volatile sig_atomic_t got_stop = 0;
+volatile sig_atomic_t g_gotParameterReload = 0;
+volatile sig_atomic_t g_SetReplaceCnStatus = 0;
 
 /* main thread exit after HA thread close connection */
-volatile sig_atomic_t ha_connection_closed = false;
-THR_LOCAL volatile sig_atomic_t got_conns_close = false;
+volatile sig_atomic_t ha_connection_closed = 0;
+volatile sig_atomic_t got_conns_close[CM_IO_THREAD_COUNT] = {0};
 pid_t cm_agent = 0;
 
 const char* g_progname;
@@ -61,40 +61,45 @@ static char g_appPath[MAXPGPATH] = {0};
 char cm_server_bin_path[MAX_PATH_LEN] = {0};
 char g_replaceCnStatusFile[MAX_PATH_LEN] = {0};
 
-void change_primary_member_index(uint32 group_index, int primary_member_index);
 int check_process_status(const char *processName);
+
+static int ServerListenSocket[MAXLISTEN] = {0};
 
 int cm_server_send_msg(CM_Connection* con, char msgtype, const char* s, size_t len, int log_level)
 {
     int ret = 0;
-    if (0 == strcmp(thread_name, "CM_CTL")) {
-        log_level = DEBUG1;
-    }
     if (con != NULL && con->fd >= 0) {
+        if (con->port == NULL || con->port->remote_type == CM_CTL) {
+            log_level = DEBUG1;
+        }
         if (msgtype == 'S') {
-            if (((cm_msg_type*)s)->msg_type == MSG_CM_AGENT_NOTIFY_CN_CENTRAL_NODE) {
-                if (g_centralNode.instanceId != ((cm_to_agent_notify_cn_central_node*)s)->instanceId &&
-                    g_centralNode.node != ((cm_to_agent_notify_cn_central_node*)s)->node) {
+            if (((const cm_msg_type*)s)->msg_type == (int32)MSG_CM_AGENT_NOTIFY_CN_CENTRAL_NODE) {
+                if (g_centralNode.instanceId != ((const cm_to_agent_notify_cn_central_node*)s)->instanceId &&
+                    g_centralNode.node != ((const cm_to_agent_notify_cn_central_node*)s)->node) {
                     write_runlog(log_level, "cmserver send msg to node %u, msgtype: %s\n",
-                        con->port->node_id, cluster_msg_int_to_string(((cm_msg_type*)s)->msg_type));
+                        con->port->node_id, cluster_msg_int_to_string(((const cm_msg_type*)s)->msg_type));
                 }
-            } else if (((cm_msg_type*)s)->msg_type != MSG_CM_AGENT_DROPPED_CN) {
-                write_runlog(log_level, "cmserver send msg to node %u, msgtype: %s\n", 
-                    con->port->node_id, cluster_msg_int_to_string(((cm_msg_type*)s)->msg_type));
+            } else if (((const cm_msg_type*)s)->msg_type != (int32)MSG_CM_AGENT_DROPPED_CN) {
+                write_runlog(log_level, "cmserver send msg to node %u, msgtype: %s\n",
+                    con->port->node_id, cluster_msg_int_to_string(((const cm_msg_type*)s)->msg_type));
             }
         }
         ret = pq_putmessage(con->port, msgtype, s, len);
         if (ret != 0) {
             write_runlog(ERROR, "pq_putmessage return error ret=%d\n", ret);
-
-            if (con->port->remote_type != CM_SERVER) {
-                EventDel(con->epHandle, con);
-                RemoveCMAgentConnection(con);
-            }
             return ret;
         }
     }
     return 0;
+}
+
+int CmsSendAndFlushMsg(CM_Connection* con, char msgType, const char *s, size_t len, int logLevel)
+{
+    int ret = cm_server_send_msg(con, msgType, s, len, logLevel);
+    if (ret == 0) {
+        ret = cm_server_flush_msg(con);
+    }
+    return ret;
 }
 
 static void GetCmdlineOpt(int argc, char* argv[])
@@ -130,32 +135,31 @@ static void GetCmdlineOpt(int argc, char* argv[])
 
 static void stop_signal_reaper(int arg)
 {
-    got_stop = true;
+    got_stop = 1;
 }
 
 static void close_all_agent_connections(int arg)
 {
-    got_conns_close = true;
+    for (int i = 0; i < CM_IO_THREAD_COUNT; i++) {
+        got_conns_close[i] = 1;
+    }
 }
 
 static void reload_cmserver_parameters(int arg)
 {
-    g_gotParameterReload = true;
+    g_gotParameterReload = 1;
 }
 
 static void SetReloadDdbConfigFlag(int arg)
 {
     if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
-        g_SetReplaceCnStatus = true;
+        g_SetReplaceCnStatus = 1;
     }
 }
 
-static int get_prog_path(int argc, char** argv)
+static int get_prog_path()
 {
-    errno_t rc;
-    int rcs;
-
-    rc = memset_s(g_cmManualStartPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    errno_t rc = memset_s(g_cmManualStartPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
     rc = memset_s(g_cmInstanceManualStartPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
@@ -188,10 +192,10 @@ static int get_prog_path(int argc, char** argv)
     rc = memset_s(cluster_maintance_path, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
     if (GetHomePath(g_appPath, sizeof(g_appPath)) != 0) {
-        fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
+        (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
     } else {
-        rcs = snprintf_s(
+        int rcs = snprintf_s(
             g_cmManualStartPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", g_appPath, CM_CLUSTER_MANUAL_START);
         canonicalize_path(g_cmManualStartPath);
         securec_check_intval(rcs, (void)rcs);
@@ -248,23 +252,23 @@ static void init_cluster_state_mode()
     write_runlog(LOG, "cluster is on init mode, set instance timeout to %d.\n", INIT_CLUSTER_MODE_INSTANCE_DEAL_TIME);
 }
 
-static void SetCmsIndexStr(char *cmServerIndxStr, uint32 len, uint32 cmServerIdx, uint32 nodeIdx)
+static void SetCmsIndexStr(char *cmServerIdxStr, uint32 strLen, uint32 cmServerIdx, uint32 nodeIdx)
 {
     char cmServerStr[MAX_PATH_LEN];
     errno_t rc = snprintf_s(cmServerStr, MAX_PATH_LEN, MAX_PATH_LEN - 1,
         "[%u node:%u, cmserverId:%u, cmServerIndex:%u], ",
         cmServerIdx, g_node[nodeIdx].node, g_node[nodeIdx].cmServerId, nodeIdx);
     securec_check_intval(rc, (void)rc);
-    rc = strcat_s(cmServerIndxStr, len, cmServerStr);
+    rc = strcat_s(cmServerIdxStr, strLen, cmServerStr);
     securec_check_errno(rc, (void)rc);
 }
 
 static void initialize_cm_server_node_index(void)
 {
-    uint32 i = 0;
+    uint32 i;
     uint32 j = 0;
-    uint32 k = 0;
-    char cmServerIndxStr[MAX_PATH_LEN] = {0};
+    uint32 k;
+    char cmServerIdxStr[MAX_PATH_LEN] = {0};
     uint32 cm_instance_id[CM_PRIMARY_STANDBY_NUM] = {0};
     uint32 cmServerNum = 0;
     /* get cmserver instance id */
@@ -285,12 +289,13 @@ static void initialize_cm_server_node_index(void)
                 continue;
             }
             g_nodeIndexForCmServer[j] = i;
-            SetCmsIndexStr(cmServerIndxStr, MAX_PATH_LEN, j, i);
+            SetCmsIndexStr(cmServerIdxStr, MAX_PATH_LEN, j, i);
             j++;
             break;
         }
     }
-    fprintf(stderr, "[%s]: cmserverNum is %u, and cmserver info is %s.\n", g_progname, cmServerNum, cmServerIndxStr);
+    (void)fprintf(stderr, "[%s]: cmserverNum is %u, and cmserver info is %s.\n",
+        g_progname, cmServerNum, cmServerIdxStr);
 }
 
 static int read_config_file_check(void)
@@ -299,7 +304,7 @@ static int read_config_file_check(void)
 
     int status = read_config_file(g_cmStaticConfigurePath, &err_no, false, MALLOC_BY_NODE_MAXNUM);
     if (status == 0) {
-        if (g_nodeHeader.node <= 0) {
+        if (g_nodeHeader.node == 0) {
             write_runlog(ERROR, "current node self is invalid  node =%u\n", g_nodeHeader.node);
             return -1;
         }
@@ -310,7 +315,7 @@ static int read_config_file_check(void)
             return -1;
         }
 
-        ret = find_current_node_by_nodeid(g_nodeHeader.node);
+        ret = find_current_node_by_nodeid();
         if (ret != 0) {
             write_runlog(ERROR, "find_current_node_by_nodeid failed, nodeId=%u.\n", g_nodeHeader.node);
             return -1;
@@ -330,17 +335,17 @@ static int read_config_file_check(void)
         char errBuffer[ERROR_LIMIT_LEN] = {0};
         switch (status) {
             case OPEN_FILE_ERROR: {
-                write_runlog(ERROR, "%s: could not open the logic cluster static config file: %s\n",
+                write_runlog(FATAL, "%s: could not open the logic cluster static config file: %s\n",
                     g_progname, strerror_r(err_no, errBuffer, ERROR_LIMIT_LEN));
                 exit(1);
             }
             case READ_FILE_ERROR: {
-                write_runlog(ERROR, "%s: could not read logic cluster static config files: %s\n",
+                write_runlog(FATAL, "%s: could not read logic cluster static config files: %s\n",
                     g_progname, strerror_r(err_no, errBuffer, ERROR_LIMIT_LEN));
                 exit(1);
             }
             case OUT_OF_MEMORY:
-                write_runlog(ERROR, "%s: out of memory\n", g_progname);
+                write_runlog(FATAL, "%s: out of memory\n", g_progname);
                 exit(1);
             default:
                 break;
@@ -352,8 +357,7 @@ static int read_config_file_check(void)
 
 int AddNodeInDynamicConfigure(const cm_instance_role_group* instance_role_group_ptr)
 {
-    errno_t rc;
-    rc = memcpy_s((void*)(&(g_instance_role_group_ptr[g_dynamic_header->relationCount])),
+    errno_t rc = memcpy_s((void*)(&(g_instance_role_group_ptr[g_dynamic_header->relationCount])),
         sizeof(cm_instance_role_group),
         instance_role_group_ptr,
         sizeof(cm_instance_role_group));
@@ -363,33 +367,9 @@ int AddNodeInDynamicConfigure(const cm_instance_role_group* instance_role_group_
     return 0;
 }
 
-void listen_ip_merge(uint32 ip_count, char ip_listen[][CM_IP_LENGTH], char* ret_ip_merge, uint32 ipMergeLength)
-{
-    int rc;
-    if (ip_count == 1) {
-        rc = snprintf_s(ret_ip_merge, ipMergeLength, ipMergeLength - 1, "%s", ip_listen[0]);
-        securec_check_intval(rc, (void)rc);
-    } else if (ip_count == 2) {
-        rc = snprintf_s(
-            ret_ip_merge, ipMergeLength, ipMergeLength - 1, "%s,%s", ip_listen[0], ip_listen[1]);
-        securec_check_intval(rc, (void)rc);
-    } else if (ip_count == 3) {
-        rc = snprintf_s(ret_ip_merge,
-            ipMergeLength,
-            ipMergeLength - 1,
-            "%s,%s,%s",
-            ip_listen[0],
-            ip_listen[1],
-            ip_listen[2]);
-        securec_check_intval(rc, (void)rc);
-    } else {
-        write_runlog(ERROR, "ip count is invalid ip_count =%u\n", ip_count);
-    }
-    return;
-}
-
-int search_HA_node(int node_type, uint32 localPort, uint32 LocalHAListenCount, char LocalHAIP[][CM_IP_LENGTH],
-    uint32 peerPort, uint32 PeerHAListenCount, char PeerHAIP[][CM_IP_LENGTH], int* node_index, int* instance_index)
+int search_HA_node(int node_type, uint32 localPort, uint32 LocalHAListenCount, const char (*LocalHAIP)[CM_IP_LENGTH],
+    uint32 peerPort, uint32 PeerHAListenCount, const char (*PeerHAIP)[CM_IP_LENGTH], int *node_index,
+    int *instance_index)
 {
     int i;
     int max_node_count;
@@ -414,12 +394,12 @@ int search_HA_node(int node_type, uint32 localPort, uint32 LocalHAListenCount, c
     if (node_type == CM_DATANODE && !g_multi_az_cluster) {
         for (i = 0; i < max_node_count; i++) {
             for (j = 0; j < (int)g_node[i].datanodeCount; j++) {
-                if (PRIMARY_DN == g_node[i].datanode[j].datanodePeerRole) {
+                if (g_node[i].datanode[j].datanodePeerRole == PRIMARY_DN) {
                     if ((g_node[i].datanode[j].datanodeLocalHAPort != peerPort) ||
                         (g_node[i].datanode[j].datanodePeerHAPort != localPort)) {
                         continue;
                     }
-                } else if (PRIMARY_DN == g_node[i].datanode[j].datanodePeer2Role) {
+                } else if (g_node[i].datanode[j].datanodePeer2Role == PRIMARY_DN) {
                     if ((g_node[i].datanode[j].datanodeLocalHAPort != peerPort) ||
                         (g_node[i].datanode[j].datanodePeer2HAPort != localPort)) {
                         continue;
@@ -435,11 +415,11 @@ int search_HA_node(int node_type, uint32 localPort, uint32 LocalHAListenCount, c
                 listen_ip_merge(g_node[i].datanode[j].datanodeLocalHAListenCount,
                     g_node[i].datanode[j].datanodeLocalHAIP,
                     local_listen_ip, CM_IP_ALL_NUM_LENGTH);
-                if (PRIMARY_DN == g_node[i].datanode[j].datanodePeerRole) {
+                if (g_node[i].datanode[j].datanodePeerRole == PRIMARY_DN) {
                     listen_ip_merge(g_node[i].datanode[j].datanodePeerHAListenCount,
                         g_node[i].datanode[j].datanodePeerHAIP,
                         peer_listen_ip, CM_IP_ALL_NUM_LENGTH);
-                } else if (PRIMARY_DN == g_node[i].datanode[j].datanodePeer2Role) {
+                } else if (g_node[i].datanode[j].datanodePeer2Role == PRIMARY_DN) {
                     listen_ip_merge(g_node[i].datanode[j].datanodePeer2HAListenCount,
                         g_node[i].datanode[j].datanodePeer2HAIP,
                         peer_listen_ip, CM_IP_ALL_NUM_LENGTH);
@@ -483,7 +463,7 @@ int search_HA_node(int node_type, uint32 localPort, uint32 LocalHAListenCount, c
                     g_node[i].datanode[j].datanodeLocalHAIP,
                     local_listen_ip, CM_IP_ALL_NUM_LENGTH);
 
-                if (PRIMARY_DN == g_node[i].datanode[j].peerDatanodes[primary_dn_idx].datanodePeerRole) {
+                if (g_node[i].datanode[j].peerDatanodes[primary_dn_idx].datanodePeerRole == PRIMARY_DN) {
                     listen_ip_merge(g_node[i].datanode[j].peerDatanodes[primary_dn_idx].datanodePeerHAListenCount,
                         g_node[i].datanode[j].peerDatanodes[primary_dn_idx].datanodePeerHAIP,
                         peer_listen_ip, CM_IP_ALL_NUM_LENGTH);
@@ -566,13 +546,12 @@ static int32 CfgRole2StaticRole(uint32 cfgRole)
 void PutInstanceDataWhenSuccess(
     cm_instance_role_group *instance_group, const int *instance_index_arry, const int *node_index_arry, int i, int j)
 {
-    error_t rc = 0;
     int node_index = 0;
     int instance_index = 0;
     uint32 instanceMember_count = sizeof(instance_group->instanceMember) / sizeof(cm_instance_role_status);
     uint32 min_count =
-        instanceMember_count < (g_dn_replication_num) ? instanceMember_count : (g_dn_replication_num);
-    rc = memset_s(instance_group, sizeof(cm_instance_role_group), 0, sizeof(cm_instance_role_group));
+        instanceMember_count < g_dn_replication_num ? instanceMember_count : g_dn_replication_num;
+    error_t rc = memset_s(instance_group, sizeof(cm_instance_role_group), 0, sizeof(cm_instance_role_group));
     securec_check_errno(rc, (void)rc);
     instance_group->count = 1;
     /* copy az info from static to dynamic config */
@@ -609,8 +588,7 @@ void PutInstanceDataWhenSuccess(
 
 void PutInstanceDataWhenError(cm_instance_role_group *instance_group, int i, int j)
 {
-    error_t rc = 0;
-    rc = memset_s(instance_group, sizeof(cm_instance_role_group), 0, sizeof(cm_instance_role_group));
+    error_t rc = memset_s(instance_group, sizeof(cm_instance_role_group), 0, sizeof(cm_instance_role_group));
     securec_check_errno(rc, (void)rc);
     instance_group->count = 1;
     /* copy az info from static to dynamic config */
@@ -626,12 +604,12 @@ void PutInstanceDataWhenError(cm_instance_role_group *instance_group, int i, int
     return;
 }
 
-void BuildDynamicDnMazConfig(cm_instance_role_group *instance_group, bool *dynamicModified, uint32 i, uint32 j)
+void BuildDynamicDnMazConfig(cm_instance_role_group *instance_group, bool *dynamicModified, int i, int j)
 {
-    int ret = 0;
     uint32 group_index;
     int member_index;
-    ret = find_node_in_dynamic_configure(g_node[i].node, g_node[i].datanode[j].datanodeId, &group_index, &member_index);
+    int ret =
+        find_node_in_dynamic_configure(g_node[i].node, g_node[i].datanode[j].datanodeId, &group_index, &member_index);
     if (ret == 0) {
         /* do nothing. */
     } else {
@@ -641,7 +619,7 @@ void BuildDynamicDnMazConfig(cm_instance_role_group *instance_group, bool *dynam
         if (ret == 0) {
             PutInstanceDataWhenSuccess(instance_group, instance_index_arry, node_index_arry, i, j);
         } else {
-           PutInstanceDataWhenError(instance_group, i, j);
+            PutInstanceDataWhenError(instance_group, i, j);
         }
 
         *dynamicModified = true;
@@ -668,10 +646,9 @@ void BuildDynamicDnSazConfigIfSucc(
     cm_instance_role_group *instGrp, int32 i, int32 j, int32 curNodeIdx, int32 curInstIdx)
 {
     int ret = 0;
-    int rc = 0;
     int32 nodeIdx = 0;
     int32 instIdx = 0;
-    rc = memset_s(instGrp, sizeof(cm_instance_role_group), 0, sizeof(cm_instance_role_group));
+    int rc = memset_s(instGrp, sizeof(cm_instance_role_group), 0, sizeof(cm_instance_role_group));
     securec_check_errno(rc, (void)rc);
     instGrp->count = 2;
     instGrp->instanceMember[0].node = g_node[i].node;
@@ -715,13 +692,12 @@ void BuildDynamicDnSazConfigIfSucc(
 void BuildDynamicDnSazConfig(
     cm_instance_role_group *instance_group, bool *dynamicModified, int i, int j)
 {
-    int ret = 0;
-    int rc = 0;
     int node_index = 0;
     int instance_index = 0;
     uint32 group_index;
     int member_index;
-    ret = find_node_in_dynamic_configure(g_node[i].node, g_node[i].datanode[j].datanodeId, &group_index, &member_index);
+    int ret =
+        find_node_in_dynamic_configure(g_node[i].node, g_node[i].datanode[j].datanodeId, &group_index, &member_index);
     if (ret == 0) {
         /* do nothing */
     } else {
@@ -746,7 +722,7 @@ void BuildDynamicDnSazConfig(
         if (ret == 0) {
             BuildDynamicDnSazConfigIfSucc(instance_group, i, j, node_index, instance_index);
         } else {
-            rc = memset_s(instance_group, sizeof(cm_instance_role_group), 0, sizeof(cm_instance_role_group));
+            int rc = memset_s(instance_group, sizeof(cm_instance_role_group), 0, sizeof(cm_instance_role_group));
             securec_check_errno(rc, (void)rc);
             instance_group->count = 1;
             instance_group->instanceMember[0].node = g_node[i].node;
@@ -764,15 +740,15 @@ void BuildDynamicDnSazConfig(
 
 int BuildDynamicConfigFile(bool* dynamicModified)
 {
-    uint32 i;
-    uint32 j;
+    int i;
+    int j;
     cm_instance_role_group instance_group;
     uint32 actual_relation_count = 0;
     uint32 dnInstanceCnt = 0;
     *dynamicModified = false;
 
     instance_group.count = 0;
-    for (i = 0; i < g_node_num; i++) {
+    for (i = 0; i < (int)g_node_num; i++) {
 #ifdef ENABLE_MULTIPLE_NODES
         if (g_node[i].coordinate == 1) {
             actual_relation_count++;
@@ -786,7 +762,7 @@ int BuildDynamicConfigFile(bool* dynamicModified)
                 BuildDynamicGtmMazConfig(&instance_group, dynamicModified, i);
             }
 #endif
-            for (j = 0; j < g_node[i].datanodeCount; j++) {
+            for (j = 0; j < (int)g_node[i].datanodeCount; j++) {
                 if (g_node[i].datanode[j].datanodeRole != PRIMARY_DN) {
                     continue;
                 }
@@ -796,12 +772,12 @@ int BuildDynamicConfigFile(bool* dynamicModified)
             }
         } else {
 #ifdef ENABLE_MULTIPLE_NODES
-            if ((g_node[i].gtm == 1) && (PRIMARY_GTM == g_node[i].gtmRole)) {
+            if ((g_node[i].gtm == 1) && (g_node[i].gtmRole == PRIMARY_GTM)) {
                 actual_relation_count++;
                 BuildDynamicGtmSazConfig(&instance_group, dynamicModified, i);
             }
 #endif
-            for (j = 0; j < g_node[i].datanodeCount; j++) {
+            for (j = 0; j < (int)g_node[i].datanodeCount; j++) {
                 if (g_node[i].datanode[j].datanodeRole != PRIMARY_DN) {
                     continue;
                 }
@@ -849,11 +825,11 @@ static int get_dynamic_configure_version()
         returnCode = read(fd, &headerinfo, sizeof(dynamicConfigHeader));
         if (returnCode != (ssize_t)sizeof(dynamicConfigHeader)) {
             write_runlog(LOG, "failed to read dynamic configure header failed!\n");
-            close(fd);
+            (void)close(fd);
             return -1;
         }
     }
-    close(fd);
+    (void)close(fd);
     return (int)headerinfo.version;
 }
 
@@ -866,7 +842,6 @@ static int init_dynamic_configure_global_ptr()
     size_t instance_report_aglinment_size;
     size_t cn_dn_disconnect_size;
     size_t total_size;
-    char* dynamci_ptr = NULL;
     errno_t rc;
 
     total_size = 0;
@@ -884,7 +859,7 @@ static int init_dynamic_configure_global_ptr()
     instance_report_aglinment_size = sizeof(cm_instance_group_report_status) * MAX_INSTANCE_NUM;
     total_size = total_size + instance_report_aglinment_size;
 
-    dynamci_ptr = (char*)malloc(total_size);
+    char* dynamci_ptr = (char*)malloc(total_size);
     if (dynamci_ptr == NULL) {
         write_runlog(ERROR, "malloc memory failed! size = %lu\n", total_size);
         return -1;
@@ -937,17 +912,14 @@ static int init_dynamic_configure_global_ptr()
 
 static int init_new_instance_role_group_ptr(const cm_instance_role_group_0* instance_role_group_ptr_0)
 {
-    int count;
-    int i = 0;
-    int j = 0;
     if (instance_role_group_ptr_0 == NULL || g_instance_role_group_ptr == NULL) {
         return -1;
     }
 
-    count = (int)g_dynamic_header->relationCount;
-    for (i = 0; i < count; i++) {
+    int count = (int)g_dynamic_header->relationCount;
+    for (int i = 0; i < count; i++) {
         g_instance_role_group_ptr[i].count = instance_role_group_ptr_0[i].count;
-        for (j = 0; j < instance_role_group_ptr_0[i].count; j++) {
+        for (int j = 0; j < instance_role_group_ptr_0[i].count; j++) {
             g_instance_role_group_ptr[i].instanceMember[j].node = instance_role_group_ptr_0[i].instanceMember[j].node;
             g_instance_role_group_ptr[i].instanceMember[j].instanceId =
                 instance_role_group_ptr_0[i].instanceMember[j].instanceId;
@@ -971,13 +943,12 @@ static int init_new_instance_role_group_ptr(const cm_instance_role_group_0* inst
 #ifdef ENABLE_MULTIPLE_NODES
 int cm_notify_msg_init(void)
 {
-    int ret = 0;
     WITHOUT_CN_CLUSTER_WITH_VALUE("init cn notify msg");
 
     cm_notify_msg_status* notify_msg = NULL;
     write_runlog(LOG, "g_dynamic_header->relationCount: %u.\n", g_dynamic_header->relationCount);
 
-    ret = CmNotifyCnMsgInit(&notify_msg);
+    int ret = CmNotifyCnMsgInit(&notify_msg);
     if (ret != 0) {
         return ret;
     }
@@ -992,10 +963,9 @@ int cm_notify_msg_init(void)
      * Then, mirror this array to others 'causing for every coordinator it's potential
      * marked datanodes are all the same.
      */
-    cm_notify_msg_status* last_notify_msg = NULL;
-    uint32 i = 0;
+    uint32 i;
     uint32 j = 0;
-    last_notify_msg = notify_msg;
+    cm_notify_msg_status *last_notify_msg = notify_msg;
     for (i = 0; i < g_dynamic_header->relationCount; i++) {
         if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_DATANODE) {
             last_notify_msg->datanode_index[j++] = i;
@@ -1029,7 +999,7 @@ static int static_dynamic_config_file_check(void)
     int dynamic_version;
     cm_instance_role_group_0* instance_role_group_ptr_0 = NULL;
     static bool cm_static_dynamic_need_check = true;
-    if (cm_static_dynamic_need_check == false) {
+    if (!cm_static_dynamic_need_check) {
         return 0;
     }
 
@@ -1095,7 +1065,7 @@ static int static_dynamic_config_file_check(void)
             write_runlog(ERROR, "read header failed!\n");
             goto read_failed;
         }
-        returnCode = lseek(fd, header_aglinment_size, SEEK_SET);
+        returnCode = lseek(fd, (long)header_aglinment_size, SEEK_SET);
         if (returnCode < 0) {
             write_runlog(ERROR, "seek header failed!\n");
             goto read_failed;
@@ -1162,7 +1132,7 @@ static int static_dynamic_config_file_check(void)
     (void)BuildDynamicConfigFile(&dynamic_modified);
     g_dynamic_header->term = 0;
 
-    if (dynamic_modified == true) {
+    if (dynamic_modified) {
         init_cluster_state_mode();
 
         cms_state_timeline_size = sizeof(dynamic_cms_timeline);
@@ -1212,7 +1182,7 @@ static int static_dynamic_config_file_check(void)
     }
 #endif
     cm_static_dynamic_need_check = false;
-    close(fd);
+    (void)close(fd);
     return 0;
 
 read_failed:
@@ -1222,7 +1192,7 @@ read_failed:
     g_instance_group_report_status_ptr = NULL;
     g_datanode_instance_count = 0;
     if (fd >= 0) {
-        close(fd);
+        (void)close(fd);
     }
     write_runlog(ERROR, "read dyamicConfig failed!");
 
@@ -1275,7 +1245,7 @@ static void abort_unauthen_connection(int epollfd, bool all)
 
 static void cm_server_stop_command_check(int epollfd)
 {
-    if (got_stop && ha_connection_closed) {
+    if (got_stop == 1 && ha_connection_closed == 1) {
         abort_unauthen_connection(epollfd, true);
         delete_lock_file(CM_PID_FILE);
         write_runlog(LOG, "cm server receive the stop command and stop !\n");
@@ -1297,12 +1267,11 @@ static void cm_server_listen_socket_init(void)
 
 static int cm_server_build_listen_socket_check(void)
 {
-    uint32 ii = 0;
     int status;
     int success;
     static bool cm_need_build_listen = true;
 
-    if ((cm_need_build_listen == false) || (g_node == NULL)) {
+    if (!cm_need_build_listen || (g_node == NULL)) {
         return -1;
     }
 
@@ -1312,7 +1281,7 @@ static int cm_server_build_listen_socket_check(void)
     }
 
     success = 0;
-    for (ii = 0; ii < g_currentNode->cmServerListenCount; ii++) {
+    for (uint32 ii = 0; ii < g_currentNode->cmServerListenCount; ii++) {
         status = StreamServerPort(
             AF_UNSPEC, g_currentNode->cmServer[ii], (unsigned short)g_currentNode->port, ServerListenSocket, MAXLISTEN);
         if (status == STATUS_OK) {
@@ -1359,19 +1328,17 @@ static void ChangeToDataDir(void)
 
 /**
  * @brief Check the process list for recording.
- * 
- * @note
- *  This function is used only to print the process list information. Therefore, the error
+ *
+ * @note This function is used only to print the process list information. Therefore, the error
  *   information will not be recorded.
- * 
+ *
  * @param  keywords         My Param doc
  */
-static void check_process_list(const char* keywords)
+static void check_process_list(const char *keywords)
 {
     char    command[MAXPGPATH] = { 0 };
     char    buffer[MAXPGPATH] = { 0 };
     int     ret;
-    FILE    *fp = NULL;
     uint32  error_count = 0;
 
     /* The keyword can be NULL. */
@@ -1382,9 +1349,10 @@ static void check_process_list(const char* keywords)
     ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, "ps ux | grep -v grep | grep \"%s\"", keywords);
     securec_check_intval(ret, (void)ret);
 
-    fp = popen(command, "re");
-    if (fp == NULL)
+    FILE *fp = popen(command, "re");
+    if (fp == NULL) {
         return;
+    }
 
     write_runlog(LOG, "start check process.\n");
     while (!feof(fp)) {
@@ -1403,16 +1371,10 @@ static void check_process_list(const char* keywords)
     (void)pclose(fp);
 }
 
-/**
- * @brief 
- * 
- * @param  processName     My Param doc
- * @return int 
- */
+
 int check_process_status(const char *processName)
 {
-    DIR           *dir = NULL;
-    struct dirent *de = NULL;
+    struct dirent *de;
     char pid_path[MAX_PATH_LEN];
     FILE *fp = NULL;
     char getBuff[MAX_PATH_LEN];
@@ -1437,8 +1399,8 @@ int check_process_status(const char *processName)
     bool uidGet = false;
     errno_t rc;
     int rcs;
-
-    if ((dir = opendir("/proc")) == NULL) {
+    DIR *dir = opendir("/proc");
+    if (dir == NULL) {
         write_runlog(ERROR, "opendir(/proc) failed, errno=%d! \n ", errno);
         return -1;
     }
@@ -1449,7 +1411,7 @@ int check_process_status(const char *processName)
          * check whether there are files under the directory ,these files includes
          * all detailed information about the process
          */
-        if (0 != CM_is_str_all_digit(de->d_name)) {
+        if (CM_is_str_all_digit(de->d_name) != 0) {
             continue;
         }
 
@@ -1487,7 +1449,7 @@ int check_process_status(const char *processName)
             rc = memset_s(paraName, MAX_PATH_LEN, 0, MAX_PATH_LEN);
             securec_check_errno(rc, (void)rc);
 
-            if ((nameGet == false) && (strstr(getBuff, "Name:") != NULL)) {
+            if (!nameGet && (strstr(getBuff, "Name:") != NULL)) {
                 nameGet = true;
                 rcs = sscanf_s(getBuff, "%s %s", paraName, MAX_PATH_LEN, paraValue, MAX_PATH_LEN);
                 check_sscanf_s_result(rcs, 2);
@@ -1500,35 +1462,35 @@ int check_process_status(const char *processName)
                 }
             }
 
-            if ((tgidGet == false) && (strstr(getBuff, "Tgid:") != NULL)) {
+            if (!tgidGet && (strstr(getBuff, "Tgid:") != NULL)) {
                 tgidGet = true;
                 rcs = sscanf_s(getBuff, "%s    %d", paraName, MAX_PATH_LEN, &tgid);
                 check_sscanf_s_result(rcs, 2);
                 securec_check_intval(rcs, (void)rcs);
             }
-            
-            if ((spidGet == false) && (strstr(getBuff, "Pid:") != NULL)) {
+
+            if (!spidGet && (strstr(getBuff, "Pid:") != NULL)) {
                 spidGet = true;
                 rcs = sscanf_s(getBuff, "%s    %d", paraName, MAX_PATH_LEN, &spid);
                 check_sscanf_s_result(rcs, 2);
                 securec_check_intval(rcs, (void)rcs);
             }
-            
-            if ((ppidGet == false) && (strstr(getBuff, "PPid:") != NULL)) {
+
+            if (!ppidGet && (strstr(getBuff, "PPid:") != NULL)) {
                 ppidGet = true;
                 rcs = sscanf_s(getBuff, "%s    %d", paraName, MAX_PATH_LEN, &ppid);
                 check_sscanf_s_result(rcs, 2);
                 securec_check_intval(rcs, (void)rcs);
             }
 
-            if ((stateGet == false) && (strstr(getBuff, "State:") != NULL)) {
+            if (!stateGet && (strstr(getBuff, "State:") != NULL)) {
                 stateGet = true;
                 rcs = sscanf_s(getBuff, "%s    %c", paraName, MAX_PATH_LEN, &state, 1);
                 check_sscanf_s_result(rcs, 2);
                 securec_check_intval(rcs, (void)rcs);
             }
 
-            if ((uidGet == false) && (strstr(getBuff, "Uid:") != NULL)) {
+            if (!uidGet && (strstr(getBuff, "Uid:") != NULL)) {
                 uidGet = true;
                 rcs = sscanf_s(getBuff,
                     "%s    %u    %u    %u    %u",
@@ -1537,16 +1499,14 @@ int check_process_status(const char *processName)
                 securec_check_intval(rcs, (void)rcs);
             }
 
-            if ((nameGet == true) && (tgidGet == true) &&
-                (spidGet == true) && (ppidGet == true) &&
-                (stateGet == true) && (uidGet == true)) {
+            if (nameGet && tgidGet && spidGet && ppidGet && stateGet && uidGet) {
                 break;
             }
         }
 
-        fclose(fp);
+        (void)fclose(fp);
 
-        if (nameFound == true) {
+        if (nameFound) {
             if (getpid() == spid) {
                 continue;
             }
@@ -1558,8 +1518,8 @@ int check_process_status(const char *processName)
             if (getuid() != uid) {
                 continue;
             }
-            
-            if ((haveFound == false)) {
+
+            if (!haveFound) {
                 haveFound = true;
             } else {
                 continue;
@@ -1571,7 +1531,7 @@ int check_process_status(const char *processName)
 
     (void)closedir(dir);
 
-    if (haveFound == true) {
+    if (haveFound) {
         return PROCESS_RUNNING;
     } else {
         return PROCESS_NOT_EXIST;
@@ -1583,7 +1543,7 @@ int check_process_status(const char *processName)
  * When this is called, we must have already switched the working
  * directory to t_thrd.proc_cxt.DataDir, so we can just use a relative path.  This
  * helps ensure that we are locking the directory we should be.
- * 
+ *
  */
 static void CreateDataDirLockFile()
 {
@@ -1606,8 +1566,8 @@ static void CreateDataDirLockFile()
 }
 
 /**
- * @brief 
- * 
+ * @brief BaseInit
+ *
  */
 static void BaseInit()
 {
@@ -1624,177 +1584,39 @@ static void BaseInit()
     CreateDataDirLockFile();
 }
 
-
-/**
- * @brief 
- * 
- * @param  epollFd          My Param doc
- * @param  events           My Param doc
- * @param  arg              My Param doc
- */
-static void cm_server_recv_msg(int epollFd, int events, void* arg)
+static int32 CmSetConnState(CM_Connection *con)
 {
-    CM_Connection* con = (CM_Connection*)arg;
-    int qtype = 0;
-
-    /* when kill conn, the mem will be free. */
-    if (got_conns_close) {
-        return;
-    }
-
-    while (con != NULL && con->fd >= 0) {
-        qtype = ReadCommand(con->port, con->inBuffer);
-        write_runlog(
-            DEBUG5, "read qtype is %d, msglen =%d len =%d\n", qtype, con->inBuffer->msglen, con->inBuffer->len);
-
-        switch (qtype) {
-            case 'C':
-                con->last_active = time(NULL);
-#ifdef KRB5
-                if (con->gss_check == false && cm_auth_method == CM_AUTH_GSS) {
-                    write_runlog(
-                        LOG, "will igrone the msg(nodeid:%u), the gss check has not pass.\n", con->port->node_id);
-                    EventDel(con->epHandle, con);
-                    RemoveCMAgentConnection(con);
-                } else {
-#endif // KRB5
-                    cm_server_process_msg(con, con->inBuffer);
-#ifdef KRB5
-                }
-#endif // KRB5
-                CM_resetStringInfo(con->inBuffer);
-                break;
-            case 'p':
-#ifdef KRB5
-                if (cm_auth_method == CM_AUTH_GSS) {
-                    con->last_active = time(NULL);
-                    if (CMHandleCheckAuth(con) == 0) {
-                        con->gss_check = true;
-                    }
-                    /* the nodeid of g_node_num*2 doesn't exist, only be used for connection test msg */
-                    if (con->port != NULL && con->port->node_id == CM_NODE_MAXNUM * 2) {
-                        EventDel(con->epHandle, con);
-                        RemoveCMAgentConnection(con);
-                    }
-                } else {
-#endif // KRB5
-                    write_runlog(LOG, "trust conn type, don't need send gss msg.\n");
-                    EventDel(con->epHandle, con);
-                    RemoveCMAgentConnection(con);
-#ifdef KRB5
-                }
-#endif // KRB5
-                CM_resetStringInfo(con->inBuffer);
-                break;
-            case 'X':
-            case EOF:
-                if (con->port != NULL && con->port->remote_type == CM_CTL) {
-                    write_runlog(DEBUG1, "connection closed by client, nodeid is %u.\n", con->port->node_id);
-                } else if (con->port != NULL && con->port->node_id != 2 * CM_NODE_MAXNUM) {
-                    write_runlog(LOG, "connection closed by client, nodeid is %u.\n", con->port->node_id);
-                }
-                EventDel(con->epHandle, con);
-                RemoveCMAgentConnection(con);
-                break;
-            case TCP_SOCKET_ERROR_NO_MESSAGE:
-            case 0:
-                write_runlog(DEBUG5, "read no messge\n");
-                CM_resetStringInfo(con->inBuffer);
-                return;
-            case TCP_SOCKET_ERROR_EPIPE:
-                write_runlog(ERROR, "connection was broken, nodeid is %u.\n", con->port->node_id);
-                EventDel(con->epHandle, con);
-                RemoveCMAgentConnection(con);
-                break;
-            default:
-                write_runlog(ERROR, "invalid frontend message type %d", qtype);
-                EventDel(con->epHandle, con);
-                RemoveCMAgentConnection(con);
-                break;
-        }
-
-        /* some communication error occurred, free con here */
-        Assert(con != NULL);
-        if (con->fd == INVALIDFD) {
-            FREE_AND_RESET(con);
-        }
-    }
-}
-
-/**
- * @brief 
- * 
- * @param  con              My Param doc
- * @param  thread           My Param doc
- * @return int 
- */
-static int CMAssignConnToThread(CM_Connection* con, const CM_Thread* thread)
-{
-    Assert(con);
-    Assert(con->port);
-    Assert(thread);
-
-    int epollfd;
-
-    epollfd = thread->epHandle;
-    if (epollfd < 0) {
-        write_runlog(ERROR, "invalid epoll fd %d, thread %lu", epollfd, thread->tid);
-        return -1;
-    }
-
-    con->callback = cm_server_recv_msg;
-    con->arg = con;
+    CMPerformAuthentication(con);
     CM_resetStringInfo(con->inBuffer);
-    con->port->startpack_have_processed = true;
-    con->epHandle = epollfd;
 
-    if (con->port->remote_type == CM_CTL) {
-        write_runlog(DEBUG1, "Add con socket [fd=%d] to thread %lu [epollfd=%d].\n", con->fd, thread->tid, epollfd);
+    if (con->fd >= 0) {
+        MsgRecvInfo recvMsg;
+        errno_t rc = memset_s(&recvMsg, sizeof(MsgRecvInfo), 0, sizeof(MsgRecvInfo));
+        securec_check_errno(rc, (void)rc);
+        recvMsg.connID.agentNodeId = con->port->node_id;
+        recvMsg.connID.connSeq = 0;
+        recvMsg.connID.remoteType = con->port->remote_type;
+        AsyncProcMsg(&recvMsg, PM_ASSIGN_CONN, (const char *)&con, sizeof(CM_Connection *));
     } else {
-        write_runlog(LOG, "Add con socket [fd=%d] to thread %lu [epollfd=%d].\n", con->fd, thread->tid, epollfd);
-    }
-
-    set_socket_timeout(con->port, 0);
-    if (EventAdd(epollfd, EPOLLIN, con)) {
-        write_runlog(ERROR, "Add con socket [fd=%d] to thread %lu failed!\n", con->fd, thread->tid);
         return -1;
     }
-
     return 0;
 }
 
-/**
- * @brief 
- * 
- * @param  nodeId           My Param doc
- */
-static void ProcessNodeConn(uint32 nodeId)
-{
-    write_runlog(LOG, "add pre conn for node %u.\n", nodeId);
-    ++g_preAgentCon.connCount;
-    g_preAgentCon.conFlag[nodeId] = 1;
-}
-
-/**
- * @brief process conn from cm_ctl or cm_agent
- * 
- */
 static int cm_server_process_startup_packet(int epollfd, CM_Connection* con, CM_StringInfo msg)
 {
-    CM_StartupPacket* sp = NULL;
     char error_msg[CM_SERVER_PACKET_ERROR_MSG] = {0};
-    CM_Thread* thread = NULL;
     int nRet = 0;
-    int ctlThreadNum = GetCtlThreadNum();
+    bool isDdbHealth = false;
 
     /* check msg bytes */
-    sp = (CM_StartupPacket *)CmGetmsgbytes(msg, sizeof(CM_StartupPacket));
+    const CM_StartupPacket* sp = (const CM_StartupPacket *)CmGetmsgbytes(msg, sizeof(CM_StartupPacket));
     if (sp == NULL) {
         write_runlog(LOG, "start message is invalid. msg->qtype: %d \n", msg->qtype);
         EventDel(epollfd, con);
         return -1;
     }
-
+    
     if (sp->node_id <= (int)g_node_num && con->port != NULL && sp->sp_remotetype == CM_AGENT) {
         write_runlog(LOG,
             "process startup packet, remote_type %d, nodeid %d, node name %s, postmaster is %s.\n",
@@ -1821,170 +1643,93 @@ static int cm_server_process_startup_packet(int epollfd, CM_Connection* con, CM_
 
             nRet = snprintf_s(error_msg, CM_SERVER_PACKET_ERROR_MSG, sizeof(error_msg) - 1, "%s", "invalid host");
             securec_check_intval(nRet, (void)nRet);
-            (void)cm_server_send_msg(con, 'E', error_msg, CM_SERVER_PACKET_ERROR_MSG);
-            (void)cm_server_flush_msg(con);
+            if (CmsSendAndFlushMsg(con, 'E', error_msg, CM_SERVER_PACKET_ERROR_MSG) != 0) {
+                RemoveConnAfterSendMsgFailed(con);
+                write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
+            }
             return -1;
         }
 
         if (!con->port->is_postmaster && g_HA_status->local_role != CM_SERVER_PRIMARY) {
-            (void)pthread_rwlock_wrlock(&gConns.lock);
-            if (tmpNodeId < CM_MAX_CONNECTIONS && g_preAgentCon.conFlag[tmpNodeId] == 0 &&
-                con->port->remote_type == CM_AGENT) {
-                if (g_multi_az_cluster) {
-                    if (g_etcd_num > 0) {
-                        if (tmpNodeId != g_currentNode->node) {
-                            ProcessNodeConn(tmpNodeId);
-                        }
-                    } else {
-                        ProcessNodeConn(tmpNodeId);
-                    }
-                } else {
-                    if (IsDdbHealth(DDB_PRE_CONN)) {
-                        if (tmpNodeId != g_currentNode->node) {
-                            ProcessNodeConn(tmpNodeId);
-                        }
-                    } else {
-                        ProcessNodeConn(tmpNodeId);
-                    }
-                }
+            if (con->port->remote_type == CM_AGENT) {
+                ProcPreNodeConn(tmpNodeId);
             }
-            (void)pthread_rwlock_unlock(&gConns.lock);
             EventDel(epollfd, con);
-            write_runlog(
-                DEBUG1, "local cmserver role(%d) is not primary(%d)\n", g_HA_status->local_role, CM_SERVER_PRIMARY);
+            write_runlog(DEBUG1,
+                "local cmserver role(%d) is not primary(%d)\n",
+                g_HA_status->local_role, CM_SERVER_PRIMARY);
 
             nRet = snprintf_s(error_msg, CM_SERVER_PACKET_ERROR_MSG, sizeof(error_msg) - 1,
                 "%s", "local cmserver is not the primary");
             securec_check_intval(nRet, (void)nRet);
-            (void)cm_server_send_msg(con, 'E', error_msg, CM_SERVER_PACKET_ERROR_MSG);
-            (void)cm_server_flush_msg(con);
+            if (CmsSendAndFlushMsg(con, 'E', error_msg, CM_SERVER_PACKET_ERROR_MSG) != 0) {
+                RemoveConnAfterSendMsgFailed(con);
+                write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
+            }
             return -1;
         }
 
         /* check msg type */
         switch (con->port->remote_type) {
             case CM_AGENT:
-                /* this conn if 2*g_node_node, only for the agent and cmserver conn check */
-                if (tmpNodeId == 2 * CM_NODE_MAXNUM) {
-                    EventDel(epollfd, con);
-                    Assert(con != NULL);
-                    CMPerformAuthentication(con);
-                    CM_resetStringInfo(con->inBuffer);
-#ifdef KRB5
-                    if (cm_auth_method != CM_AUTH_GSS) {
-                        return -1;
-                    }
-#endif // KRB5
-                    if (con->fd >= 0) {
-                        thread = GetNextThread(ctlThreadNum);
-                        if (CMAssignConnToThread(con, thread) != STATUS_OK) {
-                            write_runlog(LOG,
-                                "Assign test CM_AGENT connection to worker thread failed, confd is %d.\n", con->fd);
-                            return -1;
-                        }
-                        
-                        return 0;
-                    } else {
-                        return -1;
-                    }
-                } else if (tmpNodeId < CM_MAX_CONNECTIONS) {
-                    write_runlog(LOG, "new connection type is CM_AGENT\n");
+                write_runlog(LOG, "new connection type is CM_AGENT\n");
 
-                    EventDel(epollfd, con);
-                    Assert(con != NULL);
-                    (void)pthread_rwlock_wrlock(&gConns.lock);
-                    uint32 connCount = gConns.count;
-                    /* The conditions of cmserver will promote to primary:
-                     * 1. When it is not cluster of etcd, the number of cm_agent pre-connections must be more than half.
-                     * 2. When it is cluster of etcd, the number of healthy etcd instance must be more than half
-                     *     and the cm_agent pre-connections that are not local cm_server node must be more than 1.
-                     */
-                    bool isDdbHealth = IsDdbHealth(DDB_PRE_CONN);
-                    if (((g_preAgentCon.connCount <= g_node_num / 2 && !g_multi_az_cluster &&
-                        (g_etcd_num == 0 || !isDdbHealth)) || (g_preAgentCon.connCount == 0 && g_multi_az_cluster) ||
-                        (g_preAgentCon.connCount == 0 && !g_multi_az_cluster && isDdbHealth)) &&
-                        cm_arbitration_mode == MAJORITY_ARBITRATION && g_cmsPromoteMode == PMODE_AUTO &&
-                        g_node_num >= 3 && connCount == 0 &&
-                        !con->port->is_postmaster) {
-                        if (tmpNodeId < CM_MAX_CONNECTIONS && g_preAgentCon.conFlag[tmpNodeId] == 0) {
-                            if (g_multi_az_cluster || (isDdbHealth && !g_multi_az_cluster)) {
-                                if (tmpNodeId != g_currentNode->node) {
-                                    ProcessNodeConn(tmpNodeId);
-                                }
-                            } else {
-                                ProcessNodeConn(tmpNodeId);
-                            }
-                        }
-                        (void)pthread_rwlock_unlock(&gConns.lock);
-                        write_runlog(LOG, "the pre conn count is %u, less than half.\n", g_preAgentCon.connCount);
-                        nRet = snprintf_s(error_msg,
-                            CM_SERVER_PACKET_ERROR_MSG,
-                            sizeof(error_msg) - 1,
-                            "%s",
-                            "the pre conn number is less than half.");
-                        securec_check_intval(nRet, (void)nRet);
-                        (void)cm_server_send_msg(con, 'E', error_msg, CM_SERVER_PACKET_ERROR_MSG);
-                        (void)cm_server_flush_msg(con);
-                        return -1;
-                    }
-                    (void)pthread_rwlock_unlock(&gConns.lock);
-                    CMPerformAuthentication(con);
-                    CM_resetStringInfo(con->inBuffer);
-
-                    if (con->fd >= 0) {
-                        if (!con->port->is_postmaster && g_sslOption.enable_ssl != CM_TRUE) {
-                            AddCMAgentConnection(con);
-                        }
-
-                        /* assign new connection to a work thread by round robin */
-                        thread = GetNextThread(ctlThreadNum);
-                        if (CMAssignConnToThread(con, thread) != STATUS_OK) {
-                            write_runlog(
-                                LOG, "Assign new CM_AGENT connection to worker thread failed, confd is %d.\n", con->fd);
-                            return -1;
-                        }
-                    } else {
-                        return -1;
-                    }
-                } else {
+                if (tmpNodeId >= CM_MAX_CONNECTIONS) {
                     write_runlog(LOG, "new connection is discard due its node id (%u) is invalid.", tmpNodeId);
                     EventDel(epollfd, con);
                     return -1;
                 }
-                break;
+
+                EventDel(epollfd, con);
+                Assert(con != NULL);
+
+                uint32 connCount, preConnCount;
+                getConnInfo(connCount, preConnCount);
+                /* The conditions of cmserver will promote to primary:
+                * 1. When it is not cluster of etcd, the number of cm_agent pre-connections must be more than half.
+                * 2. When it is cluster of etcd, the number of healthy etcd instance must be more than half
+                *     and the cm_agent pre-connections that are not local cm_server node must be more than 1.
+                */
+                isDdbHealth = IsDdbHealth(DDB_PRE_CONN);
+                if (((preConnCount <= g_node_num / 2 && !g_multi_az_cluster &&
+                    (g_etcd_num == 0 || !isDdbHealth)) || (preConnCount == 0 && g_multi_az_cluster) ||
+                    (preConnCount == 0 && !g_multi_az_cluster && isDdbHealth)) &&
+                    cm_arbitration_mode == MAJORITY_ARBITRATION && g_cmsPromoteMode == PMODE_AUTO &&
+                    g_node_num >= 3 && connCount == 0 &&
+                    !con->port->is_postmaster) {
+                    ProcPreNodeConn(tmpNodeId);
+                    write_runlog(LOG, "the pre conn count is %u, less than half.\n", preConnCount);
+                    nRet = snprintf_s(error_msg,
+                        CM_SERVER_PACKET_ERROR_MSG,
+                        sizeof(error_msg) - 1,
+                        "%s",
+                        "the pre conn number is less than half.");
+                    securec_check_intval(nRet, (void)nRet);
+                    if (CmsSendAndFlushMsg(con, 'E', error_msg, CM_SERVER_PACKET_ERROR_MSG) != 0) {
+                        RemoveConnAfterSendMsgFailed(con);
+                        write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
+                    }
+                    return -1;
+                }
+
+                return CmSetConnState(con);
 
             case CM_CTL:
                 write_runlog(DEBUG1, "new connection type is CM_CTL\n");
                 /* to do: save CM_CTL  connection info: con */
                 EventDel(epollfd, con);
                 Assert(con != NULL);
-                if ((con->port->user_name != NULL) && strncmp(con->port->user_name, pw->pw_name, SP_USER)) {
-                    write_runlog(WARNING, "invalid connection\n");
-                    (void)cm_server_send_msg(con, 'E', "invalid connection", CM_SERVER_PACKET_ERROR_MSG);
-                    (void)cm_server_flush_msg(con);
-                    return -1;
-                }
-                CMPerformAuthentication(con);
-                CM_resetStringInfo(con->inBuffer);
 
-                if (con->fd >= 0) {
-                    if (ctlThreadNum == 1) {
-                        /* assign CM_CTL connection to the last thread */
-                        thread = &(gThreads.threads[gThreads.count - 1]);
-                    } else {
-                        thread = GetNextCtlThread(ctlThreadNum);
+                if ((con->port->user_name != NULL) && strncmp(con->port->user_name, pw->pw_name, SP_USER - 1)) {
+                    write_runlog(WARNING, "invalid connection\n");
+                    if (CmsSendAndFlushMsg(con, 'E', "invalid connection", CM_SERVER_PACKET_ERROR_MSG) != 0) {
+                        RemoveConnAfterSendMsgFailed(con);
+                        write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
                     }
-                    if (CMAssignConnToThread(con, thread) != STATUS_OK) {
-                        write_runlog(LOG,
-                            "Assign new connection %d to worker thread failed, confd is %d.\n",
-                            con->port->remote_type,
-                            con->fd);
-                        return -1;
-                    }
-                } else {
                     return -1;
                 }
-                break;
+
+                return CmSetConnState(con);
 
             default:
                 EventDel(epollfd, con);
@@ -1992,19 +1737,16 @@ static int cm_server_process_startup_packet(int epollfd, CM_Connection* con, CM_
                 nRet = snprintf_s(error_msg, CM_SERVER_PACKET_ERROR_MSG, sizeof(error_msg) - 1,
                     "%s", "invalid remote type");
                 securec_check_intval(nRet, (void)nRet);
-                (void)cm_server_send_msg(con, 'E', error_msg, CM_SERVER_PACKET_ERROR_MSG);
-                (void)cm_server_flush_msg(con);
+                if (CmsSendAndFlushMsg(con, 'E', error_msg, CM_SERVER_PACKET_ERROR_MSG) != 0) {
+                    RemoveConnAfterSendMsgFailed(con);
+                    write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
+                }
                 return -1;
         }
     }
     return 0;
 }
 
-/**
- * @brief 
- * 
- * @param  conn             My Param doc
- */
 static void remove_unauthen_connection(const CM_Connection* conn)
 {
     unauth_connection* pre = NULL;
@@ -2027,14 +1769,27 @@ static void remove_unauthen_connection(const CM_Connection* conn)
     }
 }
 
-/**
- * @brief 
- * 
- * @param  epollFd          My Param doc
- * @param  events           My Param doc
- * @param  arg              My Param doc
- */
-void ProcessStartupPacket(int epollFd, int events, void* arg)
+static void CheckReadNoMessage(CM_Connection *con, int epollFd)
+{
+    write_runlog(DEBUG5, "StartupPacket read no message on fd %d\n", con->fd);
+
+    bool isRecvTimeOut = false;
+    if (con->msgFirstPartRecvTime != 0 && time(NULL) >= con->msgFirstPartRecvTime + AUTHENTICATION_TIMEOUT) {
+        isRecvTimeOut = true;
+    }
+    if (time(NULL) >= con->last_active + AUTHENTICATION_TIMEOUT || isRecvTimeOut) {
+        EventDel(epollFd, con);
+        if (con->port != NULL) {
+            write_runlog(LOG, "connection TIMEOUT, node=[%s: %u], socket=%d, isRecvTimeOut=%d.\n",
+                con->port->node_name, con->port->node_id, con->port->sock, isRecvTimeOut);
+        } else {
+            write_runlog(LOG, "connection TIMEOUT.\n");
+        }
+        ConnCloseAndFree(con);
+    }
+}
+
+void ProcessStartupPacket(int epollFd, void* arg)
 {
     int qtype;
     CM_Connection* con = (CM_Connection*)arg;
@@ -2044,19 +1799,16 @@ void ProcessStartupPacket(int epollFd, int events, void* arg)
 
     remove_unauthen_connection(con);
     set_socket_timeout(con->port, AUTHENTICATION_TIMEOUT);
-    qtype = ReadCommand(con->port, con->inBuffer);
-    write_runlog(DEBUG5,
-        "Startup pack type is %d, msglen =%d len =%d ,msg:%s\n",
-        qtype,
-        con->inBuffer->msglen,
-        con->inBuffer->len,
-        con->inBuffer->data);
+    qtype = ReadCommand(con, "ProcessStartupPacket");
+    write_runlog(DEBUG5, "Startup pack type is %d, msglen =%d len =%d ,msg:%s\n",
+        qtype, con->inBuffer->msglen, con->inBuffer->len, con->inBuffer->data);
     switch (qtype) {
         case 'A':
 #ifdef KRB5
             con->gss_check = false;
 #endif // KRB5
             con->last_active = time(NULL);
+            con->msgFirstPartRecvTime = 0;
             if (cm_server_process_startup_packet(epollFd, con, con->inBuffer) == 0) {
                 /* new connection has been assigned to other thread */
                 return;
@@ -2064,7 +1816,7 @@ void ProcessStartupPacket(int epollFd, int events, void* arg)
 
             write_runlog(DEBUG1, "process startup packet error, new connection refused,[fd=%d]\n", con->fd);
             if (con->port != NULL) {
-                RemoveCMAgentConnection(con);
+                RemoveConnection(con);
             }
             break;
         case 'X':
@@ -2076,12 +1828,7 @@ void ProcessStartupPacket(int epollFd, int events, void* arg)
 
         case TCP_SOCKET_ERROR_NO_MESSAGE:
         case 0:
-            write_runlog(DEBUG5, "StartupPacket read no message on fd %d\n", con->fd);
-            if (time(NULL) >= con->last_active + AUTHENTICATION_TIMEOUT) {
-                EventDel(epollFd, con);
-                write_runlog(LOG, "connection TIMEOUT\n");
-                ConnCloseAndFree(con);
-            }
+            CheckReadNoMessage(con, epollFd);
             break;
 
         case TCP_SOCKET_ERROR_EPIPE:
@@ -2103,13 +1850,6 @@ void ProcessStartupPacket(int epollFd, int events, void* arg)
     }
 }
 
-/**
- * @brief 
- * 
- * @param  fd               My Param doc
- * @param  port             My Param doc
- * @return CM_Connection* 
- */
 static CM_Connection* makeConnection(int fd, Port* port)
 {
     CM_Connection* listenCon = (CM_Connection*)malloc(sizeof(CM_Connection));
@@ -2132,13 +1872,6 @@ static CM_Connection* makeConnection(int fd, Port* port)
     return listenCon;
 }
 
-/**
- * @brief 
- * 
- * @param  conn             My Param doc
- * @return true 
- * @return false 
- */
 static bool add_unauthen_connection(CM_Connection* conn)
 {
     unauth_connection* tmp = (unauth_connection*)malloc(sizeof(unauth_connection));
@@ -2154,24 +1887,15 @@ static bool add_unauthen_connection(CM_Connection* conn)
     return true;
 }
 
-
-/**
- * @brief accept new connections from clients
- * 
- * @param  epollFd          My Param doc
- * @param  events           My Param doc
- * @param  arg              My Param doc
- */
-static void AcceptConn(int epollFd, int events, void* arg)
+static void AcceptConn(int epollFd, void* arg)
 {
-    Port* port = NULL;
     CM_Connection* listenCon = (CM_Connection*)arg;
     if (listenCon == NULL) {
         write_runlog(ERROR, "AcceptConn arg is NULL.\n");
         return;
     }
 
-    port = ConnCreate(listenCon->fd);
+    Port* port = ConnCreate(listenCon->fd);
     if (port != NULL) {
         CM_Connection* newCon = makeConnection(port->sock, port);
         if (newCon == NULL) {
@@ -2196,7 +1920,7 @@ static void AcceptConn(int epollFd, int events, void* arg)
         }
 
         /* add new connection fd to main thread to precess startup packet */
-        if (EventAdd(epollFd, EPOLLIN, newCon)) {
+        if (EventAdd(epollFd, (int)EPOLLIN, newCon)) {
             write_runlog(ERROR, "Add new connection socket failed[fd=%d], events[%03X].\n", port->sock, EPOLLIN);
             remove_unauthen_connection(newCon);
             ConnCloseAndFree(newCon);
@@ -2208,13 +1932,6 @@ static void AcceptConn(int epollFd, int events, void* arg)
     }
 }
 
-
-/**
- * @brief 
- * 
- * @param  epollFd          My Param doc
- * @return int 
- */
 static int InitListenSocket(int epollFd)
 {
     int i;
@@ -2223,8 +1940,9 @@ static int InitListenSocket(int epollFd)
     for (i = 0; i < MAXLISTEN; i++) {
         int listenFd = ServerListenSocket[i];
 
-        if (listenFd == -1)
+        if (listenFd == -1) {
             break;
+        }
 
         ret = SetSocketNoBlock(listenFd);
         if (ret != STATUS_OK) {
@@ -2243,7 +1961,7 @@ static int InitListenSocket(int epollFd)
         listenCon->arg = listenCon;
         listenCon->epHandle = epollFd;
 
-        gConns.connections[CM_MAX_CONNECTIONS + i] = listenCon;
+        addListenConn(i, listenCon);
 
         if (EventAdd(epollFd, EPOLLIN, listenCon)) {
             write_runlog(ERROR, "Add listen socket failed[fd=%d].\n", listenFd);
@@ -2266,31 +1984,26 @@ status_t cms_chk_ssl_cert_expire()
             g_sslOption.expire_time, CM_MIN_SSL_EXPIRE_THRESHOLD, CM_MAX_SSL_EXPIRE_THRESHOLD);
         return CM_ERROR;
     }
-    cm_ssl_ca_cert_expire(g_ssl_acceptor_fd, g_sslOption.expire_time);
+    cm_ssl_ca_cert_expire(g_ssl_acceptor_fd, (int)g_sslOption.expire_time);
     return CM_SUCCESS;
 }
 
 static void CheckFileExists()
 {
-    if (!cm_file_exist((const char *)g_sslOption.ssl_para.ca_file)) {
+    if (!CmFileExist((const char *)g_sslOption.ssl_para.ca_file)) {
         write_runlog(DEBUG5, "cms_init_ssl key_file is not exist.\n");
         free(g_sslOption.ssl_para.ca_file);
         g_sslOption.ssl_para.ca_file = NULL;
     }
-    if (!cm_file_exist((const char *)g_sslOption.ssl_para.key_file)) {
+    if (!CmFileExist((const char *)g_sslOption.ssl_para.key_file)) {
         write_runlog(DEBUG5, "cms_init_ssl key_file is not exist.\n");
         free(g_sslOption.ssl_para.key_file);
         g_sslOption.ssl_para.key_file = NULL;
     }
-    if (!cm_file_exist((const char *)g_sslOption.ssl_para.cert_file)) {
+    if (!CmFileExist((const char *)g_sslOption.ssl_para.cert_file)) {
         write_runlog(DEBUG5, "cms_init_ssl cert_file is not exist.\n");
         free(g_sslOption.ssl_para.cert_file);
         g_sslOption.ssl_para.cert_file = NULL;
-    }
-    if (!cm_file_exist((const char *)g_sslOption.ssl_para.crl_file)) {
-        write_runlog(DEBUG5, "cms_init_ssl crl_file is not exist.\n");
-        free(g_sslOption.ssl_para.crl_file);
-        g_sslOption.ssl_para.crl_file = NULL;
     }
     return;
 }
@@ -2302,7 +2015,7 @@ static status_t cms_init_ssl()
     g_ssl_acceptor_fd = NULL;
     write_runlog(LOG, "cms_init_ssl get config.\n");
     if (g_sslOption.enable_ssl == CM_FALSE) {
-        write_runlog(LOG, "[INST] srv_init_ssl: ssl is not enable.\n");
+        write_runlog(WARNING, "[INST] srv_init_ssl: ssl is not enable.\n");
         return CM_SUCCESS;
     }
 
@@ -2354,7 +2067,6 @@ void cms_deinit_ssl()
     if (g_ssl_acceptor_fd != NULL) {
         cm_ssl_free_context(g_ssl_acceptor_fd);
         g_ssl_acceptor_fd = NULL;
-        //("cms deinit ssl end.");
     }
 }
 
@@ -2364,21 +2076,16 @@ static int CreateListenSocket(void)
     int epollfd = epoll_create(MAX_EVENTS);
     if (epollfd < 0) {
         write_runlog(ERROR, "create epoll failed %d.\n", epollfd);
-        return CM_ERROR;
+        return (int)CM_ERROR;
     }
 
     if (InitListenSocket(epollfd)) {
         write_runlog(ERROR, "init listen socket failed.\n");
-        return CM_ERROR;
+        return (int)CM_ERROR;
     }
     return epollfd;
 }
 
-/**
- * @brief 
- * 
- * @return int 
- */
 static int server_loop(void)
 {
     struct timespec startTime = {0, 0};
@@ -2398,6 +2105,9 @@ static int server_loop(void)
     struct epoll_event events[MAX_EVENTS];
 
     for (;;) {
+        if (got_stop == 1) {
+            return 1;
+        }
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);
         if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
             if (g_isStart && (endTime.tv_sec - startTime.tv_sec) >= totalTime) {
@@ -2416,18 +2126,18 @@ static int server_loop(void)
         int fds = epoll_wait(epollfd, events, MAX_EVENTS, 10000);
         if (fds < 0) {
             if (errno != EINTR && errno != EWOULDBLOCK) {
-                write_runlog(ERROR, "epoll_wait error : %m, mian thread exit.\n");
+                write_runlog(ERROR, "epoll_wait error : %d, mian thread exit.\n", errno);
                 break;
             }
         }
 
         for (int i = 0; i < fds; i++) {
-            CM_Connection* con = (struct CM_Connection*)events[i].data.ptr;
+            CM_Connection* con = (CM_Connection*)events[i].data.ptr;
 
             /* read event */
             if (events[i].events & EPOLLIN) {
                 if (con != NULL) {
-                    con->callback(epollfd, events[i].events, con->arg);
+                    con->callback(epollfd, con->arg);
                 }
             }
         }
@@ -2436,34 +2146,30 @@ static int server_loop(void)
         (void)usleep(20);
     }
 
-    close(epollfd);
+    (void)close(epollfd);
     return 1;
 }
 
-/**
- * @brief 
- * 
- */
 static void DoHelp(void)
 {
-    printf(_("%s is a utility to arbitrate an instance.\n\n"), g_progname);
+    (void)printf(_("%s is a utility to arbitrate an instance.\n\n"), g_progname);
 
-    printf(_("Usage:\n"));
-    printf(_("  %s\n"), g_progname);
-    printf(_("  %s 0\n"), g_progname);
-    printf(_("  %s 1\n"), g_progname);
-    printf(_("  %s 2\n"), g_progname);
-    printf(_("  %s 3\n"), g_progname);
+    (void)printf(_("Usage:\n"));
+    (void)printf(_("  %s\n"), g_progname);
+    (void)printf(_("  %s 0\n"), g_progname);
+    (void)printf(_("  %s 1\n"), g_progname);
+    (void)printf(_("  %s 2\n"), g_progname);
+    (void)printf(_("  %s 3\n"), g_progname);
 
-    printf(_("\nCommon options:\n"));
-    printf(_("  -?, -h, --help         show this help, then exit\n"));
-    printf(_("  -V, --version          output version information, then exit\n"));
+    (void)printf(_("\nCommon options:\n"));
+    (void)printf(_("  -?, -h, --help         show this help, then exit\n"));
+    (void)printf(_("  -V, --version          output version information, then exit\n"));
 
-    printf(_("\nlocation of the log information options:\n"));
-    printf(_("  0                      LOG_DESTION_FILE\n"));
-    printf(_("  1                      LOG_DESTION_SYSLOG\n"));
-    printf(_("  2                      LOG_DESTION_FILE\n"));
-    printf(_("  3                      LOG_DESTION_DEV_NULL\n"));
+    (void)printf(_("\nlocation of the log information options:\n"));
+    (void)printf(_("  0                      LOG_DESTION_FILE\n"));
+    (void)printf(_("  1                      LOG_DESTION_SYSLOG\n"));
+    (void)printf(_("  2                      LOG_DESTION_FILE\n"));
+    (void)printf(_("  3                      LOG_DESTION_DEV_NULL\n"));
 }
 
 
@@ -2476,11 +2182,10 @@ static void DoHelp(void)
 void GetMultiAzNodeInfo()
 {
     errno_t rc = 0;
-    uint32 azNodeIndex = 0;
     uint32 ii;
     uint32 jj;
 
-    for (ii = 0; ii < g_node_num; ii ++) {
+    for (ii = 0; ii < g_node_num; ii++) {
         bool isRepeatAz = false;
         for (jj = ii + 1; jj < g_node_num; jj++) {
             if (strcmp(g_node[ii].azName, g_node[jj].azName) == 0) {
@@ -2488,30 +2193,29 @@ void GetMultiAzNodeInfo()
                 break;
             }
         }
-        if (isRepeatAz == false) {
+        if (!isRepeatAz) {
             rc = memcpy_s(g_azArray[g_azNum++].azName, CM_AZ_NAME, g_node[ii].azName, CM_AZ_NAME);
-            securec_check_errno(rc, );
+            securec_check_errno(rc, (void)rc);
         }
     }
 
     for (ii = 0; ii < g_azNum; ii++) {
+        uint32 azNodeIndex = 0;
         for (jj = 0; jj < g_node_num; jj++) {
             if (strcmp(g_azArray[ii].azName, g_node[jj].azName) == 0) {
                 g_azArray[ii].nodes[azNodeIndex] = g_node[jj].node;
                 azNodeIndex++;
             }
         }
-        azNodeIndex = 0;
     }
     return;
 }
 
 static void SetCmAzInfo(uint32 groupIndex, int memberIndex, int32 azIndex, uint32 priority)
 {
-    errno_t rc = 0;
     g_cmAzInfo[azIndex].azIndex = azIndex;
     g_cmAzInfo[azIndex].azPriority = priority;
-    rc = memcpy_s(g_cmAzInfo[azIndex].azName, CM_AZ_NAME,
+    errno_t rc = memcpy_s(g_cmAzInfo[azIndex].azName, CM_AZ_NAME,
         g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex].azName, CM_AZ_NAME);
     securec_check_errno(rc, (void)rc);
     int instanceType = g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex].instanceType;
@@ -2602,12 +2306,6 @@ static void GetCmAzInfo()
 }
 
 #if defined (ENABLE_MULTIPLE_NODES) || defined (ENABLE_PRIVATEGAUSS)
-/**
- * @brief 
- * 
- * @param  level            My Param doc
- * @param  logstr           My Param doc
- */
 static void cmserver_hotpatch_log_callback(int level, const char *logstr)
 {
     write_runlog(level, "%s", logstr);
@@ -2620,7 +2318,7 @@ static void InitDdbAbrCfg()
     securec_check_errno(rc, (void)rc);
     rc = pthread_rwlock_init(&(g_ddbArbicfg.lock), NULL);
     if (rc != 0) {
-        write_runlog(ERROR, "failed to InitDdbAbrCfg.\n");
+        write_runlog(FATAL, "failed to InitDdbAbrCfg.\n");
         exit(1);
     }
     const uint32 delayBaseTimeOut = 10;
@@ -2629,19 +2327,6 @@ static void InitDdbAbrCfg()
     g_ddbArbicfg.arbiDelayBaseTimeOut = delayBaseTimeOut;
     g_ddbArbicfg.arbiDelayIncrementalTimeOut = CM_SERVER_ARBITRATE_DELAY_CYCLE_MAX_COUNT;
     g_ddbArbicfg.haHeartBeatTimeOut = haHeartBeatTimeOut;
-}
-
-static int32 InitConnLock()
-{
-    int ret = pthread_rwlock_init(&(gConns.lock), NULL);
-    if (ret != 0) {
-        write_runlog(LOG, "init CM Connections lock failed !\n");
-        return -1;
-    }
-    errno_t rc = memset_s(&g_preAgentCon, sizeof(DdbPreAgentCon), 0, sizeof(DdbPreAgentCon));
-    securec_check_errno(rc, (void)rc);
-    g_preAgentCon.lock = &(gConns.lock);
-    return 0;
 }
 
 static bool IsMaintainFileExist()
@@ -2694,13 +2379,15 @@ static void InitDnIpInfo()
     }
 }
 
-/**
- * @brief 
- * 
- * @param  argc             My Param doc
- * @param  argv             My Param doc
- * @return int 
- */
+void ClearResource()
+{
+    got_stop = 1;
+    if (g_dbType == DB_DCC) {
+        CloseAllDdbSession();
+    }
+    write_runlog(WARNING, "receive exit message, cms has cleared resource, and cms will exit.\n");
+}
+
 int main(int argc, char** argv)
 {
     uid_t uid = getuid();
@@ -2728,7 +2415,7 @@ int main(int argc, char** argv)
             DoHelp();
             exit(0);
         } else if (strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0) {
-            puts("cm_server " DEF_CM_VERSION);
+            (void)puts("cm_server " DEF_CM_VERSION);
             exit(0);
         }
     }
@@ -2742,7 +2429,7 @@ int main(int argc, char** argv)
     setup_signal_handle(SIGUSR2, SetReloadDdbConfigFlag);
     setup_signal_handle(SIGHUP, reload_cmserver_parameters);
 
-    status = get_prog_path(argc, argv);
+    status = get_prog_path();
     if (status < 0) {
         write_runlog(ERROR, "get_prog_path  failed!\n");
         return -1;
@@ -2783,8 +2470,8 @@ int main(int argc, char** argv)
 
     (void)logfile_init();
     InitDdbAbrCfg();
-
-    status = CmSSlConfigInit(CM_FALSE);
+    
+    status = CmSSlConfigInit(false);
     if (status < 0) {
         write_runlog(ERROR, "read ssl config failed!\n");
         return -1;
@@ -2827,23 +2514,19 @@ int main(int argc, char** argv)
             (void)mkdir(sys_log_path, S_IRWXU);
         }
     }
-
-    syslogFile = logfile_open(sys_log_path, "a");
     if (syslogFile == NULL) {
-        printf("server_main,open log file failed\n");
+        syslogFile = logfile_open(sys_log_path, "a");
+        if (syslogFile == NULL) {
+            (void)printf("server_main,open log file failed\n");
+        }
     }
 
     print_environ();
-    if (ReadResourceDefConfig(false) != CM_SUCCESS) {
-        write_runlog(ERROR, "read cm_resource.json failed, exit.\n");
-        return -1;
-    }
     AlarmEnvInitialize();
     create_system_alarm_log(sys_log_path);
     CreateKeyEventLogFile(sys_log_path);
     UnbalanceAlarmItemInitialize();
-    ReadOnlyAlarmItemInitialize();
-    StorageThresholdPreAlarmItemInitialize();
+    InitDbListsByStaticConfig();
 #ifdef ENABLE_MULTIPLE_NODES
     /* initialize cm cgroup and attach it if the relative path is not NULL. */
     char* cmcgroup_relpath = gscgroup_cm_init();
@@ -2867,7 +2550,7 @@ int main(int argc, char** argv)
     }
 #endif
 
-    int ret = InitConnLock();
+    int ret = InitConn();
     if (ret != 0) {
         return -1;
     }
@@ -2895,15 +2578,30 @@ int main(int argc, char** argv)
     st = ServerDdbInit();
     if (st != CM_SUCCESS) {
         write_runlog(ERROR, "ServerDdbInit failed.\n");
+        CloseAllDdbSession();
         FreeNotifyMsg();
         return -1;
     }
+    (void)atexit(ClearResource);
     GetBackupOpenConfig();
     InstanceAlarmItemInitialize();
+    ReadOnlyAlarmItemInitialize();
     GetCmAzInfo();
-    if (InitNodeReportResStatInter() != CM_SUCCESS) {
+    ret = ReadCmConfJson((void*)write_runlog);
+    if (!IsReadConfJsonSuccess(ret)) {
+        write_runlog(FATAL, "read cm conf json failed, ret=%d, reason=\"%s\".\n", ret, ReadConfJsonFailStr(ret));
         return -1;
     }
+    if (InitAllResStat() != CM_SUCCESS) {
+        write_runlog(FATAL, "init res status failed.\n");
+        return -1;
+    }
+    if (IsCusResExist() && InitNodeReportResStatInter() != CM_SUCCESS) {
+        return -1;
+    }
+    InitIsregVariable();
+    GetAllResStatusFromDdb();
+
     status = CM_CreateMonitor();
     if (status < 0) {
         write_runlog(ERROR, "CM_CreateMonitor  failed!\n");
@@ -2922,9 +2620,17 @@ int main(int argc, char** argv)
         }
     }
 
-    status = CM_CreateThreadPool(cm_thread_count);
+    status = CM_CreateWorkThreadPool(cm_thread_count);
     if (status < 0) {
         write_runlog(ERROR, "Create Threads Pool failed!\n");
+        CloseAllDdbSession();
+        FreeNotifyMsg();
+        return -1;
+    }
+
+    status = CM_CreateIOThread();
+    if (status < 0) {
+        write_runlog(ERROR, "Create IOThreads failed!\n");
         CloseAllDdbSession();
         FreeNotifyMsg();
         return -1;

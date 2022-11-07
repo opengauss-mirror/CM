@@ -22,11 +22,10 @@
  * -------------------------------------------------------------------------
  */
 
+#include <time.h>
 #include "cm_ddb_etcd.h"
-#include "cm_etcdapi.h"
 #include "cm/cm_elog.h"
 #include "cm/cm_c.h"
-#include <time.h>
 
 uint32 g_healthEtcdCountForPreConn = 0;
 static const int32 MONITOR_WAIT_TIME = 60; // 60s
@@ -37,10 +36,10 @@ static char g_heartBeatKey[DDB_MAX_PATH_LEN] = {0};
 static int32 g_haHeartbeatTimeout[PRIMARY_STANDBY_NUM] = {0};
 static int32 g_haHeartbeatFromEtcd[PRIMARY_STANDBY_NUM] = {0};
 static int32 g_delaySet = 0;
-static uint32 g_delayTimeout = ARBITRATE_DELAY_CYCLE_MAX_COUNT;
+static volatile uint32 g_delayTimeout = ARBITRATE_DELAY_CYCLE_MAX_COUNT;
 static int32 g_haHeartBeat = 0;
 static EtcdSession g_etcdSess;
-static DDB_ROLE g_cmRole = DDB_ROLE_UNKNOWN;
+static DDB_ROLE g_cmRole = DDB_ROLE_FOLLOWER;
 static DrvKeyValue *g_keyValue = NULL;
 static int32 g_promoteDelayCount = 0;
 static uint32 g_lastCmNum = 0;
@@ -52,11 +51,14 @@ static bool g_isMinority = false;
 static EtcdSessPool *g_etcdSessPool = NULL;
 static uint32 g_etcdHealthCount = 0;
 static EtcdServerSocket *g_allServerSocket = NULL;
+static int64 g_waitTime = 0;
+static volatile int64 g_waitForChangeTime = 0;
 
 int32 EtcdNotifyStatus(DDB_ROLE ddbRole)
 {
     (void)pthread_rwlock_wrlock(&g_notityCmsLock);
-    write_runlog(LOG, "node(%u) last role is %d, ready to %d.\n", g_arbiCon->curInfo.nodeId, g_cmRole, ddbRole);
+    write_runlog(LOG, "node(%u) last role is %d, ready to %d.\n",
+        g_arbiCon->curInfo.nodeId, (int32)g_cmRole, (int32)ddbRole);
     g_cmRole = ddbRole;
     DdbNotifyStatusFunc ddbNotiSta = GetDdbStatusFunc();
     if (ddbNotiSta == NULL) {
@@ -71,14 +73,14 @@ int32 EtcdNotifyStatus(DDB_ROLE ddbRole)
 static void EtcdNotifyPrimary(const char *str)
 {
     write_runlog(LOG, "[%s]: pre_agent_count is %u, node(%u) cm role is %d, to primary.\n",
-        str, g_arbiCon->agentCon->connCount, g_arbiCon->curInfo.nodeId, g_cmRole);
+        str, g_arbiCon->getPreConnCount(), g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
     (void)EtcdNotifyStatus(DDB_ROLE_LEADER);
 }
 
 static void EtcdNotifyStandby(const char *str)
 {
     write_runlog(LOG, "[%s]: pre_agent_count is %u, node(%u) cm role is %d, to standby.\n",
-        str, g_arbiCon->agentCon->connCount, g_arbiCon->curInfo.nodeId, g_cmRole);
+        str, g_arbiCon->getPreConnCount(), g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
     (void)EtcdNotifyStatus(DDB_ROLE_FOLLOWER);
 }
 
@@ -129,6 +131,9 @@ void *EtcdMonitorMain(void *argp)
         if (g_delayTimeout > 0) {
             --g_delayTimeout;
         }
+        if (g_waitForChangeTime > 0) {
+            --g_waitForChangeTime;
+        }
         (void)sleep(1);
     }
     return NULL;
@@ -136,12 +141,16 @@ void *EtcdMonitorMain(void *argp)
 
 bool SetHeartbeatToEtcd()
 {
+    if (g_notifyEtcd == DDB_ROLE_FOLLOWER) {
+        write_runlog(DEBUG1, "cms will be follwer, cannot set heartbeat to etcd.\n");
+        return true;
+    }
     char value[MAX_PATH_LEN] = {0};
     int rc = snprintf_s(value, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%d", g_haHeartBeat);
     securec_check_intval(rc, (void)rc);
 
     int etcdSetResult = etcd_set(g_etcdSess, g_heartBeatKey, value, NULL);
-    if (etcdSetResult != ETCD_OK) {
+    if (etcdSetResult != (int32)ETCD_OK) {
         write_runlog(ERROR, "%d: etcd set failed. heartbeatKey=%s, value=%s, error is %s.\n",
             __LINE__, g_heartBeatKey, value, get_last_error());
         return false;
@@ -184,7 +193,7 @@ static bool GetEtcdPrimaryKey(uint32 *primaryNodeId, EtcdSession etcdSess, int32
     char primaryValue[MAX_PATH_LEN] = {0};
     GetEtcdOption getOption = {false, false, true};
     int32 etcdResult = etcd_get(etcdSess, g_primaryKey, primaryValue, DDB_MAX_PATH_LEN, &getOption);
-    if (etcdResult != ETCD_OK) {
+    if (etcdResult != (int32)ETCD_OK) {
         const char *errNow = get_last_error();
         write_runlog(logLevel, "%d: etcd get failed, cannot get key(%s), value(%s), error is %s.\n",
             __LINE__, g_primaryKey, primaryValue, errNow);
@@ -209,7 +218,7 @@ static status_t CmSetPrimary2Etcd()
     errno_t rc = snprintf_s(primaryValue, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%u", g_arbiCon->curInfo.nodeId);
     securec_check_intval(rc, (void)rc);
     const char *str = "[CmSetPrimary2Etcd]";
-    write_runlog(LOG, "%s: node(%u) role is %d, ready to promote.\n", str, g_arbiCon->curInfo.nodeId, g_cmRole);
+    write_runlog(LOG, "%s: node(%u) role is %d, ready to promote.\n", str, g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
     int32 etcdSetResult = etcd_set(g_etcdSess, g_primaryKey, primaryValue, NULL);
     if (etcdSetResult != 0) {
         write_runlog(ERROR, "%s: etcd set failed, key=%s, value = %s, error is %s.\n", str, g_primaryKey, primaryValue,
@@ -217,7 +226,7 @@ static status_t CmSetPrimary2Etcd()
         return CM_ERROR;
     } else {
         write_runlog(LOG, "%s: node(%u) last role is %d, promote to primary.\n",
-            str, g_arbiCon->curInfo.nodeId, g_cmRole);
+            str, g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
         EtcdNotifyPrimary("CmSetPrimary2Etcd");
         return CM_SUCCESS;
     }
@@ -239,7 +248,7 @@ static void CmPrimaryToStandbyInit(uint32 primaryNodeId)
     securec_check_intval(rc, (void)rc);
     int32 etcdSetResult = etcd_set(g_etcdSess, g_primaryKey, primaryValue, &setOption);
     const char *str = "[CmPrimaryToStandbyInit]";
-    if (etcdSetResult != ETCD_OK) {
+    if (etcdSetResult != (int32)ETCD_OK) {
         write_runlog(ERROR, "%s: etcd set failed, primary_key is %s, primary is %s, last value is %s.\n",
             str, g_primaryKey, primaryValue, preValue);
     } else {
@@ -328,14 +337,8 @@ static void RestPreAgentConn(uint32 primaryNodeId)
     if (primaryNodeId == 0) {
         return;
     }
-    DdbPreAgentCon *agentCon = g_arbiCon->agentCon;
     if (g_delaySet == INSTANCE_ARBITRATE_DELAY_NO_SET) {
-        (void)pthread_rwlock_wrlock(agentCon->lock);
-        write_runlog(LOG, "pre conn reset when choose cms primary.\n");
-        agentCon->connCount = 0;
-        errno_t rc = memset_s(agentCon->conFlag, sizeof(agentCon->conFlag), 0, sizeof(agentCon->conFlag));
-        securec_check_errno(rc, (void)rc);
-        (void)pthread_rwlock_unlock(agentCon->lock);
+        g_arbiCon->resetPreConn();
     }
 }
 
@@ -368,7 +371,7 @@ static bool FindMinCmId(uint32 primaryNodeId)
         }
     }
     write_runlog(LOG, "minNodeId=%u, nodeIndex=%u, currentNode=%u, role=%d, minNodeIdForCmId=%u.\n",
-        minNodId, nodeIdx, g_arbiCon->curInfo.nodeId, g_cmRole, minNodeIdForCmId);
+        minNodId, nodeIdx, g_arbiCon->curInfo.nodeId, (int32)g_cmRole, minNodeIdForCmId);
     if (minNodId == g_arbiCon->curInfo.nodeId) {
         write_runlog(LOG, "find the min cm id=%u, the cm could be the best primary.\n", minNodId);
         return true;
@@ -378,9 +381,9 @@ static bool FindMinCmId(uint32 primaryNodeId)
 
 static int32 DelayArbiTimeout(uint32 primaryNodeId, uint32 curInstIdx)
 {
-    DdbPreAgentCon *agentCon = g_arbiCon->agentCon;
     write_runlog(LOG, "g_pre_agent_conn_count=%u, primaryNodeId is %u, curInstIdx is %u, g_cmRole is %d, "
-        "g_delayTimeout is %u.\n", agentCon->connCount, primaryNodeId, curInstIdx, g_cmRole, g_delayTimeout);
+        "g_delayTimeout is %u.\n",
+        g_arbiCon->getPreConnCount(), primaryNodeId, curInstIdx, (int32)g_cmRole, g_delayTimeout);
     if (g_arbiCon->curInfo.isVoteAz) {
         return 0;
     }
@@ -389,11 +392,11 @@ static int32 DelayArbiTimeout(uint32 primaryNodeId, uint32 curInstIdx)
             "so this note can promote primary.\n", g_arbiCon->curInfo.nodeId, primaryNodeId);
         return 1;
     }
-    if (agentCon->connCount >= 1) {
+    if (g_arbiCon->getPreConnCount() >= 1) {
         if (FindMinCmId(primaryNodeId)) {
             SetArbiDelay(curInstIdx, false);
-            write_runlog(LOG, "cm_delay_arbitrate_time_out End: server_node_index = %u, "
-                "g_pre_agent_conn_count=%u, g_cmRole is %d.\n", curInstIdx, agentCon->connCount, g_cmRole);
+            write_runlog(LOG, "cm_delay_arbitrate_time_out End: server_node_index = %u, g_pre_agent_conn_count=%u, "
+                "g_cmRole is %d.\n", curInstIdx, g_arbiCon->getPreConnCount(), (int32)g_cmRole);
             return 1;
         } else if (g_delayTimeout <= 1) {
             ++g_promoteDelayCount;
@@ -406,7 +409,7 @@ static int32 DelayArbiTimeout(uint32 primaryNodeId, uint32 curInstIdx)
         }
     }
     if (g_delayTimeout <= 1) {
-        write_runlog(LOG, "local role is %d, pre conn count is %u\n", g_cmRole, agentCon->connCount);
+        write_runlog(LOG, "local role is %d, pre conn count is %u\n", (int32)g_cmRole, g_arbiCon->getPreConnCount());
     }
     write_runlog(DEBUG1, "cm_server_delay_arbitrate_time_out Running: arbitrate_delay_time_out = %u, "
         "cm_server_node_index = %u\n", g_delayTimeout, curInstIdx);
@@ -430,10 +433,10 @@ static void Choose2BePrimary(uint32 primaryNodeId, uint32 curInstIdx)
             }
         }
     } else {
-        if (g_cmRole != DDB_ROLE_FOLLOWER && g_cmRole != DDB_ROLE_LEADER && g_arbiCon->agentCon->connCount < 1) {
+        if (g_cmRole != DDB_ROLE_FOLLOWER && g_cmRole != DDB_ROLE_LEADER && g_arbiCon->getPreConnCount() < 1) {
             const char *str = "[Choose2BePrimary]";
             write_runlog(LOG, "%s: current node is %u, g_cmRole is %d, pre_agent_conn is %u, primaryNodeId is %u, "
-                "curInstIdx is %u.\n", str, g_arbiCon->curInfo.nodeId, g_cmRole, g_arbiCon->agentCon->connCount,
+                "curInstIdx is %u.\n", str, g_arbiCon->curInfo.nodeId, (int32)g_cmRole, g_arbiCon->getPreConnCount(),
                 primaryNodeId, curInstIdx);
             EtcdNotifyStandby("Choose2BePrimary");
         }
@@ -454,10 +457,10 @@ static void Direct2BePrimary(uint32 primaryNodeId)
 {
     static bool isChangeToStandby = false;
     const char *str = "[Direct2BePrimary]";
-    write_runlog(LOG, "pre con count is %u.\n", g_arbiCon->agentCon->connCount);
-    if (g_arbiCon->agentCon->connCount >= 1) {
+    write_runlog(LOG, "pre con count is %u.\n", g_arbiCon->getPreConnCount());
+    if (g_arbiCon->getPreConnCount() >= 1) {
         write_runlog(LOG, "%s: primaryNodeId is current node(%u), cm role is %d, pre_agent_conn is %u, to primary.\n",
-            str, g_arbiCon->curInfo.nodeId, g_cmRole, g_arbiCon->agentCon->connCount);
+            str, g_arbiCon->curInfo.nodeId, (int32)g_cmRole, g_arbiCon->getPreConnCount());
         EtcdNotifyPrimary("Direct2BePrimary");
         isChangeToStandby = false;
     } else {
@@ -474,7 +477,7 @@ static void Direct2BePrimary(uint32 primaryNodeId)
         isChangeToStandby = true;
         if (g_cmRole != DDB_ROLE_FOLLOWER) {
             write_runlog(LOG, "%s: the primaryNode is current node(%u), but pre_agent_conn is 0, and cm role is %d, "
-                "so only set to standby.\n", str, g_arbiCon->curInfo.nodeId, g_cmRole);
+                "so only set to standby.\n", str, g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
             EtcdNotifyStandby("Direct2BePrimary");
         }
     }
@@ -520,7 +523,7 @@ static void CmArbitrateStart(uint32 primaryNodeId)
     } else {
         if (g_cmRole != DDB_ROLE_FOLLOWER) {
             write_runlog(LOG, "primaryNodeId(%u) is not current node(%u), and cm role is %d, to standby.\n",
-                primaryNodeId, g_arbiCon->curInfo.nodeId, g_cmRole);
+                primaryNodeId, g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
             EtcdNotifyStandby("CmArbitrateStart");
         }
     }
@@ -530,12 +533,12 @@ static void Promote2Primary(uint32 primaryNodeId, const char *str)
 {
     if (primaryNodeId != g_arbiCon->curInfo.nodeId) {
         write_runlog(LOG, "%s, current node is %u, will change it's role(%d) to primary.\n",
-            str, g_arbiCon->curInfo.nodeId, g_cmRole);
+            str, g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
         (void)CmSetPrimary2Etcd();
     }
     if (g_cmRole != DDB_ROLE_LEADER) {
         write_runlog(LOG, "%s: node(%u) cm_server role is %d, to primary.\n",
-            str, g_arbiCon->curInfo.nodeId, g_cmRole);
+            str, g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
         EtcdNotifyPrimary("CheckIsInMinority");
     }
 }
@@ -546,7 +549,7 @@ static bool CheckIsInMinority(uint32 primaryNodeId)
         return false;
     }
     write_runlog(LOG, "current node is %u, will change it's role(%d) to minority primary.\n",
-        g_arbiCon->curInfo.nodeId, g_cmRole);
+        g_arbiCon->curInfo.nodeId, (int32)g_cmRole);
     Promote2Primary(primaryNodeId, "[CheckIsInMinority]");
     write_runlog(DEBUG1, "current node is %u, it's in minority, must be primary.\n", g_arbiCon->curInfo.nodeId);
     return true;
@@ -557,8 +560,8 @@ static bool HaveNotifyEtcd(uint32 primaryNodeId)
     if (g_notifyEtcd == DDB_ROLE_UNKNOWN) {
         return false;
     }
-    write_runlog(LOG, "g_notifyEtcd is %d, primaryNodeId is %u, curnodeId is %u will notify etcd.\n",
-        g_notifyEtcd, primaryNodeId, g_arbiCon->curInfo.nodeId);
+    write_runlog(LOG, "g_notifyEtcd is %d, primaryNodeId is %u, curnodeId is %u will notify etcd, g_waitForChangeTime "
+        "is %ld.\n", (int)g_notifyEtcd, primaryNodeId, g_arbiCon->curInfo.nodeId, g_waitForChangeTime);
     if (g_notifyEtcd == DDB_ROLE_FOLLOWER && (primaryNodeId == g_arbiCon->curInfo.nodeId)) {
         write_runlog(LOG, "receive notify msg, it will change to standby, and set key(0) to etcd.\n");
         CmPrimaryToStandbyInit(primaryNodeId);
@@ -566,6 +569,12 @@ static bool HaveNotifyEtcd(uint32 primaryNodeId)
         write_runlog(LOG, "receive notify msg, it will change to primary, and set key(%u) to etcd.\n",
             g_arbiCon->curInfo.nodeId);
         Promote2Primary(primaryNodeId, "[HaveNotifyEtcd]");
+    }
+    // wait for all cms can be promoted, in order to prevent two-cms turn.
+    if (g_waitForChangeTime > 0) {
+        write_runlog(LOG, "receive notify msg, it will change to %d, and time is %ld.\n", (int32)g_notifyEtcd,
+            g_waitForChangeTime);
+        return true;
     }
     (void)pthread_rwlock_wrlock(&g_notifyEtcdLock);
     g_notifyEtcd = DDB_ROLE_UNKNOWN;
@@ -605,7 +614,7 @@ static void CmNormalArbitrate()
     if (g_delaySet == INSTANCE_ARBITRATE_DELAY_HAVE_SET) {
         write_runlog(LOG, "end to get new primary when delay have set.\n");
     }
-    write_runlog(DEBUG5, "local role is %d.\n", g_cmRole);
+    write_runlog(DEBUG5, "local role is %d.\n", (int32)g_cmRole);
 }
 
 static void UpdateEtcdServerSocket(EtcdServerSocket *serverList, ServerSocket *serverSocket)
@@ -625,6 +634,10 @@ static status_t GetEtcdSession(EtcdSession *sess, EtcdServerSocket *serverList, 
 
 status_t DrvEtcdRestConn(DrvCon_t sess, int32 timeOut)
 {
+    if (g_allServerSocket == NULL) {
+        write_runlog(ERROR, "g_allServerSocket is NULL, cannot reset etcd conn.\n");
+        return CM_SUCCESS;
+    }
     write_runlog(LOG, "cannot interacter with etcd, begin to reset etcd Session.\n");
     EtcdSession *etcdSess = (EtcdSession *)sess;
     (void)etcd_close(*etcdSess);
@@ -791,7 +804,7 @@ static status_t InitEtcdSesionPool()
 static void UpdateEtcdSessPool(DDB_STATE dbState, uint32 idx)
 {
     write_runlog(LOG, "update etcd(%s) health from %d to %d.\n",
-        g_etcdInfo[idx].nodeInfo.nodeName, g_etcdSessPool[idx].nodeState.health, dbState);
+        g_etcdInfo[idx].nodeInfo.nodeName, (int32)g_etcdSessPool[idx].nodeState.health, (int32)dbState);
     (void)pthread_rwlock_wrlock(&g_checkEtcdSessLock);
     g_etcdSessPool[idx].nodeState.health = dbState;
     if (dbState == DDB_STATE_HEALTH) {
@@ -879,6 +892,7 @@ status_t InitThreadInfo(const DrvApiInfo *apiInfo)
 {
     g_arbiCon = apiInfo->cmsArbiCon;
     g_lastCmNum = g_arbiCon->instNum;
+    g_waitTime = apiInfo->client_t.waitTime;
     status_t st = InitEtcdServerSocket(&g_allServerSocket, apiInfo);
     if (st != CM_SUCCESS) {
         write_runlog(ERROR, "failed to init g_allServerSocket.\n");
@@ -897,23 +911,29 @@ status_t CreateEtcdThread(const DrvApiInfo *apiInfo)
 {
     int32 logLevel = (apiInfo->modId == MOD_CMS) ? ERROR : DEBUG5;
     if (apiInfo->modId != MOD_CMS) {
-        write_runlog(logLevel, "mod is %d, cannot create etcdTheard.\n", MOD_CMS);
-        return CM_SUCCESS;
-    }
-    if (apiInfo->cmsArbiCon == NULL) {
-        write_runlog(logLevel, "cmsArbiCon is NULL, cannot create etcdTheard.\n");
+        write_runlog(logLevel, "mod is %d, cannot create etcdTheard.\n", (int32)MOD_CMS);
         return CM_SUCCESS;
     }
     if (g_etcdNum == 0) {
         write_runlog(logLevel, "g_etcdNum is 0, cannot create etcdTheard.\n");
         return CM_SUCCESS;
     }
-    status_t st = InitThreadInfo(apiInfo);
+    write_runlog(LOG, "cms will init g_allServerSocket.\n");
+    status_t st = InitEtcdServerSocket(&g_allServerSocket, apiInfo);
+    if (st != CM_SUCCESS) {
+        write_runlog(ERROR, "failed to init g_allServerSocket.\n");
+        return CM_ERROR;
+    }
+    if (apiInfo->cmsArbiCon == NULL) {
+        write_runlog(logLevel, "cmsArbiCon is NULL, cannot create etcdTheard.\n");
+        return CM_SUCCESS;
+    }
+    st = InitThreadInfo(apiInfo);
     if (st != CM_SUCCESS) {
         write_runlog(ERROR, "failed to init Thread Info.\n");
         return CM_ERROR;
     }
-    st = CreateEtcdSession((DrvCon_t)&g_etcdSess, apiInfo);
+    st = CreateEtcdSession(&g_etcdSess, apiInfo);
     if (st != CM_SUCCESS) {
         write_runlog(logLevel, "failed to Create Etcd Session.\n");
         return CM_ERROR;
@@ -940,12 +960,13 @@ void DrvNotifyEtcd(DDB_ROLE dbRole)
 {
     if (g_cmRole != dbRole) {
         write_runlog(LOG, "receive notify msg, it will set g_notifyEtcd(%d) to %d, g_cmRole is %d.\n",
-            g_notifyEtcd, dbRole, g_cmRole);
+            (int32)g_notifyEtcd, (int32)dbRole, (int32)g_cmRole);
         (void)pthread_rwlock_wrlock(&g_notifyEtcdLock);
         g_notifyEtcd = dbRole;
+        g_waitForChangeTime = g_waitTime;
         (void)pthread_rwlock_unlock(&g_notifyEtcdLock);
         write_runlog(LOG, "receive notify msg, it has set g_notifyEtcd(%d) to %d, g_cmRole is %d.\n",
-            g_notifyEtcd, dbRole, g_cmRole);
+            (int32)g_notifyEtcd, (int32)dbRole, (int32)g_cmRole);
         (void)EtcdNotifyStatus(dbRole);
     }
 }

@@ -5,7 +5,7 @@ if (ENABLE_MULTIPLE_NODES)
     list(APPEND TGT_cmagent_SRC ${TGT_cmagentD_SRC})
 endif ()
 
-set(TGT_cmagent_INC ${ZLIB_DIRECTORY_INC})
+set(TGT_cmagent_INC ${ZLIB_DIRECTORY_INC} ${CBB_DIRECTORY_INC})
 
 set(CMA_LIB_PATHS
         ${PGPORT_HOME}
@@ -13,10 +13,11 @@ set(CMA_LIB_PATHS
         ${CGROUP_DIRECTORY_LIB}
         ${DCC_ALL_LIBS}
         ${ZLIB_DIRECTORY_LIB}
+        ${CBB_DIRECTORY_LIB}
         )
 
 set(CMA_LINK_LIBS cmprotocol_static cmcommon_static cmpq_static cmclient_static m z
-        config_static pthread cjson alarmclient_static ${CM_ADPT_LIBS} securec dl ${G_BIN_EXT_LIBS})
+        config_static pthread cjson alarmclient_static ${CM_ADPT_LIBS} securec dl ${G_BIN_EXT_LIBS} libcbb.a)
 
 if (ENABLE_LIBPQ)
     aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/client_adpts/libpq TGT_cmagentPQ_SRC)

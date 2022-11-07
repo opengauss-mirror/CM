@@ -68,10 +68,10 @@ static status_t ProcessAckMsgCore(char *recvMsg, RecvResult &out)
     CmsToCtlSwitchAck *ackMsg = NULL;
     cm_to_ctl_cluster_status *queryMsg = NULL;
 
-    const cm_msg_type *msgType = reinterpret_cast<const cm_msg_type*>(reinterpret_cast<const void*>(recvMsg));
+    const cm_msg_type *msgType = (const cm_msg_type*)(recvMsg);
     switch (msgType->msg_type) {
         case MSG_CMS_CTL_SWITCH_ACK:
-            ackMsg = reinterpret_cast<CmsToCtlSwitchAck*>(reinterpret_cast<void*>(recvMsg));
+            ackMsg = (CmsToCtlSwitchAck*)(recvMsg);
             out.isSwitchSuccess = ackMsg->isSuccess;
             if (!ackMsg->isSuccess) {
                 write_runlog(LOG, "switch failed, errMsg : %s\n", ackMsg->errMsg);
@@ -79,7 +79,7 @@ static status_t ProcessAckMsgCore(char *recvMsg, RecvResult &out)
             }
             return CM_SUCCESS;
         case MSG_CM_CTL_DATA_BEGIN:
-            queryMsg = reinterpret_cast<cm_to_ctl_cluster_status*>(reinterpret_cast<void*>(recvMsg));
+            queryMsg = (cm_to_ctl_cluster_status*)(recvMsg);
             out.status = queryMsg->cluster_status;
             break;
         case MSG_CM_CTL_DATA_END:
@@ -353,7 +353,7 @@ static int GetClusterStatus()
     if (cm_client_send_msg(pCmsConn, 'C', (char*)&sendMsg, sizeof(sendMsg)) != 0) {
         ReleaseConn(pCmsConn);
         write_runlog(DEBUG1, "send get cluster status msg fail, errno(%d).\n", errno);
-        return CM_ERROR;
+        return -1;
     }
     recv.status = -1;
     ProcessAckMsg(pCmsConn, QUERY_TIME_OUT, recv);
@@ -461,11 +461,11 @@ static status_t TransferDdbData(CtlToCmsSwitch &sendMsg)
     }
     ProcessAckMsg(pCmsConn, SWITCH_TIME_OUT, recv);
     ReleaseConn(pCmsConn);
-    if (!recv.isSwitchSuccess) {
-        return CM_ERROR;
+    if (recv.isSwitchSuccess) {
+        return CM_SUCCESS;
     }
 
-    return CM_SUCCESS;
+    return CM_ERROR;
 }
 
 static status_t SwitchDdbCore(const char *ddbType)
@@ -574,17 +574,17 @@ int DoSwitch(const CtlOption *ctx)
 
     flag = (ctx->switchOption.ddbType != NULL) && !ctx->switchOption.isRollback && !ctx->switchOption.isCommit;
     if (flag) {
-        return SwitchDdb(ctx->switchOption.ddbType);
+        return (int)SwitchDdb(ctx->switchOption.ddbType);
     }
 
     flag = (ctx->switchOption.ddbType == NULL) && ctx->switchOption.isRollback && !ctx->switchOption.isCommit;
     if (flag) {
-        return SwitchRollback(LOG);
+        return (int)SwitchRollback(LOG);
     }
 
     flag = (ctx->switchOption.ddbType == NULL) && !ctx->switchOption.isRollback && ctx->switchOption.isCommit;
     if (flag) {
-        return SwitchCommit();
+        return (int)SwitchCommit();
     }
     write_runlog(LOG, "input wrong, please check the cmd.\n");
 

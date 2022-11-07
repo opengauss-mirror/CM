@@ -27,7 +27,9 @@
 #include "cm_defs.h"
 #include "cm/elog.h"
 
-typedef enum KeyEventType {
+#define MAX_LOG_BUFF_LEN 2048
+
+typedef enum KeyEventTypeEn {
     KEY_EVENT_FAILOVER = 0,
     KEY_EVENT_SWITCHOVER = 1,
     KEY_EVENT_RESTART = 2,
@@ -50,6 +52,11 @@ typedef enum KeyEventType {
     KEY_EVENT_TYPE_CEIL, // new event types should be added before this.
 } KeyEventType;
 
+typedef struct log_level_string_st {
+    const char* level_string;
+    int level_val;
+} log_level_string;
+
 typedef status_t (*SetParam)(const char *key, const char *value);
 void LoadParamterFromConfigWithPrefixKey(const char *configFile, const char *prefixKey, SetParam setParam);
 
@@ -58,6 +65,7 @@ void AddTimeLogPrefix(char *str, unsigned int strlen);
 void CheckAndSwitchLogFile(const char *sysLogPath, const char *prefixLogName, char *logFilePath, char *logFileName);
 void RenameLogFile(const char *sysLogPath, const char *logFilePath, const char *logFileName);
 bool CheckLogFileStat(const char *fileName);
+void WriteRunLogv(int elevel, const char* fmt, va_list ap) __attribute__((format(printf, 2, 0)));
 void write_runlog(int elevel, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 void write_stderr(const char *fmt, ...) __attribute__((format(PG_PRINTF_ATTRIBUTE, 1, 2)));
 void WriteKeyEventLog(KeyEventType keyEventType, uint32 instanceId, const char *fmt, ...);

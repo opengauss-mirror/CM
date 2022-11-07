@@ -26,28 +26,17 @@
 #include "cms_disk_check.h"
 #include "cms_az.h"
 
-/**
- * @brief send the state of current cm_server to client.
- * 
- * @param  con              My Param doc
- */
-void ProcessCtlToCmQueryCmserverMsg(CM_Connection* con)
+void ProcessCtlToCmQueryCmserverMsg(MsgRecvInfo* recvMsgInfo)
 {
     cm_to_ctl_cmserver_status cmToCtlCmserverStatusContent = {0};
 
     cmToCtlCmserverStatusContent.msg_type = (int32)MSG_CM_CTL_CMSERVER;
     cmToCtlCmserverStatusContent.local_role = g_HA_status->local_role;
-    (void)cm_server_send_msg(
-        con, 'S', (char*)&(cmToCtlCmserverStatusContent), sizeof(cmToCtlCmserverStatusContent));
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)&(cmToCtlCmserverStatusContent), sizeof(cmToCtlCmserverStatusContent));
     return;
 }
 
-/**
- * @brief 
- * 
- * @param  con              My Param doc
- */
-void ProcessCtlToCmGetMsg(CM_Connection* con)
+void ProcessCtlToCmGetMsg(MsgRecvInfo* recvMsgInfo)
 {
     cm_to_ctl_get msgGetAck;
 
@@ -56,39 +45,28 @@ void ProcessCtlToCmGetMsg(CM_Connection* con)
     msgGetAck.log_level = log_min_messages;
     msgGetAck.msg_type = (int32)MSG_CM_CTL_GET_ACK;
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgGetAck), sizeof(msgGetAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgGetAck), sizeof(msgGetAck));
 }
 
-/**
- * @brief cm server process the msg from cm_ctl kerberos info and send these
- * 
- * @param  con              My Param doc
- */
-void ProcessCtlToCmQueryKerberosStatusMsg(CM_Connection* con)
+void ProcessCtlToCmQueryKerberosStatusMsg(MsgRecvInfo* recvMsgInfo)
 {
     g_kerberos_group_report_status.kerberos_status.msg_type = (int32)MSG_CTL_CM_QUERY_KERBEROS_ACK;
 
     if (g_kerberos_group_report_status.kerberos_status.port[0] != 0) {
-        (void)cm_server_send_msg(
-            con, 'S', (char*)&(g_kerberos_group_report_status.kerberos_status),
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)&(g_kerberos_group_report_status.kerberos_status),
             sizeof(cm_to_ctl_kerberos_status_query));
         return;
     }
 }
 
-/**
- * @brief 
- * 
- * @param  con              My Param doc
- */
-void ProcessCtlToCmBalanceResultMsg(CM_Connection* con)
+void ProcessCtlToCmBalanceResultMsg(MsgRecvInfo* recvMsgInfo)
 {
     cm_to_ctl_balance_result msgBalanceResult;
 
     msgBalanceResult.msg_type = (int32)MSG_CM_CTL_BALANCE_RESULT_ACK;
     msgBalanceResult.imbalanceCount = isNodeBalanced(msgBalanceResult.instances);
 
-    (void)cm_server_send_msg(con, 'S', (char*)(&msgBalanceResult), sizeof(msgBalanceResult));
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgBalanceResult), sizeof(msgBalanceResult));
 }
 
 int GetCurAz()
@@ -109,7 +87,7 @@ int GetCurAz()
     int azCount = 0;
     int azIndex = 0;
     int simpleAZ = 1;
-    write_runlog(LOG, "azDnCount[AZ1]=%d, azDnCount[AZ2]=%d, azDnCount[AZ3]=%d.\n", azDnCount[AZ1_INDEX],
+    write_runlog(DEBUG1, "azDnCount[AZ1]=%d, azDnCount[AZ2]=%d, azDnCount[AZ3]=%d.\n", azDnCount[AZ1_INDEX],
         azDnCount[AZ2_INDEX], azDnCount[AZ3_INDEX]);
     for (int i = 0; i < AZ_MEMBER_MAX_COUNT; ++i) {
         if (azDnCount[i] != 0) {
@@ -174,11 +152,11 @@ void SetSwitchoverPendingCmd(uint32 groupIdx, int32 memIdx, int32 waitSecond, co
             }
         }
     }
-    write_runlog(LOG, "%s, instd(%u) localRole is (%d: %s), cmd[cmdPur(%d: %s), cmdSour(%d: %s), cmdPur(%d: %s)] "
-        "timeout is %d, delayTime is %d.\n", str, GetInstanceIdInGroup(groupIdx, memIdx), localRole,
+    write_runlog(LOG, "%s, instd(%u) localRole is (%d: %s), cmd[cmdPur(%d: %s), cmdSour(%d: %s), cmdPur(%d: %s), "
+        "peerIdx: %u] timeout is %d, delayTime is %d.\n", str, GetInstanceIdInGroup(groupIdx, memIdx), localRole,
         datanode_role_int_to_string(localRole), cmd->cmdPur, datanode_role_int_to_string(cmd->cmdPur), cmd->cmdSour,
         datanode_role_int_to_string(cmd->cmdSour), cmd->cmdRealPur, datanode_role_int_to_string(cmd->cmdRealPur),
-        waitSecond, cmd->delaySwitchoverTime);
+        cmd->peerInstId, waitSecond, cmd->delaySwitchoverTime);
     for (int jj = 0; jj < g_instance_role_group_ptr[groupIdx].count; jj++) {
         if (memIdx != jj) {
             CleanCommand(groupIdx, jj);
@@ -186,11 +164,6 @@ void SetSwitchoverPendingCmd(uint32 groupIdx, int32 memIdx, int32 waitSecond, co
     }
 }
 
-/**
- * @brief
- *
- * @return int
- */
 int CheckNotifyCnStatus()
 {
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {

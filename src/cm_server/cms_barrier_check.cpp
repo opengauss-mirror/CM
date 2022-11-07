@@ -24,8 +24,8 @@
 #include "cm/elog.h"
 #include "cms_alarm.h"
 #include "cms_global_params.h"
-#include "cms_barrier_check.h"
 #include "cms_ddb_adapter.h"
+#include "cms_barrier_check.h"
 
 #define IS_MAJORITY(sum, alive) (((sum) != 0) && (2 * (alive) > (sum)))
 #define HALF_COUNT(count) ((count) / 2)
@@ -292,12 +292,19 @@ static bool IsNeedUpdateQueryBarrier(const char *minBarrier, const char *queryBa
 
 static status_t GenerateStopBarrier()
 {
+    if (strlen(g_targetBarrier) == 0) {
+        write_runlog(ERROR, "[GenerateStopBarrier] target_barrier is null, waiting for the next round\n");
+        return CM_ERROR;
+    }
+
     char key[MAX_PATH_LEN] = {0};
     errno_t rc = snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/barrier/stop_barrier", pw->pw_name);
     securec_check_intval(rc, (void)rc);
     status_t st = SetKV2Ddb(key, MAX_PATH_LEN, g_targetBarrier, BARRIERLEN, NULL);
     if (st != CM_SUCCESS) {
         write_runlog(ERROR, "[GenerateStopBarrier] ddb set failed. key=%s,value=%s.\n", key, g_targetBarrier);
+    } else {
+        write_runlog(LOG, "Generate Stop Barrier success, stop_barrier is %s\n", g_targetBarrier);
     }
     return st;
 }
@@ -312,21 +319,63 @@ static status_t GetQueryBarrierValueFromDDb(char *value, uint32 len)
     DDB_RESULT dbResult = SUCCESS_GET_VALUE;
     status_t st = GetKVFromDDb(queryBarrierKey, MAX_PATH_LEN, value, len, &dbResult);
     if (st != CM_SUCCESS && dbResult != CAN_NOT_FIND_THE_KEY) {
-        write_runlog(ERROR, "get query_barrier info %s from ddb: %d\n", queryBarrierKey, (int)dbResult);
+        write_runlog(ERROR, "get query_barrier info %s failed from ddb: %d\n", queryBarrierKey, (int)dbResult);
         return st;
     }
-    /* Ensure that the value of querybarrier in etcd is the same as that in cma */
+    /* Ensure that the value of querybarrier in ddb is the same as g_queryBarrier and incremental */
+    if (strlen(g_queryBarrier) != 0 && strncmp(value, g_queryBarrier, len - 1) < 0) {
+        write_runlog(WARNING, "query_barrier form ddb is smaller than g_queryBarrier, value from ddb is %s,"
+            "g_queryBarrier is %s\n", value, g_queryBarrier);
+        rc = memcpy_s(value, len, g_queryBarrier, len);
+        securec_check_errno(rc, (void)rc);
+        return CM_SUCCESS;
+    }
     rc = memcpy_s(g_queryBarrier, sizeof(g_queryBarrier), value, len);
     securec_check_errno(rc, (void)rc);
     return CM_SUCCESS;
+}
+
+static void CheckBackupOpenStatus()
+{
+    char getValue[MAX_PATH_LEN] = {0};
+    char backupOpenKey[MAX_PATH_LEN] = {0};
+    errno_t rc = snprintf_s(backupOpenKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/backup_open", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVFromDDb(backupOpenKey, MAX_PATH_LEN, getValue, MAX_PATH_LEN, &dbResult);
+    if (st != CM_SUCCESS) {
+        write_runlog(ERROR, "get backup_open info failed %s from ddb: %d\n", backupOpenKey, (int)dbResult);
+        return;
+    }
+    int backupOpenValue = (int)strtol(getValue, NULL, 0);
+    /* backup_open has changed, but cms not reload it, should stop the disaster recovery mode immediately */
+    if (backup_open != (ClusterRole)backupOpenValue && g_gotParameterReload == 0) {
+        write_runlog(ERROR, "backup_open value has changed to %d, exit!\n", backupOpenValue);
+        exit(1);
+    }
+    return;
+}
+
+static bool IsStopBarrierExists()
+{
+    char getValue[MAX_PATH_LEN] = {0};
+    char stopBarrierKey[MAX_PATH_LEN] = {0};
+    errno_t rc = snprintf_s(stopBarrierKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/barrier/stop_barrier", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVAndLogLevel(stopBarrierKey, getValue, MAX_PATH_LEN, &dbResult, DEBUG1);
+    if (st != CM_SUCCESS) {
+        write_runlog(DEBUG1, "get stop_barrier info failed %s from ddb: %d\n", stopBarrierKey, (int)dbResult);
+        return false;
+    }
+    write_runlog(LOG, "get stop_barrier success from ddb, stop_barrier is %s\n", getValue);
+    return true;
 }
 
 void *DealGlobalBarrier(void *arg)
 {
     char minBarrier[BARRIERLEN] = {0};
     char queryBarrier[BARRIERLEN] = {0};
-    bool needUpdateQueryVal = false;
-    bool needUpdateTargetVal = false;
     write_runlog(LOG, "Starting DealGlobalBarrier thread.\n");
     InitCnMajorityNum();
     for (;;) {
@@ -334,17 +383,17 @@ void *DealGlobalBarrier(void *arg)
             cm_sleep(20);
             continue;
         }
-        /* get the old query value from DDb */
+        if (IsStopBarrierExists()) {
+            return NULL;
+        }
         status_t st = GetQueryBarrierValueFromDDb(queryBarrier, BARRIERLEN);
         if (st != CM_SUCCESS) {
-            write_runlog(LOG, "Get query_barrier From DDb failed\n");
             cm_sleep(1);
             continue;
         }
-        /* scan all nodes to get the minBarrierID */
         CalcMinBarrier(minBarrier, BARRIERLEN);
-        /* scan all nodes and check it's querybarrier */
-        needUpdateQueryVal = IsNeedUpdateQueryBarrier(minBarrier, queryBarrier, BARRIERLEN);
+        bool needUpdateTargetVal = false;
+        bool needUpdateQueryVal = IsNeedUpdateQueryBarrier(minBarrier, queryBarrier, BARRIERLEN);
         if (needUpdateQueryVal) {
             GlobalQueryBarrierRefresh(minBarrier, BARRIERLEN);
             needUpdateTargetVal = IsNeedUpdateTargetBarrier();
@@ -361,10 +410,19 @@ void *DealGlobalBarrier(void *arg)
         if (isExistClusterMaintenance && isInClusterFailover) {
             st = GenerateStopBarrier();
             if (st == CM_SUCCESS) {
-                write_runlog(LOG, "Generate Stop Barrier success, stop_barrier is %s\n", g_targetBarrier);
                 return NULL;
             }
         }
         cm_sleep(1);
     }
+}
+
+void *DealBackupOpenStatus(void *arg)
+{
+    write_runlog(LOG, "Starting DealBackupOpenStatus thread.\n");
+    for (;;) {
+        CheckBackupOpenStatus();
+        cm_sleep(1);
+    }
+    return NULL;
 }

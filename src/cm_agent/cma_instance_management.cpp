@@ -32,13 +32,15 @@
 #include "cma_alarm.h"
 #include "cma_common.h"
 #include "cma_client.h"
-#include "cma_instance_management.h"
 #include "cma_process_messages.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
 #include "cma_coordinator_utils.h"
 #include "cma_cn_gtm_instance_management.h"
 #endif
+#include "cma_instance_management_res.h"
+#include "cma_network_check.h"
+#include "cma_instance_management.h"
 
 #ifdef ENABLE_UT
 #define static
@@ -54,6 +56,10 @@ static const int SIG_TYPE = 2;
 #else
 static const int SIG_TYPE = 9;
 #endif
+
+typedef void (*StartCheck)(void);
+typedef bool (*StartDnCheck)(void);
+
 
 /*
  * @brief A helper function to indicate whether the gs_relpace command is running to repair the faulty cms
@@ -93,7 +99,6 @@ void start_cmserver_check(void)
 {
     int ret;
     int alarmReason = UNKNOWN_BAD_REASON;
-    uint32 alarmIndex = 0;
     int rc;
     char command[MAXPGPATH] = {0};
     char instanceName[CM_NODE_NAME] = {0};
@@ -106,7 +111,7 @@ void start_cmserver_check(void)
         return;
     }
 
-    alarmIndex = g_currentNode->datanodeCount;
+    uint32 alarmIndex = g_currentNode->datanodeCount;
     rc = snprintf_s(
         instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "%s_%u", "cms", g_currentNode->cmServerId);
     securec_check_intval(rc, (void)rc);
@@ -131,7 +136,7 @@ void start_cmserver_check(void)
         g_cmsDiskDamage = false;
     }
 
-    if (!getnicstatus(1, g_currentNode->cmServer)) {
+    if (!GetNicStatus(g_currentNode->cmServerId, CM_INSTANCE_TYPE_CMS)) {
         write_runlog(WARNING, "nic related with cmserver not up.\n");
         g_cmsNicDown = true;
         set_instance_not_exist_alarm_value(&alarmReason, NIC_BAD_REASON);
@@ -156,6 +161,7 @@ void start_cmserver_check(void)
                         instanceName,
                         "",
                         "",
+                        "",
                         &(g_startupAlarmList[alarmIndex]),
                         ALM_AT_Fault,
                         instanceName,
@@ -168,8 +174,8 @@ void start_cmserver_check(void)
                 if (g_startupAlarmList != NULL) {
                     g_startCmsCount = 0;
                     /* fill the alarm message */
-                    WriteAlarmAdditionalInfo(
-                        &tempAdditionalParam, instanceName, "", "", &(g_startupAlarmList[alarmIndex]), ALM_AT_Resume);
+                    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "",
+                        &(g_startupAlarmList[alarmIndex]), ALM_AT_Resume);
                     /* report the alarm */
                     AlarmReporter(&(g_startupAlarmList[alarmIndex]), ALM_AT_Resume, &tempAdditionalParam);
                 }
@@ -193,12 +199,19 @@ void start_cmserver_check(void)
                         instanceName,
                         "",
                         "",
+                        "",
                         &(g_startupAlarmList[alarmIndex]),
                         ALM_AT_Fault,
                         instanceName);
                     /* report the alarm */
                     AlarmReporter(&(g_startupAlarmList[alarmIndex]), ALM_AT_Fault, &tempAdditionalParam);
                 }
+            }
+
+            if (g_cmsDiskDamage || g_cmsNicDown) {
+                write_runlog(LOG, "g_cmsDiskDamage is %d, and g_cmsNicDown is %d, cannot start cms.\n",
+                    g_cmsDiskDamage, g_cmsNicDown);
+                return;
             }
 
             /* Judge the current node cms whether the cms is under replacing */
@@ -239,10 +252,10 @@ static void CheckProcessNum(const char* cmdLine)
     char    line[MAXPGPATH] = { 0 };
     char    buffer[MAXPGPATH] = { 0 };
     uint32  processCount = 0;
-
+ 
     int ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, "ps ux | grep -v grep | grep \"%s\"", cmdLine);
     securec_check_intval(ret, (void)ret);
-
+ 
     FILE *fp = popen(command, "re");
     if (fp == NULL) {
         return;
@@ -250,13 +263,13 @@ static void CheckProcessNum(const char* cmdLine)
 
     while (!feof(fp)) {
         if (fgets(line, MAXPGPATH - 1, fp)) {
-            ret = strncat_s(buffer, MAXPGPATH, line, strlen(line));
+            ret = strcat_s(buffer, MAXPGPATH, line);
             securec_check_errno(ret, (void)ret);
             processCount++;
         }
     }
     (void)pclose(fp);
-
+ 
     if (processCount > 1) {
         write_runlog(ERROR, "Multiple processes <%s>, buf is\n%s", cmdLine, buffer);
         ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
@@ -306,60 +319,105 @@ void start_fenced_UDF_check(void)
             write_runlog(ERROR, "run system command failed %d! %s, errno=%d.\n", ret, command, errno);
         }
     } else {
-        CheckProcessNum("gaussdb fenced UDF");
+        CheckProcessNum("gaussdb fenced UDF master");
         g_fencedUdfStopped = false;
     }
 }
 
 void CheckAgentNicDown()
 {
-    if (!getnicstatus(g_currentNode->cmAgentListenCount, g_currentNode->cmAgentIP)) {
+    if (!GetNicStatus(g_currentNode->cmAgentId, CM_INSTANCE_TYPE_CMA)) {
         write_runlog(WARNING, "nic related with cm_agent not up.\n");
         g_agentNicDown = true;
     } else {
         g_agentNicDown = false;
     }
 }
+
+static void ComputeCheckTime(const cmTime_t *checkBegin, const char *str)
+{
+    const long ddbTime = 2;
+    struct timespec checkEnd = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &checkEnd);
+    if (checkEnd.tv_sec - checkBegin->tv_sec > ddbTime) {
+        write_runlog(LOG, "%s, it takes %ld s.\n", str, (checkEnd.tv_sec - checkBegin->tv_sec));
+    }
+}
+
+static void StartInstanceAndCheck(StartCheck startCheck, const char *str)
+{
+    if (startCheck == NULL) {
+        return;
+    }
+    cmTime_t checkBegin = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
+    startCheck();
+    ComputeCheckTime(&checkBegin, str);
+}
+
+static bool CheckDnCanStart(StartDnCheck startCheck, const char *str)
+{
+    if (startCheck == NULL) {
+        return true;
+    }
+    cmTime_t checkBegin = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
+    bool needStartDnCheck = startCheck();
+    ComputeCheckTime(&checkBegin, str);
+    return needStartDnCheck;
+}
+
 void start_instance_check(void)
 {
     if (g_shutdownRequest) {
         return;
     }
 #ifdef ENABLE_MULTIPLE_NODES
-    start_gtm_check();
+    StartInstanceAndCheck(start_gtm_check, "[start_gtm_check]");
 
-    start_coordinator_check();
+    StartInstanceAndCheck(start_coordinator_check, "[start_coordinator_check]");
 #endif
 
-    start_cmserver_check();
+    StartInstanceAndCheck(start_cmserver_check, "[start_cmserver_check]");
 
-    bool needStartDnCheck = CheckStartDN();
-    if (needStartDnCheck) {
-        StartDatanodeCheck();
+    bool needStartDnCheck = CheckDnCanStart(CheckStartDN, "[CheckStartDN]");
+    if (needStartDnCheck && !g_enableSharedStorage) {
+        StartInstanceAndCheck(StartDatanodeCheck, "[StartDatanodeCheck]");
     }
 
-    CheckAgentNicDown();
+    StartInstanceAndCheck(CheckAgentNicDown, "[CheckAgentNicDown]");
+
+    if (IsCusResExistLocal()) {
+        StartInstanceAndCheck(StartResourceCheck, "[StartResourceCheck]");
+    }
+
     if (g_clusterType == V3SingleInstCluster) {
         return;
     }
-
-    StartResourceCheck();
 
 #ifdef ENABLE_MULTIPLE_NODES
     if (g_currentNode->coordinate == 1 || g_currentNode->datanodeCount > 0) {
 #else
     if (g_currentNode->datanodeCount > 0 && needStartDnCheck) {
 #endif
-        start_fenced_UDF_check();
+        StartInstanceAndCheck(start_fenced_UDF_check, "[start_fenced_UDF_check]");
     } else {
         g_fencedUdfStopped = true;
     }
 }
 
+static ShutdownMode GetShutdownMode(int32 mode)
+{
+    if (mode < (int32)FAST_MODE || mode >= (int32)SHUTDOWN_CEIL_MODE) {
+        return FAST_MODE;
+    }
+    return (ShutdownMode)mode;
+}
+
 /* get the lines from a text file - return NULL if file can't be opened */
 void get_stop_mode(const char *path)
 {
-    FILE *infile = NULL;
+    FILE *infile;
     int linelen = 0;
     int nlines = 0;
     int c;
@@ -390,7 +448,7 @@ void get_stop_mode(const char *path)
     /* cluster_manual_start file damaged. */
     if (nlines < 3) {
         write_runlog(LOG, "cluster_manual_start file damaged.\n");
-        fclose(infile);
+        (void)fclose(infile);
         return;
     }
 
@@ -400,7 +458,7 @@ void get_stop_mode(const char *path)
         g_cmDoForce = CmAtoBool(buffer);
     }
     if (fgets(buffer, bufferLen, infile) != NULL) {
-        g_cmShutdownMode = CmAtoi(buffer, (int)FAST_MODE);
+        g_cmShutdownMode = GetShutdownMode(CmAtoi(buffer, (int)FAST_MODE));
     }
     if (fgets(buffer, bufferLen, infile) != NULL) {
         g_cmShutdownLevel = CmAtoi(buffer, SINGLE_INSTANCE);
@@ -408,7 +466,7 @@ void get_stop_mode(const char *path)
 
     write_runlog(LOG, "g_cmDoForce :%d,g_cmShutdownMode:%d, g_cmShutdownLevel:%d\n",
         g_cmDoForce, g_cmShutdownMode, g_cmShutdownLevel);
-    fclose(infile);
+    (void)fclose(infile);
     return;
 }
 
@@ -418,29 +476,27 @@ void get_stop_mode(const char *path)
  */
 static pid_t get_instances_pid(const char *pidPath)
 {
-    FILE *pidf = NULL;
     pid_t pid;
 
-    pidf = fopen(pidPath, "re");
+    FILE *pidf = fopen(pidPath, "re");
     if (pidf == NULL) {
         /* No pid file, not an error on startup */
         char errBuffer[ERROR_LIMIT_LEN];
-        if (errno == ENOENT)
-            write_runlog(ERROR,
-                "PID file :\"%s\" does not exist: %s\n.",
-                pidPath,
+        if (errno == ENOENT) {
+            write_runlog(ERROR, "PID file :\"%s\" does not exist: %s\n.", pidPath,
                 strerror_r(errno, errBuffer, ERROR_LIMIT_LEN));
-        else
+        } else {
             write_runlog(
                 ERROR, "could not open PID file \"%s\": %s\n.", pidPath, strerror_r(errno, errBuffer, ERROR_LIMIT_LEN));
+        }
         return 0;
     }
     if (fscanf_s(pidf, "%d", &pid) != 1) {
         write_runlog(ERROR, "invalid data in PID file \"%s\"\n", pidPath);
-        fclose(pidf);
+        (void)fclose(pidf);
         return 0;
     }
-    fclose(pidf);
+    (void)fclose(pidf);
     return pid;
 }
 
@@ -536,16 +592,15 @@ void stop_datanode_check(uint32 i)
     CheckOfflineNode(i);
     cdt = (stat(instanceManualStartPath, &instanceStatBuf) == 0 || stat(g_cmManualStartPath, &clusterStatBuf) == 0);
     if (cdt) {
-        if (0 == stat(instanceReplace, &instanceStatBuf)) {
+        if (stat(instanceReplace, &instanceStatBuf) == 0) {
             write_runlog(LOG,
                 "datanode(%s) is being replaced and can't be stopped.\n",
                 g_currentNode->datanode[i].datanodeLocalDataPath);
             return;
         }
         get_stop_mode(instanceManualStartPath);
-        cdt = (g_cmShutdownMode == IMMEDIATE_MODE || (g_cmShutdownMode == FAST_MODE && g_isCmaBuildingDn[i] == true));
+        cdt = (g_cmShutdownMode == IMMEDIATE_MODE || (g_cmShutdownMode == FAST_MODE && g_isCmaBuildingDn[i]));
         if (cdt) {
-            pgpid_t pid = 0;
             char build_pid_path[MAXPGPATH];
 
             rc = memset_s(build_pid_path, MAXPGPATH, 0, MAXPGPATH);
@@ -556,11 +611,10 @@ void stop_datanode_check(uint32 i)
                 "%s/gs_build.pid",
                 g_currentNode->datanode[i].datanodeLocalDataPath);
             securec_check_intval(rcs, (void)rcs);
-            pid = get_pgpid(build_pid_path, MAXPGPATH);
+            pgpid_t pid = get_pgpid(build_pid_path, MAXPGPATH);
             cdt = (pid > 0 && is_process_alive(pid));
             if (cdt) {
                 char cmd[MAXPGPATH];
-                int ret = 0;
 
                 rc = memset_s(cmd, MAXPGPATH, 0, MAXPGPATH);
                 securec_check_errno(rc, (void)rc);
@@ -570,12 +624,12 @@ void stop_datanode_check(uint32 i)
                 const char *shutdownModeStr = (g_cmShutdownMode == IMMEDIATE_MODE) ? "immediate" : "fast";
                 write_runlog(LOG, "Shutdown the datanode %s : %s\n", shutdownModeStr, cmd);
 
-                ret = system(cmd);
+                int ret = system(cmd);
                 if (ret != 0) {
                     write_runlog(
                         ERROR, "datanode immediate shutdown: run system command failed! %s, errno=%d.\n", cmd, errno);
                 } else {
-                    if (g_isCmaBuildingDn[i] == true) {
+                    if (g_isCmaBuildingDn[i]) {
                         g_isCmaBuildingDn[i] = false;
                         write_runlog(LOG,
                             "Shutdown the datanode %s successfully: %s. Then set g_isCmaBuildingDn to false.\n",
@@ -584,7 +638,7 @@ void stop_datanode_check(uint32 i)
                     }
                 }
             } else {
-                if (g_isCmaBuildingDn[i] == true) {
+                if (g_isCmaBuildingDn[i]) {
                     g_isCmaBuildingDn[i] = false;
                     write_runlog(LOG,
                         "Datanode %u shutdown: set g_isCmaBuildingDn to false.\n",
@@ -608,10 +662,19 @@ void stop_datanode_check(uint32 i)
     }
 }
 
+static void StopAllDatanode()
+{
+    for (uint32 i = 0; i < g_currentNode->datanodeCount; i++) {
+        if (g_clusterType == V3SingleInstCluster) {
+            StopOneZengine(i);
+        } else {
+            stop_datanode_check(i);
+        }
+    }
+}
+
 void stop_instances_check(void)
 {
-    uint32 i = 0;
-
 #ifdef ENABLE_MULTIPLE_NODES
     if (g_currentNode->gtm == 1) {
         stop_gtm_check();
@@ -622,15 +685,11 @@ void stop_instances_check(void)
     }
 #endif
 
-    for (i = 0; i < g_currentNode->datanodeCount; i++) {
-        if (g_clusterType == V3SingleInstCluster) {
-            StopOneZengine(i);
-        } else {
-            stop_datanode_check(i);
-        }
+    if (!g_enableSharedStorage) {
+        StopAllDatanode();
     }
 
-    if (!g_resConf.empty()) {
+    if (IsCusResExistLocal()) {
         StopResourceCheck();
     }
 }
@@ -654,13 +713,11 @@ static int cmserver_stopped_check(void)
 
 static int datanode_stopped_check(void)
 {
-    uint32 ii = 0;
     int ret;
     errno_t rc;
 
     const char *processName = GetDnProcessName();
-    for (ii = 0; ii < g_currentNode->datanodeCount; ii++) {
-        pgpid_t pid = 0;
+    for (uint32 ii = 0; ii < g_currentNode->datanodeCount; ii++) {
         char build_pid_path[MAXPGPATH];
 
         ret = check_one_instance_status(processName, g_currentNode->datanode[ii].datanodeLocalDataPath, NULL);
@@ -673,7 +730,7 @@ static int datanode_stopped_check(void)
             "%s/gs_build.pid",
             g_currentNode->datanode[ii].datanodeLocalDataPath);
         securec_check_intval(rc, (void)rc);
-        pid = get_pgpid(build_pid_path, MAXPGPATH);
+        pgpid_t pid = get_pgpid(build_pid_path, MAXPGPATH);
         if ((ret == PROCESS_RUNNING) || (pid > 0 && is_process_alive(pid))) {
             write_runlog(LOG, "data  node is running path is %s\n", g_currentNode->datanode[ii].datanodeLocalDataPath);
             return PROCESS_RUNNING;
@@ -698,7 +755,7 @@ void stop_cm_instance_internal(const char *cm_path)
     /* Get tool path */
     ret = cmagent_getenv("GPHOME", toolPath, sizeof(toolPath));
     if (ret != EOK) {
-        write_runlog(ERROR, "get env GPHOME fail.\n");
+        write_runlog(FATAL, "get env GPHOME fail.\n");
         exit(ret);
     }
 
@@ -707,7 +764,7 @@ void stop_cm_instance_internal(const char *cm_path)
 
     ret = access(pyPstreePath, F_OK);
     if (ret != EOK) {
-        write_runlog(ERROR, "%s may be not exist.\n", pyPstreePath);
+        write_runlog(FATAL, "%s may be not exist.\n", pyPstreePath);
         exit(ret);
     }
 
@@ -737,7 +794,7 @@ void stop_cm_instance_internal(const char *cm_path)
     write_runlog(LOG, "stop_cm_instance: command= %s \n", system_cmd);
 
     if (ExecuteCmd(system_cmd, timeOut)) {
-        write_runlog(ERROR, "stop_cm_instance: execute command failed. %s \n", system_cmd);
+        write_runlog(WARNING, "stop_cm_instance: execute command failed. %s \n", system_cmd);
     } else {
         write_runlog(LOG, "cm_server shutting down.\n");
     }
@@ -780,9 +837,10 @@ static int check_process_status(const char *processName, int pid, char state, co
     }
     return PROCESS_RUNNING;
 }
-int check_one_instance_status(const char *processName, const char *cmd_line, int *isPhonyDead)
+
+static int GetProcessInfo(const char *processName, const char *cmdLine, int *processId, char *processState)
 {
-    DIR *dir = NULL;
+    DIR *dir;
     struct dirent *de = NULL;
     char pidPath[MAX_PATH_LEN];
     char cmdPath[MAX_PATH_LEN];
@@ -805,7 +863,7 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
 
     if ((dir = opendir("/proc")) == NULL) {
         write_runlog(LOG, "opendir(/proc) failed! \n");
-        return -1;
+        return PROCESS_UNKNOWN;
     }
 
     while ((de = readdir(dir)) != NULL) {
@@ -814,7 +872,7 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
          * check whether there are files under the directory ,these files includes
          * all detailed information about the process
          */
-        if (0 != CM_is_str_all_digit(de->d_name)) {
+        if (CM_is_str_all_digit(de->d_name) != 0) {
             continue;
         }
 
@@ -851,21 +909,20 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
             rc = memset_s(paraName, MAX_PATH_LEN, 0, MAX_PATH_LEN);
             securec_check_errno(rc, (void)rc);
 
-            cdt = ((nameGet == false) && (strstr(getBuff, "Name:") != NULL));
+            cdt = (!nameGet && (strstr(getBuff, "Name:") != NULL));
             if (cdt) {
                 nameGet = true;
                 rcs = sscanf_s(getBuff, "%s %s", paraName, MAX_PATH_LEN, paraValue, MAX_PATH_LEN);
                 check_sscanf_s_result(rcs, 2);
                 securec_check_intval(rcs, (void)rcs);
 
-                if (0 == strcmp(processName, paraValue)) {
-                    nameFound = true;
-                } else {
+                if (strcmp(processName, paraValue) != 0) {
                     break;
                 }
+                nameFound = true;
             }
 
-            cdt = ((ppidGet == false) && (strstr(getBuff, "PPid:") != NULL));
+            cdt = (!ppidGet && (strstr(getBuff, "PPid:") != NULL));
             if (cdt) {
                 ppidGet = true;
                 rcs = sscanf_s(getBuff, "%s %d", paraName, MAX_PATH_LEN, &ppid);
@@ -873,7 +930,7 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
                 securec_check_intval(rcs, (void)rcs);
             }
 
-            cdt = ((stateGet == false) && (strstr(getBuff, "State:") != NULL));
+            cdt = (!stateGet && (strstr(getBuff, "State:") != NULL));
             if (cdt) {
                 stateGet = true;
                 rcs = sscanf_s(getBuff, "%s %c", paraName, MAX_PATH_LEN, &state, 1);
@@ -881,7 +938,7 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
                 securec_check_intval(rcs, (void)rcs);
             }
 
-            cdt = ((uidGet == false) && (strstr(getBuff, "Uid:") != NULL));
+            cdt = (!uidGet && (strstr(getBuff, "Uid:") != NULL));
             if (cdt) {
                 uidGet = true;
                 rcs = sscanf_s(
@@ -890,15 +947,15 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
                 securec_check_intval(rcs, (void)rcs);
             }
 
-            cdt = ((nameGet == true) && (ppidGet == true) && (stateGet == true) && (uidGet == true));
+            cdt = (nameGet && ppidGet && stateGet && uidGet);
             if (cdt) {
                 break;
             }
         }
 
-        fclose(fp);
+        (void)fclose(fp);
 
-        if (nameFound == false) {
+        if (!nameFound) {
             continue;
         }
 
@@ -923,11 +980,11 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
             while (i < MAX_PATH_LEN - 1) {
                 /* cmdline of CN,DN,GTM and CM begin with '/', and fenced UDF begin with '-', and kerberos with 'k'. */
                 if (*p == '/') {
-                    if (strcmp(p, cmd_line) == 0) {
+                    if (strcmp(p, cmdLine) == 0) {
                         haveFound = true;
                         break;
                     } else {
-                        char *cmd_line_tmp = strdup(cmd_line);
+                        char *cmd_line_tmp = strdup(cmdLine);
                         if (cmd_line_tmp != NULL) {
                             canonicalize_path(cmd_line_tmp);
                             if (strcmp(p, cmd_line_tmp) == 0) {
@@ -942,7 +999,7 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
                         i = i + paralen;
                     }
                 } else if (*p == 'f') {
-                    if (strstr(p, cmd_line) != NULL) {
+                    if (strstr(p, cmdLine) != NULL) {
                         haveFound = true;
                         break;
                     } else {
@@ -950,7 +1007,7 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
                         i++;
                     }
                 } else if (*p == 'k') {
-                    if (strstr(p, cmd_line) != NULL) {
+                    if (strstr(p, cmdLine) != NULL) {
                         haveFound = true;
                         break;
                     } else {
@@ -958,7 +1015,7 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
                         i++;
                     }
                 } else if (*p == 'l') {
-                    if (strstr(p, cmd_line) != NULL) {
+                    if (strstr(p, cmdLine) != NULL) {
                         haveFound = true;
                         break;
                     } else {
@@ -973,9 +1030,9 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
             rc = memset_s(getBuff, MAX_PATH_LEN, 0, MAX_PATH_LEN);
             securec_check_errno(rc, (void)rc);
         }
-        fclose(fp);
+        (void)fclose(fp);
 
-        if (haveFound == true) {
+        if (haveFound) {
             break;
         }
     }
@@ -986,13 +1043,48 @@ int check_one_instance_status(const char *processName, const char *cmd_line, int
         write_runlog(ERROR, "the process files may not exist in /proc.\n");
         return PROCESS_UNKNOWN;
     }
-
+    
     if (haveFound) {
-        return check_process_status(processName, pid, state, cmd_line, isPhonyDead);
-    } else {
-        write_runlog(LOG, "process (%s) is not running, path is %s, haveFound is 0\n", processName, cmd_line);
-        return PROCESS_NOT_EXIST;
+        *processId = pid;
+        if (processState != NULL) {
+            *processState = state;
+        }
+        return PROCESS_RUNNING;
     }
+    write_runlog(LOG, "process (%s) is not running, path is %s, haveFound is 0\n", processName, cmdLine);
+    return PROCESS_NOT_EXIST;
+}
+
+int killInstanceByPid(const char *processName, const char *cmdLine)
+{
+    int pid = 0;
+    int runningState = GetProcessInfo(processName, cmdLine, &pid, NULL);
+    if (runningState == PROCESS_RUNNING) {
+        char killCmd[MAX_PATH_LEN] = {0};
+        int rcs = snprintf_s(killCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1, "kill -9 %d", pid);
+        securec_check_intval(rcs, (void)rcs);
+
+        write_runlog(LOG, "kill process %s, path is %s, command: %s\n", processName, cmdLine, killCmd);
+        int ret = system(killCmd);
+        if (ret != 0) {
+            write_runlog(ERROR, "kill_instance_by_pid: system command failed, errno=%d.\n", errno);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+int check_one_instance_status(const char *processName, const char *cmdLine, int *isPhonyDead)
+{
+    int32 processId = 0;
+    char processState = '0';
+    int32 runningState = GetProcessInfo(processName, cmdLine, &processId, &processState);
+    if (runningState == PROCESS_RUNNING) {
+        return check_process_status(processName, processId, processState, cmdLine, isPhonyDead);
+    }
+    write_runlog(LOG, "process (%s) is not running, path is %s, haveFound is 0\n", processName, cmdLine);
+    return PROCESS_NOT_EXIST;
 }
 
 static int all_nodes_stopped_check()
@@ -1067,7 +1159,6 @@ static void StopCmInstance()
 static int stop_primary_check(const char *ssh_channel, const char *data_path)
 {
     char command[MAXPGPATH] = {0};
-    FILE *fd = NULL;
     char result_str[MAX_BUF_LEN + 1] = {0};
     char mpprvFile[MAXPGPATH] = {0};
     int rc;
@@ -1105,22 +1196,22 @@ static int stop_primary_check(const char *ssh_channel, const char *data_path)
         return -1;
     }
 
-    fd = fopen(result_path, "re");
+    FILE *fd = fopen(result_path, "re");
     if (fd == NULL) {
         write_runlog(LOG, "fopen failed, errno[%d]!\n", errno);
         (void)unlink(result_path);
         return -1;
     }
 
-    uint32 bytesread = fread(result_str, 1, MAX_BUF_LEN, fd);
+    size_t bytesread = fread(result_str, 1, MAX_BUF_LEN, fd);
     if (bytesread > MAX_BUF_LEN) {
-        write_runlog(LOG, "stop_primary_check fread file failed! file=%s, bytesread=%u\n", result_path, bytesread);
-        fclose(fd);
+        write_runlog(LOG, "stop_primary_check fread file failed! file=%s, bytesread=%lu\n", result_path, bytesread);
+        (void)fclose(fd);
         (void)unlink(result_path);
         return -1;
     }
 
-    fclose(fd);
+    (void)fclose(fd);
     (void)unlink(result_path);
     return (int)strtol(result_str, NULL, 10);
 }
@@ -1162,10 +1253,67 @@ static void normal_stop_one_instance(const char *instDataPath, InstanceTypes ins
     write_runlog(LOG, "%s shutting down.\n", type_int_to_str_name(instance_type));
 }
 
+static status_t StopPrimaryDatanode(uint32 role, const char *ip, const char *path)
+{
+    if (role != DUMMY_STANDBY_DN) {
+        write_runlog(LOG, "peer ip: %s, datapath: %s.\n", ip, path);
+        if (stop_primary_check(ip, path) == PROCESS_RUNNING) {
+            write_runlog(LOG, "peer is still running.\n");
+            return CM_ERROR;
+        }
+    }
+    return CM_SUCCESS;
+}
+
+static void NormalShutdownOneDatanode(const dataNodeInfo *dnInfo, int localRole)
+{
+    if (localRole == INSTANCE_ROLE_STANDBY) {
+        if (g_multi_az_cluster) {
+            bool beContinue = false;
+            for (uint32 j = 0; j < g_dn_replication_num - 1; ++j) {
+                beContinue = false;
+                if (StopPrimaryDatanode(dnInfo->peerDatanodes[j].datanodePeerRole,
+                    dnInfo->peerDatanodes[j].datanodePeerHAIP[0],
+                    dnInfo->peerDatanodes[j].datanodePeerDataPath) != CM_SUCCESS) {
+                    beContinue = true;
+                    break;
+                }
+            }
+            if (beContinue && g_normalStopTryTimes < 3) {
+                g_normalStopTryTimes++;
+                return;
+            }
+        } else {
+            if ((StopPrimaryDatanode(dnInfo->datanodePeerRole, dnInfo->datanodePeerHAIP[0],
+                dnInfo->datanodePeerDataPath) != CM_SUCCESS) ||
+                (StopPrimaryDatanode(dnInfo->datanodePeer2Role, dnInfo->datanodePeer2HAIP[0],
+                dnInfo->datanodePeer2DataPath) != CM_SUCCESS)) {
+                return;
+            }
+        }
+    }
+
+    write_runlog(LOG, "datanode normal shutdown, datapath: %s.\n", dnInfo->datanodeLocalDataPath);
+    normal_stop_one_instance(dnInfo->datanodeLocalDataPath, INSTANCE_DN);
+}
+
+static void NormalShutdownAllDatanode()
+{
+    for (uint32 i = 0; i < g_currentNode->datanodeCount; ++i) {
+        const dataNodeInfo *dnInfo = &g_currentNode->datanode[i];
+        write_runlog(LOG, "local_role is %s, datapath: %s.\n",
+            datanode_role_int_to_string(g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role),
+            dnInfo->datanodeLocalDataPath);
+        if (g_clusterType == V3SingleInstCluster) {
+            StopOneZengine(i);
+        } else {
+            NormalShutdownOneDatanode(dnInfo, g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role);
+        }
+    }
+}
+
 static void normal_shutdown_nodes(void)
 {
-    uint32 ii = 0;
-
     /* coordinator */
     if (g_currentNode->coordinate == 1) {
         write_runlog(LOG, "coordinator normal shutdown, datapath: %s.\n", g_currentNode->DataPath);
@@ -1173,68 +1321,9 @@ static void normal_shutdown_nodes(void)
     }
 
     /* datanode */
-    for (ii = 0; ii < g_currentNode->datanodeCount; ii++) {
-        write_runlog(LOG,
-            "local_role is %s, datapath: %s.\n",
-            datanode_role_int_to_string(g_dnReportMsg[ii].dnStatus.reportMsg.local_status.local_role),
-            g_currentNode->datanode[ii].datanodeLocalDataPath);
-        if (g_clusterType == V3SingleInstCluster) {
-            StopOneZengine(ii);
-        } else {
-            if (g_dnReportMsg[ii].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_STANDBY) {
-                if (g_multi_az_cluster) {
-                    bool be_continue = false;
-                    for (uint32 j = 0; j < g_dn_replication_num - 1; ++j) {
-                        be_continue = false;
-                        if (g_currentNode->datanode[ii].peerDatanodes[j].datanodePeerRole != DUMMY_STANDBY_DN) {
-                            write_runlog(LOG,
-                                "peer ip: %s, datapath: %s.\n",
-                                g_currentNode->datanode[ii].peerDatanodes[j].datanodePeerHAIP[0],
-                                g_currentNode->datanode[ii].peerDatanodes[j].datanodePeerDataPath);
-                            if (stop_primary_check(g_currentNode->datanode[ii].peerDatanodes[j].datanodePeerHAIP[0],
-                                    g_currentNode->datanode[ii].peerDatanodes[j].datanodePeerDataPath) ==
-                                PROCESS_RUNNING) {
-                                write_runlog(LOG, "peer is still running.\n");
-                                be_continue = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (be_continue && g_normalStopTryTimes < 3) {
-                        g_normalStopTryTimes++;
-                        continue;
-                    }
-                } else {
-                    if (g_currentNode->datanode[ii].datanodePeerRole != DUMMY_STANDBY_DN) {
-                        write_runlog(LOG,
-                            "peer ip: %s, datapath: %s.\n",
-                            g_currentNode->datanode[ii].datanodePeerHAIP[0],
-                            g_currentNode->datanode[ii].datanodePeerDataPath);
-                        if (stop_primary_check(g_currentNode->datanode[ii].datanodePeerHAIP[0],
-                                g_currentNode->datanode[ii].datanodePeerDataPath) == PROCESS_RUNNING) {
-                            write_runlog(LOG, "peer is still running.\n");
-                            continue;
-                        }
-                    }
-
-                    if (g_currentNode->datanode[ii].datanodePeer2Role != DUMMY_STANDBY_DN) {
-                        write_runlog(LOG,
-                            "peer ip: %s, datapath: %s.\n",
-                            g_currentNode->datanode[ii].datanodePeer2HAIP[0],
-                            g_currentNode->datanode[ii].datanodePeer2DataPath);
-                        if (stop_primary_check(g_currentNode->datanode[ii].datanodePeer2HAIP[0],
-                                g_currentNode->datanode[ii].datanodePeer2DataPath) == PROCESS_RUNNING) {
-                            write_runlog(LOG, "peer is still running.\n");
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            write_runlog(
-                LOG, "datanode normal shutdown, datapath: %s.\n", g_currentNode->datanode[ii].datanodeLocalDataPath);
-            normal_stop_one_instance(g_currentNode->datanode[ii].datanodeLocalDataPath, INSTANCE_DN);
-        }
+    if (!g_enableSharedStorage) {
+        write_runlog(LOG, "datanode normal shutdown.\n");
+        NormalShutdownAllDatanode();
     }
 
     /* cm_server */
@@ -1250,18 +1339,56 @@ static void normal_shutdown_nodes(void)
     }
 
     /* resource */
-    if (!g_resConf.empty()) {
-        write_runlog(LOG, "normal_shutdown_nodes, %u resource process will be stopped.\n", (uint32)g_resConf.size());
-        StopResourceInstances();
+    if (IsCusResExistLocal()) {
+        write_runlog(LOG, "normal_shutdown_nodes, %u resource will be stopped.\n", GetLocalResConfCount());
+        StopAllResInst();
+    }
+}
+
+static void ShutdownOneDatanode(const dataNodeInfo *dnInfo)
+{
+    char buildPidPath[MAX_PATH_LEN] = {0};
+    int ret = snprintf_s(buildPidPath,
+        MAX_PATH_LEN,
+        MAX_PATH_LEN - 1,
+        "%s/gs_build.pid",
+        dnInfo->datanodeLocalDataPath);
+    securec_check_intval(ret, (void)ret);
+    pgpid_t pid = get_pgpid(buildPidPath, MAX_PATH_LEN);
+    if (pid > 0 && is_process_alive(pid)) {
+        char cmd[MAX_PATH_LEN] = {0};
+        ret = snprintf_s(cmd,
+            MAX_PATH_LEN,
+            MAX_PATH_LEN - 1,
+            "killall %s %s >>%s 2>&1",
+            PG_CTL_NAME,
+            PG_REWIND_NAME,
+            system_call_log);
+        securec_check_intval(ret, (void)ret);
+        write_runlog(LOG, "immediate_shutdown_nodes: %s \n", cmd);
+
+        if (system(cmd) != 0) {
+            write_runlog(ERROR, "immediate_shutdown_nodes: run system command failed! %s, errno=%d.\n", cmd, errno);
+        }
+    }
+
+    write_runlog(LOG, "datanode immediate shutdown, kill_instance_force(): %s.\n", dnInfo->datanodeLocalDataPath);
+    immediate_stop_one_instance(dnInfo->datanodeLocalDataPath, INSTANCE_DN);
+}
+
+static void ImmediateShutdownAllDatanode()
+{
+    for (uint32 ii = 0; ii < g_currentNode->datanodeCount; ii++) {
+        if (g_clusterType == V3SingleInstCluster) {
+            StopOneZengine(ii);
+        } else {
+            ShutdownOneDatanode(&g_currentNode->datanode[ii]);
+        }
     }
 }
 
 void immediate_shutdown_nodes(bool kill_cmserver, bool kill_cn)
 {
-    uint32 ii = 0;
-    errno_t rc;
-    int rcs;
-
     /* coordinate */
     if (g_currentNode->coordinate == 1 && kill_cn) {
         write_runlog(LOG, "coordinator immediate shutdown, kill_instance_force(): %s.\n", g_currentNode->DataPath);
@@ -1269,50 +1396,9 @@ void immediate_shutdown_nodes(bool kill_cmserver, bool kill_cn)
     }
 
     /* datanode */
-    for (ii = 0; ii < g_currentNode->datanodeCount; ii++) {
-        if (g_clusterType == V3SingleInstCluster) {
-            StopOneZengine(ii);
-        } else {
-            pgpid_t pid = 0;
-            char build_pid_path[MAXPGPATH];
-
-            rc = memset_s(build_pid_path, MAXPGPATH, 0, MAXPGPATH);
-            securec_check_errno(rc, (void)rc);
-            rcs = snprintf_s(build_pid_path,
-                MAXPGPATH,
-                MAXPGPATH - 1,
-                "%s/gs_build.pid",
-                g_currentNode->datanode[ii].datanodeLocalDataPath);
-            securec_check_intval(rcs, (void)rcs);
-            pid = get_pgpid(build_pid_path, MAXPGPATH);
-            if (pid > 0 && is_process_alive(pid)) {
-                char cmd[MAXPGPATH];
-                int ret = 0;
-
-                rc = memset_s(cmd, MAXPGPATH, 0, MAXPGPATH);
-                securec_check_errno(rc, (void)rc);
-                rcs = snprintf_s(cmd,
-                    MAXPGPATH,
-                    MAXPGPATH - 1,
-                    "killall %s %s >>%s 2>&1",
-                    PG_CTL_NAME,
-                    PG_REWIND_NAME,
-                    system_call_log);
-                securec_check_intval(rcs, (void)rcs);
-                write_runlog(LOG, "immediate_shutdown_nodes: %s \n", cmd);
-
-                ret = system(cmd);
-                if (ret != 0) {
-                    write_runlog(
-                        ERROR, "immediate_shutdown_nodes: run system command failed! %s, errno=%d.\n", cmd, errno);
-                }
-            }
-
-            write_runlog(LOG,
-                "datanode immediate shutdown, kill_instance_force(): %s.\n",
-                g_currentNode->datanode[ii].datanodeLocalDataPath);
-            immediate_stop_one_instance(g_currentNode->datanode[ii].datanodeLocalDataPath, INSTANCE_DN);
-        }
+    if (!g_enableSharedStorage) {
+        write_runlog(LOG, "all datanode immediate shutdown.\n");
+        ImmediateShutdownAllDatanode();
     }
 
     /* cm_server */
@@ -1328,16 +1414,26 @@ void immediate_shutdown_nodes(bool kill_cmserver, bool kill_cn)
     }
 
     /* resource */
-    if (!g_resConf.empty()) {
-        write_runlog(LOG, "immediate_shutdown_nodes, %u resource process will be stopped.\n", (uint32)g_resConf.size());
-        StopResourceInstances();
+    if (IsCusResExistLocal()) {
+        write_runlog(LOG, "immediate_shutdown_nodes, %u resource will be stopped.\n", GetLocalResConfCount());
+        StopAllResInst();
+    }
+}
+
+static void FastShutdownAllDatanode()
+{
+    for (uint32 ii = 0; ii < g_currentNode->datanodeCount; ii++) {
+        write_runlog(LOG, "datanode fast shutdown, datapath: %s.\n", g_currentNode->datanode[ii].datanodeLocalDataPath);
+        if (g_clusterType == V3SingleInstCluster) {
+            StopOneZengine(ii);
+        } else {
+            fast_stop_one_instance(g_currentNode->datanode[ii].datanodeLocalDataPath, INSTANCE_DN);
+        }
     }
 }
 
 void fast_shutdown_nodes(void)
 {
-    uint32 ii = 0;
-
     /* coordinator */
     if (g_currentNode->coordinate == 1) {
         write_runlog(LOG, "coordinator fast shutdown, datapath: %s.\n", g_currentNode->DataPath);
@@ -1345,13 +1441,9 @@ void fast_shutdown_nodes(void)
     }
 
     /* datanode */
-    for (ii = 0; ii < g_currentNode->datanodeCount; ii++) {
-        write_runlog(LOG, "datanode fast shutdown, datapath: %s.\n", g_currentNode->datanode[ii].datanodeLocalDataPath);
-        if (g_clusterType == V3SingleInstCluster) {
-            StopOneZengine(ii);
-        } else {
-            fast_stop_one_instance(g_currentNode->datanode[ii].datanodeLocalDataPath, INSTANCE_DN);
-        }
+    if (!g_enableSharedStorage) {
+        write_runlog(LOG, "all datanode fast shutdown.\n");
+        FastShutdownAllDatanode();
     }
 
     /* cm_server */
@@ -1367,9 +1459,9 @@ void fast_shutdown_nodes(void)
     }
 
     /* resource */
-    if (!g_resConf.empty()) {
-        write_runlog(LOG, "fast shutdown, %u resource process will be stopped.\n", (uint32)g_resConf.size());
-        StopResourceInstances();
+    if (IsCusResExistLocal()) {
+        write_runlog(LOG, "fast shutdown, %u resource process will be stopped.\n", GetLocalResConfCount());
+        StopAllResInst();
     }
 }
 
@@ -1442,13 +1534,8 @@ static void StopOneZengine(uint32 index)
         char instance_replace[MAX_PATH_LEN] = {0};
         struct stat instance_stat_buf = {0};
         int rcs;
-        rcs = snprintf_s(instance_replace,
-            MAX_PATH_LEN,
-            MAX_PATH_LEN - 1,
-            "%s/%s_%u",
-            g_binPath,
-            CM_INSTANCE_REPLACE,
-            g_currentNode->datanode[index].datanodeId);
+        rcs = snprintf_s(instance_replace, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s_%u",
+            g_binPath, CM_INSTANCE_REPLACE, g_currentNode->datanode[index].datanodeId);
         securec_check_intval(rcs, (void)rcs);
         if (stat(instance_replace, &instance_stat_buf) == 0) {
             write_runlog(LOG,
@@ -1461,7 +1548,6 @@ static void StopOneZengine(uint32 index)
             StopZengineByCmd(index);
             return;
         }
-
         write_runlog(LOG,
             "datanode is not running, no need to shutdown: %s.\n",
             g_currentNode->datanode[index].datanodeLocalDataPath);
@@ -1619,7 +1705,7 @@ void *agentStartAndStopMain(void *arg)
         rcs = snprintf_s(gauss_replace, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/GaussReplace.dat", pg_host_path);
         securec_check_intval(rcs, (void)rcs);
     } else {
-        write_runlog(ERROR, "get PGHOST failed!\n");
+        write_runlog(FATAL, "get PGHOST failed!\n");
         exit(-1);
     }
 

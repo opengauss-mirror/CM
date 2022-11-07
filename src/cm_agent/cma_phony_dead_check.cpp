@@ -25,13 +25,13 @@
 #include "cm/libpq-fe.h"
 #include "cm/libpq-int.h"
 #include "cma_global_params.h"
-#include "cma_phony_dead_check.h"
 #include "cma_instance_management.h"
 #include "cma_common.h"
 #include "cma_client.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
 #endif
+#include "cma_phony_dead_check.h"
 
 #ifdef ENABLE_UT
 #define static
@@ -39,10 +39,10 @@
 
 const int PROCESS_NORMAL_RUNNING = 0;
 
-static bool IsDNCoredump(int dnId)
+static bool IsDNCoredump(uint32 dnId)
 {
     int rcs;
-    uint32 i = (uint32)dnId;
+    uint32 i = dnId;
     GaussState state;
     char *dataPath = g_currentNode->datanode[i].datanodeLocalDataPath;
     char gaussdbStatePath[MAXPGPATH] = {0};
@@ -60,14 +60,9 @@ static bool IsDNCoredump(int dnId)
 
 static bool DnPhonyDeadProcessE2E(int dnId, int phonyDead)
 {
-    if (IsDNCoredump(dnId)) {
-        g_dnPhonyDeadD[dnId] = true;
-        write_runlog(WARNING, "dn_%u Core Dump\n", g_currentNode->datanode[dnId].datanodeId);
-        return true;
-    }
     if (phonyDead == PROCESS_PHONY_DEAD_D) {
         /* Verify that the short link to dn is available */
-        if (CheckDnStausPhonyDead(dnId, agent_phony_dead_check_interval) != 0) {
+        if (CheckDnStausPhonyDead(dnId, (int)agent_phony_dead_check_interval) != 0) {
             g_dnPhonyDeadD[dnId] = true;
             write_runlog(WARNING, "dn_%u phony dead D\n", g_currentNode->datanode[dnId].datanodeId);
             return true;
@@ -75,6 +70,10 @@ static bool DnPhonyDeadProcessE2E(int dnId, int phonyDead)
     }
     g_dnPhonyDeadD[dnId] = false;
     if (phonyDead == PROCESS_PHONY_DEAD_T) {
+        if (IsDNCoredump((uint32)dnId)) {
+            write_runlog(WARNING, "dn_%u Core Dump\n", g_currentNode->datanode[dnId].datanodeId);
+            return true;
+        }
         write_runlog(WARNING, "dn_%u phony dead T, immediate shutdown\n", g_currentNode->datanode[dnId].datanodeId);
         immediate_stop_one_instance(g_currentNode->datanode[dnId].datanodeLocalDataPath, INSTANCE_DN);
         return true;
@@ -85,21 +84,24 @@ static bool DnPhonyDeadProcessE2E(int dnId, int phonyDead)
 static bool DnPhonyDeadStatusCheck(int dnId, uint32 *agentCheckTimeInterval)
 {
     uint32 i = (uint32)dnId;
-    errno_t rc = 0;
 
     int phonyDead = PROCESS_NORMAL_RUNNING;
-    rc = check_one_instance_status(GetDnProcessName(), g_currentNode->datanode[i].datanodeLocalDataPath, &phonyDead);
+    errno_t rc =
+        check_one_instance_status(GetDnProcessName(), g_currentNode->datanode[i].datanodeLocalDataPath, &phonyDead);
     if (g_enableE2ERto == 1) {
         if (DnPhonyDeadProcessE2E(dnId, phonyDead)) {
             return true;
         }
     } else {
         g_dnPhonyDeadD[i] = false;
-        if (rc != PROCESS_RUNNING || phonyDead == PROCESS_PHONY_DEAD_D) {
+        if (rc != PROCESS_RUNNING) {
             return false;
         }
+        if (phonyDead == PROCESS_PHONY_DEAD_D) {
+            return true;
+        }
         if (phonyDead == PROCESS_PHONY_DEAD_T) {
-            if (g_agentCheckTStatusInterval > agent_phony_dead_check_interval) {
+            if (g_clusterType != V3SingleInstCluster && g_agentCheckTStatusInterval > agent_phony_dead_check_interval) {
                 *agentCheckTimeInterval = g_agentCheckTStatusInterval;
             }
             return true;
@@ -117,7 +119,7 @@ static bool DnPhonyDeadStatusCheck(int dnId, uint32 *agentCheckTimeInterval)
         /* reset phony dead times. */
         return false;
     } else {
-        rc = CheckDnStausPhonyDead(dnId, *agentCheckTimeInterval);
+        rc = CheckDnStausPhonyDead(dnId, (int)*agentCheckTimeInterval);
         if (rc == 0) {
             rc = check_disc_state(g_currentNode->datanode[i].datanodeId);
         }
@@ -142,7 +144,7 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
     }
     write_runlog(LOG, "DN instanceId is %d.\n", i);
     if (i == -1) {
-        write_runlog(ERROR, "unknown instance %u.\n", instanceId);
+        write_runlog(FATAL, "unknown instance %u.\n", instanceId);
         exit(-1);
     }
 
@@ -169,11 +171,44 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
         }
         (void)gettimeofday(&checkEnd, NULL);
 
-        expired_time = checkEnd.tv_sec - checkBegin.tv_sec;
+        expired_time = (uint32)(checkEnd.tv_sec - checkBegin.tv_sec);
         write_runlog(DEBUG5, "phony dead check take %u seconds.\n", expired_time);
 
-        if (expired_time < agentCheckTimeInterval)
+        if (expired_time < agentCheckTimeInterval) {
             cm_sleep(agentCheckTimeInterval - expired_time);
+        }
+    }
+    return NULL;
+}
+
+void *DNCoreDumpCheckMain(void *arg)
+{
+    const uint32 instanceId = *(uint32 *)arg;
+    uint32 i;
+    for (i = 0; i < g_currentNode->datanodeCount; i++) {
+        if (g_currentNode->datanode[i].datanodeId == instanceId) {
+            break;
+        }
+    }
+    pthread_t threadId = pthread_self();
+    write_runlog(LOG, "DN coredump check thread start, instanceId is %u, threadid %lu.\n", instanceId, threadId);
+    if (i >= g_currentNode->datanodeCount) {
+        write_runlog(FATAL, "unknown instance %u.\n", instanceId);
+        exit(-1);
+    }
+
+    for (;;) {
+        if (g_shutdownRequest) {
+            cm_sleep(5);
+            continue;
+        }
+        if (IsDNCoredump(i)) {
+            g_dnCore[i] = true;
+            write_runlog(WARNING, "dn_%u Core Dump\n", instanceId);
+        } else {
+            g_dnCore[i] = false;
+        }
+        cm_sleep(1);
     }
     return NULL;
 }

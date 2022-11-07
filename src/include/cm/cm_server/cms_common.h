@@ -54,4 +54,9 @@ void GetDoradoOfflineIp(char *ip, uint32 ipLen);
 bool SetOfflineNode(void);
 void GetDelayArbitTimeFromConf();
 void GetBackupOpenConfig();
+void GetDelayArbitClusterTimeFromConf();
+void GetDnArbitrateMode();
+
+bool EnableShareDisk();
+
 #endif

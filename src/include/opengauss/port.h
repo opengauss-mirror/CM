@@ -319,7 +319,7 @@ extern int fls(int mask);
 #endif
 
 #ifndef HAVE_GETOPT
-extern int getopt(int nargc, char* const* nargv, const char* ostr);
+extern int getopt(int nargc, char *const *nargv, const char *ostr);
 #endif
 
 #if !defined(HAVE_GETPEEREID) && !defined(WIN32)
@@ -403,7 +403,7 @@ typedef struct OptParseContext {
 } OptParseContext;
 
 extern void initOptParseContext(OptParseContext* pOptCtxt);
-extern int getopt_r(int nargc, char* const* nargv, const char* ostr, OptParseContext* pOptArgs);
+extern int getopt_r(int nargc, char *const *nargv, const char *ostr, OptParseContext *pOptArgs);
 
 /* port/gs_system.c */
 extern int gs_system(const char* command);
@@ -424,7 +424,7 @@ extern char* gs_strerror(int errnum);
 extern THR_LOCAL char gs_dir_buf[];
 extern struct dirent* gs_readdir(DIR* dir);
 
-/*env thread safe version*/
+/* env thread safe version */
 extern int gs_putenv_r(char* envvar);
 extern char* gs_getenv_r(const char* name);
 

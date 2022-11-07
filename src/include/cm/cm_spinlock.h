@@ -103,7 +103,7 @@ static inline void cm_spin_sleep(void)
     struct timespec ts;
     ts.tv_sec = 0;
     ts.tv_nsec = nsecValue;
-    nanosleep(&ts, NULL);
+    (void)nanosleep(&ts, NULL);
 }
 
 #endif

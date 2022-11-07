@@ -28,7 +28,6 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <time.h>
@@ -37,8 +36,6 @@
 #include "cm/libpq-fe.h"
 #include "cm/libpq-int.h"
 #include "cm/cm_c.h"
-#include "cm/cm_ip.h"
-#include "cm/cm_msg.h"
 #include "cm/ip.h"
 #include "cm/cm_elog.h"
 #include "cs_ssl.h"
@@ -51,7 +48,6 @@
  * fall back options if they are not specified by arguments or defined
  * by environment variables.
  */
-#define DefaultHost "localhost"
 
 /* ----------
  * Definition of the conninfo parameters and their fallback resources.
@@ -133,12 +129,10 @@ CM_Conn* PQconnectCM(const char* conninfo)
  */
 CM_Conn* PQconnectCMStart(const char* conninfo)
 {
-    CM_Conn* conn = NULL;
-
     /*
      * Allocate memory for the conn structure
      */
-    conn = makeEmptyCM_Conn();
+    CM_Conn *conn = makeEmptyCM_Conn();
     if (conn == NULL) {
         return NULL;
     }
@@ -172,13 +166,10 @@ CM_Conn* PQconnectCMStart(const char* conninfo)
  */
 static bool connectOptions1(CM_Conn* conn, const char* conninfo)
 {
-    CMPQconninfoOption* connOptions = NULL;
-    char* tmp = NULL;
-
     /*
      * Parse the conninfo string
      */
-    connOptions = conninfo_parse(conninfo, &conn->errorMessage);
+    CMPQconninfoOption *connOptions = conninfo_parse(conninfo, &conn->errorMessage);
     if (connOptions == NULL) {
         conn->status = CONNECTION_BAD;
         /* errorMessage is already set */
@@ -190,7 +181,7 @@ static bool connectOptions1(CM_Conn* conn, const char* conninfo)
      *
      * XXX: probably worth checking strdup() return value here...
      */
-    tmp = conninfo_getval(connOptions, "hostaddr");
+    char *tmp = conninfo_getval(connOptions, "hostaddr");
     conn->pghostaddr = tmp != NULL ? strdup(tmp) : NULL;
     tmp = conninfo_getval(connOptions, "host");
     conn->pghost = tmp != NULL ? strdup(tmp) : NULL;
@@ -233,7 +224,7 @@ static int connectNoDelay(CM_Conn* conn)
 #ifdef TCP_NODELAY
     int on = 1;
 
-    if (setsockopt(conn->sock, IPPROTO_TCP, TCP_NODELAY, (char*)&on, sizeof(on)) < 0) {
+    if (setsockopt(conn->sock, (int)IPPROTO_TCP, TCP_NODELAY, (char*)&on, sizeof(on)) < 0) {
         appendCMPQExpBuffer(&conn->errorMessage, "could not set socket to TCP no delay mode: \n");
         return 0;
     }
@@ -272,7 +263,6 @@ static int connectCMStart(CM_Conn* conn)
     struct addrinfo hint = {0};
     const char* node = NULL;
     int ret;
-    errno_t rc = 0;
 
     if (conn == NULL) {
         return 0;
@@ -287,9 +277,9 @@ static int connectCMStart(CM_Conn* conn)
      */
 
     /* Initialize hint structure */
-    rc = memset_s(&hint, sizeof(hint), 0, sizeof(hint));
-    securec_check_errno(rc, );
-    hint.ai_socktype = SOCK_STREAM;
+    errno_t rc = memset_s(&hint, sizeof(hint), 0, sizeof(hint));
+    securec_check_errno(rc, (void)rc);
+    hint.ai_socktype = (int)SOCK_STREAM;
     hint.ai_family = AF_UNSPEC;
 
     /* Set up port number as a string */
@@ -297,7 +287,7 @@ static int connectCMStart(CM_Conn* conn)
         portnum = atoi(conn->pgport);
     }
     rc = snprintf_s(portstr, sizeof(portstr), sizeof(portstr) - 1, "%d", portnum);
-    securec_check_ss_c(rc, "\0", "\0");
+    securec_check_intval(rc, (void)rc);
 
     if (conn->pghostaddr != NULL && conn->pghostaddr[0] != '\0') {
         /* Using pghostaddr avoids a hostname lookup */
@@ -314,8 +304,9 @@ static int connectCMStart(CM_Conn* conn)
         hint.ai_family = AF_UNSPEC;
     }
 
+    addrs = NULL;
     /* Use CM_getaddrinfo_all() to resolve the address */
-    ret = cm_getaddrinfo_all(node, portstr, &hint, &addrs);
+    ret = getaddrinfo(((node == NULL) || node[0] == '\0') ? NULL : node, portstr, &hint, &addrs);
     if (ret || (addrs == NULL)) {
         if (node != NULL) {
             appendCMPQExpBuffer(
@@ -327,7 +318,7 @@ static int connectCMStart(CM_Conn* conn)
                 gai_strerror(ret));
         }
         if (addrs != NULL) {
-            cm_freeaddrinfo_all(hint.ai_family, addrs);
+            freeaddrinfo(addrs);
         }
         goto connect_errReturn;
     }
@@ -353,7 +344,7 @@ static int connectCMStart(CM_Conn* conn)
 
 connect_errReturn:
     if (conn->sock >= 0) {
-        close(conn->sock);
+        (void)close(conn->sock);
         conn->sock = -1;
     }
     conn->status = CONNECTION_BAD;
@@ -381,7 +372,6 @@ static int connectCMComplete(CM_Conn* conn)
      */
     if (conn->connect_timeout != NULL) {
         int timeout = atoi(conn->connect_timeout);
-
         if (timeout > 0) {
             /*
              * Rounding could cause connection to fail; need at least 2 secs
@@ -471,13 +461,12 @@ CMPostgresPollingStatusType CMPQconnectPoll(CM_Conn* conn)
              * result of a command the backend hasn't even got yet.
              */
             while (cmpqFlush(conn) > 0) {
-                if (cmpqWait(false, true, conn)) {
+                if (cmpqWait(0, 1, conn) != 0) {
                     break;
                 }
             }
 
             int n = cmpqReadData(conn);
-
             if (n < 0) {
                 goto error_return;
             }
@@ -523,7 +512,7 @@ keep_going: /* We will come back to here until there is
                 conn->raddr.salen = addr_cur->ai_addrlen;
 
                 /* Open a socket */
-                conn->sock = socket(addr_cur->ai_family, SOCK_STREAM, 0);
+                conn->sock = socket(addr_cur->ai_family, (int)SOCK_STREAM, 0);
                 if (conn->sock < 0) {
                     /*
                      * ignore socket() failure if we have more addresses
@@ -545,7 +534,7 @@ keep_going: /* We will come back to here until there is
                 struct sockaddr_in localaddr;
 
                 rc = memset_s(&localaddr, sizeof(sockaddr_in), 0, sizeof(sockaddr_in));
-                securec_check_errno(rc, );
+                securec_check_errno(rc, (void)rc);
                 localaddr.sin_family = AF_INET;
                 localaddr.sin_addr.s_addr = inet_addr(conn->pglocalhost);
                 /* Any local port will do. */
@@ -561,7 +550,7 @@ keep_going: /* We will come back to here until there is
 #ifdef F_SETFD
                 if (fcntl(conn->sock, F_SETFD, FD_CLOEXEC) == -1) {
                     appendCMPQExpBuffer(&conn->errorMessage, "could not set socket(FD_CLOEXEC): %d\n", SOCK_ERRNO);
-                    closesocket(conn->sock);
+                    (void)closesocket(conn->sock);
                     conn->sock = -1;
                     conn->addr_cur = addr_cur->ai_next;
                     continue;
@@ -579,7 +568,7 @@ keep_going: /* We will come back to here until there is
 
                     if ((setsockopt(conn->sock, SOL_SOCKET, SO_REUSEADDR, (char*)&on, sizeof(on))) == -1) {
                         appendCMPQExpBuffer(&conn->errorMessage, "setsockopt(SO_REUSEADDR) failed: %d\n", SOCK_ERRNO);
-                        closesocket(conn->sock);
+                        (void)closesocket(conn->sock);
                         conn->sock = -1;
                         conn->addr_cur = addr_cur->ai_next;
                         continue;
@@ -593,7 +582,7 @@ keep_going: /* We will come back to here until there is
                  */
                 if (!IS_AF_UNIX(addr_cur->ai_family)) {
                     if (!connectNoDelay(conn)) {
-                        close(conn->sock);
+                        (void)close(conn->sock);
                         conn->sock = -1;
                         conn->addr_cur = addr_cur->ai_next;
                         continue;
@@ -607,7 +596,7 @@ keep_going: /* We will come back to here until there is
                     !pg_fe_set_noblock(conn->sock)) {
                     appendCMPQExpBuffer(
                         &conn->errorMessage, "could not set socket to non-blocking mode: %d\n", SOCK_ERRNO);
-                    close(conn->sock);
+                    (void)close(conn->sock);
                     conn->sock = -1;
                     conn->addr_cur = addr_cur->ai_next;
                     continue;
@@ -647,7 +636,7 @@ keep_going: /* We will come back to here until there is
                  */
                 connectFailureMessage(conn);
                 if (conn->sock >= 0) {
-                    close(conn->sock);
+                    (void)close(conn->sock);
                     conn->sock = -1;
                 }
 
@@ -695,7 +684,7 @@ keep_going: /* We will come back to here until there is
                  */
                 if (conn->addr_cur->ai_next != NULL) {
                     if (conn->sock >= 0) {
-                        close(conn->sock);
+                        (void)close(conn->sock);
                         conn->sock = -1;
                     }
                     conn->addr_cur = conn->addr_cur->ai_next;
@@ -722,23 +711,23 @@ keep_going: /* We will come back to here until there is
         case CONNECTION_MADE: {
             CM_StartupPacket* sp = (CM_StartupPacket*)malloc(sizeof(CM_StartupPacket));
             if (sp == NULL) {
-                appendCMPQExpBuffer(&conn->errorMessage, "malloc failed, size: %ld \n", sizeof(CM_StartupPacket));
+                appendCMPQExpBuffer(&conn->errorMessage, "malloc failed, size: %lu \n", sizeof(CM_StartupPacket));
                 goto error_return;
             }
-            int packetlen = (int)sizeof(CM_StartupPacket);
+            size_t packetlen = sizeof(CM_StartupPacket);
 
             rc = memset_s(sp, sizeof(CM_StartupPacket), 0, sizeof(CM_StartupPacket));
-            securec_check_errno(rc, );
+            securec_check_errno(rc, (void)rc);
 
             if (conn->pguser != NULL) {
                 rc = strncpy_s(sp->sp_user, SP_USER, conn->pguser, SP_USER - 1);
-                securec_check_errno(rc, );
+                securec_check_errno(rc, (void)rc);
                 sp->sp_user[SP_USER - 1] = '\0';
             }
 
             if (conn->pglocalhost != NULL) {
                 rc = strncpy_s(sp->sp_host, SP_HOST, conn->pglocalhost, SP_HOST - 1);
-                securec_check_errno(rc, );
+                securec_check_errno(rc, (void)rc);
                 sp->sp_host[SP_HOST - 1] = '\0';
             }
 
@@ -751,11 +740,11 @@ keep_going: /* We will come back to here until there is
              * handled correctly by the server.
              */
             rc = strncpy_s(sp->sp_node_name, SP_NODE_NAME, conn->gc_node_name, SP_NODE_NAME - 1);
-            securec_check_errno(rc, );
+            securec_check_errno(rc, (void)rc);
             sp->sp_node_name[SP_NODE_NAME - 1] = '\0';
             sp->sp_remotetype = conn->remote_type;
             sp->node_id = conn->node_id;
-            sp->sp_ispostmaster = conn->is_postmaster;
+            sp->sp_ispostmaster = (bool)conn->is_postmaster;
 
             /*
              * Send the startup packet.
@@ -806,7 +795,7 @@ keep_going: /* We will come back to here until there is
              */
             if (!(beresp == 'R' || beresp == 'E'
 #ifdef KRB5
-                    || beresp == 'P'
+                || beresp == 'P'
 #endif  // KRB5
                     )) {
                 appendCMPQExpBuffer(&conn->errorMessage,
@@ -854,18 +843,18 @@ keep_going: /* We will come back to here until there is
             }
 #ifdef KRB5
             if (beresp == 'P') {
-                int llen = msgLength;
+                size_t llen = (size_t)msgLength;
                 conn->gss_inbuf.length = llen;
                 FREE_AND_RESET(conn->gss_inbuf.value);
                 conn->gss_inbuf.value = malloc(llen);
                 if (conn->gss_inbuf.value == NULL) {
                     appendCMPQExpBuffer(&conn->errorMessage,
                         libpq_gettext("failed to allocate the gss_inbuf memory:"
-                                      "out of memory: request_size=%d.\n"),
+                                      "out of memory: request_size=%lu.\n"),
                         llen);
                     goto error_return;
                 }
-                cmpqGetnchar((char*)conn->gss_inbuf.value, llen, conn);
+                (void)cmpqGetnchar((char*)conn->gss_inbuf.value, llen, conn);
                 /* OK, we successfully read the message; mark data consumed */
                 conn->inStart = conn->inCursor;
                 rc = CMGssContinue(conn);
@@ -884,8 +873,9 @@ keep_going: /* We will come back to here until there is
                  * needed to hold the whole message; see notes in
                  * pqParseInput3.
                  */
-                if (cmpqCheckInBufferSpace((size_t)(conn->inCursor + msgLength), conn))
+                if (cmpqCheckInBufferSpace((size_t)(conn->inCursor + msgLength), conn)) {
                     goto error_return;
+                }
                 /* We'll come back when there is more data */
                 return PGRES_POLLING_READING;
             }
@@ -912,12 +902,13 @@ keep_going: /* We will come back to here until there is
                 resetCMPQExpBuffer(&conn->errorMessage);
                 conn->inStart = conn->inCursor;
                 rc = CMGssStartup(conn);
-                if (rc != STATUS_OK)
+                if (rc != STATUS_OK) {
                     goto error_return;
+                }
                 goto keep_going;
             } else if (areq == CM_AUTH_REQ_GSS_CONT) {
-                int llen = msgLength - 4;
-                if (llen <= 0) {
+                size_t llen = (size_t)(msgLength - 4);
+                if (llen == 0) {
                     goto error_return;
                 }
                 conn->gss_inbuf.length = llen;
@@ -926,11 +917,11 @@ keep_going: /* We will come back to here until there is
                 if (conn->gss_inbuf.value == NULL) {
                     appendCMPQExpBuffer(&conn->errorMessage,
                         libpq_gettext("failed to allocate memory for gss_inbuf:"
-                                      "out of memory: request size=%d.\n"),
+                                      "out of memory: request size=%lu.\n"),
                         llen);
                     goto error_return;
                 }
-                cmpqGetnchar((char *)conn->gss_inbuf.value, llen, conn);
+                (void)cmpqGetnchar((char *)conn->gss_inbuf.value, llen, conn);
                 /* OK, we successfully read the message; mark data consumed */
                 conn->inStart = conn->inCursor;
                 rc = CMGssContinue(conn);
@@ -938,7 +929,7 @@ keep_going: /* We will come back to here until there is
                     FREE_AND_RESET(conn->gss_inbuf.value);
                     goto error_return;
                 }
-                cmpqFlush(conn);
+                (void)cmpqFlush(conn);
                 goto keep_going;
             }
 #endif  // KRB5
@@ -948,7 +939,9 @@ keep_going: /* We will come back to here until there is
 
         case CONNECTION_AUTH_OK: {
             /* We can release the address list now. */
-            cm_freeaddrinfo_all(conn->addrlist_family, conn->addrlist);
+            if (conn->addrlist != NULL) {
+                freeaddrinfo(conn->addrlist);
+            }
             conn->addrlist = NULL;
             conn->addr_cur = NULL;
             /* Otherwise, we are open for business! */
@@ -984,18 +977,22 @@ error_return:
  */
 static CM_Conn* makeEmptyCM_Conn(void)
 {
-    CM_Conn* conn = NULL;
-    errno_t rc = 0;
-
-    conn = (CM_Conn*)malloc(sizeof(CM_Conn));
+    CM_Conn *conn = (CM_Conn*)malloc(sizeof(CM_Conn));
     if (conn == NULL) {
         write_runlog(DEBUG1, "[conn abnormal] Out of memory for CmServer_conn!\n");
         return conn;
     }
 
     /* Zero all pointers and booleans */
-    rc = memset_s(conn, sizeof(CM_Conn), 0, sizeof(CM_Conn));
+    errno_t rc = memset_s(conn, sizeof(CM_Conn), 0, sizeof(CM_Conn));
     securec_check_errno(rc, FREE_AND_RESET(conn));
+    conn->pipe.link.tcp.closed = CM_TRUE;
+    conn->pipe.link.tcp.sock = CS_INVALID_SOCKET;
+    conn->pipe.link.ssl.tcp.closed = CM_TRUE;
+    conn->pipe.link.ssl.tcp.sock = CS_INVALID_SOCKET;
+    conn->pipe.link.ssl.ssl_ctx = NULL;
+    conn->pipe.link.ssl.ssl_sock = NULL;
+    conn->sock = CS_INVALID_SOCKET;
 
     conn->status = CONNECTION_BAD;
     conn->result = NULL;
@@ -1012,9 +1009,9 @@ static CM_Conn* makeEmptyCM_Conn(void)
      * twice that.
      */
     conn->inBufSize = 16 * 1024;
-    conn->inBuffer = (char*)malloc(conn->inBufSize);
+    conn->inBuffer = (char*)malloc((size_t)conn->inBufSize);
     conn->outBufSize = 16 * 1024;
-    conn->outBuffer = (char*)malloc(conn->outBufSize);
+    conn->outBuffer = (char*)malloc((size_t)conn->outBufSize);
     initCMPQExpBuffer(&conn->errorMessage);
     initCMPQExpBuffer(&conn->workBuffer);
 
@@ -1056,9 +1053,10 @@ static void freeCM_Conn(CM_Conn* conn)
 
 #ifdef KRB5
     OM_uint32 lmin_s = 0;
-    gss_release_name(&lmin_s, &conn->gss_targ_nam);
-#endif // KRB5
-
+    (void)gss_release_name(&lmin_s, &conn->gss_targ_nam);
+#endif  // KRB5
+    cm_ssl_free_context(conn->ssl_connector_fd);
+    conn->ssl_connector_fd = NULL;
     free(conn);
 }
 
@@ -1084,9 +1082,9 @@ static void closeCM_Conn(CM_Conn* conn)
          * Force length word for backends may try to read that in a generic
          * code
          */
-        cmpqPutMsgStart('X', true, conn);
-        cmpqPutMsgEnd(conn);
-        cmpqFlush(conn);
+        (void)cmpqPutMsgStart('X', true, conn);
+        (void)cmpqPutMsgEnd(conn);
+        (void)cmpqFlush(conn);
     }
 
     /*
@@ -1094,12 +1092,14 @@ static void closeCM_Conn(CM_Conn* conn)
      */
     CsDisconnect(&(conn->pipe), 0, &(conn->sock));
     if (conn->sock >= 0) {
-        close(conn->sock);
+        (void)close(conn->sock);
     }
     conn->sock = -1;
     conn->status = CONNECTION_BAD; /* Well, not really _bad_ - just
                                     * absent */
-    cm_freeaddrinfo_all(conn->addrlist_family, conn->addrlist);
+    if (conn->addrlist != NULL) {
+        freeaddrinfo(conn->addrlist);
+    }
     conn->addrlist = NULL;
     conn->addr_cur = NULL;
     conn->inStart = conn->inCursor = conn->inEnd = 0;
@@ -1136,7 +1136,6 @@ void CMPQfinish(CM_Conn* conn)
  */
 int CMPQPacketSend(CM_Conn* conn, char packetType, const void* buf, size_t bufLen)
 {
-    int ret = 0;
     if (conn == NULL) {
         write_runlog(ERROR, "CMPQPacketSend failed conn is null");
         return STATUS_ERROR;
@@ -1154,7 +1153,7 @@ int CMPQPacketSend(CM_Conn* conn, char packetType, const void* buf, size_t bufLe
         return STATUS_ERROR;
     }
     /* Finish the message. */
-    ret = cmpqPutMsgEnd(conn);
+    int ret = cmpqPutMsgEnd(conn);
     if (ret < 0) {
         write_runlog(LOG, "cmpqPutMsgEnd failed ret=%d\n", ret);
         return STATUS_ERROR;
@@ -1173,7 +1172,7 @@ int CMPQPacketSend(CM_Conn* conn, char packetType, const void* buf, size_t bufLe
  /**
   * @brief Conninfo parser routine. Defaults are supplied (from a service file, environment variables, etc)
   * for unspecified options, but only if use_defaults is TRUE.
-  * 
+  *
   * @return CMPQconninfoOption* If successful, a malloc'd CMPQconninfoOption array is returned.
   * If not successful, NULL is returned and an error message is left in errorMessage.
   */
@@ -1181,15 +1180,12 @@ static CMPQconninfoOption* conninfo_parse(const char* conninfo, PQExpBuffer erro
 {
     char* pname = NULL;
     char* pval = NULL;
-    char* buf = NULL;
-    char* cp = NULL;
     char* cp2 = NULL;
-    CMPQconninfoOption* options = NULL;
     CMPQconninfoOption* option = NULL;
     errno_t rc;
 
     /* Make a working copy of CMPQconninfoOptions */
-    options = (CMPQconninfoOption*)malloc(sizeof(CMPQconninfoOptions));
+    CMPQconninfoOption *options = (CMPQconninfoOption*)malloc(sizeof(CMPQconninfoOptions));
     if (options == NULL) {
         printfCMPQExpBuffer(errorMessage, libpq_gettext("out of memory\n"));
         return NULL;
@@ -1198,14 +1194,14 @@ static CMPQconninfoOption* conninfo_parse(const char* conninfo, PQExpBuffer erro
     securec_check_errno(rc, (void)rc);
 
     /* Need a modifiable copy of the input string */
-    if ((buf = strdup(conninfo)) == NULL) {
+    char *buf = strdup(conninfo);
+    if (buf == NULL) {
         printfCMPQExpBuffer(errorMessage, libpq_gettext("out of memory\n"));
         CMPQconninfoFree(options);
         options = NULL;
         return NULL;
     }
-    cp = buf;
-
+    char *cp = buf;
     while (*cp) {
         /* Skip blanks before the parameter name */
         if (isspace((unsigned char)*cp)) {
@@ -1341,9 +1337,7 @@ static CMPQconninfoOption* conninfo_parse(const char* conninfo, PQExpBuffer erro
 
 static char* conninfo_getval(CMPQconninfoOption* connOptions, const char* keyword)
 {
-    CMPQconninfoOption* option = NULL;
-
-    for (option = connOptions; option->keyword != NULL; option++) {
+    for (CMPQconninfoOption *option = connOptions; option->keyword != NULL; ++option) {
         if (strcmp(option->keyword, keyword) == 0) {
             return option->val;
         }
@@ -1354,13 +1348,11 @@ static char* conninfo_getval(CMPQconninfoOption* connOptions, const char* keywor
 
 void CMPQconninfoFree(CMPQconninfoOption* connOptions)
 {
-    CMPQconninfoOption* option = NULL;
-
     if (connOptions == NULL) {
         return;
     }
 
-    for (option = connOptions; option->keyword != NULL; option++) {
+    for (CMPQconninfoOption *option = connOptions; option->keyword != NULL; option++) {
         FREE_AND_RESET(option->val);
     }
     free(connOptions);
@@ -1389,10 +1381,8 @@ char* CMPQerrorMessage(const CM_Conn* conn)
  */
 static int CMGssContinue(CM_Conn* conn)
 {
-    OM_uint32 maj_stat = 0;
     OM_uint32 min_stat = 0;
     OM_uint32 lmin_s = 0;
-    char* krbconfig = NULL;
     int retry_count = 0;
 
 retry_init:
@@ -1403,20 +1393,20 @@ retry_init:
      */
     krb5_clean_cache_profile_path();
 
-    /* Krb5 config file priority : setpath > env(MPPDB_KRB5_FILE_PATH) > default(/etc/krb5.conf).*/
-    krbconfig = gs_getenv_with_check("MPPDB_KRB5_FILE_PATH", conn);
+    /* Krb5 config file priority : setpath > env:MPPDB_KRB5_FILE_PATH > /etc/krb5.conf. */
+    char *krbconfig = gs_getenv_with_check("MPPDB_KRB5_FILE_PATH", conn);
     if (krbconfig == NULL) {
         appendCMPQExpBuffer(&conn->errorMessage, "get env MPPDB_KRB5_FILE_PATH failed.\n");
         return STATUS_ERROR;
     }
-    (void)krb5_set_profile_path(krbconfig);
+    krb5_set_profile_path(krbconfig);
 
     /*
      * The first time come here(with no tickent cache), gss_init_sec_context will send TGS_REQ
      * to kerberos server to get ticket and then cache it in default_ccache_name which configured
      * in MPPDB_KRB5_FILE_PATH.
      */
-    maj_stat = gss_init_sec_context(&min_stat,
+    OM_uint32 maj_stat = gss_init_sec_context(&min_stat,
         GSS_C_NO_CREDENTIAL,
         &conn->gss_ctx,
         conn->gss_targ_nam,
@@ -1460,12 +1450,12 @@ retry_init:
         OM_uint32 qp_min_s = 0;
         OM_uint32 qp_msg_ctx = 0;
         gss_buffer_desc qp_msg;
-        gss_display_status(&qp_min_s, maj_stat, GSS_C_GSS_CODE, GSS_C_NO_OID, &qp_msg_ctx, &qp_msg);
-        fprintf(stderr, "gss failed: %s\n", (char*)qp_msg.value);
-        gss_release_buffer(&qp_min_s, &qp_msg);
-        gss_display_status(&qp_min_s, min_stat, GSS_C_MECH_CODE, GSS_C_NO_OID, &qp_msg_ctx, &qp_msg);
-        fprintf(stderr, "gss failed: %s\n", (char*)qp_msg.value);
-        gss_release_buffer(&qp_min_s, &qp_msg);
+        (void)gss_display_status(&qp_min_s, maj_stat, GSS_C_GSS_CODE, GSS_C_NO_OID, &qp_msg_ctx, &qp_msg);
+        (void)fprintf(stderr, "gss failed: %s\n", (char*)qp_msg.value);
+        (void)gss_release_buffer(&qp_min_s, &qp_msg);
+        (void)gss_display_status(&qp_min_s, min_stat, GSS_C_MECH_CODE, GSS_C_NO_OID, &qp_msg_ctx, &qp_msg);
+        (void)fprintf(stderr, "gss failed: %s\n", (char*)qp_msg.value);
+        (void)gss_release_buffer(&qp_min_s, &qp_msg);
 
         /* Retry 10 times for init context responding to scenarios such as cache renewed by kinit. */
         if (retry_count < 10) {
@@ -1474,9 +1464,9 @@ retry_init:
             goto retry_init;
         }
 
-        gss_release_name(&lmin_s, &conn->gss_targ_nam);
+        (void)gss_release_name(&lmin_s, &conn->gss_targ_nam);
         if (conn->gss_ctx != NULL) {
-            gss_delete_sec_context(&lmin_s, &conn->gss_ctx, GSS_C_NO_BUFFER);
+            (void)gss_delete_sec_context(&lmin_s, &conn->gss_ctx, GSS_C_NO_BUFFER);
         }
 
         printfCMPQExpBuffer(&conn->errorMessage, libpq_gettext("GSSAPI continuation error, more than 10 times\n"));
@@ -1484,10 +1474,10 @@ retry_init:
     }
 
     if (maj_stat == GSS_S_COMPLETE) {
-        gss_release_name(&lmin_s, &conn->gss_targ_nam);
+        (void)gss_release_name(&lmin_s, &conn->gss_targ_nam);
     }
     if (conn->gss_ctx != NULL) {
-        gss_delete_sec_context(&lmin_s, &conn->gss_ctx, GSS_C_NO_BUFFER);
+        (void)gss_delete_sec_context(&lmin_s, &conn->gss_ctx, GSS_C_NO_BUFFER);
     }
 
     return STATUS_OK;
@@ -1498,13 +1488,8 @@ retry_init:
  */
 static int CMGssStartup(CM_Conn* conn)
 {
-    OM_uint32 maj_stat = 0;
     OM_uint32 min_stat = 0;
-    int maxlen = -1;
     gss_buffer_desc temp_gbuf;
-    char* krbsrvname = NULL;
-    char* krbhostname = NULL;
-    errno_t rc = EOK;
 
     if (!((conn->pghost != NULL) && conn->pghost[0] != '\0')) {
         printfCMPQExpBuffer(&conn->errorMessage, libpq_gettext("host name must be specified\n"));
@@ -1521,13 +1506,13 @@ static int CMGssStartup(CM_Conn* conn)
      * the GSSAPI system. The PGKRBSRVNAME and KRBHOSTNAME is from
      * the principal.
      */
-    krbsrvname = gs_getenv_with_check("PGKRBSRVNAME", conn);
+    char *krbsrvname = gs_getenv_with_check("PGKRBSRVNAME", conn);
     if (krbsrvname == NULL) {
         printfCMPQExpBuffer(&conn->errorMessage, libpq_gettext("The environment PGKRBSRVNAME is null.\n"));
         return STATUS_ERROR;
     }
 
-    krbhostname = gs_getenv_with_check("KRBHOSTNAME", conn);
+    char *krbhostname = gs_getenv_with_check("KRBHOSTNAME", conn);
     if (krbhostname == NULL) {
         printfCMPQExpBuffer(&conn->errorMessage, libpq_gettext("The environment KRBHOSTNAME null.\n"));
         return STATUS_ERROR;
@@ -1536,18 +1521,19 @@ static int CMGssStartup(CM_Conn* conn)
     if ((MAX_INT32 - strlen(krbhostname)) < (strlen(krbsrvname) + 2)) {
         return STATUS_ERROR;
     }
-    maxlen = strlen(krbhostname) + strlen(krbsrvname) + 2;
+    size_t maxlen = strlen(krbhostname) + strlen(krbsrvname) + 2;
     temp_gbuf.value = (char*)malloc(maxlen);
     if (temp_gbuf.value == NULL) {
         printfCMPQExpBuffer(&conn->errorMessage, libpq_gettext("out of memory, remote datanode.\n"));
         return STATUS_ERROR;
     }
 
-    rc = snprintf_s((char*)temp_gbuf.value, maxlen, maxlen - 1, "%s/%s", krbsrvname, krbhostname);
-    securec_check_ss_c(rc, "", "");
+    int ret = snprintf_s((char*)temp_gbuf.value, maxlen, maxlen - 1, "%s/%s", krbsrvname, krbhostname);
+    securec_check_intval(ret, (void)ret);
     temp_gbuf.length = strlen((char*)temp_gbuf.value);
 
-    maj_stat = gss_import_name(&min_stat, &temp_gbuf, (gss_OID)GSS_KRB5_NT_PRINCIPAL_NAME, &conn->gss_targ_nam);
+    OM_uint32 maj_stat =
+        gss_import_name(&min_stat, &temp_gbuf, (gss_OID)GSS_KRB5_NT_PRINCIPAL_NAME, &conn->gss_targ_nam);
     FREE_AND_RESET(temp_gbuf.value);
     if (maj_stat != GSS_S_COMPLETE) {
         printfCMPQExpBuffer(&conn->errorMessage, libpq_gettext("GSSAPI name import error.\n"));
@@ -1569,14 +1555,13 @@ static void check_backend_env(const char* input_env_value, CM_Conn* conn)
 {
     const int MAXENVLEN = 1024;
     const char* danger_character_list[] = {";", "`", "\\", "'", "\"", ">", "<", "$", "&", "|", "!", "\n", NULL};
-    int i = 0;
 
     if (input_env_value == NULL || strlen(input_env_value) >= MAXENVLEN) {
         appendCMPQExpBuffer(&conn->errorMessage, "wrong env value.\n");
         return;
     }
 
-    for (i = 0; danger_character_list[i] != NULL; i++) {
+    for (int i = 0; danger_character_list[i] != NULL; i++) {
         if (strstr((const char*)input_env_value, danger_character_list[i])) {
             appendCMPQExpBuffer(&conn->errorMessage,
                 "env_value(%s) contains invaid symbol(%s).\n",

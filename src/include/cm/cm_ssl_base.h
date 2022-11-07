@@ -55,8 +55,10 @@ typedef volatile uint32 spinlock_t;
 typedef volatile uint32 ip_spinlock_t;
 
 
-#define CM_NETWORK_IO_TIMEOUT      (uint32)5000 /* mill-seconds */
+#define CM_NETWORK_SEND_TIMEOUT      (uint32)5000 /* mill-seconds */
+#define CM_NETWORK_IO_TIMEOUT      (uint32)1 /* mill-seconds */
 #define CM_SSL_IO_TIMEOUT          (uint32)30000 /* mill-seconds */
+#define CM_SSL_ACCEPT_TIMEOUT      (uint32)1 /* mill-seconds */
 
 typedef struct st_sock_addr {
     struct sockaddr_storage addr;
@@ -172,7 +174,7 @@ static inline void cm_assert(bool condition)
     }
 }
 
-#ifdef DB_DEBUG_VERSION
+#ifdef CM_DEBUG_VERSION
 #define CM_ASSERT(expr) cm_assert((bool)(expr))
 #else
 #define CM_ASSERT(expr) ((void)(expr))

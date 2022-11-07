@@ -33,12 +33,13 @@ int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval);
 
 int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex);
 
-int CheckDatanodeStatus(const char *pid_path, int *role);
+int CheckDatanodeStatus(const char *dataDir, int *role);
 int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg);
 /* Agent to DN connection */
 int ProcessLockNoPrimaryCmd(uint32 instId);
 int ProcessLockChosenPrimaryCmd(const cm_to_agent_lock2 *msgTypeLock2Ptr);
-void *DNSyncCheckMain(void * const arg);
-void ProcessStreamingStandbyClusterBuildCommand(int instanceType, const char* dataDir, const cm_to_agent_build *buildMsg);
+void *DNSyncCheckMain(void *arg);
+void ProcessStreamingStandbyClusterBuildCommand(
+    int instanceType, const char* dataDir, const cm_to_agent_build *buildMsg);
 void* DNBackupStatusCheckMain(void *arg);
 #endif  // CM_CMA_CLIENT_ADPT_H

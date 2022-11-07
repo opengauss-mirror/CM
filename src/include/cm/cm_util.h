@@ -24,17 +24,31 @@
 
 #ifndef CM_UTIL_H
 #define CM_UTIL_H
-/*
- * is_absolute_path
- *
- */
-#ifndef WIN32
-#define IS_DIR_SEP(ch) ((ch) == '/')
-#else
-#define IS_DIR_SEP(ch) ((ch) == '/' || (ch) == '\\')
-#endif
+
+#include <pthread.h>
+#include "c.h"
 
 int CmMkdirP(char *path, unsigned int omode);
 char *gs_getenv_r(const char *name);
+uint64 GetMonotonicTimeMs();
+
+enum class CMMutexPrio {
+    CM_MUTEX_PRIO_NONE,
+    CM_MUTEX_PRIO_NORMAL,
+    CM_MUTEX_PRIO_HIGH,
+};
+
+using CMPrioMutex = struct CMPrioMutexSt {
+    pthread_mutex_t lock;
+    pthread_mutex_t innerLock;
+    pthread_cond_t cond;
+    uint32 highPrioCount;
+    CMMutexPrio curPrio;
+};
+
+void CMPrioMutexInit(CMPrioMutex &mutex);
+int CMPrioMutexLock(CMPrioMutex &mutex, CMMutexPrio prio);
+void CMPrioMutexUnLock(CMPrioMutex &mutex);
+char *GetDynamicMem(char *dynamicPtr, size_t *curSize, size_t memSize);
 
 #endif  // CM_UTIL_H

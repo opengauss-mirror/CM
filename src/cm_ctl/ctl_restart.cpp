@@ -27,7 +27,6 @@
 #include "cm/cm_misc.h"
 #include "ctl_common.h"
 #include "cm/cm_msg.h"
-#include "cm/libpq-int.h"
 #include "cm/cm_agent/cma_main.h"
 
 #define START_DEFAULT_WAIT 600
@@ -149,7 +148,7 @@ static void do_start_lc(void)
     }
 
     /* check node' s status */
-    if (0 != start_instance_check_lc()) {
+    if (start_instance_check_lc() != 0) {
         exit(-1);
     }
     return;
@@ -169,7 +168,7 @@ static void stop_instance_lc(uint32 nodeid, uint32 instanceId)
         MAXPGPATH - 1,
         "echo -e \'%d\\n%d\\n%d\' >  %s_%u;chmod 600 %s_%u",
         do_force,
-        shutdown_mode_num,
+        (int)shutdown_mode_num,
         shutdown_level,
         instance_manual_start_file,
         instanceId,
@@ -213,7 +212,7 @@ static int stop_check_one_instance_lc(uint32 node_id_check, const char* datapath
 {
     int result = -1;
 
-    if (0 != checkStaticConfigExist(node_id_check)) {
+    if (checkStaticConfigExist(node_id_check) != 0) {
         write_runlog(
             ERROR, "the cluster static config file does not exist on the node: %u.\n", g_node[node_id_check].node);
         write_runlog(FATAL, "failed to check the logical cluster instance stop status: %s.\n", datapath);
@@ -226,12 +225,11 @@ static int stop_check_one_instance_lc(uint32 node_id_check, const char* datapath
 
         if (strncmp(datapath, local_data_path, MAX_PATH_LEN) == 0) {
             CheckDnNodeStatusById(node_id_check, &result, ii);
-            if (result == PROCESS_NOT_EXIST && (shutdown_mode_num == IMMEDIATE_MODE || 
-                (shutdown_mode_num == FAST_MODE && is_check_building_dn == true))) {
+            if (result == PROCESS_NOT_EXIST && (shutdown_mode_num == IMMEDIATE_MODE ||
+                (shutdown_mode_num == FAST_MODE && is_check_building_dn))) {
                 char command[MAXPGPATH] = {0};
-                int ret = -1;
+                int ret;
                 char gausshomePath[MAXPGPATH] = {0};
-
                 ret = GetHomePath(gausshomePath, sizeof(gausshomePath));
                 if (ret != EOK) {
                     return -1;
@@ -269,7 +267,7 @@ static void stop_instance_check_lc(void)
     uint32 ii;
     uint32 jj;
     uint32 kk;
-    int rcs = -1;
+    int rcs;
 
     for (ii = 0; ii < g_logic_cluster_count; ii++) {
         if (strcmp(g_command_operation_lcName, g_logicClusterStaticConfig[ii].LogicClusterName) != 0) {
@@ -311,7 +309,7 @@ static void stop_instance_check_lc(void)
 static void* check_instance_stop_status_lc(void* arg)
 {
 #define STOP_WAIT_SECONDS_LC 3
-    int i = 0;
+    int i;
     const time_t    start_time = get_start_time();
 
     if (!wait_seconds_set) {
@@ -348,7 +346,7 @@ static void* check_instance_stop_status_lc(void* arg)
 static void start_instance_lc(uint32 nodeid, uint32 instanceId)
 {
     char command[MAXPGPATH] = {0};
-    int nRet = 0;
+    int nRet;
     nRet = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
         SYSTEMQUOTE "rm -f %s_%u < \"%s\" 2>&1 &" SYSTEMQUOTE,
         instance_manual_start_file, instanceId, DEVNULL);
@@ -408,7 +406,7 @@ static int start_instance_check_lc(void)
 
 static int start_check_one_instance_lc(uint32 node_id_check, const char* datapath)
 {
-    if (0 != checkStaticConfigExist(node_id_check)) {
+    if (checkStaticConfigExist(node_id_check) != 0) {
         write_runlog(
             ERROR, "the cluster static config file does not exist on the node: %u.\n", g_node[node_id_check].node);
         write_runlog(FATAL, "failed to check the logical cluster instance start status: %s.\n", datapath);
@@ -469,7 +467,7 @@ static void* check_instance_start_status(void* arg)
 
 static int get_nodeIndex_from_nodeId(uint32 node_id)
 {
-    int node_index = 0;
+    int node_index;
     uint32 ii;
     for (ii = 0; ii < g_node_num; ii++) {
         if (g_node[ii].node == node_id) {

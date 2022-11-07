@@ -26,17 +26,15 @@
 #include "common/config/cm_config.h"
 #include "cm/cm_elog.h"
 #include "cm/cm_msg.h"
-#include "cms_alarm.h"
 #include "cms_global_params.h"
 #include "cms_ddb_adapter.h"
 #include "cms_common.h"
+#include "cms_alarm.h"
 
-static Alarm *CnStorageThresholdAlarmList;
-static Alarm *DnStorageThresholdAlarmList;
-static Alarm *LogStorageThresholdAlarmList;
-
-static Alarm *ReadOnlyAlarmList;
-static instance_phony_dead_alarm* g_phony_dead_alarm = NULL;
+static Alarm *g_logStorageAlarm;
+static InstanceAlarm* g_readOnlyPreAlarm = NULL;
+static InstanceAlarm* g_readOnlyAlarm = NULL;
+static InstancePhonyDeadAlarm* g_phony_dead_alarm = NULL;
 static InstanceAlarm* g_reduceSyncListAlarm = NULL;
 static InstanceAlarm* g_increaseSyncListAlarm = NULL;
 
@@ -58,123 +56,103 @@ void ReportCMSAlarmNormalCluster(Alarm* alarmItem, AlarmType type, AlarmAddition
     }
 }
 
-/**
- * @brief 
- * 
- */
-void StorageThresholdPreAlarmItemInitialize(void)
-{
-    uint32 i = 0;
-    uint32 cnCount = 0;
-    uint32 dnCount = 0;
-
-    for (i = 0; i < g_node_num; i++) {
-        if (g_node[i].coordinate == 1) {
-            cnCount++;
-        }
-        dnCount += g_node[i].datanodeCount;
-    }
-
-    write_runlog(LOG, "[%s][line:%d] cncount:%u, dncount:%u\n",
-        __FUNCTION__, __LINE__, cnCount, dnCount);
-
-    LogStorageThresholdAlarmList = (Alarm*)malloc(sizeof(Alarm) * CM_NODE_MAXNUM);
-    if (LogStorageThresholdAlarmList == NULL) {
-        AlarmLog(ALM_LOG, "Out of memory: LogStorageThresholdAlarmList failed.\n");
-        exit(1);
-    }
-    for (i = 0; i < CM_NODE_MAXNUM; i++) {
-        AlarmItemInitialize(&(LogStorageThresholdAlarmList[i]), ALM_AI_StorageThresholdPreAlarm, ALM_AS_Normal, NULL);
-    }
-
-    CnStorageThresholdAlarmList = (Alarm*)malloc(sizeof(Alarm) * MAX_CN_NUM);
-    if (CnStorageThresholdAlarmList == NULL) {
-        AlarmLog(ALM_LOG, "Out of memory: CnStorageThresholdAlarmList failed.\n");
-        exit(1);
-    }
-    for (i = 0; i < MAX_CN_NUM; i++) {
-        AlarmItemInitialize(&(CnStorageThresholdAlarmList[i]), ALM_AI_StorageThresholdPreAlarm, ALM_AS_Normal, NULL);
-    }
-
-    DnStorageThresholdAlarmList = (Alarm*)malloc(sizeof(Alarm) * MAX_DN_NUM);
-    if (DnStorageThresholdAlarmList == NULL) {
-        AlarmLog(ALM_LOG, "Out of memory: DnStorageThresholdAlarmList failed.\n");
-        exit(1);
-    }
-    for (i = 0; i < MAX_DN_NUM; i++) {
-        AlarmItemInitialize(&(DnStorageThresholdAlarmList[i]), ALM_AI_StorageThresholdPreAlarm, ALM_AS_Normal, NULL);
-    }
-}
-
-/**
- * @brief 
- * 
- * @param  alarmType        My Param doc
- * @param  instanceName     My Param doc
- * @param  alarmNode        My Param doc
- * @param  alarmIndex       My Param doc
- */
-void ReportStorageThresholdPreAlarm(AlarmType alarmType, const char* instanceName, CM_DiskPreAlarmType alarmNode,
-                                    uint32 alarmIndex)
-{
-    AlarmAdditionalParam tempAdditionalParam;
-    switch (alarmNode) {
-        case PRE_ALARM_LOG:
-            /* fill the alarm message */
-            WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "",
-                &(LogStorageThresholdAlarmList[alarmIndex]), alarmType, instanceName);
-            /* report the alarm */
-            AlarmReporter(&(LogStorageThresholdAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
-            break;
-        case PRE_ALARM_CN:
-            /* fill the alarm message */
-            WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "",
-                &(CnStorageThresholdAlarmList[alarmIndex]), alarmType, instanceName);
-            /* report the alarm */
-            AlarmReporter(&(CnStorageThresholdAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
-            break;
-        case PRE_ALARM_DN:
-            /* fill the alarm message */
-            WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "",
-                &(DnStorageThresholdAlarmList[alarmIndex]), alarmType, instanceName);
-            /* report the alarm */
-            AlarmReporter(&(DnStorageThresholdAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
-            break;
-        default:
-            break;
-    }
-}
-/**
- * @brief 
- * 
- */
 void ReadOnlyAlarmItemInitialize(void)
 {
-    uint32 alarmIndex = 0;
     uint32 readOnlyCount = MAX_CN_NUM + MAX_DN_NUM;
-
-    ReadOnlyAlarmList = (Alarm*)malloc(sizeof(Alarm) * readOnlyCount);
-    if (ReadOnlyAlarmList == NULL) {
+    g_readOnlyAlarm = (InstanceAlarm*)malloc(sizeof(InstanceAlarm) * readOnlyCount);
+    g_readOnlyPreAlarm = (InstanceAlarm*)malloc(sizeof(InstanceAlarm) * readOnlyCount);
+    g_logStorageAlarm = (Alarm*)malloc(sizeof(Alarm) * CM_NODE_MAXNUM);
+    if (g_readOnlyAlarm == NULL || g_readOnlyPreAlarm == NULL || g_logStorageAlarm == NULL) {
         AlarmLog(ALM_LOG, "Out of memory: ReadOnlyAlarmItemInitialize failed.\n");
         exit(1);
     }
-    write_runlog(LOG, "[%s][line:%d] ReadOnlyAlarmList malloc success.\n", __FUNCTION__, __LINE__);
-
-    for (; alarmIndex < readOnlyCount; alarmIndex++) {
-        AlarmItemInitialize(&(ReadOnlyAlarmList[alarmIndex]), ALM_AI_TransactionReadOnly, ALM_AS_Normal, NULL);
+    write_runlog(LOG, "[%s][line:%d] ReadOnlyAlarm malloc success.\n", __FUNCTION__, __LINE__);
+    for (uint32 i = 0; i < CM_NODE_MAXNUM; i++) {
+        AlarmItemInitialize(&(g_logStorageAlarm[i]), ALM_AI_StorageThresholdPreAlarm, ALM_AS_Normal, NULL);
+    }
+    for (uint32 i = 0; i < readOnlyCount; i++) {
+        AlarmItemInitialize(&(g_readOnlyAlarm[i].instanceAlarmItem),
+            ALM_AI_TransactionReadOnly, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_readOnlyPreAlarm[i].instanceAlarmItem),
+            ALM_AI_StorageThresholdPreAlarm, ALM_AS_Normal, NULL);
+    }
+    uint32 alarmIndex = 0;
+    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
+        for (int32 j = 0; j < g_instance_role_group_ptr[i].count; j++) {
+            uint32 instanceid = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
+            if (alarmIndex > readOnlyCount) {
+                write_runlog(ERROR, "[%s] out of range %u.\n", __FUNCTION__, readOnlyCount);
+                return;
+            }
+            if (instanceid == 0) {
+                continue;
+            }
+            if ((g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_DATANODE) ||
+                (g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_COORDINATE)) {
+                g_readOnlyAlarm[alarmIndex].instanceId = instanceid;
+                g_readOnlyPreAlarm[alarmIndex].instanceId = instanceid;
+                alarmIndex++;
+            }
+        }
     }
 }
 
-void ReportReadOnlyAlarm(AlarmType alarmType, const char* instanceName, uint32 alarmIndex)
+void ReportReadOnlyAlarm(AlarmType alarmType, const char* instanceName, uint32 instanceid)
 {
-    write_runlog(DEBUG1, "[%s][line:%d] instanceName:%s, alarmIndex:%u, g_node_num:%u\n",
-        __FUNCTION__, __LINE__, instanceName, alarmIndex, g_node_num);
+    uint32 readOnlyCount = MAX_CN_NUM + MAX_DN_NUM;
+    uint32 alarmIndex = 0;
+    for (; alarmIndex < readOnlyCount; alarmIndex++) {
+        if (instanceid == g_readOnlyAlarm[alarmIndex].instanceId) {
+            break;
+        }
+    }
+    if (alarmIndex >= readOnlyCount) {
+        AlarmLog(ALM_LOG, "%s is not in g_readOnlyAlarm.\n", instanceName);
+        return;
+    }
+    write_runlog(DEBUG1, "[%s][line:%d] instanceName:%s, instanceid:%u, alarmIndex:%u, \n",
+        __FUNCTION__, __LINE__, instanceName, instanceid, alarmIndex);
+
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message */
-    WriteAlarmAdditionalInfo(
-        &tempAdditionalParam, instanceName, "", "", &(ReadOnlyAlarmList[alarmIndex]), alarmType, instanceName);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "",
+        &(g_readOnlyAlarm[alarmIndex].instanceAlarmItem), alarmType, instanceName);
     /* report the alarm */
-    AlarmReporter(&(ReadOnlyAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
+    AlarmReporter(&(g_readOnlyAlarm[alarmIndex].instanceAlarmItem), alarmType, &tempAdditionalParam);
+}
+
+void ReportReadOnlyPreAlarm(AlarmType alarmType, const char* instanceName, uint32 instanceid)
+{
+    uint32 readOnlyCount = MAX_CN_NUM + MAX_DN_NUM;
+    uint32 alarmIndex = 0;
+    for (; alarmIndex < readOnlyCount; alarmIndex++) {
+        if (instanceid == g_readOnlyPreAlarm[alarmIndex].instanceId) {
+            break;
+        }
+    }
+    if (alarmIndex >= readOnlyCount) {
+        AlarmLog(ALM_LOG, "%s is not in g_readOnlyPreAlarm.\n", instanceName);
+        return;
+    }
+    write_runlog(DEBUG1, "[%s][line:%d] instanceName:%s, instanceid:%u, alarmIndex:%u, \n",
+        __FUNCTION__, __LINE__, instanceName, instanceid, alarmIndex);
+
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "",
+        &(g_readOnlyPreAlarm[alarmIndex].instanceAlarmItem), alarmType, instanceName);
+    /* report the alarm */
+    AlarmReporter(&(g_readOnlyPreAlarm[alarmIndex].instanceAlarmItem), alarmType, &tempAdditionalParam);
+}
+
+void ReportLogStorageAlarm(AlarmType alarmType, const char* instanceName, uint32 alarmIndex)
+{
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "",
+        &(g_logStorageAlarm[alarmIndex]), alarmType, instanceName);
+    /* report the alarm */
+    AlarmReporter(&(g_logStorageAlarm[alarmIndex]), alarmType, &tempAdditionalParam);
 }
 
 int GetDnCount()
@@ -191,13 +169,13 @@ int GetDnCount()
 
 void AlarmInitReduceOrIncreaseSyncList()
 {
-    if (g_dynamic_header->relationCount <= 0 || g_instance_role_group_ptr == NULL) {
+    if (g_dynamic_header->relationCount == 0 || g_instance_role_group_ptr == NULL) {
         write_runlog(ALM_LOG, "g_dynamic_header init failed.\n");
         exit(1);
     }
     int dnCount = GetDnCount();
     g_dnCount = dnCount;
-    errno_t rc = 0;
+    errno_t rc;
     size_t alarmLen = sizeof(InstanceAlarm) * (size_t)dnCount;
     g_increaseSyncListAlarm = (InstanceAlarm *)malloc(alarmLen);
     if (g_increaseSyncListAlarm == NULL) {
@@ -215,9 +193,9 @@ void AlarmInitReduceOrIncreaseSyncList()
     securec_check_errno(rc, (void)rc);
     for (int i = 0; i < dnCount; ++i) {
         AlarmItemInitialize(
-            &(g_reduceSyncListAlarm[i].instanceAlarmItem[0]), ALM_AI_DNReduceSyncList, ALM_AS_Normal, NULL);
+            &(g_reduceSyncListAlarm[i].instanceAlarmItem), ALM_AI_DNReduceSyncList, ALM_AS_Normal, NULL);
         AlarmItemInitialize(
-            &(g_increaseSyncListAlarm[i].instanceAlarmItem[0]), ALM_AI_DNIncreaseSyncList, ALM_AS_Normal, NULL);
+            &(g_increaseSyncListAlarm[i].instanceAlarmItem), ALM_AI_DNIncreaseSyncList, ALM_AS_Normal, NULL);
     }
     int alarmIndex = 0;
     for (uint32 i = 0; i < g_dynamic_header->relationCount; ++i) {
@@ -250,7 +228,7 @@ void InstanceAlarmItemInitialize(void)
         write_runlog(ERROR, "total instance count %d is greater than max(2048).\n", g_instance_count);
         return;
     }
-    g_phony_dead_alarm = (instance_phony_dead_alarm *)malloc(sizeof(instance_phony_dead_alarm) * MAX_INSTANCE_NUM);
+    g_phony_dead_alarm = (InstancePhonyDeadAlarm *)malloc(sizeof(InstancePhonyDeadAlarm) * MAX_INSTANCE_NUM);
     if (g_phony_dead_alarm == NULL) {
         AlarmLog(ALM_LOG, "Out of memory: PhonyDeadAlarmItemInitialize failed.\n");
         exit(1);
@@ -267,7 +245,7 @@ void InstanceAlarmItemInitialize(void)
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         for (int32 j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             uint32 instanceid = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
-            if (alarmIndex > MAX_INSTANCE_NUM) {
+            if (alarmIndex >= MAX_INSTANCE_NUM) {
                 write_runlog(ERROR, "out of range 2048.\n");
                 return;
             }
@@ -311,6 +289,7 @@ void report_phony_dead_alarm(AlarmType alarmType, const char* instanceName, uint
         instanceName,
         "",
         "",
+        "",
         g_phony_dead_alarm[alarmIndex].PhonyDeadAlarmItem,
         alarmType,
         instanceName);
@@ -327,7 +306,7 @@ void report_unbalanced_alarm(AlarmType alarmType)
 {
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message */
-    WriteAlarmAdditionalInfo(&tempAdditionalParam, "", "", "", UnbalanceAlarmItem, alarmType);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, "", "", "", "", UnbalanceAlarmItem, alarmType);
     /* report the alarm */
     AlarmReporter(UnbalanceAlarmItem, alarmType, &tempAdditionalParam);
 }
@@ -342,7 +321,7 @@ void report_ddb_fail_alarm(AlarmType alarmType, const char* instanceName, int al
     AlarmAdditionalParam tempAdditionalParam;
 
     /* fill the alarm message */
-    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", alarm, alarmType, instanceName);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "", alarm, alarmType, instanceName);
     /* report the alarm */
     AlarmReporter(alarm, alarmType, &tempAdditionalParam);
 }
@@ -352,18 +331,12 @@ void ServerSwitchAlarmItemInitialize(void)
     AlarmItemInitialize(ServerSwitchAlarmItem, ALM_AI_ServerSwitchOver, ALM_AS_Normal, NULL);
 }
 
-/**
- * @brief 
- * 
- * @param  alarmType        My Param doc
- * @param  instanceName     My Param doc
- */
-  void report_server_switch_alarm(AlarmType alarmType, const char* instanceName)
+void report_server_switch_alarm(AlarmType alarmType, const char *instanceName)
 {
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message */
-    WriteAlarmAdditionalInfo(
-        &tempAdditionalParam, instanceName, "", "", ServerSwitchAlarmItem, alarmType, instanceName);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "", ServerSwitchAlarmItem, alarmType,
+        instanceName);
     /* report the alarm */
     ReportCMSAlarmNormalCluster(ServerSwitchAlarmItem, alarmType, &tempAdditionalParam);
 }
@@ -394,20 +367,21 @@ void ReportIncreaseOrReduceAlarm(AlarmType alarmType, uint32 instanceId, bool is
         instanceName,
         "",
         "",
-        instanceAlarm[alarmIndex].instanceAlarmItem,
+        "",
+        &(instanceAlarm[alarmIndex].instanceAlarmItem),
         alarmType,
         instanceName);
     /* report the alarm */
-    ReportCMSAlarmNormalCluster(instanceAlarm[alarmIndex].instanceAlarmItem, alarmType, &tempAdditionalParam);
+    ReportCMSAlarmNormalCluster(&(instanceAlarm[alarmIndex].instanceAlarmItem), alarmType, &tempAdditionalParam);
 }
 
 void UpdatePhonyDeadAlarm()
 {
     uint32 dnCount = 0;
-    uint32 i = 0;
-    int32 j = 0;
+    uint32 i;
+    int32 j;
     int alarmIndex = 0;
-    uint32 instanceId = 0;
+    uint32 instanceId;
     for (i = 0; i < g_node_num; i++) {
         dnCount += g_node[i].datanodeCount;
     }
@@ -415,7 +389,7 @@ void UpdatePhonyDeadAlarm()
     for (i = 0; i < g_dynamic_header->relationCount; i++) {
         for (j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             instanceId = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
-            g_phony_dead_alarm[alarmIndex].instanceId = instanceId; 
+            g_phony_dead_alarm[alarmIndex].instanceId = instanceId;
             alarmIndex++;
         }
     }

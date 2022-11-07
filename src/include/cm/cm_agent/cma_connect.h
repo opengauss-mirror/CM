@@ -34,10 +34,6 @@
 extern CM_Conn* agent_cm_server_connect;
 extern CM_Conn* GetConnToCmserver(uint32 nodeid);
 
-void CloseConnToCmserver(void);
+void *SendAndRecvCmsMsgMain(void *arg);
 
-status_t cm_client_flush_msg(CM_Conn* conn);
-status_t cm_client_send_msg(CM_Conn* conn, char msgtype, const char* s, size_t lenmsg);
-bool CmaSendMsgToCms(const void *reportMsg, size_t len, const char* msg);
-bool CmaSendSslMsgToCms(CM_Conn *conn, const void *reportMsg, size_t len, const char *msg);
 #endif

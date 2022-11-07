@@ -104,7 +104,7 @@
 /* #undef GETTIMEOFDAY_1ARG */
 
 #ifdef GETTIMEOFDAY_1ARG
-# define gettimeofday(a,b) gettimeofday(a)
+#define gettimeofday(a, b) gettimeofday(a)
 #endif
 
 /* Define to 1 if you have the `append_history' function. */
@@ -708,8 +708,9 @@
 /* PostgreSQL version as a string */
 #define PG_VERSION "9.2.4"
 
-/* Gaussdb version as a string*/
-#define DEF_GS_VERSION "(GaussDB Kernel V500R002C00 build ffdd628b) compiled at 2021-06-08 16:24:15 commit 0 last mr 1462 debug"
+/* Gaussdb version as a string */
+#define DEF_GS_VERSION \
+    "(GaussDB Kernel V500R002C00 build ffdd628b) compiled at 2021-06-08 16:24:15 commit 0 last mr 1462 debug"
 
 /* PostgreSQL version as a number */
 #define PG_VERSION_NUM 90204
@@ -721,13 +722,15 @@
 #define PGXC_VERSION "1.1"
 
 /* Postgres-XC version as a number */
-#define PGXC_VERSION_NUM 
+#define PGXC_VERSION_NUM
 
 /* openGauss version as a number */
 #define OPENGAUSS_VERSION_NUM_STR "2.0.0"
 
 /* A string containing the version number, platform, and C compiler */
-#define PG_VERSION_STR "openGauss 2.0.0 (GaussDB Kernel V500R002C00 build ffdd628b) compiled at 2021-06-08 16:24:15 commit 0 last mr 1462 debug on x86_64-unknown-linux-gnu, compiled by g++ (GCC) 7.3.0, 64-bit"
+#define PG_VERSION_STR                                                                                              \
+    "openGauss 2.0.0 (GaussDB Kernel V500R002C00 build ffdd628b) compiled at 2021-06-08 16:24:15 commit 0 last mr " \
+    "1462 debug on x86_64-unknown-linux-gnu, compiled by g++ (GCC) 7.3.0, 64-bit"
 
 /* A string containing the version number of Postgres-XC, platform, and C compiler */
 /* #undef PGXC_VERSION_STR */
@@ -841,7 +844,6 @@
 /* #undef USE_SSE42_CRC32C */
 
 /* Define to 1 to use Intel SSSE 4.2 CRC instructions with a runtime check. */
-// #define USE_SSE42_CRC32C_WITH_RUNTIME_CHECK 1
 
 /* Define to build with (Open)SSL support. (--with-openssl) */
 #define USE_SSL 1

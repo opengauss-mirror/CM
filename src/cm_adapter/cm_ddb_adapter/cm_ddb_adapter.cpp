@@ -22,17 +22,18 @@
  * -------------------------------------------------------------------------
  */
 
-#include "cm_ddb_adapter.h"
 #include "cm_ddb_dcc.h"
 #include "cm_ddb_etcd.h"
 #include "cm/cm_elog.h"
+#include "cm_ddb_sharedisk.h"
 
-#define CHECK_DB_SESSION_IS_NULL(ddbConn)   \
-    do {                                    \
-        if (((ddbConn)->session) == NULL) { \
-            DdbSetIdle(ddbConn);            \
-            return CM_ERROR;                \
-        }                                   \
+#define CHECK_DB_SESSION_AND_STOPPED(ddbConn, returnValue)                                                            \
+    do {                                                                                                              \
+        if ((((ddbConn)->drv) == NULL) || (((ddbConn)->session) == NULL && ((ddbConn)->drv->type) != DB_SHAREDISK) || \
+            ((ddbConn)->drv->ddbStopped)) {                                                                           \
+            DdbSetIdle(ddbConn);                                                                                      \
+            return (returnValue);                                                                                     \
+        }                                                                                                             \
     } while (0)
 
 static const uint32 MAX_LOG_LEN = 2048;
@@ -86,9 +87,9 @@ DdbDriver *DrvGetInstance(DDB_TYPE type)
         case DB_DCC:
             return DrvDccGet();
         case DB_SHAREDISK:
-            break;
+            return DrvSdGet();
         default:
-            write_runlog(WARNING, "undefined ddb type(%d)\n", type);
+            write_runlog(WARNING, "undefined ddb type(%d)\n", (int32)type);
             break;
     }
     return NULL;
@@ -97,7 +98,7 @@ DdbDriver *DrvGetInstance(DDB_TYPE type)
 status_t DrvLazyLoad(DdbDriver *drv, const DrvApiInfo *apiInfo)
 {
     status_t loadingStatus = CM_SUCCESS;
-    if (SECUREC_UNLIKELY(drv->initialized)) {
+    if (SECUREC_LIKELY(drv->initialized)) {
         return CM_SUCCESS;
     }
     (void)pthread_rwlock_wrlock(&(drv->lock));
@@ -121,14 +122,13 @@ static void DrvFreeNodeInfo(const DdbDriver *drv)
 
 DdbDriver *InitDdbDrv(const DdbInitConfig *config)
 {
-    DdbDriver *drv = NULL;
-    drv = DrvGetInstance(config->type);
+    DdbDriver *drv = DrvGetInstance(config->type);
     if (drv == NULL) {
-        write_runlog(ERROR, "invalid type(%d), cannot init ddbConn.\n", config->type);
+        write_runlog(ERROR, "invalid type(%d), cannot init ddbConn.\n", (int32)config->type);
         return NULL;
     }
     if (SECUREC_UNLIKELY(DrvLazyLoad(drv, &(config->drvApiInfo)) != CM_SUCCESS)) {
-        write_runlog(ERROR, "load driver(%s) library failed, type = [%u].\n", drv->msg, drv->type);
+        write_runlog(ERROR, "load driver(%s) library failed, type = [%d].\n", drv->msg, (int32)drv->type);
         DrvFreeNodeInfo(drv);
         return NULL;
     }
@@ -144,7 +144,7 @@ static const char *DrvGetLastError(const DdbDriver *drv)
     return drv->lastError();
 }
 
-status_t InitDdbConn(DdbConn *ddbConn, DdbInitConfig *config)
+status_t InitDdbConn(DdbConn *ddbConn, const DdbInitConfig *config)
 {
     DdbDriver *drv = InitDdbDrv(config);
     if (drv == NULL) {
@@ -154,7 +154,7 @@ status_t InitDdbConn(DdbConn *ddbConn, DdbInitConfig *config)
 
     if (drv->allocConn(&ddbConn->session, &(config->drvApiInfo)) != CM_SUCCESS) {
         write_runlog(ERROR, "failed alloc conn, driver is (%s), type is %d, error is %s.\n",
-            drv->msg, drv->type, DrvGetLastError(drv));
+            drv->msg, (int32)drv->type, DrvGetLastError(drv));
         DrvFreeNodeInfo(drv);
         return CM_ERROR;
     }
@@ -198,55 +198,60 @@ static status_t CheckDdbSession(const DdbConn *ddbConn, const char *str)
         return CM_ERROR;
     }
     int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-    if (ddbConn->session == NULL) {
-        write_runlog(logLevel, "[%d: %s] [%s] ddbConn session is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg, str);
+    if (ddbConn->session == NULL && ddbConn->drv->type != DB_SHAREDISK) {
+        write_runlog(logLevel, "[%d: %s] [%s] ddbConn session is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg, str);
+        return CM_ERROR;
+    }
+    if (ddbConn->drv->ddbStopped) {
+        write_runlog(logLevel, "[%d: %s] [%s] ddb has stopped.\n", (int32)ddbConn->drv->type, ddbConn->drv->msg, str);
         return CM_ERROR;
     }
     return CM_SUCCESS;
 }
 
-status_t DdbGetValue(DdbConn *ddbConn, DrvText *key, DrvText *value, DrvGetOption *option)
+status_t DdbGetValue(DdbConn *ddbConn, DrvText *key, DrvText *value, const DrvGetOption *option)
 {
     CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
     if (ddbConn->drv->getValue == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-        write_runlog(
-            logLevel, "[%d: %s] [DdbGetValue] ddbConn getValue is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg);
+        write_runlog(logLevel, "[%d: %s] [DdbGetValue] ddbConn getValue is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
     status_t st = ddbConn->drv->getValue(ddbConn->session, key, value, option);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = {0};
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1,
-        "[%d: %s] [DdbGetValue], get value(%u: %s) by key(%u: %s)", ddbConn->drv->type, ddbConn->drv->msg,
-        key->len, key->data, value->len, value->data);
+        "[%d: %s] [DdbGetValue], get value(%u: %s) by key(%u: %s)",
+        (int32)ddbConn->drv->type, ddbConn->drv->msg, key->len, key->data, value->len, value->data);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
 }
 
-status_t DdbGetAllKV(DdbConn *ddbConn, DrvText *key, DrvKeyValue *keyValue, uint32 length, DrvGetOption *option)
+status_t DdbGetAllKV(DdbConn *ddbConn, DrvText *key, DrvKeyValue *keyValue, uint32 length, const DrvGetOption *option)
 {
     CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
     if (ddbConn->drv->getAllKV == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-        write_runlog(
-            logLevel, "[%d: %s] [getAllKV] ddbConn getAllKV is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg);
+        write_runlog(logLevel, "[%d: %s] [getAllKV] ddbConn getAllKV is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
     status_t st = ddbConn->drv->getAllKV(ddbConn->session, key, keyValue, length, option);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = {0};
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbGetAllKV], get all values by key(%u: %s).",
-        ddbConn->drv->type, ddbConn->drv->msg, key->len, key->data);
+        (int32)ddbConn->drv->type, ddbConn->drv->msg, key->len, key->data);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
@@ -257,19 +262,19 @@ status_t DdbSaveAllKV(DdbConn *ddbConn, DrvText *key, DrvSaveOption *option)
     CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
     if (ddbConn->drv->saveAllKV == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-        write_runlog(
-            logLevel, "[%d: %s] [DdbSaveAllKV] ddbConn getAllKV is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg);
+        write_runlog(logLevel, "[%d: %s] [DdbSaveAllKV] ddbConn getAllKV is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
     status_t st = ddbConn->drv->saveAllKV(ddbConn->session, key, option);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = {0};
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbGetAllKV], get all values by key(%u: %s).",
-        ddbConn->drv->type, ddbConn->drv->msg, key->len, key->data);
+        (int32)ddbConn->drv->type, ddbConn->drv->msg, key->len, key->data);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
@@ -280,41 +285,43 @@ status_t DdbSetValue(DdbConn *ddbConn, DrvText *key, DrvText *value, DrvSetOptio
     CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
     if (ddbConn->drv->setKV == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-        write_runlog(logLevel, "[%d: %s] [setKV] ddbConn setKV is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg);
+        write_runlog(logLevel, "[%d: %s] [setKV] ddbConn setKV is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
     status_t st = ddbConn->drv->setKV(ddbConn->session, key, value, option);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = {0};
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1,
-        "[%d: %s] [DdbSetValue], set key_value[%u: %s,  %u: %s].", ddbConn->drv->type, ddbConn->drv->msg,
+        "[%d: %s] [DdbSetValue], set key_value[%u: %s,  %u: %s].", (int32)ddbConn->drv->type, ddbConn->drv->msg,
         key->len, key->data, value->len, value->data);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
 }
 
-status_t DdbDelKey(DdbConn *ddbConn, DrvText *key, DrvDelOption *option)
+status_t DdbDelKey(DdbConn *ddbConn, DrvText *key)
 {
     CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
     if (ddbConn->drv->delKV == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-        write_runlog(logLevel, "[%d: %s] [DdbDelKey] ddbConn delKV is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg);
+        write_runlog(logLevel, "[%d: %s] [DdbDelKey] ddbConn delKV is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
-    status_t st = ddbConn->drv->delKV(ddbConn->session, key, option);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
+    status_t st = ddbConn->drv->delKV(ddbConn->session, key);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = {0};
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbDelKey], del key[%u: %s].",
-        ddbConn->drv->type, ddbConn->drv->msg, key->len, key->data);
+        (int32)ddbConn->drv->type, ddbConn->drv->msg, key->len, key->data);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
@@ -326,18 +333,18 @@ status_t DdbInstanceState(DdbConn *ddbConn, char *memberName, DdbNodeState *drvS
     if (ddbConn->drv->drvNodeState == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
         write_runlog(logLevel, "[%d: %s] [DdbInstanceState] ddbConn drvNodeState is NULL.\n",
-            ddbConn->drv->type, ddbConn->drv->msg);
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
     status_t st = ddbConn->drv->drvNodeState(ddbConn->session, memberName, drvState);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = {0};
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbHealth], memberName[%s].",
-        ddbConn->drv->type, ddbConn->drv->msg, memberName);
+        (int32)ddbConn->drv->type, ddbConn->drv->msg, memberName);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
@@ -345,22 +352,27 @@ status_t DdbInstanceState(DdbConn *ddbConn, char *memberName, DdbNodeState *drvS
 
 status_t DdbFreeConn(DdbConn *ddbConn)
 {
-    CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
+    if (CheckDdbConn(ddbConn, "[DdbFreeConn]") != CM_SUCCESS) {
+        return CM_ERROR;
+    }
+    if (ddbConn->session == NULL) {
+        return CM_SUCCESS;
+    }
     if (ddbConn->drv->freeConn == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-        write_runlog(
-            logLevel, "[%d: %s] [DdbFreeConn] ddbConn freeConn is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg);
+        write_runlog(logLevel, "[%d: %s] [DdbFreeConn] ddbConn freeConn is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_SUCCESS);
     status_t st = ddbConn->drv->freeConn(&ddbConn->session);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = {0};
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbFreeConn]",
-        ddbConn->drv->type, ddbConn->drv->msg);
+        (int32)ddbConn->drv->type, ddbConn->drv->msg);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
@@ -449,19 +461,19 @@ status_t DdbRestConn(DdbConn *ddbConn)
     CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
     if (ddbConn->drv->restConn == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-        write_runlog(
-            logLevel, "[%d: %s] [DdbRestConn] ddbConn restConn is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg);
+        write_runlog(logLevel, "[%d: %s] [DdbRestConn] ddbConn restConn is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
     status_t st = ddbConn->drv->restConn(ddbConn->session, ddbConn->timeOut);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = {0};
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] DdbRestConn.",
-        ddbConn->drv->type, ddbConn->drv->msg);
+        (int32)ddbConn->drv->type, ddbConn->drv->msg);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
@@ -472,19 +484,19 @@ status_t DdbExecCmd(DdbConn *ddbConn, char *cmdLine, char *output, int *outputLe
     CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
     if (ddbConn->drv->execCmd == NULL) {
         int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
-        write_runlog(
-            logLevel, "[%d: %s] [DdbExecCmd] ddbConn restConn is NULL.\n", ddbConn->drv->type, ddbConn->drv->msg);
+        write_runlog(logLevel, "[%d: %s] [DdbExecCmd] ddbConn restConn is NULL.\n",
+            (int32)ddbConn->drv->type, ddbConn->drv->msg);
         return CM_ERROR;
     }
     struct timespec checkBegin = { 0, 0 };
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
     DdbSetRunning(ddbConn);
-    CHECK_DB_SESSION_IS_NULL(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
     status_t st = ddbConn->drv->execCmd(ddbConn->session, cmdLine, output, outputLen, maxBufLen);
     DdbSetIdle(ddbConn);
     char msg[MAX_LOG_LEN] = { 0 };
     errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbExecCmd].",
-        ddbConn->drv->type, ddbConn->drv->msg);
+        (int32)ddbConn->drv->type, ddbConn->drv->msg);
     securec_check_intval(rc, (void)rc);
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
@@ -502,4 +514,33 @@ status_t DDbSetParam(const DdbConn *ddbConn, const char *key, const char *value)
 {
     CM_RETERR_IF_NULL(ddbConn->drv);
     return ddbConn->drv->setParam(key, value);
+}
+
+status_t DdbStop(DdbConn *ddbConn)
+{
+    if (CheckDdbConn(ddbConn, "[DdbStop]") != CM_SUCCESS) {
+        return CM_ERROR;
+    }
+    if (ddbConn->drv->stop == NULL) {
+        int32 logLevel = (ddbConn->modId == MOD_CMCTL) ? DEBUG1 : ERROR;
+        write_runlog(logLevel, "[%d: %s] [DdbStop] stop is NULL.\n", (int32)ddbConn->drv->type, ddbConn->drv->msg);
+        return CM_ERROR;
+    }
+    if (ddbConn->drv->ddbStopped) {
+        return CM_SUCCESS;
+    }
+    struct timespec checkBegin = { 0, 0 };
+    (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
+    DdbSetRunning(ddbConn);
+    if (ddbConn->drv->ddbStopped) {
+        return CM_SUCCESS;
+    }
+    status_t st = ddbConn->drv->stop(&ddbConn->drv->ddbStopped);
+    DdbSetIdle(ddbConn);
+    char msg[MAX_LOG_LEN] = { 0 };
+    errno_t rc = snprintf_s(msg, MAX_LOG_LEN, MAX_LOG_LEN - 1, "[%d: %s] [DdbStop].",
+        (int32)ddbConn->drv->type, ddbConn->drv->msg);
+    securec_check_intval(rc, (void)rc);
+    ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
+    return st;
 }

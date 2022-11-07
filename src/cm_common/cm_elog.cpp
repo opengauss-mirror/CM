@@ -30,7 +30,6 @@
 #include <syslog.h>
 
 #include "alarm/alarm.h"
-#include "cm/cm_misc.h"
 #include "cm/cm_elog.h"
 
 #include <sys/time.h>
@@ -44,17 +43,6 @@
 
 #undef _
 #define _(x) x
-
-/*
- * We really want line-buffered mode for logfile output, but Windows does
- * not have it, and interprets _IOLBF as _IOFBF (bozos).  So use _IONBF
- * instead on Windows.
- */
-#ifdef WIN32
-#define LBF_MODE _IONBF
-#else
-#define LBF_MODE _IOLBF
-#endif
 
 #define KEY_EVENT_PRE "key_event"
 
@@ -103,16 +91,47 @@ static void TrimPathDoubleEndQuotes(char* path);
 #define MSBUF_LENGTH 8
 #define FORMATTED_TS_LEN 128
 
-static THR_LOCAL char  errbuf_errdetail[EREPORT_BUF_LEN];
-static THR_LOCAL char  errbuf_errcode[EREPORT_BUF_LEN];
-static THR_LOCAL char  errbuf_errmodule[EREPORT_BUF_LEN];
-static THR_LOCAL char  errbuf_errmsg[EREPORT_BUF_LEN];
-static THR_LOCAL char  errbuf_errcause[EREPORT_BUF_LEN];
-static THR_LOCAL char  errbuf_erraction[EREPORT_BUF_LEN];
+typedef struct ErrBufCtx_ {
+    char errdetail[EREPORT_BUF_LEN];
+    char errcode[EREPORT_BUF_LEN];
+    char errmodule[EREPORT_BUF_LEN];
+    char errmsg[EREPORT_BUF_LEN];
+    char errcause[EREPORT_BUF_LEN];
+    char erraction[EREPORT_BUF_LEN];
+    char fmtLogTime[FORMATTED_TS_LEN];
+} ErrBufCtx;
 
-static THR_LOCAL char formatted_log_time[FORMATTED_TS_LEN];
+static pthread_key_t g_key;
+static pthread_once_t g_keyOnce = PTHREAD_ONCE_INIT;
 
-static char* g_cmKeyEventType[KEY_EVENT_TYPE_CEIL] = {0};
+void KeyDestructor(void *errCtx)
+{
+    free(errCtx);
+}
+
+void MakeKey(void)
+{
+    (void)pthread_key_create(&g_key, KeyDestructor);
+}
+
+static ErrBufCtx *GetErrBufCtx()
+{
+    (void)pthread_once(&g_keyOnce, MakeKey);
+
+    void *errCtx = pthread_getspecific(g_key);
+    if (errCtx == NULL) {
+        errCtx = malloc(sizeof(ErrBufCtx));
+        if (errCtx == NULL) {
+            (void)printf("FATAL: out of memory! g_errCtx requested size: %lu.\n", sizeof(ErrBufCtx));
+            exit(1);
+        }
+        (void)pthread_setspecific(g_key, errCtx);
+    }
+
+    return (ErrBufCtx *)errCtx;
+}
+
+static const char* g_cmKeyEventType[KEY_EVENT_TYPE_CEIL] = {0};
 
 /**
  * @brief When a parent process opens a file, the child processes will inherit the
@@ -194,7 +213,8 @@ static void setup_formatted_log_time(void)
     stamp_time = (time_t)tv.tv_sec;
     (void)localtime_r(&stamp_time, &timeinfo);
 
-    (void)strftime(formatted_log_time,
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    (void)strftime(errCtx->fmtLogTime,
         FORMATTED_TS_LEN,
         /* leave room for milliseconds... */
         "%Y-%m-%d %H:%M:%S     %Z",
@@ -203,7 +223,7 @@ static void setup_formatted_log_time(void)
     /* 'paste' milliseconds into place... */
     rc = sprintf_s(msbuf, MSBUF_LENGTH, ".%03d", (int)(tv.tv_usec / 1000));
     securec_check_intval(rc, (void)rc);
-    rcs = strncpy_s(formatted_log_time + 19, FORMATTED_TS_LEN - 19, msbuf, 4);
+    rcs = strncpy_s(errCtx->fmtLogTime + 19, FORMATTED_TS_LEN - 19, msbuf, 4);
     securec_check_errno(rcs, (void)rcs);
 }
 
@@ -219,15 +239,16 @@ void add_log_prefix(int elevel, char* str)
     if (thread_name == NULL) {
         thread_name = "";
     }
+    ErrBufCtx *errCtx = GetErrBufCtx();
     rcs = snprintf_s(errbuf_tmp,
         sizeof(errbuf_tmp),
         sizeof(errbuf_tmp) - 1,
         "%s tid=%ld %s %s: ",
-        formatted_log_time,
+        errCtx->fmtLogTime,
         gettid(),
         thread_name,
         log_level_int_to_string2(elevel));
-    securec_check_intval(rcs, );
+    securec_check_intval(rcs, (void)rcs);
     /* max message length less than 2048. */
     rc = strncat_s(errbuf_tmp, BUF_LEN * 3, str, BUF_LEN * 3 - strlen(errbuf_tmp));
     securec_check_errno(rc, (void)rc);
@@ -252,8 +273,9 @@ static bool is_log_level_output(int elevel, int log_min_level)
         }
     } else if (log_min_level == LOG) {
         /* elevel not equal to LOG */
-        if (elevel >= FATAL)
+        if (elevel >= FATAL) {
             return true;
+        }
     } else if (elevel >= log_min_level) {
         /* Neither is LOG */
         return true;
@@ -262,17 +284,187 @@ static bool is_log_level_output(int elevel, int log_min_level)
     return false;
 }
 
+void WriteRunLogv(int elevel, const char* fmt, va_list ap)
+{
+    /* Get whether the record will be logged into the file. */
+    if (!is_log_level_output(elevel, log_min_messages)) {
+        return;
+    }
+
+    /* Obtaining international texts. */
+    fmt = _(fmt);
+
+    if (prefix_name != NULL && strcmp(prefix_name, "cm_ctl") == 0) {
+        /* Skip the wait dot log and the line break log. */
+        if (strcmp(fmt, ".") == 0) {
+            (void)pthread_rwlock_wrlock(&dotCount_lock);
+            dotCountNotZero = true;
+            (void)pthread_rwlock_unlock(&dotCount_lock);
+            (void)vfprintf(stdout, fmt, ap);
+            (void)fflush(stdout);
+            return;
+        }
+
+        /**
+         * Log the record to std error.
+         * 1. The log level is greater than the level "LOG", and the process name is "cm_ctl".
+         * 2. The log file path was not initialized.
+         */
+        if (elevel >= LOG || sys_log_path[0] == '\0') {
+            if (dotCountNotZero) {
+                (void)fprintf(stdout, "\n");
+                (void)pthread_rwlock_wrlock(&dotCount_lock);
+                dotCountNotZero = false;
+                (void)pthread_rwlock_unlock(&dotCount_lock);
+            }
+
+            /* Get the print out format. */
+            char fmtBuffer[MAX_LOG_BUFF_LEN] = {0};
+            int ret = snprintf_s(fmtBuffer, sizeof(fmtBuffer), sizeof(fmtBuffer) - 1, "%s: %s", prefix_name, fmt);
+            securec_check_intval(ret, (void)ret);
+            va_list bp;
+            va_copy(bp, ap);
+            (void)vfprintf(stdout, fmtBuffer, bp);
+            (void)fflush(stdout);
+            va_end(bp);
+        }
+    }
+
+    /* Format the log record, if more than size of buf, and will truncated it. */
+    char errbuf[MAX_LOG_BUFF_LEN] = {0};
+    int count = vsnprintf_truncated_s(errbuf, sizeof(errbuf), fmt, ap);
+    if (count == -1) {
+        write_runlog(ERROR, "cannot print message, because count is -1.\n");
+        return;
+    }
+
+    if (log_destion_choice == LOG_DESTION_FILE) {
+        add_log_prefix(elevel, errbuf);
+        write_log_file(errbuf, count);
+    }
+}
+
 /*
  * Write errors to stderr (or by equal means when stderr is
  * not available).
  */
 void write_runlog(int elevel, const char* fmt, ...)
 {
+    /* Get whether the record will be logged into the file. */
+    if (!is_log_level_output(elevel, log_min_messages)) {
+        return;
+    }
+
+    /* Obtaining international texts. */
+    fmt = _(fmt);
+
+    va_list ap;
+    va_start(ap, fmt);
+    WriteRunLogv(elevel, fmt, ap);
+    va_end(ap);
+}
+
+int add_message_string(char* errmsg_tmp, char* errdetail_tmp, char* errmodule_tmp, char* errcode_tmp, const char* fmt)
+{
+    char errbuf_tmp[EREPORT_BUF_LEN] = {0};
+
+    int rcs = snprintf_s(errbuf_tmp, sizeof(errbuf_tmp), sizeof(errbuf_tmp) - 1, "%s", fmt);
+    securec_check_intval(rcs, (void)rcs);
+    char *p = strstr(errbuf_tmp, "[ERRMSG]:");
+    if (p != NULL) {
+        rcs = snprintf_s(errmsg_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRMSG]:"));
+    } else if ((p = strstr(errbuf_tmp, "[ERRDETAIL]:")) != NULL) {
+        rcs = snprintf_s(errdetail_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt);
+    } else if ((p = strstr(errbuf_tmp, "[ERRMODULE]:")) != NULL) {
+        rcs = snprintf_s(errmodule_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRMODULE]:"));
+    } else if ((p = strstr(errbuf_tmp, "[ERRCODE]:")) != NULL) {
+        rcs = snprintf_s(errcode_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRCODE]:"));
+    }
+    securec_check_intval(rcs, (void)rcs);
+    return 0;
+}
+
+int add_message_string(char* errmsg_tmp, char* errdetail_tmp, char* errmodule_tmp, char* errcode_tmp,
+    char* errcause_tmp, char* erraction_tmp, const char* fmt)
+{
+    char *p = NULL;
+    char errbuf_tmp[EREPORT_BUF_LEN] = {0};
+
+    int rcs = snprintf_s(errbuf_tmp, sizeof(errbuf_tmp), sizeof(errbuf_tmp) - 1, "%s", fmt);
+    securec_check_intval(rcs, (void)rcs);
+    if ((p = strstr(errbuf_tmp, "[ERRMSG]:")) != NULL) {
+        rcs = snprintf_s(errmsg_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRMSG]:"));
+    } else if ((p = strstr(errbuf_tmp, "[ERRDETAIL]:")) != NULL) {
+        rcs = snprintf_s(errdetail_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt);
+    } else if ((p = strstr(errbuf_tmp, "[ERRMODULE]:")) != NULL) {
+        rcs = snprintf_s(errmodule_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRMODULE]:"));
+    } else if ((p = strstr(errbuf_tmp, "[ERRCODE]:")) != NULL) {
+        rcs = snprintf_s(errcode_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRCODE]:"));
+    } else if ((p = strstr(errbuf_tmp, "[ERRCAUSE]:")) != NULL) {
+        rcs = snprintf_s(errcause_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt);
+    } else if ((p = strstr(errbuf_tmp, "[ERRACTION]:")) != NULL) {
+        rcs = snprintf_s(erraction_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt);
+    }
+    securec_check_intval(rcs, (void)rcs);
+    return 0;
+}
+
+
+void add_log_prefix2(int elevel, const char* errmodule_tmp, const char* errcode_tmp, char* str)
+{
+    char errbuf_tmp[BUF_LEN * 3] = {0};
+    errno_t rc;
+    int rcs;
+
+    setup_formatted_log_time();
+
+    /* unify log style */
+    if (thread_name == NULL) {
+        thread_name = "";
+    }
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    if (errmodule_tmp[0] && errcode_tmp[0]) {
+        rcs = snprintf_s(errbuf_tmp,
+            sizeof(errbuf_tmp),
+            sizeof(errbuf_tmp) - 1,
+            "%s tid=%ld %s [%s] %s %s: ",
+            errCtx->fmtLogTime,
+            gettid(),
+            thread_name,
+            errmodule_tmp,
+            errcode_tmp,
+            log_level_int_to_string2(elevel));
+    } else {
+        rcs = snprintf_s(errbuf_tmp,
+            sizeof(errbuf_tmp),
+            sizeof(errbuf_tmp) - 1,
+            "%s tid=%ld %s %s: ",
+            errCtx->fmtLogTime,
+            gettid(),
+            thread_name,
+            log_level_int_to_string2(elevel));
+    }
+    securec_check_intval(rcs, (void)rcs);
+
+    /* max message length less than 2048. */
+    rc = strncat_s(errbuf_tmp, BUF_LEN * 3, str, BUF_LEN * 3 - strlen(errbuf_tmp));
+    securec_check_errno(rc, (void)rc);
+
+    rc = memcpy_s(str, BUF_LEN * 2, errbuf_tmp, BUF_LEN * 2 - 1);
+    securec_check_errno(rc, (void)rc);
+    str[BUF_LEN * 2 - 1] = '\0';
+}
+
+/*
+ * Write errors to stderr (or by equal means when stderr is
+ * not available).
+ */
+void write_runlog3(int elevel, const char* errmodule_tmp, const char* errcode_tmp, const char* fmt, ...)
+{
     va_list ap;
     va_list bp;
     char errbuf[2048] = {0};
     char fmtBuffer[2048] = {0};
-    int count = 0;
     int ret = 0;
 
     /* Get whether the record will be logged into the file. */
@@ -304,8 +496,8 @@ void write_runlog(int elevel, const char* fmt, ...)
          * 2. The log file path was not initialized.
          */
         if (elevel >= LOG || sys_log_path[0] == '\0') {
-            if (dotCountNotZero == true) {
-                fprintf(stdout, "\n");
+            if (dotCountNotZero) {
+                (void)fprintf(stdout, "\n");
                 (void)pthread_rwlock_wrlock(&dotCount_lock);
                 dotCountNotZero = false;
                 (void)pthread_rwlock_unlock(&dotCount_lock);
@@ -321,181 +513,15 @@ void write_runlog(int elevel, const char* fmt, ...)
         }
     }
 
-    /* Format the log record, if more than size of buf, and will truncated it. */
-    count = vsnprintf_truncated_s(errbuf, sizeof(errbuf), fmt, ap);
-    va_end(ap);
-    if (count == -1) {
-        write_runlog(ERROR, "cannot print message, because count is -1.\n");
-        return;
-    }
-
-    if (log_destion_choice == LOG_DESTION_FILE) {
-        add_log_prefix(elevel, errbuf);
-        write_log_file(errbuf, count);
-    }
-}
-
-int add_message_string(char* errmsg_tmp, char* errdetail_tmp, char* errmodule_tmp, char* errcode_tmp, const char* fmt)
-{
-    int rcs = 0;
-    char *p = NULL;
-    char errbuf_tmp[EREPORT_BUF_LEN] = {0};
-
-    rcs = snprintf_s(errbuf_tmp, sizeof(errbuf_tmp), sizeof(errbuf_tmp) - 1, "%s", fmt);
-    securec_check_intval(rcs, );
-    if ((p = strstr(errbuf_tmp, "[ERRMSG]:")) != NULL) {
-        rcs = snprintf_s(errmsg_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRMSG]:"));
-    } else if ((p = strstr(errbuf_tmp, "[ERRDETAIL]:")) != NULL) {
-        rcs = snprintf_s(errdetail_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt);
-    } else if ((p = strstr(errbuf_tmp, "[ERRMODULE]:")) != NULL) {
-        rcs = snprintf_s(errmodule_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRMODULE]:"));
-    } else if ((p = strstr(errbuf_tmp, "[ERRCODE]:")) != NULL) {
-        rcs = snprintf_s(errcode_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRCODE]:"));
-    }
-    securec_check_intval(rcs, );
-    return 0;
-}
-
-int add_message_string(char* errmsg_tmp, char* errdetail_tmp, char* errmodule_tmp, char* errcode_tmp,
-    char* errcause_tmp, char* erraction_tmp, const char* fmt)
-{
-    int rcs = 0;
-    char *p = NULL;
-    char errbuf_tmp[EREPORT_BUF_LEN] = {0};
-
-    rcs = snprintf_s(errbuf_tmp, sizeof(errbuf_tmp), sizeof(errbuf_tmp) - 1, "%s", fmt);
-    securec_check_intval(rcs, );
-    if ((p = strstr(errbuf_tmp, "[ERRMSG]:")) != NULL) {
-        rcs = snprintf_s(errmsg_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRMSG]:"));
-    } else if ((p = strstr(errbuf_tmp, "[ERRDETAIL]:")) != NULL) {
-        rcs = snprintf_s(errdetail_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt);
-    } else if ((p = strstr(errbuf_tmp, "[ERRMODULE]:")) != NULL) {
-        rcs = snprintf_s(errmodule_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRMODULE]:"));
-    } else if ((p = strstr(errbuf_tmp, "[ERRCODE]:")) != NULL) {
-        rcs = snprintf_s(errcode_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt + strlen("[ERRCODE]:"));
-    } else if ((p = strstr(errbuf_tmp, "[ERRCAUSE]:")) != NULL) {
-        rcs = snprintf_s(errcause_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt);
-    } else if ((p = strstr(errbuf_tmp, "[ERRACTION]:")) != NULL) {
-        rcs = snprintf_s(erraction_tmp, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s", fmt);
-    }
-    securec_check_intval(rcs, );
-    return 0;
-}
-
-
-void add_log_prefix2(int elevel, const char* errmodule_tmp, const char* errcode_tmp, char* str)
-{
-    char errbuf_tmp[BUF_LEN * 3] = {0};
-    errno_t rc;
-    int rcs;
-
-    setup_formatted_log_time();
-
-    /* unify log style */
-    if (thread_name == NULL) {
-        thread_name = "";
-    }
-    if (errmodule_tmp[0] && errcode_tmp[0]) {
-        rcs = snprintf_s(errbuf_tmp,
-            sizeof(errbuf_tmp),
-            sizeof(errbuf_tmp) - 1,
-            "%s tid=%ld %s [%s] %s %s: ",
-            formatted_log_time,
-            gettid(),
-            thread_name,
-            errmodule_tmp,
-            errcode_tmp,
-            log_level_int_to_string2(elevel));
-    } else {
-        rcs = snprintf_s(errbuf_tmp,
-            sizeof(errbuf_tmp),
-            sizeof(errbuf_tmp) - 1,
-            "%s tid=%ld %s %s: ",
-            formatted_log_time,
-            gettid(),
-            thread_name,
-            log_level_int_to_string2(elevel));
-    }
-    securec_check_intval(rcs, );
-
-    /* max message length less than 2048. */
-    rc = strncat_s(errbuf_tmp, BUF_LEN * 3, str, BUF_LEN * 3 - strlen(errbuf_tmp));
-    securec_check_errno(rc, (void)rc);
-
-    rc = memcpy_s(str, BUF_LEN * 2, errbuf_tmp, BUF_LEN * 2 - 1);
-    securec_check_errno(rc, (void)rc);
-    str[BUF_LEN * 2 - 1] = '\0';
-}
-
-/*
- * Write errors to stderr (or by equal means when stderr is
- * not available).
- */
-void write_runlog3(int elevel, const char* errmodule_tmp, const char* errcode_tmp, const char* fmt, ...)
-{
-    va_list ap;
-    va_list bp;
-    char errbuf[2048] = {0};
-    char fmtBuffer[2048] = {0};
-    int count = 0;
-    int ret = 0;
-    bool output_to_server = false;
-
-    /* Get whether the record will be logged into the file. */
-    output_to_server = is_log_level_output(elevel, log_min_messages);
-    if (!output_to_server) {
-        return;
-    }
-
-    /* Obtaining international texts. */
-    fmt = _(fmt);
-
-    va_start(ap, fmt);
-
-    if (prefix_name != NULL && strcmp(prefix_name, "cm_ctl") == 0) {
-        /* Skip the wait dot log and the line break log. */
-        if (strcmp(fmt, ".") == 0) {
-            (void)pthread_rwlock_wrlock(&dotCount_lock);
-            dotCountNotZero = true;
-            (void)pthread_rwlock_unlock(&dotCount_lock);
-            (void)vfprintf(stdout, fmt, ap);
-            (void)fflush(stdout);
-            va_end(ap);
-            return;
-        }
-
-        /**
-         * Log the record to std error.
-         * 1. The log level is greater than the level "LOG", and the process name is "cm_ctl".
-         * 2. The log file path was not initialized.
-         */
-        if (elevel >= LOG || sys_log_path[0] == '\0') {
-            if (dotCountNotZero == true) {
-                fprintf(stdout, "\n");
-                (void)pthread_rwlock_wrlock(&dotCount_lock);
-                dotCountNotZero = false;
-                (void)pthread_rwlock_unlock(&dotCount_lock);
-            }
-
-            /* Get the print out format. */
-            ret = snprintf_s(fmtBuffer, sizeof(fmtBuffer), sizeof(fmtBuffer) - 1, "%s: %s", prefix_name, fmt);
-            securec_check_intval(ret, );
-            va_copy(bp, ap);
-            (void)vfprintf(stdout, fmtBuffer, bp);
-            (void)fflush(stdout);
-            va_end(bp);
-        }
-    }
-
     /* Format the log record. */
-    count = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
-    securec_check_intval(count, );
+    ret = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
+    securec_check_intval(ret, (void)ret);
     va_end(ap);
 
     switch (log_destion_choice) {
         case LOG_DESTION_FILE:
             add_log_prefix2(elevel, errmodule_tmp, errcode_tmp, errbuf);
-            write_log_file(errbuf, count);
+            write_log_file(errbuf, ret);
             break;
 
         default:
@@ -512,20 +538,18 @@ void write_runlog3(int elevel, const char* errmodule_tmp, const char* errcode_tm
  */
 FILE* logfile_open(const char* fileName, const char* mode)
 {
-    FILE* fh = NULL;
     mode_t oumask;
     char log_file_name[MAXPGPATH] = {0};
     char log_temp_name[MAXPGPATH] = {0};
     char log_create_time[LOG_MAX_TIMELEN] = {0};
-    DIR* dir = NULL;
     struct dirent* de = NULL;
     bool is_exist = false;
     pg_time_t current_time;
     struct tm* systm = NULL;
     /* check validity of current log file name */
     char* name_ptr = NULL;
-    errno_t rc = 0;
-    int ret = 0;
+    errno_t rc;
+    int ret;
 
     if (fileName == NULL) {
         (void)printf("logfile_open,log file path is null.\n");
@@ -539,8 +563,9 @@ FILE* logfile_open(const char* fileName, const char* mode)
     oumask = umask((mode_t)((~(mode_t)(S_IRUSR | S_IWUSR | S_IXUSR)) & (S_IRWXU | S_IRWXG | S_IRWXO)));
 
     /* find current log file. */
-    if ((dir = opendir(fileName)) == NULL) {
-        printf(_("%s: opendir %s failed! \n"), prefix_name, fileName);
+    DIR *dir = opendir(fileName);
+    if (dir == NULL) {
+        (void)printf(_("%s: opendir %s failed! \n"), prefix_name, fileName);
         return NULL;
     }
     while ((de = readdir(dir)) != NULL) {
@@ -558,7 +583,7 @@ FILE* logfile_open(const char* fileName, const char* mode)
     }
 
     rc = memset_s(log_file_name, MAXPGPATH, 0, MAXPGPATH);
-    securec_check_errno(rc, );
+    securec_check_errno(rc, (void)rc);
     if (!is_exist) {
         /* create current log file name. */
         current_time = time(NULL);
@@ -568,16 +593,16 @@ FILE* logfile_open(const char* fileName, const char* mode)
         }
         ret =
             snprintf_s(log_temp_name, MAXPGPATH, MAXPGPATH - 1, "%s%s%s", prefix_name, log_create_time, curLogFileMark);
-        securec_check_intval(ret, );
+        securec_check_intval(ret, (void)ret);
         ret = snprintf_s(log_file_name, MAXPGPATH, MAXPGPATH - 1, "%s/%s", fileName, log_temp_name);
-        securec_check_intval(ret, );
+        securec_check_intval(ret, (void)ret);
     } else {
         /* if log file exist, get its file name. */
         ret = snprintf_s(log_file_name, MAXPGPATH, MAXPGPATH - 1, "%s/%s", fileName, de->d_name);
-        securec_check_intval(ret, );
+        securec_check_intval(ret, (void)ret);
     }
     (void)closedir(dir);
-    fh = fopen(log_file_name, mode);
+    FILE *fh = fopen(log_file_name, mode);
 
     (void)umask(oumask);
 
@@ -607,9 +632,9 @@ FILE* logfile_open(const char* fileName, const char* mode)
 
     /* store current log file name */
     rc = memset_s(g_curLogFileName, MAXPGPATH, 0, MAXPGPATH);
-    securec_check_errno(rc, );
+    securec_check_errno(rc, (void)rc);
     rc = strncpy_s(g_curLogFileName, MAXPGPATH, log_file_name, strlen(log_file_name));
-    securec_check_errno(rc, );
+    securec_check_errno(rc, (void)rc);
 
     return fh;
 }
@@ -621,12 +646,12 @@ int logfile_init()
 
     rc = pthread_rwlock_init(&syslog_write_lock, NULL);
     if (rc != 0) {
-        fprintf(stderr, "logfile_init lock failed.exit\n");
+        (void)fprintf(stderr, "FATAL logfile_init lock failed.exit\n");
         exit(1);
     }
     rc = pthread_rwlock_init(&dotCount_lock, NULL);
     if (rc != 0) {
-        fprintf(stderr, "logfile_init dot_count_lock failed.exit\n");
+        (void)fprintf(stderr, "FATAL logfile_init dot_count_lock failed.exit\n");
         exit(1);
     }
     rcs = memset_s(sys_log_path, MAX_PATH_LEN, 0, MAX_PATH_LEN);
@@ -640,7 +665,7 @@ int is_comment_line(const char* str)
     size_t ii = 0;
 
     if (str == NULL) {
-        printf("bad config file line\n");
+        (void)printf("FATAL bad config file line\n");
         exit(1);
     }
 
@@ -665,9 +690,8 @@ static char* TrimToken(char* src, const char& delim)
 {
     char* s = 0;
     char* e = 0;
-    char* c = 0;
 
-    for (c = src; (c != NULL) && *c; ++c) {
+    for (char *c = src; (c != NULL) && *c; ++c) {
         if (*c == delim) {
             if (e == NULL) {
                 e = c;
@@ -694,30 +718,24 @@ static char* TrimToken(char* src, const char& delim)
 static void TrimPathDoubleEndQuotes(char* path)
 {
     size_t pathLen = strlen(path);
-
     /* make sure buf[MAXPGPATH] can copy the whole path, last '\0' included */
     if (pathLen > MAXPGPATH - 1) {
         return;
     }
-
-    char* pathTrimed = NULL;
-    pathTrimed = TrimToken(path, '\'');
+    char *pathTrimed = TrimToken(path, '\'');
     pathTrimed = TrimToken(pathTrimed, '\"');
-
     char buf[MAXPGPATH] = {0};
-    errno_t rc = 0;
 
-    rc = strncpy_s(buf, MAXPGPATH, pathTrimed, strlen(pathTrimed));
-    securec_check_errno(rc, );
+    errno_t rc = strncpy_s(buf, MAXPGPATH, pathTrimed, strlen(pathTrimed));
+    securec_check_errno(rc, (void)rc);
 
     rc = strncpy_s(path, pathLen + 1, buf, strlen(buf));
-    securec_check_errno(rc, );
+    securec_check_errno(rc, (void)rc);
 }
 
 void get_krb_server_keyfile(const char* config_file)
 {
     char buf[MAXPGPATH];
-    FILE* fd = NULL;
 
     int ii = 0;
 
@@ -737,15 +755,15 @@ void get_krb_server_keyfile(const char* config_file)
         logInitFlag = true;
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
-        printf("get_krb_server_keyfile confDir error\n");
+        (void)printf("FATAL get_krb_server_keyfile confDir error\n");
         exit(1);
     }
 
     while (!feof(fd)) {
         rc = memset_s(buf, MAXPGPATH, 0, MAXPGPATH);
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
 
         (void)fgets(buf, MAXPGPATH, fd);
         buf[MAXPGPATH - 1] = 0;
@@ -803,11 +821,11 @@ void get_krb_server_keyfile(const char* config_file)
         }
         if (strlen(subStr3) > 0) {
             rc = memcpy_s(cm_krb_server_keyfile, sizeof(sys_log_path), subStr3, strlen(subStr3) + 1);
-            securec_check_errno(rc, );
+            securec_check_errno(rc, (void)rc);
         }
     }
 
-    fclose(fd);
+    (void)fclose(fd);
 
     TrimPathDoubleEndQuotes(cm_krb_server_keyfile);
 
@@ -817,7 +835,6 @@ void get_krb_server_keyfile(const char* config_file)
 void GetStringFromConf(const char* configFile, char* itemValue, size_t itemValueLenth, const char* itemName)
 {
     char buf[MAXPGPATH];
-    FILE* fd = NULL;
 
     int ii = 0;
 
@@ -837,15 +854,15 @@ void GetStringFromConf(const char* configFile, char* itemValue, size_t itemValue
         logInitFlag = true;
     }
 
-    fd = fopen(configFile, "r");
+    FILE *fd = fopen(configFile, "r");
     if (fd == NULL) {
-        printf("%s confDir error\n", itemName);
+        (void)printf("FATAL %s confDir error\n", itemName);
         exit(1);
     }
 
     while (!feof(fd)) {
         rc = memset_s(buf, MAXPGPATH, 0, MAXPGPATH);
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
 
         (void)fgets(buf, MAXPGPATH, fd);
         buf[MAXPGPATH - 1] = 0;
@@ -902,7 +919,7 @@ void GetStringFromConf(const char* configFile, char* itemValue, size_t itemValue
         }
         if (strlen(subStr3) > 0) {
             rc = memcpy_s(itemValue, itemValueLenth, subStr3, strlen(subStr3) + 1);
-            securec_check_errno(rc, );
+            securec_check_errno(rc, (void)rc);
         } else {
             write_runlog(ERROR, "invalid value for parameter \" %s \" in %s.\n", itemName, configFile);
         }
@@ -918,7 +935,6 @@ void GetStringFromConf(const char* configFile, char* itemValue, size_t itemValue
 void get_log_level(const char* config_file)
 {
     char buf[BUF_LEN];
-    FILE* fd = NULL;
 
     if (config_file == NULL) {
         return;
@@ -926,15 +942,14 @@ void get_log_level(const char* config_file)
         logInitFlag = true;
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
-        printf("can not open config file: %s errno:%s\n", config_file, strerror(errno));
+        (void)printf("FATAL can not open config file: %s errno:%s\n", config_file, strerror(errno));
         exit(1);
     }
 
     while (!feof(fd)) {
-        errno_t rc;
-        rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
+        errno_t rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
         securec_check_errno(rc, (void)rc);
         (void)fgets(buf, BUF_LEN, fd);
 
@@ -976,7 +991,7 @@ void get_log_level(const char* config_file)
         }
     }
 
-    fclose(fd);
+    (void)fclose(fd);
     return;  /* default value warning */
 }
 
@@ -984,21 +999,19 @@ void get_log_level(const char* config_file)
 void get_build_mode(const char* config_file)
 {
     char buf[BUF_LEN];
-    FILE* fd = NULL;
 
     if (config_file == NULL) {
         return;
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
-        printf("can not open config file: %s errno:%s\n", config_file, strerror(errno));
+        (void)printf("FATAL can not open config file: %s errno:%s\n", config_file, strerror(errno));
         exit(1);
     }
 
     while (!feof(fd)) {
-        errno_t rc;
-        rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
+        errno_t rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
         securec_check_errno(rc, (void)rc);
         (void)fgets(buf, BUF_LEN, fd);
 
@@ -1022,7 +1035,7 @@ void get_build_mode(const char* config_file)
         }
     }
 
-    fclose(fd);
+    (void)fclose(fd);
     return;
 }
 
@@ -1030,8 +1043,6 @@ void get_build_mode(const char* config_file)
 void get_log_file_size(const char* config_file)
 {
     char buf[BUF_LEN];
-    FILE* fd = NULL;
-    char *subBuf = NULL;
     const int minLogFileSize = 1 * 1024 * 1024;
     const char *logFileSizeStr = "log_file_size";
 
@@ -1041,15 +1052,14 @@ void get_log_file_size(const char* config_file)
         logInitFlag = true;
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
-        printf("get_log_file_size error\n");
+        (void)printf("FATAL get_log_file_size error\n");
         exit(1);
     }
 
     while (!feof(fd)) {
-        errno_t rc;
-        rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
+        errno_t rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
         securec_check_errno(rc, (void)rc);
         (void)fgets(buf, BUF_LEN, fd);
 
@@ -1057,15 +1067,14 @@ void get_log_file_size(const char* config_file)
             continue;  /* skip  # comment */
         }
 
-        subBuf = trim(buf);
+        char *subBuf = trim(buf);
         if (strncmp(subBuf, logFileSizeStr, strlen(logFileSizeStr)) == 0) {
             /* only check the first line */
-            char* subStr = NULL;
             char countStr[COUNTSTR_LEN] = {0};
             int ii = 0;
             int jj = 0;
 
-            subStr = strchr(buf, '=');
+            char *subStr = strchr(buf, '=');
             if (subStr != NULL) {
                 /* find = */
                 ii = 1;  /* 1 is = */
@@ -1085,7 +1094,7 @@ void get_log_file_size(const char* config_file)
                 while (*(subStr + ii) >= '0' && *(subStr + ii) <= '9') {
                     /* end when no more number. */
                     if (jj > (int)sizeof(countStr) - 2) {
-                        printf("too large log file size.\n");
+                        (void)printf("FATAL too large log file size.\n");
                         exit(1);
                     } else {
                         countStr[jj] = *(subStr + ii);
@@ -1110,7 +1119,7 @@ void get_log_file_size(const char* config_file)
     }
 
 out:
-    fclose(fd);
+    (void)fclose(fd);
     return;  /* default value is warning */
 }
 
@@ -1119,24 +1128,23 @@ int get_cm_thread_count(const char* config_file)
 #define DEFAULT_THREAD_NUM 5
 
     char buf[BUF_LEN];
-    FILE* fd = NULL;
     int thread_count = DEFAULT_THREAD_NUM;
     errno_t rc = 0;
 
     if (config_file == NULL) {
-        printf("no cmserver config file! exit.\n");
+        (void)printf("FATAL no cmserver config file! exit.\n");
         exit(1);
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
-        printf("open cmserver config file :%s ,error:%m\n", config_file);
+        (void)printf("FATAL open cmserver config file :%s ,error:%d\n", config_file, errno);
         exit(1);
     }
 
     while (!feof(fd)) {
         rc = memset_s(buf, sizeof(buf), 0, sizeof(buf));
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
         (void)fgets(buf, BUF_LEN, fd);
 
         if (is_comment_line(buf) == 1) {
@@ -1145,12 +1153,11 @@ int get_cm_thread_count(const char* config_file)
 
         if (strstr(buf, "thread_count") != NULL) {
             /* only check the first line */
-            char* subStr = NULL;
             char countStr[COUNTSTR_LEN] = {0};
             int ii = 0;
             int jj = 0;
 
-            subStr = strchr(buf, '=');
+            char *subStr = strchr(buf, '=');
             /* find = */
             if (subStr != NULL) {
                 ii = 1;
@@ -1171,7 +1178,7 @@ int get_cm_thread_count(const char* config_file)
                 /* end when no number */
                 while (*(subStr + ii) >= '0' && *(subStr + ii) <= '9') {
                     if (jj > (int)sizeof(countStr) - 2) {
-                        printf("too large thread count.\n");
+                        (void)printf("FATAL too large thread count.\n");
                         exit(1);
                     } else {
                         countStr[jj] = *(subStr + ii);
@@ -1184,9 +1191,8 @@ int get_cm_thread_count(const char* config_file)
 
                 if (countStr[0] != 0) {
                     thread_count = atoi(countStr);
-
                     if (thread_count < 2 || thread_count > 1000) {
-                        printf("invalid thread count %d, range [2 - 1000].\n", thread_count);
+                        (void)printf("FATAL invalid thread count %d, range [2 - 1000].\n", thread_count);
                         exit(1);
                     }
                 } else {
@@ -1197,7 +1203,7 @@ int get_cm_thread_count(const char* config_file)
     }
 
 out:
-    fclose(fd);
+    (void)fclose(fd);
     return thread_count;
 }
 
@@ -1255,24 +1261,23 @@ uint32 get_uint32_value_from_config(const char* config_file, const char* key, ui
 int64 get_int64_value_from_config(const char* config_file, const char* key, int64 defaultValue)
 {
     char buf[BUF_LEN];
-    FILE* fd = NULL;
     int64 int64Value = defaultValue;
     errno_t rc = 0;
 
     if (config_file == NULL) {
-        printf("no config file! exit.\n");
+        (void)printf("FATAL no config file! exit.\n");
         exit(1);
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
-        printf("open config file failed:%s ,errno:%s\n", config_file, strerror(errno));
+        (void)printf("FATAL open config file failed:%s ,errno:%s\n", config_file, strerror(errno));
         exit(1);
     }
 
     while (!feof(fd)) {
         rc = memset_s(buf, sizeof(buf), 0, sizeof(buf));
-        securec_check_errno(rc, );
+        securec_check_errno(rc, (void)rc);
         (void)fgets(buf, BUF_LEN, fd);
 
         if (is_comment_line(buf) == 1) {
@@ -1281,12 +1286,11 @@ int64 get_int64_value_from_config(const char* config_file, const char* key, int6
 
         if (strstr(buf, key) != NULL) {
             /* only check the first line */
-            char* subStr = NULL;
             char countStr[COUNTSTR_LEN] = {0};
             int ii = 0;
             int jj = 0;
 
-            subStr = strchr(buf, '=');
+            char *subStr = strchr(buf, '=');
             if (subStr != NULL) {
                 /* find = */
                 ii = 1;
@@ -1326,7 +1330,7 @@ int64 get_int64_value_from_config(const char* config_file, const char* key, int6
     }
 
 out:
-    fclose(fd);
+    (void)fclose(fd);
     return int64Value;
 }
 
@@ -1341,9 +1345,8 @@ char* trim(char* src)
 {
     char* s = 0;
     char* e = 0;
-    char* c = 0;
 
-    for (c = src; (c != NULL) && *c; ++c) {
+    for (char *c = src; (c != NULL) && *c; ++c) {
         if (isspace(*c)) {
             if (e == NULL) {
                 e = c;
@@ -1368,11 +1371,10 @@ char* trim(char* src)
 /* Check this line is comment line or not, which is in cm_server.conf file */
 static bool is_comment_entity(char* strLine, uint32 lineLen)
 {
-    char* src = NULL;
     if (strLine == NULL || strlen(strLine) == 0 || lineLen == 0) {
         return true;
     }
-    src = strLine;
+    char *src = strLine;
     src = trim(src);
     if (src == NULL || strlen(src) < 1) {
         return true;
@@ -1388,17 +1390,15 @@ int is_digit_string(char* str)
 {
 #define isDigital(_ch) (((_ch) >= '0') && ((_ch) <= '9'))
 
-    size_t i = 0;
-    size_t len = 0;
-    char* p = NULL;
     if (str == NULL) {
         return 0;
     }
-    if ((len = strlen(str)) == 0) {
+    size_t len = strlen(str);
+    if (len == 0) {
         return 0;
     }
-    p = str;
-    for (i = 0; i < len; i++) {
+    char *p = str;
+    for (size_t i = 0; i < len; i++) {
         if (!isDigital(p[i])) {
             return 0;
         }
@@ -1408,7 +1408,6 @@ int is_digit_string(char* str)
 static void get_alarm_parameters(const char* config_file)
 {
     char buf[BUF_LEN] = {0};
-    FILE* fd = NULL;
     char* index1 = NULL;
     char* index2 = NULL;
     char* src = NULL;
@@ -1420,7 +1419,7 @@ static void get_alarm_parameters(const char* config_file)
         return;
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
         return;
     }
@@ -1460,13 +1459,12 @@ static void get_alarm_parameters(const char* config_file)
             break;
         }
     }
-    fclose(fd);
+    (void)fclose(fd);
 }
 
 static void get_alarm_report_max_count(const char* config_file)
 {
     char buf[BUF_LEN] = {0};
-    FILE* fd = NULL;
     char* index1 = NULL;
     char* index2 = NULL;
     char* src = NULL;
@@ -1478,14 +1476,14 @@ static void get_alarm_report_max_count(const char* config_file)
         return;
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
         return;
     }
 
     while (!feof(fd)) {
         rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
-        securec_check_errno(rc, fclose(fd));
+        securec_check_errno(rc, (void)fclose(fd));
         (void)fgets(buf, BUF_LEN, fd);
 
         if (is_comment_entity(buf, BUF_LEN)) {
@@ -1518,7 +1516,7 @@ static void get_alarm_report_max_count(const char* config_file)
             break;
         }
     }
-    fclose(fd);
+    (void)fclose(fd);
 }
 
 /*
@@ -1543,7 +1541,6 @@ void get_log_paramter(const char* confDir)
 {
     get_log_level(confDir);
     get_log_file_size(confDir);
-    GetStringFromConf(confDir, sys_log_path, sizeof(sys_log_path), "log_dir");
     GetStringFromConf(confDir, g_alarmComponentPath, sizeof(g_alarmComponentPath), "alarm_component");
     get_alarm_report_interval(confDir);
     get_alarm_report_max_count(confDir);
@@ -1551,7 +1548,6 @@ void get_log_paramter(const char* confDir)
 
 void GetAlarmConfig(const char *confDir)
 {
-    GetStringFromConf(confDir, sys_log_path, sizeof(sys_log_path), "alarm_scope");
     GetStringFromConf(confDir, g_alarmComponentPath, sizeof(g_alarmComponentPath), "alarm_component");
     GetAlarmReportInterval(confDir);
     GetAlarmReportMaxCount(confDir);
@@ -1560,55 +1556,44 @@ void GetAlarmConfig(const char *confDir)
 /*
  * @GaussDB@
  * Brief			:  close the current  file, and open the next   file
- * Description		:
- * Notes			:
  */
 void switchLogFile(void)
 {
     char log_new_name[MAXPGPATH] = {0};
-    mode_t oumask;
     char current_localtime[LOG_MAX_TIMELEN] = {0};
-    pg_time_t current_time;
     struct tm* systm;
 
-    int len_log_cur_name = 0;
-    int len_suffix_name = 0;
-    int len_log_new_name = 0;
-    int ret = 0;
-    errno_t rc = 0;
-
-    current_time = time(NULL);
+    pg_time_t current_time = time(NULL);
 
     systm = localtime(&current_time);
-
     if (systm != NULL) {
         (void)strftime(current_localtime, LOG_MAX_TIMELEN, "-%Y-%m-%d_%H%M%S", systm);
     }
 
     /* close the current  file */
     if (syslogFile != NULL) {
-        fclose(syslogFile);
+        (void)fclose(syslogFile);
         syslogFile = NULL;
     }
 
     /* renamed the current file without  Mark */
-    len_log_cur_name = (int)strlen(g_curLogFileName);
-    len_suffix_name = (int)strlen(curLogFileMark);
-    len_log_new_name = len_log_cur_name - len_suffix_name;
+    int len_log_cur_name = (int)strlen(g_curLogFileName);
+    int len_suffix_name = (int)strlen(curLogFileMark);
+    int len_log_new_name = len_log_cur_name - len_suffix_name;
 
-    rc = strncpy_s(log_new_name, MAXPGPATH, g_curLogFileName, (size_t)len_log_new_name);
-    securec_check_errno(rc, );
+    errno_t rc = strncpy_s(log_new_name, MAXPGPATH, g_curLogFileName, (size_t)len_log_new_name);
+    securec_check_errno(rc, (void)rc);
     rc = strncat_s(log_new_name, MAXPGPATH, ".log", strlen(".log"));
-    securec_check_errno(rc, );
-    ret = rename(g_curLogFileName, log_new_name);
+    securec_check_errno(rc, (void)rc);
+    int ret = rename(g_curLogFileName, log_new_name);
     if (ret != 0) {
-        printf(_("%s: rename log file %s failed! \n"), prefix_name, g_curLogFileName);
+        (void)printf(_("%s: rename log file %s failed! \n"), prefix_name, g_curLogFileName);
         return;
     }
 
     /* new current file name */
     rc = memset_s(g_curLogFileName, MAXPGPATH, 0, MAXPGPATH);
-    securec_check_errno(rc, );
+    securec_check_errno(rc, (void)rc);
     ret = snprintf_s(g_curLogFileName,
         MAXPGPATH,
         MAXPGPATH - 1,
@@ -1617,9 +1602,9 @@ void switchLogFile(void)
         prefix_name,
         current_localtime,
         curLogFileMark);
-    securec_check_intval(ret, );
+    securec_check_intval(ret, (void)ret);
 
-    oumask = umask((mode_t)((~(mode_t)(S_IRUSR | S_IWUSR | S_IXUSR)) & (S_IRWXU | S_IRWXG | S_IRWXO)));
+    mode_t oumask = umask((mode_t)((~(mode_t)(S_IRUSR | S_IWUSR | S_IXUSR)) & (S_IRWXU | S_IRWXG | S_IRWXO)));
 
     syslogFile = fopen(g_curLogFileName, "a");
 
@@ -1628,22 +1613,34 @@ void switchLogFile(void)
     if (syslogFile == NULL) {
         (void)printf("switchLogFile,switch new log file failed %s\n", strerror(errno));
     } else {
+        (void)setvbuf(syslogFile, NULL, LBF_MODE, 0);
+
+#ifdef WIN32
+        /* use CRLF line endings on Windows */
+        _setmode(_fileno(syslogFile), _O_TEXT);
+#endif
         if (SetFdCloseExecFlag(syslogFile) == -1) {
             (void)printf("set file flag failed, filename:%s, errmsg: %s.\n", g_curLogFileName, strerror(errno));
         }
     }
 }
 
+bool CheckLogFileExist()
+{
+    struct stat st;
+    if (stat(g_curLogFileName, &st) != 0) {
+        return false;
+    }
+    return true;
+}
+
 /*
  * @GaussDB@
- * Brief:
  * Description: write info to the files
  * Notes: if the current  file size is full, switch to the next
  */
 void write_log_file(const char* buffer, int count)
 {
-    int rc = 0;
-
     (void)pthread_rwlock_wrlock(&syslog_write_lock);
 
     if (syslogFile == NULL) {
@@ -1657,16 +1654,23 @@ void write_log_file(const char* buffer, int count)
             switchLogFile();
         }
 
+        if (!CheckLogFileExist()) {
+            if (syslogFile != NULL) {
+                (void)fclose(syslogFile);
+                syslogFile = NULL;
+            }
+            syslogFile = logfile_open(sys_log_path, "a");
+        }
+
         if (syslogFile != NULL) {
-            rc = fwrite(buffer, 1, (size_t)count, syslogFile);
-            if (rc != count) {
-                printf("could not write to log file: %s, erron:%d\n", g_curLogFileName, errno);
+            if (fwrite(buffer, 1, (size_t)count, syslogFile) != (size_t)count) {
+                (void)printf("could not write to log file: %s, erron:%d\n", g_curLogFileName, errno);
             }
         } else {
-            printf("write_log_file could not open log file  %s : erron:%d\n", g_curLogFileName, errno);
+            (void)printf("write_log_file could not open log file  %s : erron:%d\n", g_curLogFileName, errno);
         }
     } else {
-        printf("write_log_file,log file is null now:%s\n", buffer);
+        (void)printf("write_log_file,log file is null now:%s\n", buffer);
     }
 
     (void)pthread_rwlock_unlock(&syslog_write_lock);
@@ -1675,45 +1679,44 @@ void write_log_file(const char* buffer, int count)
 char *errmsg(const char *fmt, ...)
 {
     va_list ap;
-    int count = 0;
-    errno_t rc;
     char errbuf[BUF_LEN] = {0};
     fmt = _(fmt);
     va_start(ap, fmt);
-    rc = memset_s(errbuf_errmsg, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    errno_t rc = memset_s(errCtx->errmsg, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
     securec_check_errno(rc, (void)rc);
-    count = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
-    securec_check_intval(count, );
+    int ret = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
+    securec_check_intval(ret, (void)ret);
     va_end(ap);
-    rc = snprintf_s(errbuf_errmsg, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRMSG]:%s", errbuf);
+    rc = snprintf_s(errCtx->errmsg, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRMSG]:%s", errbuf);
     securec_check_intval(rc, (void)rc);
-    return errbuf_errmsg;
+    return errCtx->errmsg;
 }
 
 char *errdetail(const char *fmt, ...)
 {
     va_list ap;
-    int count = 0;
     char errbuf[BUF_LEN] = {0};
     fmt = _(fmt);
     va_start(ap, fmt);
-    errno_t rc = memset_s(errbuf_errdetail, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    errno_t rc = memset_s(errCtx->errdetail, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
     securec_check_errno(rc, (void)rc);
-    count = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
-    securec_check_intval(count, );
+    int ret = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
+    securec_check_intval(ret, (void)ret);
     va_end(ap);
-    rc = snprintf_s(errbuf_errdetail, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRDETAIL]:%s", errbuf);
+    rc = snprintf_s(errCtx->errdetail, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRDETAIL]:%s", errbuf);
     securec_check_intval(rc, (void)rc);
-    return errbuf_errdetail;
+    return errCtx->errdetail;
 }
 
 char* errcode(int sql_state)
 {
     int i;
-    int rcs;
     errno_t rc;
     char buf[6] = {0};
-    rc = memset_s(errbuf_errcode, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    rc = memset_s(errCtx->errcode, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
     securec_check_errno(rc, (void)rc);
     /* the length of sql code is 5 */
     for (i = 0; i < 5; i++) {
@@ -1721,64 +1724,61 @@ char* errcode(int sql_state)
         sql_state >>= 6;
     }
     buf[i] = '\0';
-    rcs = snprintf_s(errbuf_errcode, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s%s", "[ERRCODE]:", buf);
-    securec_check_intval(rcs, );
-    return errbuf_errcode;
+    int ret = snprintf_s(errCtx->errcode, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "%s%s", "[ERRCODE]:", buf);
+    securec_check_intval(ret, (void)ret);
+    return errCtx->errcode;
 }
 
 char *errcause(const char *fmt, ...)
 {
     va_list ap;
-    int count = 0;
     char errbuf[BUF_LEN] = {0};
     fmt = _(fmt);
     va_start(ap, fmt);
-    errno_t rc = memset_s(errbuf_errcause, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    errno_t rc = memset_s(errCtx->errcause, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
     securec_check_errno(rc, (void)rc);
-    count = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
-    securec_check_intval(count, );
+    int ret = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
+    securec_check_intval(ret, (void)ret);
     va_end(ap);
-    rc = snprintf_s(errbuf_errcause, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRCAUSE]:%s", errbuf);
+    rc = snprintf_s(errCtx->errcause, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRCAUSE]:%s", errbuf);
     securec_check_intval(rc, (void)rc);
-    return errbuf_errcause;
+    return errCtx->errcause;
 }
 
 char *erraction(const char *fmt, ...)
 {
     va_list ap;
-    int count = 0;
     char errbuf[BUF_LEN] = {0};
     fmt = _(fmt);
     va_start(ap, fmt);
-    errno_t rc = memset_s(errbuf_erraction, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    errno_t rc = memset_s(errCtx->erraction, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
     securec_check_errno(rc, (void)rc);
-    count = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
-    securec_check_intval(count, );
+    int ret = vsnprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, fmt, ap);
+    securec_check_intval(ret, (void)ret);
     va_end(ap);
-    rc = snprintf_s(errbuf_erraction, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRACTION]:%s", errbuf);
+    rc = snprintf_s(errCtx->erraction, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRACTION]:%s", errbuf);
     securec_check_intval(rc, (void)rc);
-    return errbuf_erraction;
+    return errCtx->erraction;
 }
 
 char* errmodule(ModuleId id)
 {
-    errno_t rc = memset_s(errbuf_errmodule, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    errno_t rc = memset_s(errCtx->errmodule, EREPORT_BUF_LEN, 0, EREPORT_BUF_LEN);
     securec_check_errno(rc, (void)rc);
-    rc = snprintf_s(errbuf_errmodule, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRMODULE]:%s",
+    rc = snprintf_s(errCtx->errmodule, EREPORT_BUF_LEN, EREPORT_BUF_LEN - 1, "[ERRMODULE]:%s",
         get_valid_module_name(id));
     securec_check_intval(rc, (void)rc);
-    return errbuf_errmodule;
+    return errCtx->errmodule;
 }
 
 int SetLogFilePath(const char *logPath)
 {
-    errno_t rc;
-
-    rc = strcpy_s(sys_log_path, MAX_PATH_LEN, logPath);
+    errno_t rc = strcpy_s(sys_log_path, MAX_PATH_LEN, logPath);
     securec_check_errno(rc, (void)rc);
-
     syslogFile = logfile_open(logPath, "a");
-
     if (syslogFile == NULL) {
         (void)printf(_("open log file failed\n"));
         return -1;
@@ -1964,8 +1964,6 @@ void CreateKeyEventLogFile(const char *sysLogPath)
     bool isExist = false;
     char *namePtr;
     errno_t rc;
-    DIR *dir = NULL;
-    struct dirent *de = NULL;
 
     CmKeyEventInit();
     if (sysLogPath == NULL) {
@@ -1973,12 +1971,14 @@ void CreateKeyEventLogFile(const char *sysLogPath)
         securec_check_errno(rc, (void)rc);
         return;
     }
-    if ((dir = opendir(sysLogPath)) == NULL) {
+    DIR *dir = opendir(sysLogPath);
+    if (dir == NULL) {
         write_runlog(ERROR, "opendir %s failed! \n", sysLogPath);
         rc = strncpy_s(g_operationLogPath, MAXPGPATH, "/dev/null", strlen("/dev/null"));
         securec_check_errno(rc, (void)rc);
         return;
     }
+    struct dirent *de;
     while ((de = readdir(dir)) != NULL) {
         /* exist current log file */
         if (strstr(de->d_name, KEY_EVENT_PRE) == NULL) {
@@ -2015,7 +2015,6 @@ void CreateKeyEventLogFile(const char *sysLogPath)
 
 bool CheckLogFileStat(const char *fileName)
 {
-    long filesize = 0;
     struct stat statbuff;
     int ret;
     errno_t rc = memset_s(&statbuff, sizeof(statbuff), 0, sizeof(statbuff));
@@ -2024,11 +2023,10 @@ bool CheckLogFileStat(const char *fileName)
     if (ret != 0 || (strncmp(fileName, "/dev/null", strlen("/dev/null")) == 0)) {
         write_runlog(ERROR, "stat log %s error, ret=%d.\n", fileName, ret);
         return false;
-    } else {
-        filesize = statbuff.st_size;
     }
+    long filesize = statbuff.st_size;
     /* Check Log File Permissions */
-    if (!S_ISREG(statbuff.st_mode) || statbuff.st_mode & (S_IRWXG | S_IRWXO | S_IXUSR)) {
+    if (!S_ISREG(statbuff.st_mode) || (statbuff.st_mode & (S_IRWXG | S_IRWXO | S_IXUSR))) {
         write_runlog(ERROR, "[CheckLogFileStat] %s has execute, group or world access permission.\n", fileName);
         return true;
     }
@@ -2066,13 +2064,11 @@ void RenameLogFile(const char *sysLogPath, const char *logFilePath, const char *
 void CheckAndSwitchLogFile(const char *sysLogPath, const char *prefixLogName, char *logFilePath, char *logFileName)
 {
     status_t ret;
-    bool isNeedSwitch;
-    isNeedSwitch = CheckLogFileStat(logFilePath);
-    if (isNeedSwitch) {
+    if (CheckLogFileStat(logFilePath)) {
         RenameLogFile(sysLogPath, logFilePath, logFileName);
         ret = CreateNewLogFile(sysLogPath, prefixLogName, logFilePath, logFileName);
         if (ret == CM_SUCCESS) {
-        write_runlog(LOG, "Create new log file(%s) successfully! \n", logFileName);
+            write_runlog(LOG, "Create new log file(%s) successfully! \n", logFileName);
         }
     }
 }
@@ -2085,7 +2081,8 @@ void AddTimeLogPrefix(char *str, unsigned int strlen)
     if (thread_name == NULL) {
         thread_name = "";
     }
-    rcs = snprintf_s(str, strlen, strlen - 1, "%s tid=%ld %s: ", formatted_log_time, gettid(), thread_name);
+    ErrBufCtx *errCtx = GetErrBufCtx();
+    rcs = snprintf_s(str, strlen, strlen - 1, "%s tid=%ld %s: ", errCtx->fmtLogTime, gettid(), thread_name);
     securec_check_intval(rcs, (void)rcs);
 }
 
@@ -2103,7 +2100,6 @@ void WriteKeyEventLog(KeyEventType keyEventType, uint32 instanceId, const char *
 {
     const unsigned int logLen = 2048;
     va_list ap;
-    FILE *logFile = NULL;
     int rcs;
     char logBuf[logLen] = {0};
     char format[logLen] = {0};
@@ -2125,7 +2121,7 @@ void WriteKeyEventLog(KeyEventType keyEventType, uint32 instanceId, const char *
     (void)pthread_rwlock_wrlock(&g_operationLogWriteLock);
     CheckAndSwitchLogFile(sys_log_path, "key_event", g_operationLogPath, g_operationLogName);
     canonicalize_path(g_operationLogPath);
-    logFile = fopen(g_operationLogPath, "a");
+    FILE *logFile = fopen(g_operationLogPath, "a");
     size_t actualLogLen = strlen(logBuf);
     if (logFile != NULL) {
         if (fwrite(logBuf, 1, actualLogLen, logFile) != actualLogLen) {
@@ -2133,7 +2129,6 @@ void WriteKeyEventLog(KeyEventType keyEventType, uint32 instanceId, const char *
         }
         (void)fflush(logFile);
         (void)fclose(logFile);
-        logFile = NULL;
     } else {
         write_runlog(ERROR, "write_log_file could not open log file  %s.\n", g_operationLogName);
     }

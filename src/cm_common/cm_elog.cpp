@@ -104,14 +104,9 @@ typedef struct ErrBufCtx_ {
 static pthread_key_t g_key;
 static pthread_once_t g_keyOnce = PTHREAD_ONCE_INIT;
 
-void KeyDestructor(void *errCtx)
-{
-    free(errCtx);
-}
-
 void MakeKey(void)
 {
-    (void)pthread_key_create(&g_key, KeyDestructor);
+    (void)pthread_key_create(&g_key, free);
 }
 
 static ErrBufCtx *GetErrBufCtx()

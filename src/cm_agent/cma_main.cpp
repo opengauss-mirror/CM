@@ -1430,6 +1430,11 @@ int get_agent_global_params_from_configfile()
         write_runlog(ERROR, "get_config_param() get enable_dcf fail.\n");
     }
 
+#ifndef ENABLE_MULTIPLE_NODES
+    if (get_config_param(configDir, "enable_fence_dn", g_enableFenceDn, sizeof(g_enableFenceDn)) < 0)
+        write_runlog(ERROR, "get_config_param() get enable_fence_dn fail.\n");
+#endif
+
 #ifdef __aarch64__
     agent_process_cpu_affinity = get_uint32_value_from_config(configDir, "process_cpu_affinity", 0);
     if (agent_process_cpu_affinity > CPU_AFFINITY_MAX) {

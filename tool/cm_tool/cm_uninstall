@@ -26,7 +26,7 @@ import subprocess
 from CMLog import CMLog
 from ErrorCode import ErrorCode
 from InstallImpl import InstallImpl
-from Common import executeCmdOnHost, getEnvParam, getLocalhostName
+from Common import *
 
 class UnIntall:
     def __init__(self) -> None:
@@ -40,7 +40,7 @@ class UnIntall:
 
     def usage(self):
         """
-cm_uninstall is a utility to deploy CM tool to openGauss database cluster.
+cm_uninstall is a utility to uninstall CM tool to openGauss database cluster.
 
 Usage:
     cm_uninstall -? | --help
@@ -88,6 +88,17 @@ General options:
         if self.envFile == "":
             self.envFile = "~/.bashrc"
 
+    def _checkXMLContainCMInfo(self):
+        cmd = "grep -E 'cmDir|cmsNum|cmServerPortBase|cmServerPortStandby|cmServerlevel|" \
+            "cmServerListenIp1|cmServerRelation' " + self.xmlFile
+        status, output = subprocess.getstatusoutput(cmd)
+        if status == 0:
+            CMLog.exitWithError("%s should not contain CM infos.\nDetail:\n%s" % (self.xmlFile, output))
+
+    def checkXMLFile(self):
+        checkXMLFile(self.xmlFile)
+        self._checkXMLContainCMInfo()
+
     def getHostnames(self):
         """
         Get hostnames of all nodes from static file.
@@ -134,7 +145,10 @@ General options:
             crontab {cronContentTmpFile}
             """.format(cronContentTmpFile=cronContentTmpFile)
         for host in self.hostnames:
-            status, output = executeCmdOnHost(host, cmd)
+            isLocal = False
+            if host == self.localhostName:
+                isLocal = True
+            status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
                 self.logger.logExit(("Failed to cancle monitor crontab on host %s." % host) + errorDetail)
@@ -232,6 +246,7 @@ General options:
         self.checkExeUser()
         self.parseCommandLine()
         self.checkParam()
+        self.checkXMLFile()
         self.initLogger()
         self.logger.log("Start to uninstall CM.")
         self.getHostnames()

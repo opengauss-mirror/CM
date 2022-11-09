@@ -443,13 +443,17 @@ void* ConnCmsPMain(void* arg)
                 }
 
                 /* agentStopInstanceDelayTime: The delay time of stopping instances.
-                 * If isToStopInstances is true, agentStopInstanceDelayTime is FENCE_TIMEOUT, 30 seconds.
+                 * If isToStopInstances is true, and g_enableFenceDn is true,
+                 * agentStopInstanceDelayTime is FENCE_TIMEOUT, 30 seconds.
+                 * If isToStopInstances is true, and g_enableFenceDn is false,
+                 * agentStopInstanceDelayTime is DISABLE_TIMEOUT, 0 seconds, never timeout.
                  * If isToStopInstances is false, agentStopInstanceDelayTime is agent_kill_instance_timeout,
                  * 0 second by default,
                  * and the operation of stopping instances will not be executed.
                  */
-                uint32 agentStopInstanceDelayTime = isToStopInstances ? DISABLE_TIMEOUT : agent_kill_instance_timeout;
-                if (isDisconnectTimeout(g_disconnectTime, agentStopInstanceDelayTime) && !have_killed_nodes) {
+                uint32 timeout = IsBoolCmParamTrue(g_enableFenceDn) ? FENCE_TIMEOUT : DISABLE_TIMEOUT;
+                uint32 agentStopInstanceDelayTime = isToStopInstances ? timeout : agent_kill_instance_timeout;
+                if (isDisconnectTimeout(g_disconnectTime, (int)agentStopInstanceDelayTime) && !have_killed_nodes) {
                     if ((undocumentedVersion == 0) && isMaintenanceModeDisableOperation(CMA_KILL_SELF_INSTANCES)) {
                         have_killed_nodes = false;
                         write_runlog(LOG, "%d Maintaining cluster: cm agent cannot stop self instances.\n", __LINE__);
@@ -462,6 +466,14 @@ void* ConnCmsPMain(void* arg)
                             "sync_dropped_coordinator change to false.\n", agentStopInstanceDelayTime);
                         g_syncDroppedCoordinator = false;
                         have_killed_nodes = true;
+
+                        /*
+                         * Kill datanode proccess, so that it can be restarted with pending mode.
+                        */
+                        uint32 i;
+                        for (i = 0; i < g_currentNode->datanodeCount; i++) {
+                            immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
+                        }
                     }
                 }
             }

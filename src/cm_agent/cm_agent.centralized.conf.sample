@@ -37,4 +37,8 @@ dilatation_shard_count_for_disk_capacity_alarm = 1             #check disk capac
 enable_dcf = off
 disaster_recovery_type = 0
 agent_backup_open = 0
+enable_e2e_rto = 0
+enable_fence_dn = off                                        #enable fence the datanode when cma cannot connect to any cms.
+                                                             #if set to on, restart datenode after 30 seconds. otherwise, don't restart datanode.
+                                                             #default off
 ############### End ###################

@@ -384,6 +384,9 @@ void ReloadParametersFromConfigfile()
     if (get_config_param(configDir, "enable_dcf", g_agentEnableDcf, sizeof(g_agentEnableDcf)) < 0)
         write_runlog(ERROR, "get_config_param() get enable_dcf fail.\n");
 
+    if (get_config_param(configDir, "enable_fence_dn", g_enableFenceDn, sizeof(g_enableFenceDn)) < 0)
+        write_runlog(ERROR, "get_config_param() get enable_fence_dn fail.\n");
+
     write_runlog(LOG,
         "reload cm_agent parameters:\n"
         "  log_min_messages=%d, maxLogFileSize=%d, sys_log_path=%s, \n  alarm_component=%s, "
@@ -393,7 +396,7 @@ void ReloadParametersFromConfigfile()
         "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, upgrade_from=%u,\n"
         "  enableLogCompress=%s, security_mode=%s, incremental_build=%d, unix_socket_directory=%s agent_backup_open = "
         "%u,enable_dcf = %s,\n"
-        "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s\n",
+        "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s, enable_fence_dn=%s\n",
         log_min_messages,
         maxLogFileSize,
         sys_log_path,
@@ -419,7 +422,8 @@ void ReloadParametersFromConfigfile()
         g_agentEnableDcf,
         g_enableE2ERto,
         g_disasterRecoveryType,
-        g_environmentThreshold);
+        g_environmentThreshold,
+        g_enableFenceDn);
 }
 
 void listen_ip_merge(uint32 ip_count, char ip_listen[][CM_IP_LENGTH], char *ret_ip_merge, uint32 ipMergeLength)

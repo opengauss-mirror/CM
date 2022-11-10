@@ -19,6 +19,7 @@
 # Description  : cm_install is a utility to deploy CM tool to openGauss database cluster.
 #############################################################################
 
+import cmd
 import getopt
 import os
 import sys
@@ -45,7 +46,7 @@ class Install:
         self.toolPath = ""
         self.tmpPath = ""
         self.cmDirs = []
-        self.hostNames = []
+        self.hostnames = []
         self.localhostName = ""
         self.cmpkg = ""
 
@@ -58,28 +59,6 @@ class Install:
         self.gaussLog = getEnvParam(self.envFile, "GAUSSLOG")
         self.toolPath = getEnvParam(self.envFile, "GPHOME")
         self.tmpPath = getEnvParam(self.envFile, "PGHOST")
-
-    def checkXMLFile(self):
-        """
-        function: check XML file
-                1.check -X parameter
-                2.check XML file exists
-                3.check XML file an absolute path
-                4.permission
-        input : NA
-        output: NA
-        """
-        if self.xmlFile.startswith('~/'):
-            homePath = os.path.expanduser('~')
-            self.xmlFile = homePath + self.xmlFile[1:]
-        if not os.path.isfile(self.xmlFile):
-            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50210"] % "xmlFile")
-        if not os.path.exists(self.xmlFile):
-            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % "xmlFile")
-        if not os.path.isabs(self.xmlFile):
-            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50213"] % "xmlFile")
-        if not os.access(self.xmlFile, os.R_OK):
-            CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50100"] % (self.xmlFile, "current user"))
 
     def checkExeUser(self):
         if os.getuid() == 0:
@@ -125,13 +104,23 @@ General options:
 
     def checkParam(self):
         if self.xmlFile == "":
-            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'X or xml' + ".")
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'X' + ".")
+        checkXMLFile(self.xmlFile)
 
         if self.cmpkg == "":
-            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'p or cmpkg' + ".")
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % '-cmpkg' + ".")
+        if not os.path.exists(self.cmpkg):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % self.cmpkg)
 
         if self.envFile == "":
-            self.envFile = "~/.bashrc"
+            self.envFile = os.path.join(os.environ['HOME'], ".bashrc")
+        if not os.path.exists(self.envFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % ("envFile " + self.envFile))
+        if not os.path.isfile(self.envFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50210"] % ("envFile " + self.envFile))
+        self.envFile = getEnvParam(self.envFile, "MPPDB_ENV_SEPARATE_PATH")
+        if self.envFile == "" or not os.path.exists(self.envFile) or not os.path.isfile(self.envFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_518["GAUSS_51802"] % 'MPPDB_ENV_SEPARATE_PATH' + ".")
 
     def checkOm(self):
         """
@@ -180,6 +169,8 @@ General options:
     def getInfoListOfAllNodes(self):
         """
         get hostname and cmDir list of all nodes
+        check other CM infos in xml
+        TODO: check the consistence of xml and installed cluster.
         """
         self.localhostName = getLocalhostName()
 
@@ -189,28 +180,38 @@ General options:
             raise Exception(ErrorCode.GAUSS_512["GAUSS_51200"] % elementName)
         deviceArray = rootNode.findall('DEVICELIST')[0]
         deviceNodes = deviceArray.findall('DEVICE')
+        cmDict = {"cmsNum": "", "cmServerPortBase": "", "cmServerPortStandby": "",
+             "cmServerlevel": "", "cmServerListenIp1": "", "cmServerRelation": ""}
         for dev in deviceNodes:
             paramList = dev.findall('PARAM')
             for param in paramList:
-                if param.attrib['name'] == 'name':
-                    self.hostNames.append(param.attrib['value'])
-                if param.attrib['name'] == 'cmDir':
-                    self.cmDirs.append(param.attrib['value'])
-
-    def _checkTrust(self, host):
-        """
-        check trust between current host and the given host
-        """
-        checkTrustCmd = "source %s; pssh -s -H %s 'pwd'" % (self.envFile, host)
-        status, output = subprocess.getstatusoutput(checkTrustCmd)
-        return status
+                paraName = param.attrib['name']
+                paraValue = param.attrib['value']
+                if paraName == 'name':
+                    self.hostnames.append(paraValue)
+                elif paraName == 'cmDir':
+                    self.cmDirs.append(paraValue)
+                elif paraName in cmDict.keys():
+                    cmDict[paraName] = paraValue
+        # check params in xml
+        for item in cmDict:
+            if item == 'cmServerPortStandby':
+                continue
+            if cmDict[item] == "":
+                CMLog.exitWithError(ErrorCode.GAUSS_512["GAUSS_51200"] % item)
+        if cmDict['cmsNum'] != '1':
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmsNum')
+        if cmDict['cmServerlevel'] != '1':
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerlevel')
+        if not cmDict['cmServerPortBase'].isdigit():
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerPortBase')
+        if cmDict['cmServerPortStandby'] != "" and not cmDict['cmServerPortStandby'].isdigit():
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerPortStandby')
+        if len(self.hostnames) != len(self.cmDirs):
+            CMLog.exitWithError("\"cmDir\" of all nodes must be provided.")
 
     def checkHostTrust(self):
-        for host in self.hostNames:
-            if host == self.localhostName:
-                continue
-            if self._checkTrust(host) != 0:
-                CMLog.exitWithError(ErrorCode.GAUSS_511["GAUSS_51100"] % host)
+        checkHostsTrust(self.hostnames, self.localhostName)
 
     def initLogger(self):
         logPath = os.path.join(self.gaussLog, "cm", "cm_tool")
@@ -233,7 +234,6 @@ General options:
         self.checkParam()
         self.checkOm()
         self.checkCM()
-        self.checkXMLFile()
         self.getEnvParams()
         self.initLogger()
         self.getLocalhostName()

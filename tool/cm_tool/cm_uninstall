@@ -26,7 +26,7 @@ import subprocess
 from CMLog import CMLog
 from ErrorCode import ErrorCode
 from InstallImpl import InstallImpl
-from Common import executeCmdOnHost, getEnvParam, getLocalhostName
+from Common import *
 
 class UnIntall:
     def __init__(self) -> None:
@@ -40,7 +40,7 @@ class UnIntall:
 
     def usage(self):
         """
-cm_uninstall is a utility to deploy CM tool to openGauss database cluster.
+cm_uninstall is a utility to uninstall CM tool to openGauss database cluster.
 
 Usage:
     cm_uninstall -? | --help
@@ -82,11 +82,25 @@ General options:
 
     def checkParam(self):
         if self.xmlFile == "":
-            CMLog.exitWithError(
-                ErrorCode.GAUSS_500["GAUSS_50001"] % 'X' + ".")
+            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % 'X' + ".")
+        checkXMLFile(self.xmlFile)
 
         if self.envFile == "":
-            self.envFile = "~/.bashrc"
+            self.envFile = os.path.join(os.environ['HOME'], ".bashrc")
+        if not os.path.exists(self.envFile):
+             CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % ("envFile " + self.envFile))
+        if not os.path.isfile(self.envFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50210"] % ("envFile " + self.envFile))
+        self.envFile = getEnvParam(self.envFile, "MPPDB_ENV_SEPARATE_PATH")
+        if self.envFile == "" or not os.path.exists(self.envFile) or not os.path.isfile(self.envFile):
+            CMLog.exitWithError(ErrorCode.GAUSS_518["GAUSS_51802"] % 'MPPDB_ENV_SEPARATE_PATH' + ".")
+
+    def checkXMLContainCMInfo(self):
+        cmd = "grep -E 'cmDir|cmsNum|cmServerPortBase|cmServerPortStandby|cmServerlevel|" \
+            "cmServerListenIp1|cmServerRelation' " + self.xmlFile
+        status, output = subprocess.getstatusoutput(cmd)
+        if status == 0:
+            CMLog.exitWithError("%s should not contain CM infos.\nDetail:\n%s" % (self.xmlFile, output))
 
     def getHostnames(self):
         """
@@ -134,7 +148,10 @@ General options:
             crontab {cronContentTmpFile}
             """.format(cronContentTmpFile=cronContentTmpFile)
         for host in self.hostnames:
-            status, output = executeCmdOnHost(host, cmd)
+            isLocal = False
+            if host == self.localhostName:
+                isLocal = True
+            status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
                 self.logger.logExit(("Failed to cancle monitor crontab on host %s." % host) + errorDetail)
@@ -190,15 +207,16 @@ General options:
         if not self.bDeleteData:
             return
         self.logger.log("Deleting CM data path.")
+        self.logger.closeLog()
         for host, path in zip(self.hostnames, self.cmDataPaths):
             isLocal = False
             if host == self.localhostName:
                 isLocal = True
-            cmd = "source %s; rm -rf %s" % (self.envFile, path)
+            cmd = "source %s; rm -rf %s $GAUSSLOG/cm" % (self.envFile, path)
             status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
-                self.logger.exitWithError(("Failed to delete CM data path on host %s." % host) + errorDetail)
+                CMLog.exitWithError(("Failed to delete CM data path on host %s." % host) + errorDetail)
 
     def deleteBinary(self):
         """
@@ -211,11 +229,12 @@ General options:
             isLocal = False
             if host == self.localhostName:
                 isLocal = True
-            cmd = "source %s; cd $GAUSSHOME/bin; rm -f om_monitor cm_agent cm_server cm_ctl; cd -" % self.envFile
+            cmd = "source %s; cd $GAUSSHOME/bin; rm -f om_monitor* cm_agent* cm_server* " \
+                "cm_ctl* *manual*start*; cd -" % self.envFile
             status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
-                self.logger.exitWithError(("Failed to delete CM binaries on host %s." % host) + errorDetail)
+                self.logger.logExit(("Failed to delete CM binaries on host %s." % host) + errorDetail)
 
     def initLogger(self):
         gaussLog = getEnvParam(self.envFile, "GAUSSLOG")
@@ -228,21 +247,28 @@ General options:
         if os.getuid() == 0:
             CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50105"])
 
+    def checkHostTrust(self):
+        checkHostsTrust(self.hostnames, self.localhostName)
+
     def run(self):
         self.checkExeUser()
         self.parseCommandLine()
         self.checkParam()
+        self.checkXMLContainCMInfo()
         self.initLogger()
-        self.logger.log("Start to uninstall CM.")
         self.getHostnames()
+        self.checkHostTrust()
+        self.logger.log("Start to uninstall CM.")
         self.getCMDataPaths()
         self.cancleMonitorCrontab()
         self.stopCMProcess()
         self.refreshStaticAndDynamicFile()
-        self.deleteData()
         self.deleteBinary()
-        self.logger.log("Uninstall CM tool success.")
-
+        self.deleteData()
+        if self.bDeleteData:
+            self.logger.printMessage("Uninstall CM tool success.")
+        else:
+            self.logger.logExit("Uninstall CM tool success.")
 
 if __name__ == "__main__":
     unInstall = UnIntall()

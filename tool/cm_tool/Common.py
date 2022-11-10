@@ -18,6 +18,7 @@
 # Description  : Common.py includes some public function
 #############################################################################
 
+import os
 import subprocess
 from CMLog import CMLog
 from ErrorCode import ErrorCode
@@ -40,3 +41,38 @@ def executeCmdOnHost(host, cmd, isLocal = False):
         cmd = 'ssh -o ConnectTimeout=5 %s \"%s\"' % (host, cmd)
     status, output = subprocess.getstatusoutput(cmd)
     return status, output
+
+def checkXMLFile(xmlFile):
+    """
+    function: check XML file
+            1.check whether XML file exists
+            2.check whether XML file is file
+            3.permission
+    input : NA
+    output: NA
+    """
+    if xmlFile.startswith('~/'):
+        homePath = os.path.expanduser('~')
+        xmlFile = homePath + xmlFile[1:]
+    if not os.path.exists(xmlFile):
+        CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % "xmlFile")
+    if not os.path.isfile(xmlFile):
+        CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50210"] % "xmlFile")
+    if not os.access(xmlFile, os.R_OK):
+        CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50100"] % (xmlFile, "current user"))
+
+def checkHostsTrust(hosts, localhost = ""):
+    """
+    check trust between current host and the given hosts
+    """
+    hostsWithoutTrust = []
+    for host in hosts:
+        if host == localhost:
+            continue
+        checkTrustCmd = "ssh -o ConnectTimeout=3 -o ConnectionAttempts=5 -o PasswordAuthentication=no " \
+            "-o StrictHostKeyChecking=no %s 'pwd > /dev/null'" % host
+        status, output = subprocess.getstatusoutput(checkTrustCmd)
+        if status != 0:
+            hostsWithoutTrust.append(host)
+    if hostsWithoutTrust != []:
+        CMLog.exitWithError(ErrorCode.GAUSS_511["GAUSS_51100"] % ','.join(hostsWithoutTrust))

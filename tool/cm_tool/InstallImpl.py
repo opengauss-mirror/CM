@@ -40,6 +40,7 @@ class InstallImpl:
         self.tmpPath = install.tmpPath
         self.localhostName = install.localhostName
         self.logger = install.logger
+        self.clusterStopped = install.clusterStopped
 
     def executeCmdOnHost(self, host, cmd, isLocal = False):
         if host == self.localhostName:
@@ -275,11 +276,6 @@ class InstallImpl:
     @staticmethod
     def refreshDynamicFile(envFile):
         # refresh dynamic file
-        getStatusCmd = "source %s; gs_om -t status --detail | grep 'Primary Normal' > /dev/null" % envFile
-        status, output = subprocess.getstatusoutput(getStatusCmd)
-        if status != 0:
-            CMLog.printMessage("Normal primary doesn't exist in the cluster, no need to refresh dynamic file.")
-            return 0, ""
         refreshDynamicFileCmd = "source %s; gs_om -t refreshconf" % envFile
         status, output = subprocess.getstatusoutput(refreshDynamicFileCmd)
         errorDetail = ""
@@ -292,6 +288,9 @@ class InstallImpl:
         status, output  = InstallImpl.refreshStaticFile(self.envFile, self.xmlFile)
         if status != 0:
             self.logger.logExit("Failed to refresh static file." + output)
+        if self.clusterStopped:
+            self.logger.log("Don't need to refresh dynamic file when the cluster is currently stopped.")
+            return
         status, output = InstallImpl.refreshDynamicFile(self.envFile)
         if status != 0:
             self.logger.logExit("Failed to refresh dynamic file." + output)

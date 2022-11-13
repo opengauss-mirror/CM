@@ -248,6 +248,10 @@ class InstallImpl:
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit("Failed to start cluster." + errorDetail)
 
+        status, output = InstallImpl.refreshDynamicFile(self.envFile)
+        if status != 0:
+            self.logger.error("Failed to refresh dynamic file." + output)
+
         queryCmd = "source %s; cm_ctl query -Cv" % self.envFile
         status, output = subprocess.getstatusoutput(queryCmd)
         if status != 0:
@@ -283,17 +287,11 @@ class InstallImpl:
             errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (refreshDynamicFileCmd, status, output)
         return status, errorDetail
 
-    def refreshStaticAndDynamicFile(self):
+    def _refreshStaticFile(self):
         self.logger.log("Refreshing static and dynamic file using xml file with cm.")
         status, output  = InstallImpl.refreshStaticFile(self.envFile, self.xmlFile)
         if status != 0:
             self.logger.logExit("Failed to refresh static file." + output)
-        if self.clusterStopped:
-            self.logger.log("Don't need to refresh dynamic file when the cluster is currently stopped.")
-            return
-        status, output = InstallImpl.refreshDynamicFile(self.envFile)
-        if status != 0:
-            self.logger.logExit("Failed to refresh dynamic file." + output)
 
     def run(self):
         self.logger.log("Start to install cm tool.")
@@ -302,6 +300,6 @@ class InstallImpl:
         self.createManualStartFile()
         self.initCMServer()
         self.initCMAgent()
-        self.refreshStaticAndDynamicFile()
+        self._refreshStaticFile()
         self.setMonitorCrontab()
         self.startCluster()

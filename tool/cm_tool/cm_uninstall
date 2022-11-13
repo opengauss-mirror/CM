@@ -196,6 +196,22 @@ General options:
         status, output  = InstallImpl.refreshStaticFile(self.envFile, self.xmlFile)
         if status != 0:
             self.logger.logExit("Failed to refresh static file." + output)
+        # Remove dynamic file, if the cluster is stopped currently.
+        removeDynamicCmd = "source %s; rm -f $GAUSSHOME/bin/cluster_dynamic_config" % self.envFile
+        for host in self.hostnames:
+            isLocal = False
+            if host == self.localhostName:
+                isLocal = True
+            executeCmdOnHost(host, removeDynamicCmd, isLocal)
+        clusterStopped = False
+        checkClusterStoppedCmd = "source %s; ls $GAUSSHOME/bin/cluster_manual_start" % self.envFile
+        status, output = subprocess.getstatusoutput(checkClusterStoppedCmd)
+        if status == 0:
+            clusterStopped = True
+        self.logger.debug("Command: " + checkClusterStoppedCmd)
+        self.logger.debug("Status: %s\nOtput: %s" % (status, output))
+        if clusterStopped:
+            return
         status, output = InstallImpl.refreshDynamicFile(self.envFile)
         if status != 0:
             self.logger.logExit("Failed to refresh dynamic file." + output)

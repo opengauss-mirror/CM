@@ -199,6 +199,9 @@ class InstallImpl:
         # set crontab on other hosts
         setCronCmd = "crontab %s" % cronContentTmpFile
         cleanTmpFileCmd = "rm %s -f" % cronContentTmpFile
+        import getpass
+        username = getpass.getuser()
+        killMonitorCmd = "pkill om_monitor -u %s; " % username
         for host in self.hostnames:
             if host == self.localhostName:
                 continue
@@ -219,7 +222,8 @@ class InstallImpl:
                 self.logger.logExit(ErrorCode.GAUSS_508["GAUSS_50801"] + errorDetail)
 
             # start om_monitor
-            status, output = self.executeCmdOnHost(host, startMonitorCmd)
+            # Firstly, kill residual om_monitor, otherwise cm_agent won't be started if there are residual om_monitor process.
+            status, output = self.executeCmdOnHost(host, killMonitorCmd + startMonitorCmd)
             if status != 0:
                 self.logger.debug("Command: " + startMonitorCmd)
                 errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
@@ -233,7 +237,7 @@ class InstallImpl:
             self.logger.logExit(ErrorCode.GAUSS_508["GAUSS_50801"] + errorDetail)
         os.remove(cronContentTmpFile)
 
-        status, output = subprocess.getstatusoutput(startMonitorCmd)
+        status, output = subprocess.getstatusoutput(killMonitorCmd + startMonitorCmd)
         if status != 0:
             self.logger.debug("Command: " + startMonitorCmd)
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)

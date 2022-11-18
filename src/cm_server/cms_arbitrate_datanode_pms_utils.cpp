@@ -24,6 +24,7 @@
 #include "cms_arbitrate_datanode_pms_utils.h"
 #include  "cms_az.h"
 #include "cms_process_messages.h"
+#include "cms_ddb.h"
 
 /**
  * @brief
@@ -237,6 +238,20 @@ void InitDnArbitInfo(DnArbitInfo *info)
     info->staRoleIndex = -1;
 }
 
+void UpdateGlobalTermByMaxTerm(uint32 maxTerm)
+{
+    (void)pthread_rwlock_wrlock(&term_update_rwlock);
+    uint32 currentTerm = g_dynamic_header->term;
+    if (maxTerm > currentTerm) {
+        currentTerm = maxTerm + CM_INCREMENT_TERM_VALUE;
+        write_runlog(LOG, "global term %u is smaller than instance maxterm %u, update global term to %u\n",
+            g_dynamic_header->term, maxTerm, currentTerm);
+        g_dynamic_header->term = currentTerm;
+        (void)SetTermToDdb(currentTerm);
+    }
+    (void)pthread_rwlock_unlock(&term_update_rwlock);
+}
+
 void GetDnArbitInfo(uint32 groupIdx, DnArbitInfo *info)
 {
     int32 count = GetInstanceCountsInGroup(groupIdx);
@@ -254,6 +269,8 @@ void GetDnArbitInfo(uint32 groupIdx, DnArbitInfo *info)
             info->switchoverIdx = i;
         }
     }
+    /* term may increment without cm, the global term needs to be synchronized */
+    UpdateGlobalTermByMaxTerm(info->maxTerm);
 }
 
 uint32 GetInstanceTerm(uint32 groupIndex, int memberIndex)

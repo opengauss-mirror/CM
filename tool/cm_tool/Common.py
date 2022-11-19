@@ -38,7 +38,7 @@ def getLocalhostName():
 
 def executeCmdOnHost(host, cmd, isLocal = False):
     if not isLocal:
-        cmd = 'ssh -o ConnectTimeout=5 %s \"%s\"' % (host, cmd)
+        cmd = 'ssh -q -o ConnectTimeout=5 %s \"%s\"' % (host, cmd)
     status, output = subprocess.getstatusoutput(cmd)
     return status, output
 

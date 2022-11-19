@@ -49,6 +49,9 @@ class Install:
         self.hostnames = []
         self.localhostName = ""
         self.cmpkg = ""
+        self.nodesInfo = dict()
+        self.clusterStopped = False
+        self.maxTerm = 0
 
     def getLocalhostName(self):
         import socket
@@ -131,7 +134,7 @@ General options:
         if status != 0:
             errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s\n" % (
                 cmd, status, output)
-            CMLog.exitWithError("OM tool is required." + errorDetail)
+            self.logger.logExit("OM tool is required." + errorDetail)
 
     def checkXMLFileSecurity(self):
         """
@@ -174,6 +177,24 @@ General options:
         """
         self.localhostName = getLocalhostName()
 
+        # get hostnames and port from static file
+        cmd = "source %s; gs_om -t view" % self.envFile
+        status, output = subprocess.getstatusoutput(cmd)
+        if status != 0:
+            self.logger.logExit((ErrorCode.GAUSS_514["GAUSS_51400"] % cmd) + \
+                "\nStatus:%d\nOutput:" + output)
+        nodesStaticInfo = re.split("=+", output)[1:]
+        for nodeInfo in nodesStaticInfo:
+            if nodeInfo == "":
+                continue
+            nodename = re.findall("nodeName:(.*)", nodeInfo)[0]
+            self.hostnames.append(nodename)
+            dataPath = re.findall("datanodeLocalDataPath.*:(.*)", nodeInfo)[0]
+            port = re.findall("datanodePort.*:(.*)", nodeInfo)[0]
+            self.nodesInfo[nodename] = {"dataPath": dataPath, "port": port}
+
+        # get node info from XML
+        hostnamesInXML = []
         rootNode = self.initParserXMLFile()
         elementName = 'DEVICELIST'
         if not rootNode.findall('DEVICELIST'):
@@ -188,27 +209,30 @@ General options:
                 paraName = param.attrib['name']
                 paraValue = param.attrib['value']
                 if paraName == 'name':
-                    self.hostnames.append(paraValue)
+                    hostnamesInXML.append(paraValue)
                 elif paraName == 'cmDir':
                     self.cmDirs.append(paraValue)
                 elif paraName in cmDict.keys():
                     cmDict[paraName] = paraValue
+        # check whether XML contains all nodes info
+        if self.hostnames != hostnamesInXML:
+            self.logger.logExit("XML info is not consistent with static file.")
         # check params in xml
         for item in cmDict:
             if item == 'cmServerPortStandby':
                 continue
             if cmDict[item] == "":
-                CMLog.exitWithError(ErrorCode.GAUSS_512["GAUSS_51200"] % item)
+                self.logger.logExit(ErrorCode.GAUSS_512["GAUSS_51200"] % item)
         if cmDict['cmsNum'] != '1':
-            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmsNum')
+            self.logger.logExit(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmsNum')
         if cmDict['cmServerlevel'] != '1':
-            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerlevel')
+            self.logger.logExit(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerlevel')
         if not cmDict['cmServerPortBase'].isdigit():
-            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerPortBase')
+            self.logger.logExit(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerPortBase')
         if cmDict['cmServerPortStandby'] != "" and not cmDict['cmServerPortStandby'].isdigit():
-            CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerPortStandby')
+            self.logger.logExit(ErrorCode.GAUSS_500["GAUSS_50024"] % 'cmServerPortStandby')
         if len(self.hostnames) != len(self.cmDirs):
-            CMLog.exitWithError("\"cmDir\" of all nodes must be provided.")
+            self.logger.logExit("\"cmDir\" of all nodes must be provided.")
 
     def checkHostTrust(self):
         checkHostsTrust(self.hostnames, self.localhostName)
@@ -227,18 +251,68 @@ General options:
             "grep 'CMServer State' > /dev/null" % self.envFile
         status, output = subprocess.getstatusoutput(checkCMExistCmd)
         if status == 0:
-            CMLog.exitWithError("CM exists in current cluster.")
+            self.logger.logExit("CM exists in current cluster.")
+
+    def checkCluster(self):
+        """
+        check the status of the current cluster
+        """
+        cmd = "source %s; gs_om -t status --detail" % self.envFile
+        status, output = subprocess.getstatusoutput(cmd)
+        if status != 0:
+            erroeDetail = "Detail:\nCommand:\n" + cmd + "\noutput:" + output
+            self.logger.logExit(ErrorCode.GAUSS_516["GAUSS_51600"] + erroeDetail)
+        if "cluster_state   : Unavailable" in output:
+            # It’s permitted to deploy CM tool when cluster is stopped,
+            # but not permitted when cluster is unavailable.
+            if output.count("Manually stopped") == len(self.hostnames):
+                self.clusterStopped = True
+                return
+            self.logger.logExit("The cluster is unavailable currently.")
+        if "cluster_state   : Normal" not in output:
+            self.logger.logExit("Cluster is running but its status is abnormal.")
+        # check whether term of primary is invalid and biggest.
+        primaryCount = 0
+        primaryTerm = 0
+        sqlCmd = "select term from pg_last_xlog_replay_location();"
+        for host in self.hostnames:
+            isLocal = False
+            if host == self.localhostName:
+                isLocal = True
+            findPrimaryCmd = "source %s; gs_ctl query -D %s | grep 'local_role.*Primary' > /dev/null" % \
+                (self.envFile, self.nodesInfo[host]["dataPath"])
+            notPrimary, output = executeCmdOnHost(host, findPrimaryCmd, isLocal)
+            if notPrimary == 0:
+                primaryCount += 1
+            getTermLsnCmd = "source %s; gsql -d postgres -p %s -tA -c '%s'" % \
+                (self.envFile, self.nodesInfo[host]["port"], sqlCmd)
+            status, term = executeCmdOnHost(host, getTermLsnCmd, isLocal)
+            if status != 0:
+                self.logger.logExit("Failed to get term of host %s." % host)
+            if notPrimary == 0:
+                primaryTerm = int(term)
+            if self.maxTerm < int(term):
+                self.maxTerm = int(term)
+
+        if primaryCount != 1:
+            self.logger.logExit("The number of primary is invalid.")
+        if primaryTerm == 0 or primaryTerm < self.maxTerm:
+            self.logger.logExit("Term of primary is invalid or not maximal.\n"
+                "Hint: it seems that the cluster is newly installed, so it's "
+                "recommended to deploy CM tool while installing the cluster.")
+
     def run(self):
         self.checkExeUser()
         self.parseCommandLine()
         self.checkParam()
-        self.checkOm()
-        self.checkCM()
         self.getEnvParams()
         self.initLogger()
-        self.getLocalhostName()
+        self.checkOm()
+        self.checkCM()
         self.getInfoListOfAllNodes()
+        self.getLocalhostName()
         self.checkHostTrust()
+        self.checkCluster()
         installImpl = InstallImpl(self)
         installImpl.run()
 

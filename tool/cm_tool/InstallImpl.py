@@ -33,7 +33,7 @@ class InstallImpl:
         self.envFile = install.envFile
         self.xmlFile = install.xmlFile
         self.cmDirs = install.cmDirs
-        self.hostNames = install.hostNames
+        self.hostnames = install.hostnames
         self.gaussHome = install.gaussHome
         self.gaussLog = install.gaussLog
         self.toolPath = install.toolPath
@@ -51,7 +51,7 @@ class InstallImpl:
         create path: cmdir、cmdir/cm_server、cmdir/cm_agent
         """
         self.logger.log("Preparing CM path.")
-        for (cmdir, host) in zip(self.cmDirs, self.hostNames):
+        for (cmdir, host) in zip(self.cmDirs, self.hostnames):
             cmd = "mkdir -p {cmdir}/cm_server {cmdir}/cm_agent".format(cmdir=cmdir)
             status, output = self.executeCmdOnHost(host, cmd)
             if status != 0:
@@ -77,7 +77,7 @@ class InstallImpl:
 
         # decompress cmpkg on other hosts
         cmpkgName = os.path.basename(self.cmpkg)
-        for host in self.hostNames:
+        for host in self.hostnames:
             if host == self.localhostName:
                 continue
             # copy cm pacakage to other hosts
@@ -125,7 +125,7 @@ class InstallImpl:
                 touch {gaussHome}/bin/cluster_manual_start
             fi
             """.format(gaussHome=self.gaussHome)
-        for host in self.hostNames:
+        for host in self.hostnames:
             status, output = self.executeCmdOnHost(host, cmd)
             if status != 0:
                 self.logger.debug("Command: " + cmd)
@@ -134,7 +134,7 @@ class InstallImpl:
 
     def initCMServer(self):
         self.logger.log("Initializing cm_server.")
-        for (cmdir, host) in zip(self.cmDirs, self.hostNames):
+        for (cmdir, host) in zip(self.cmDirs, self.hostnames):
             cmd = """
                 cp {gaussHome}/share/config/cm_server.conf.sample {cmdir}/cm_server/cm_server.conf
                 sed 's#log_dir = .*#log_dir = {gaussLog}/cm/cm_server#' {cmdir}/cm_server/cm_server.conf -i
@@ -147,7 +147,7 @@ class InstallImpl:
 
     def initCMAgent(self):
         self.logger.log("Initializing cm_agent.")
-        for (cmdir, host) in zip(self.cmDirs, self.hostNames):
+        for (cmdir, host) in zip(self.cmDirs, self.hostnames):
             cmd = """
                 cp {gaussHome}/share/config/cm_agent.conf.sample {cmdir}/cm_agent/cm_agent.conf && 
                 sed 's#log_dir = .*#log_dir = {gaussLog}/cm/cm_agent#' {cmdir}/cm_agent/cm_agent.conf -i && 
@@ -198,7 +198,7 @@ class InstallImpl:
         # set crontab on other hosts
         setCronCmd = "crontab %s" % cronContentTmpFile
         cleanTmpFileCmd = "rm %s -f" % cronContentTmpFile
-        for host in self.hostNames:
+        for host in self.hostnames:
             if host == self.localhostName:
                 continue
             # copy cronContentTmpFile to other host
@@ -246,6 +246,7 @@ class InstallImpl:
             self.logger.debug("Command: " + startCmd)
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit("Failed to start cluster." + errorDetail)
+
         queryCmd = "source %s; cm_ctl query -Cv" % self.envFile
         status, output = subprocess.getstatusoutput(queryCmd)
         if status != 0:

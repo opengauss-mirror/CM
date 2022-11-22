@@ -33,13 +33,14 @@ class InstallImpl:
         self.envFile = install.envFile
         self.xmlFile = install.xmlFile
         self.cmDirs = install.cmDirs
-        self.hostNames = install.hostNames
+        self.hostnames = install.hostnames
         self.gaussHome = install.gaussHome
         self.gaussLog = install.gaussLog
         self.toolPath = install.toolPath
         self.tmpPath = install.tmpPath
         self.localhostName = install.localhostName
         self.logger = install.logger
+        self.clusterStopped = install.clusterStopped
 
     def executeCmdOnHost(self, host, cmd, isLocal = False):
         if host == self.localhostName:
@@ -51,7 +52,7 @@ class InstallImpl:
         create path: cmdir、cmdir/cm_server、cmdir/cm_agent
         """
         self.logger.log("Preparing CM path.")
-        for (cmdir, host) in zip(self.cmDirs, self.hostNames):
+        for (cmdir, host) in zip(self.cmDirs, self.hostnames):
             cmd = "mkdir -p {cmdir}/cm_server {cmdir}/cm_agent".format(cmdir=cmdir)
             status, output = self.executeCmdOnHost(host, cmd)
             if status != 0:
@@ -77,7 +78,7 @@ class InstallImpl:
 
         # decompress cmpkg on other hosts
         cmpkgName = os.path.basename(self.cmpkg)
-        for host in self.hostNames:
+        for host in self.hostnames:
             if host == self.localhostName:
                 continue
             # copy cm pacakage to other hosts
@@ -125,7 +126,7 @@ class InstallImpl:
                 touch {gaussHome}/bin/cluster_manual_start
             fi
             """.format(gaussHome=self.gaussHome)
-        for host in self.hostNames:
+        for host in self.hostnames:
             status, output = self.executeCmdOnHost(host, cmd)
             if status != 0:
                 self.logger.debug("Command: " + cmd)
@@ -134,7 +135,7 @@ class InstallImpl:
 
     def initCMServer(self):
         self.logger.log("Initializing cm_server.")
-        for (cmdir, host) in zip(self.cmDirs, self.hostNames):
+        for (cmdir, host) in zip(self.cmDirs, self.hostnames):
             cmd = """
                 cp {gaussHome}/share/config/cm_server.conf.sample {cmdir}/cm_server/cm_server.conf
                 sed 's#log_dir = .*#log_dir = {gaussLog}/cm/cm_server#' {cmdir}/cm_server/cm_server.conf -i
@@ -147,7 +148,7 @@ class InstallImpl:
 
     def initCMAgent(self):
         self.logger.log("Initializing cm_agent.")
-        for (cmdir, host) in zip(self.cmDirs, self.hostNames):
+        for (cmdir, host) in zip(self.cmDirs, self.hostnames):
             cmd = """
                 cp {gaussHome}/share/config/cm_agent.conf.sample {cmdir}/cm_agent/cm_agent.conf && 
                 sed 's#log_dir = .*#log_dir = {gaussLog}/cm/cm_agent#' {cmdir}/cm_agent/cm_agent.conf -i && 
@@ -198,7 +199,10 @@ class InstallImpl:
         # set crontab on other hosts
         setCronCmd = "crontab %s" % cronContentTmpFile
         cleanTmpFileCmd = "rm %s -f" % cronContentTmpFile
-        for host in self.hostNames:
+        import getpass
+        username = getpass.getuser()
+        killMonitorCmd = "pkill om_monitor -u %s; " % username
+        for host in self.hostnames:
             if host == self.localhostName:
                 continue
             # copy cronContentTmpFile to other host
@@ -218,7 +222,8 @@ class InstallImpl:
                 self.logger.logExit(ErrorCode.GAUSS_508["GAUSS_50801"] + errorDetail)
 
             # start om_monitor
-            status, output = self.executeCmdOnHost(host, startMonitorCmd)
+            # Firstly, kill residual om_monitor, otherwise cm_agent won't be started if there are residual om_monitor process.
+            status, output = self.executeCmdOnHost(host, killMonitorCmd + startMonitorCmd)
             if status != 0:
                 self.logger.debug("Command: " + startMonitorCmd)
                 errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
@@ -232,7 +237,7 @@ class InstallImpl:
             self.logger.logExit(ErrorCode.GAUSS_508["GAUSS_50801"] + errorDetail)
         os.remove(cronContentTmpFile)
 
-        status, output = subprocess.getstatusoutput(startMonitorCmd)
+        status, output = subprocess.getstatusoutput(killMonitorCmd + startMonitorCmd)
         if status != 0:
             self.logger.debug("Command: " + startMonitorCmd)
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
@@ -246,6 +251,11 @@ class InstallImpl:
             self.logger.debug("Command: " + startCmd)
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit("Failed to start cluster." + errorDetail)
+
+        status, output = InstallImpl.refreshDynamicFile(self.envFile)
+        if status != 0:
+            self.logger.error("Failed to refresh dynamic file." + output)
+
         queryCmd = "source %s; cm_ctl query -Cv" % self.envFile
         status, output = subprocess.getstatusoutput(queryCmd)
         if status != 0:
@@ -274,11 +284,6 @@ class InstallImpl:
     @staticmethod
     def refreshDynamicFile(envFile):
         # refresh dynamic file
-        getStatusCmd = "source %s; gs_om -t status --detail | grep 'Primary Normal' > /dev/null" % envFile
-        status, output = subprocess.getstatusoutput(getStatusCmd)
-        if status != 0:
-            CMLog.printMessage("Normal primary doesn't exist in the cluster, no need to refresh dynamic file.")
-            return 0, ""
         refreshDynamicFileCmd = "source %s; gs_om -t refreshconf" % envFile
         status, output = subprocess.getstatusoutput(refreshDynamicFileCmd)
         errorDetail = ""
@@ -286,14 +291,11 @@ class InstallImpl:
             errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (refreshDynamicFileCmd, status, output)
         return status, errorDetail
 
-    def refreshStaticAndDynamicFile(self):
+    def _refreshStaticFile(self):
         self.logger.log("Refreshing static and dynamic file using xml file with cm.")
         status, output  = InstallImpl.refreshStaticFile(self.envFile, self.xmlFile)
         if status != 0:
             self.logger.logExit("Failed to refresh static file." + output)
-        status, output = InstallImpl.refreshDynamicFile(self.envFile)
-        if status != 0:
-            self.logger.logExit("Failed to refresh dynamic file." + output)
 
     def run(self):
         self.logger.log("Start to install cm tool.")
@@ -302,6 +304,6 @@ class InstallImpl:
         self.createManualStartFile()
         self.initCMServer()
         self.initCMAgent()
-        self.refreshStaticAndDynamicFile()
+        self._refreshStaticFile()
         self.setMonitorCrontab()
         self.startCluster()

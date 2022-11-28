@@ -214,7 +214,10 @@ General options:
             return
         status, output = InstallImpl.refreshDynamicFile(self.envFile)
         if status != 0:
-            self.logger.logExit("Failed to refresh dynamic file." + output)
+            if "The number of master dn must equal to 1." in output:
+                self.logger.debug("Cann't refresh dynamic file when there is no normal primary in the current cluster.")
+            else:
+                self.logger.logExit("Failed to refresh dynamic file." + output)
 
     def deleteData(self):
         """
@@ -228,7 +231,7 @@ General options:
             isLocal = False
             if host == self.localhostName:
                 isLocal = True
-            cmd = "source %s; rm -rf %s $GAUSSLOG/cm" % (self.envFile, path)
+            cmd = "source %s; rm -rf %s $GAUSSLOG/cm $GAUSSHOME/share/sslcert/cm" % (self.envFile, path)
             status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
@@ -246,7 +249,7 @@ General options:
             if host == self.localhostName:
                 isLocal = True
             cmd = "source %s; cd $GAUSSHOME/bin; rm -f om_monitor* cm_agent* cm_server* " \
-                "cm_ctl* *manual*start*; cd -" % self.envFile
+                "cm_ctl* cm_persist* *manual*start*; cd -" % self.envFile
             status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)

@@ -139,6 +139,7 @@ class InstallImpl:
             cmd = """
                 cp {gaussHome}/share/config/cm_server.conf.sample {cmdir}/cm_server/cm_server.conf
                 sed 's#log_dir = .*#log_dir = {gaussLog}/cm/cm_server#' {cmdir}/cm_server/cm_server.conf -i
+                sed 's/enable_ssl.*=.*on/enable_ssl = off/g' {cmdir}/cm_server/cm_server.conf -i
                 """.format(gaussHome=self.gaussHome, gaussLog=self.gaussLog, cmdir=cmdir)
             status, output = self.executeCmdOnHost(host, cmd)
             if status != 0:
@@ -153,6 +154,7 @@ class InstallImpl:
                 cp {gaussHome}/share/config/cm_agent.conf.sample {cmdir}/cm_agent/cm_agent.conf && 
                 sed 's#log_dir = .*#log_dir = {gaussLog}/cm/cm_agent#' {cmdir}/cm_agent/cm_agent.conf -i && 
                 sed 's#unix_socket_directory = .*#unix_socket_directory = {gaussHome}#' {cmdir}/cm_agent/cm_agent.conf -i
+                sed 's/enable_ssl.*=.*on/enable_ssl = off/g' {cmdir}/cm_agent/cm_agent.conf -i
                 """.format(gaussHome=self.gaussHome, gaussLog=self.gaussLog, cmdir=cmdir)
             status, output = self.executeCmdOnHost(host, cmd)
             if status != 0:

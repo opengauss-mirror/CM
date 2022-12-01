@@ -249,7 +249,7 @@ General options:
             if host == self.localhostName:
                 isLocal = True
             cmd = "source %s; cd $GAUSSHOME/bin; rm -f om_monitor* cm_agent* cm_server* " \
-                "cm_ctl* cm_persist* *manual*start*; cd -" % self.envFile
+                "cm_ctl* cm_persist* *manual*start* promote_mode_cms; cd -" % self.envFile
             status, output = executeCmdOnHost(host, cmd, isLocal)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
@@ -267,7 +267,7 @@ General options:
             CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50105"])
 
     def checkHostTrust(self):
-        checkHostsTrust(self.hostnames, self.localhostName)
+        checkHostsTrust(self.hostnames)
 
     def run(self):
         self.checkExeUser()

@@ -18,13 +18,13 @@
 # Description  : InstallImpl.py
 #############################################################################
 
+from curses.ascii import isdigit, islower, isupper
 import os
 import re
 import subprocess
-import xml.etree.cElementTree as ETree
+import getpass
 from ErrorCode import ErrorCode
 from Common import executeCmdOnHost
-from CMLog import CMLog
 
 class InstallImpl:
     def __init__(self, install):
@@ -139,7 +139,6 @@ class InstallImpl:
             cmd = """
                 cp {gaussHome}/share/config/cm_server.conf.sample {cmdir}/cm_server/cm_server.conf
                 sed 's#log_dir = .*#log_dir = {gaussLog}/cm/cm_server#' {cmdir}/cm_server/cm_server.conf -i
-                sed 's/enable_ssl.*=.*on/enable_ssl = off/g' {cmdir}/cm_server/cm_server.conf -i
                 """.format(gaussHome=self.gaussHome, gaussLog=self.gaussLog, cmdir=cmdir)
             status, output = self.executeCmdOnHost(host, cmd)
             if status != 0:
@@ -154,7 +153,6 @@ class InstallImpl:
                 cp {gaussHome}/share/config/cm_agent.conf.sample {cmdir}/cm_agent/cm_agent.conf && 
                 sed 's#log_dir = .*#log_dir = {gaussLog}/cm/cm_agent#' {cmdir}/cm_agent/cm_agent.conf -i && 
                 sed 's#unix_socket_directory = .*#unix_socket_directory = {gaussHome}#' {cmdir}/cm_agent/cm_agent.conf -i
-                sed 's/enable_ssl.*=.*on/enable_ssl = off/g' {cmdir}/cm_agent/cm_agent.conf -i
                 """.format(gaussHome=self.gaussHome, gaussLog=self.gaussLog, cmdir=cmdir)
             status, output = self.executeCmdOnHost(host, cmd)
             if status != 0:
@@ -201,7 +199,6 @@ class InstallImpl:
         # set crontab on other hosts
         setCronCmd = "crontab %s" % cronContentTmpFile
         cleanTmpFileCmd = "rm %s -f" % cronContentTmpFile
-        import getpass
         username = getpass.getuser()
         killMonitorCmd = "pkill om_monitor -u %s; " % username
         for host in self.hostnames:
@@ -299,6 +296,139 @@ class InstallImpl:
         if status != 0:
             self.logger.logExit("Failed to refresh static file." + output)
 
+    @staticmethod
+    def checkPassword(passwordCA):
+        minPasswordLen = 8
+        maxPasswordLen = 15
+        kinds = [0, 0, 0, 0]
+        specLetters = "~!@#$%^&*()-_=+\\|[{}];:,<.>/?"
+        if len(passwordCA) < minPasswordLen:
+            print("Invalid password, it must contain at least eight characters.")
+            return False
+        if len(passwordCA) > maxPasswordLen:
+            print("Invalid password, it must contain at most fifteen characters.")
+            return False
+        for c in passwordCA:
+            if isdigit(c):
+                kinds[0] += 1
+            elif isupper(c):
+                kinds[1] += 1
+            elif islower(c):
+                kinds[2] += 1
+            elif c in specLetters:
+                kinds[3] += 1
+            else:
+                print("The password contains illegal character: %s." % c)
+                return False
+        kindsNum = 0
+        for k in kinds:
+            if k > 0:
+                kindsNum += 1
+        if kindsNum < 3:
+            print("The password must contain at least three kinds of characters.")
+            return False
+        return True
+
+    def _getPassword(self):
+        passwordCA = ""
+        passwordCA2 = ""
+        tryCount = 0
+        while tryCount < 3:
+            passwordCA = getpass.getpass("Please input the password for ca cert:")
+            passwordCA2 = getpass.getpass("Please input the password for ca cert again:")
+            if passwordCA != passwordCA2:
+                tryCount += 1
+                self.logger.printMessage("The password enterd twice do not match.")
+                continue
+            if not InstallImpl.checkPassword(passwordCA):
+                tryCount += 1
+                continue
+            break
+        if tryCount == 3:
+            self.logger.logExit("Maximum number of attempts has been reached.")
+        return passwordCA
+
+    def _createCMSslConf(self, certPath):
+        """
+        Generate config file.
+        """
+        self.logger.debug("OPENSSL: Create config file.")
+        v3CaL = [
+            "[ v3_ca ]",
+            "subjectKeyIdentifier=hash",
+            "authorityKeyIdentifier=keyid:always,issuer:always",
+            "basicConstraints = CA:true",
+            "keyUsage = keyCertSign,cRLSign",
+        ]
+        v3Ca = os.linesep.join(v3CaL)
+
+        # Create config file.
+        with open(os.path.join(certPath, "openssl.cnf"), "w") as fp:
+            # Write config item of Signature
+            fp.write(v3Ca)
+        self.logger.debug("OPENSSL: Successfully create config file.")
+
+    def _cleanUselessFile(self):
+        """
+        Clean useless files
+        :return: NA
+        """
+        certPath = os.path.join(self.gaussHome, "share/sslcert/cm")
+        keyFiles = ["cacert.pem", "server.crt", "server.key", "client.crt", "client.key",
+            "server.key.cipher", "server.key.rand", "client.key.cipher", "client.key.rand"]
+        for fileName in os.listdir(certPath):
+            filePath = os.path.join(certPath, fileName)
+            if fileName not in keyFiles:
+                os.remove(filePath)
+
+    def _createCMCALocal(self):
+        self.logger.debug("Creating Cm ca files locally.")
+        certPath = os.path.join(self.gaussHome, "share/sslcert/cm")
+        mkdirCmd = "rm %s -rf; mkdir %s" % (certPath, certPath)
+        status, output = subprocess.getstatusoutput(mkdirCmd)
+        if status != 0:
+            self.logger.debug("Command: %s\nStatus: %sOutput: %s" % (mkdirCmd, status, output))
+            self.logger.logExit("Failed to create cert path.")
+        self._createCMSslConf(certPath)
+        curPath = os.path.split(os.path.realpath(__file__))[0]
+        createCMCACert = os.path.realpath(os.path.join(curPath, "CreateCMCACert.sh"))
+        passwd = self._getPassword()
+        cmd = "echo \"%s\" | sh %s %s" % (passwd, createCMCACert, self.envFile)
+        # once used, set password to null and release it
+        passwd = ""
+        del passwd
+        status, output = subprocess.getstatusoutput(cmd)
+        cmd = ""
+        del cmd
+        if status != 0:
+            self.logger.logExit("Failed to create cm ca cert file.\n" + output)
+        self._cleanUselessFile()
+
+    def _distributeCA(self):
+        self.logger.debug("Distributing CM ca files to other hosts.")
+        certPath = os.path.join(self.gaussHome, "share/sslcert/cm")
+        createCertPathCmd = "rm {certPath} -rf; mkdir {certPath}; chmod 700 {certPath}".format(
+            certPath=certPath)
+        for host in self.hostnames:
+            if host == self.localhostName:
+                continue
+            status, output = self.executeCmdOnHost(host, createCertPathCmd)
+            if status != 0:
+                errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" (createCertPathCmd, status, output)
+                self.logger.debug(errorDetail)
+                self.logger.logExit("Failed to create path of CA for CM on host %s." % host)
+            scpCmd = "scp {certPath}/* {host}:{certPath}".format(certPath=certPath, host=host)
+            status, output = subprocess.getstatusoutput(scpCmd)
+            if status != 0:
+                errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" (scpCmd, status, output)
+                self.logger.debug(errorDetail)
+                self.logger.logExit("Failed to create CA for CM.")
+
+    def createCMCA(self):
+        self.logger.log("Creating CM ca files.")
+        self._createCMCALocal()
+        self._distributeCA()
+
     def run(self):
         self.logger.log("Start to install cm tool.")
         self.prepareCMPath()
@@ -306,6 +436,7 @@ class InstallImpl:
         self.createManualStartFile()
         self.initCMServer()
         self.initCMAgent()
+        self.createCMCA()
         self._refreshStaticFile()
         self.setMonitorCrontab()
         self.startCluster()

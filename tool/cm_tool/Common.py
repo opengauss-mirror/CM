@@ -61,14 +61,12 @@ def checkXMLFile(xmlFile):
     if not os.access(xmlFile, os.R_OK):
         CMLog.exitWithError(ErrorCode.GAUSS_501["GAUSS_50100"] % (xmlFile, "current user"))
 
-def checkHostsTrust(hosts, localhost = ""):
+def checkHostsTrust(hosts):
     """
     check trust between current host and the given hosts
     """
     hostsWithoutTrust = []
     for host in hosts:
-        if host == localhost:
-            continue
         checkTrustCmd = "ssh -o ConnectTimeout=3 -o ConnectionAttempts=5 -o PasswordAuthentication=no " \
             "-o StrictHostKeyChecking=no %s 'pwd > /dev/null'" % host
         status, output = subprocess.getstatusoutput(checkTrustCmd)

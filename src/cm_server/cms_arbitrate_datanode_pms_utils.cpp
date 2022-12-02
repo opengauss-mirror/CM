@@ -23,6 +23,7 @@
  */
 #include "cms_arbitrate_datanode_pms_utils.h"
 #include  "cms_az.h"
+#include "cms_ddb.h"
 
 /**
  * @brief
@@ -229,6 +230,20 @@ cm_instance_role_status *GetRoleStatus(uint32 groupIndex, int32 memberIndex)
     return &(g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex]);
 }
 
+void UpdateGlobalTermByMaxTerm(uint32 maxTerm)
+{
+    (void)pthread_rwlock_wrlock(&term_update_rwlock);
+    uint32 currentTerm = g_dynamic_header->term;
+    if (maxTerm > currentTerm) {
+        currentTerm = maxTerm + CM_INCREMENT_TERM_VALUE;
+        write_runlog(LOG, "global term %u is smaller than instance maxterm %u, update global term to %u\n",
+            g_dynamic_header->term, maxTerm, currentTerm);
+        g_dynamic_header->term = currentTerm;
+        (void)SetTermToDdb(currentTerm);
+    }
+    (void)pthread_rwlock_unlock(&term_update_rwlock);
+}
+
 uint32 GetMaxTerm(uint32 groupIdx)
 {
     int32 count = GetInstanceCountsInGroup(groupIdx);
@@ -239,6 +254,7 @@ uint32 GetMaxTerm(uint32 groupIdx)
             maxTerm = dnReport[i].local_status.term;
         }
     }
+    UpdateGlobalTermByMaxTerm(maxTerm);
     return maxTerm;
 }
 

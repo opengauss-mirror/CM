@@ -247,7 +247,7 @@ status_t do_start(void)
 
     (void)clock_gettime(CLOCK_MONOTONIC, &g_startTime);
     /* start the whole cluster */
-    if (g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
+    if (g_commandOperationInstanceId == 0 && g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
 #ifdef ENABLE_MULTIPLE_NODES
         if (cn_resumes_restart) {
             write_stderr(_("%s: enable resuming the fault CN.\n"), g_progname);
@@ -322,8 +322,8 @@ status_t do_start(void)
         /* start a az with availability zone name */
         write_runlog(LOG, "start the availability zone: %s. \n", g_command_operation_azName);
         start_az(g_command_operation_azName);
-    } else if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
-        if (CheckResInstInfo(g_commandOperationNodeId, g_commandOperationInstanceId) != CM_SUCCESS) {
+    } else if (g_commandOperationInstanceId > 0) {
+        if (CheckResInstInfo(&g_commandOperationNodeId, g_commandOperationInstanceId) != CM_SUCCESS) {
             write_runlog(ERROR, "can't do start resource instance, instId:%u.\n", g_commandOperationInstanceId);
             return CM_ERROR;
         }

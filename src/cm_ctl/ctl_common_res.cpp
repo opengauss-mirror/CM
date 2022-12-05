@@ -92,24 +92,24 @@ ResStatus GetResInstStatus(uint32 instId)
     return result;
 }
 
-status_t CheckResInstInfo(uint32 nodeId, uint32 instId)
+status_t CheckResInstInfo(uint32 *nodeId, uint32 instId)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].cmInstanceId != instId) {
                 continue;
             }
-            if (g_resStatus[i].status.resStat[j].nodeId != nodeId) {
+            if (*nodeId == 0) {
+                *nodeId = g_resStatus[i].status.resStat[j].nodeId;
+                return CM_SUCCESS;
+            }
+            if (g_resStatus[i].status.resStat[j].nodeId != *nodeId) {
                 write_runlog(FATAL, "resource(%s) instance(%u) is in node(%u) not in node(%u).\n",
-                    g_resStatus[i].status.resName, instId, g_resStatus[i].status.resStat[j].nodeId, nodeId);
-                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+                    g_resStatus[i].status.resName, instId, g_resStatus[i].status.resStat[j].nodeId, *nodeId);
                 return CM_ERROR;
             }
-            (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
             return CM_SUCCESS;
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
     write_runlog(FATAL, "instanceId(%u) is not a resource instanceId.\n", instId);
     return CM_ERROR;

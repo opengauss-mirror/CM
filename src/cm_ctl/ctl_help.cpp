@@ -31,7 +31,7 @@ static void StartUsage(const char *projectName)
         projectName);
 #else
     (void)printf(_("  %s start [-z AVAILABILITY_ZONE [--cm_arbitration_mode=ARBITRATION_MODE]] | "
-                   "[-n NODEID [-D DATADIR | -I RESOURCE_INSTANCE_ID]] [-t SECS] \n"),
+                   "[-n NODEID [-D DATADIR]] | [-I RESOURCE_INSTANCE_ID [-n NODEID]] [-t SECS] \n"),
         projectName);
 #endif
 }
@@ -67,7 +67,7 @@ static void UsageHelp(const char *projectName)
     (void)printf(_("  %s view [-v | -N | -n NODEID | -c] [-l FILENAME]\n"), projectName);
     (void)printf(_("  %s disable -n NODEID -D DATADIR [-t SECS]\n"), projectName);
 #else
-    (void)printf(_("  %s stop [[-z AVAILABILITY_ZONE] | [-n NODEID [-D DATADIR | -I RESOURCE_INSTANCE_ID]]] [-t SECS] "
+    (void)printf(_("  %s stop [[-z AVAILABILITY_ZONE] | [-n NODEID [-D DATADIR]] | [-I RESOURCE_INSTANCE_ID [-n NODEID]]] [-t SECS] "
         "[-m SHUTDOWN-MODE]\n"), projectName);
     (void)printf(_("  %s query [-z ALL] [-l FILENAME] [-v [-C [-s] [-S] [-d] [-i] [-F] [-x] [-p]] | [-r]] [-t SECS] "
         "[--minorityAz=AZ_NAME]\n"), projectName);

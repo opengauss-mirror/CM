@@ -147,15 +147,14 @@ int DoStop(void)
     }
 #endif
 
-    if (g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
+    if (g_commandOperationInstanceId == 0 && g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
         write_runlog(LOG, "stop cluster. \n");
         stop_cluster();
     } else if (g_command_operation_azName != NULL) {
         write_runlog(LOG, "stop the availability zone: %s. \n", g_command_operation_azName);
-
         stop_az(g_command_operation_azName);
-    } else if ((g_commandOperationNodeId > 0) && (g_commandOperationInstanceId > 0)) {
-        if (CheckResInstInfo(g_commandOperationNodeId, g_commandOperationInstanceId) != CM_SUCCESS) {
+    } else if (g_commandOperationInstanceId > 0) {
+        if (CheckResInstInfo(&g_commandOperationNodeId, g_commandOperationInstanceId) != CM_SUCCESS) {
             write_runlog(ERROR, "can't do stop resource instance, instId:%u.\n", g_commandOperationInstanceId);
             return 1;
         }

@@ -27,7 +27,7 @@ libetcdapi.a: output cm_etcdapi.o
 	ar -crv $@ *.o
 
 output:
-	ar -x ${3RD_PATH}/dependency/$(PLAT_FORM_NAME)/etcd/comm/lib/libclientv3.a
+	ar -x ${3RD_PATH}/kernel/dependency/etcd/comm/lib/libclientv3.a
 
 install: all
 
@@ -43,6 +43,6 @@ uninstall:
 	rm -f '$(DESTDIR)$(libdir)/libetcdapi.a'
 
 librace.a: cm_etcdapi.o
-	ar -x ${with_3rd}/dependency/$(PLAT_FORM_STR)/etcd/comm/lib/libclientv3.a
+	ar -x ${with_3rd}/kernel/dependency/etcd/comm/lib/libclientv3.a
 	ar -crv $@ *.o
 	mv $@ libetcdapi.a

@@ -114,6 +114,8 @@ General options:
             CMLog.exitWithError(ErrorCode.GAUSS_500["GAUSS_50001"] % '-cmpkg' + ".")
         if not os.path.exists(self.cmpkg):
             CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50201"] % self.cmpkg)
+        if not os.path.isfile(self.cmpkg):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50210"] % ("cmpkg " + self.cmpkg))
 
         if self.envFile == "":
             self.envFile = os.path.join(os.environ['HOME'], ".bashrc")
@@ -235,7 +237,7 @@ General options:
             self.logger.logExit("\"cmDir\" of all nodes must be provided.")
 
     def checkHostTrust(self):
-        checkHostsTrust(self.hostnames, self.localhostName)
+        checkHostsTrust(self.hostnames)
 
     def initLogger(self):
         logPath = os.path.join(self.gaussLog, "cm", "cm_tool")

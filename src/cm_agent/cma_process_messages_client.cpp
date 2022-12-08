@@ -368,7 +368,7 @@ static void ProcessRegResInst(const CmsNotifyAgentRegMsg *recvMsg)
         write_runlog(LOG, "local res inst[%s:%u] has been reg.\n", recvMsg->resName, recvMsg->resInstId);
     } else if ((isreg == CM_RES_ISREG_UNREG) || (isreg == CM_RES_ISREG_PENDING) || (isreg == CM_RES_ISREG_UNKNOWN)) {
         write_runlog(LOG, "before reg res inst, need clean res inst first.\n");
-        if (CleanOneResInst(local) == CM_SUCCESS) {
+        if ((CheckOneResInst(local) == CUS_RES_CHECK_STAT_OFFLINE) || (CleanOneResInst(local) == CM_SUCCESS)) {
             (void)RegOneResInst(local, recvMsg->resInstId);
         }
     } else if (isreg == CM_RES_ISREG_NOT_SUPPORT) {

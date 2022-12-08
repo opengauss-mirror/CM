@@ -56,6 +56,7 @@ void GetDelayArbitTimeFromConf();
 void GetBackupOpenConfig();
 void GetDelayArbitClusterTimeFromConf();
 void GetDnArbitrateMode();
+void CmsSyncStandbyMode();
 
 bool EnableShareDisk();
 

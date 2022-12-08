@@ -89,69 +89,65 @@ char *gs_getenv_r(const char *name)
 
 uint64 GetMonotonicTimeMs()
 {
-    static const uint32 CM_NSEC_COUNT_PER_MS = 1000000;
-    static const uint32 CM_MS_COUNT_PER_SEC = 1000;
-
     struct timespec ts;
     (void)clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64)ts.tv_sec * CM_MS_COUNT_PER_SEC + (uint64)ts.tv_nsec / CM_NSEC_COUNT_PER_MS;
 }
 
-void CMPrioMutexInit(CMPrioMutex &mutex)
+void CMFairMutexInit(CMFairMutex &mutex)
 {
     (void)pthread_mutex_init(&mutex.lock, NULL);
     (void)pthread_mutex_init(&mutex.innerLock, NULL);
     (void)pthread_cond_init(&mutex.cond, NULL);
-    mutex.highPrioCount = 0;
-    mutex.curPrio = CMMutexPrio::CM_MUTEX_PRIO_NONE;
+    mutex.readerCount = 0;
+    mutex.writerCount = 0;
+    mutex.curType = CMFairMutexType::CM_MUTEX_NODE;
 }
-
-int CMPrioMutexLock(CMPrioMutex &mutex, CMMutexPrio prio)
+ 
+int CMFairMutexLock(CMFairMutex &mutex, CMFairMutexType type)
 {
-    if (prio == CMMutexPrio::CM_MUTEX_PRIO_HIGH) {
-        (void)pthread_mutex_lock(&mutex.innerLock);
-        mutex.highPrioCount++;
-        (void)pthread_mutex_unlock(&mutex.innerLock);
-        int ret = pthread_mutex_lock(&mutex.lock);
-        if (ret == 0) {
-            mutex.curPrio = CMMutexPrio::CM_MUTEX_PRIO_HIGH;
-        } else {
-            (void)pthread_mutex_lock(&mutex.innerLock);
-            mutex.highPrioCount--;
-            (void)pthread_mutex_unlock(&mutex.innerLock);
-            (void)pthread_cond_broadcast(&mutex.cond);
-        }
-
-        return ret;
+    struct timespec ts;
+    uint32* count1 = NULL;
+    uint32* count2 = NULL;
+    const int LOCK_WAIT_TIME = 2;
+  
+    if (type == CMFairMutexType::CM_MUTEX_READ) {
+        count1 = &mutex.readerCount;
+        count2 = &mutex.writerCount;
+    } else {
+        count1 = &mutex.writerCount;
+        count2 = &mutex.readerCount;
     }
-
+ 
+    (void)pthread_mutex_lock(&mutex.innerLock);
+    (*count1)++;
+ 
     while (true) {
-        if (mutex.highPrioCount == 0) {
+        if (type != mutex.curType || *count2 == 0) {
             int ret = pthread_mutex_trylock(&mutex.lock);
             if (ret == 0) {
-                mutex.curPrio = CMMutexPrio::CM_MUTEX_PRIO_NORMAL;
-                return 0;
-            } else if (ret != EBUSY) {
-                return ret;
+                mutex.curType = type;
+                (*count1)--;
+                break;
             }
         }
-
-        (void)pthread_mutex_lock(&mutex.innerLock);
-        (void)pthread_cond_wait(&mutex.cond, &mutex.innerLock);
-        (void)pthread_mutex_unlock(&mutex.innerLock);
+ 
+        (void)clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += LOCK_WAIT_TIME;
+ 
+        (void)pthread_cond_timedwait(&mutex.cond, &mutex.innerLock, &ts);
     }
+ 
+    (void)pthread_mutex_unlock(&mutex.innerLock);
+ 
+    return 0;
 }
-
-void CMPrioMutexUnLock(CMPrioMutex &mutex)
+ 
+void CMFairMutexUnLock(CMFairMutex &mutex)
 {
-    if (mutex.curPrio == CMMutexPrio::CM_MUTEX_PRIO_HIGH) {
-        (void)pthread_mutex_lock(&mutex.innerLock);
-        mutex.highPrioCount--;
-        (void)pthread_mutex_unlock(&mutex.innerLock);
-    }
-
-    mutex.curPrio = CMMutexPrio::CM_MUTEX_PRIO_NONE;
+    (void)pthread_mutex_lock(&mutex.innerLock);
     (void)pthread_mutex_unlock(&mutex.lock);
+    (void)pthread_mutex_unlock(&mutex.innerLock);
     (void)pthread_cond_broadcast(&mutex.cond);
 }
 

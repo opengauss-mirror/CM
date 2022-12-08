@@ -205,6 +205,8 @@ bool g_getHistoryCnStatusFromDdb = false;
 bool g_needIncTermToDdbAgain = false;
 bool g_clusterStarting = false;
 bool g_isSharedStorageMode = false;
+volatile bool g_needReloadSyncStandbyMode = false;
+
 volatile uint32 g_refreshDynamicCfgNum = 0;
 
 bool g_elastic_exist_node = false;
@@ -249,7 +251,7 @@ int *g_lastCnDnDisconnectTimes = NULL;
 volatile switchover_az_mode cm_switchover_az_mode = AUTOSWITCHOVER_AZ;
 volatile logic_cluster_restart_mode cm_logic_cluster_restart_mode = INITIAL_LOGIC_CLUSTER_RESTART;
 
-CM_IOThread gIOThread;
+CM_IOThreads gIOThreads;
 CM_WorkThreads gWorkThreads;
 CM_HAThreads gHAThreads;
 CM_MonitorThread gMonitorThread;
@@ -368,47 +370,6 @@ void initazArray(char azArray[][CM_AZ_NAME])
         securec_check_errno(rc, (void)rc);
         write_runlog(DEBUG1, "after init, the valid azName is: %s, index is: %u.\n", *(azArray + azIndex), azIndex);
     }
-}
-
-bool is_majority_reelection_exceptional_condition(synchronous_standby_mode current_datanode_sync_mode,
-    int dynamic_primary_count, int staticPrimaryIndex, bool static_primary_and_dynamic_primary_differs)
-{
-    /*
-     * Skip majority re-election if we are in minority mode,
-     * Skip majority re-election if we are not in a multi-active standby cluster
-     * Skip majority re-election if we are doing AZ auto-switchover
-     */
-    if (cm_arbitration_mode == MINORITY_ARBITRATION || !g_multi_az_cluster || switchoverAZInProgress) {
-        return true;
-    }
-
-    /* Skip majority re-election if we don't have all AZ's available to us */
-    if ((current_cluster_az_status >= AnyAz1 && current_cluster_az_status <= FirstAz2) ||
-        (current_datanode_sync_mode >= AnyAz1 && current_datanode_sync_mode <= FirstAz2)) {
-        return true;
-    }
-
-    /*
-     * Skip majority re-election if we are just promoted to CMS primary,
-     * as we attempt to keep the original configuration of datanode primary/standbys
-     * Skip majority re-election if we don't have a static primary, which should not happen
-     */
-    if (arbitration_majority_reelection_timeout > 0 || staticPrimaryIndex < 0) {
-        return true;
-    }
-
-    /*
-     * Currently we don't have interactive communication between CM server and datanodes,
-     * and we cannot failover to a datanode whose dynamic role is already a primary.
-     * Because of these constraint, we cannot deal with multiple-dynamic-primary scenarios correctly.
-     * Leave that to partition locking later on.
-     */
-    const int onePrimary = 1;
-    if (dynamic_primary_count > onePrimary || static_primary_and_dynamic_primary_differs) {
-        return true;
-    }
-
-    return false;
 }
 
 maintenance_mode getMaintenanceMode(const uint32 &group_index)

@@ -289,7 +289,7 @@ extern pthread_rwlock_t g_sendQueueRwlock;
 extern pthread_rwlock_t g_recvQueueRwlock;
 extern synchronous_standby_mode current_cluster_az_status;
 extern CM_WorkThreads gWorkThreads;
-extern CM_IOThread gIOThread;
+extern CM_IOThreads gIOThreads;
 extern CM_HAThreads gHAThreads;
 extern CM_MonitorThread gMonitorThread;
 extern CM_MonitorNodeStopThread gMonitorNodeStopThread;
@@ -411,6 +411,7 @@ extern bool g_getHistoryDnStatusFromDdb;
 extern bool g_getHistoryCnStatusFromDdb;
 extern volatile uint32 g_refreshDynamicCfgNum;
 extern bool g_needIncTermToDdbAgain;
+extern volatile bool g_needReloadSyncStandbyMode;
 extern bool g_instance_status_for_cm_server_pending[CM_PRIMARY_STANDBY_NUM];
 extern bool g_clusterStarting;
 /* thread count of thread pool */

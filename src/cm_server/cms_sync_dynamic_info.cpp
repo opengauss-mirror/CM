@@ -25,6 +25,7 @@
 #include "cms_ddb.h"
 #include "cms_global_params.h"
 #include "cms_write_dynamic_config.h"
+#include "cms_common.h"
 
 static bool IsCnStatusParameterValid(const char *cnId, const char *cnStatus)
 {
@@ -193,6 +194,7 @@ void* SyncDynamicInfoFromDdb(void* arg)
 
         if (IsDdbHealth(DDB_PRE_CONN)) {
             write_runlog(DEBUG1, "will sync instance info from ddb. \n");
+            CmsSyncStandbyMode();
             if ((cm_arbitration_mode == MINORITY_ARBITRATION || cm_server_start_mode == MINORITY_START) &&
                 g_multi_az_cluster) {
                 write_runlog(LOG,

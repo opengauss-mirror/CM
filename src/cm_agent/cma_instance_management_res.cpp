@@ -57,7 +57,7 @@ int SystemExecute(const char *scriptPath, const char *oper, uint32 timeout)
     return -1;
 }
 
-void StartOneResInst(const CmResConfList *conf)
+status_t StartOneResInst(const CmResConfList *conf)
 {
     char oper[MAX_OPTION_LEN] = {0};
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s", conf->resInstanceId, conf->arg);
@@ -66,9 +66,15 @@ void StartOneResInst(const CmResConfList *conf)
     ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
     if (ret == 0) {
         write_runlog(LOG, "StartOneResInst: run start script (%s %s) successfully.\n", conf->script, oper);
+    } else if (ret == CUS_RES_START_FAIL_DEPEND_NOT_ALIVE) {
+        write_runlog(LOG, "StartOneResInst: res(%s) inst(%u) can't do restart, cause depend resource inst not alive.\n",
+            conf->resName, conf->cmInstanceId);
+        return CM_ERROR;
     } else {
         write_runlog(ERROR, "StartOneResInst: run start script (%s %s) failed, ret=%d.\n", conf->script, oper, ret);
     }
+
+    return CM_SUCCESS;
 }
 
 void StopOneResInst(const CmResConfList *conf)
@@ -90,6 +96,13 @@ void OneResInstShutdown(const CmResConfList *oneResConf)
     if (CheckOneResInst(oneResConf) != CUS_RES_CHECK_STAT_OFFLINE) {
         write_runlog(LOG, "custom resource(%s:%u) shutdown.\n", oneResConf->resName, oneResConf->cmInstanceId);
         StopOneResInst(oneResConf);
+    }
+}
+
+void OneResInstClean(const CmResConfList *oneResConf)
+{
+    if (CheckOneResInst(oneResConf) != CUS_RES_CHECK_STAT_OFFLINE) {
+        (void)CleanOneResInst(oneResConf);
     }
 }
 
@@ -171,10 +184,20 @@ status_t CleanOneResInst(const CmResConfList *conf)
     return CM_SUCCESS;
 }
 
+static inline void CleanOneInstCheckCount(CmResConfList *resConf)
+{
+    if (resConf->checkInfo.startCount != 0) {
+        write_runlog(LOG, "res(%s) inst(%u) restart times will clean.\n", resConf->resName, resConf->cmInstanceId);
+    }
+    resConf->checkInfo.startCount = 0;
+    resConf->checkInfo.startTime = 0;
+    resConf->checkInfo.brokeTime = 0;
+}
+
 void StopAllResInst()
 {
     for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
-        (void)CleanOneResInst(&g_resConf[i]);
+        OneResInstClean(&g_resConf[i]);
     }
 }
 
@@ -214,8 +237,7 @@ static void ManualStopLocalResInst(CmResConfList *conf)
         write_runlog(ERROR, "manual stop res(%s) inst(%u) failed, ret=%d.\n", conf->resName, conf->resInstanceId, ret);
     } else {
         write_runlog(LOG, "manual stop res(%s) inst(%u) success.\n", conf->resName, conf->resInstanceId);
-        conf->checkInfo.startCount = 0;
-        conf->checkInfo.startTime = 0;
+        CleanOneInstCheckCount(conf);
     }
 }
 
@@ -231,29 +253,29 @@ bool IsInstManualStopped(uint32 instId)
     return false;
 }
 
-static bool CanCusInstDoStart(const CmResConfList *conf)
+static bool CanCusInstDoRestart(const CmResConfList *conf)
 {
     ResIsregStatus stat = IsregOneResInst(conf, conf->resInstanceId);
     if ((stat == CM_RES_ISREG_REG) || (stat == CM_RES_ISREG_NOT_SUPPORT)) {
         return true;
     }
-    write_runlog(LOG, "cur inst(%u) isreg stat=(%u), can't do start.\n", conf->cmInstanceId, (uint32)stat);
+    write_runlog(LOG, "cur inst(%u) isreg stat=(%u), can't do restart.\n", conf->cmInstanceId, (uint32)stat);
     return false;
 }
 
-static inline void RestartOneResInst(CmResConfList *conf)
+static inline status_t RestartOneResInst(CmResConfList *conf)
 {
-    write_runlog(LOG, "res(%s) inst(%u) need restart.\n", conf->resName, conf->cmInstanceId);
     (void)CleanOneResInst(conf);
-    if (CanCusInstDoStart(conf)) {
-        StartOneResInst(conf);
-    }
+    CM_RETURN_IFERR(StartOneResInst(conf));
+    return CM_SUCCESS;
 }
 
 static void ProcessOfflineInstance(CmResConfList *conf)
 {
     if (conf->checkInfo.restartTimes == -1) {
-        RestartOneResInst(conf);
+        if (CanCusInstDoRestart(conf)) {
+            (void)RestartOneResInst(conf);
+        }
         return;
     }
     if (conf->checkInfo.brokeTime == 0) {
@@ -261,7 +283,9 @@ static void ProcessOfflineInstance(CmResConfList *conf)
         return;
     }
     if (conf->checkInfo.startCount >= conf->checkInfo.restartTimes) {
-        write_runlog(LOG, "[CLIENT] res(%s) inst(%u) get out from cluster.\n", conf->resName, conf->resInstanceId);
+        write_runlog(LOG, "res(%s) inst(%u) is offline, but restart times (%d) >= limit (%d), can't do restart again, "
+            "will do manually stop.\n", conf->resName, conf->resInstanceId, conf->checkInfo.startCount,
+            conf->checkInfo.restartTimes);
         ManualStopLocalResInst(conf);
         return;
     }
@@ -275,18 +299,14 @@ static void ProcessOfflineInstance(CmResConfList *conf)
             conf->resName, conf->resInstanceId, conf->checkInfo.startTime, conf->checkInfo.restartPeriod);
         return;
     }
-    RestartOneResInst(conf);
+    if (!CanCusInstDoRestart(conf)) {
+        return;
+    }
+    CM_RETVOID_IFERR(RestartOneResInst(conf));
     conf->checkInfo.startCount++;
     conf->checkInfo.startTime = time(NULL);
-    write_runlog(DEBUG1, "[CLIENT] res(%s) inst(%u) startCount=%d, startTime=%ld.\n",
-        conf->resName, conf->resInstanceId, conf->checkInfo.startCount, conf->checkInfo.startTime);
-}
-
-static inline void CleanOneInstCheckCount(CmResConfList *resConf)
-{
-    resConf->checkInfo.startCount = 0;
-    resConf->checkInfo.startTime = 0;
-    resConf->checkInfo.brokeTime = 0;
+    write_runlog(LOG, "res(%s) inst(%u) has been restart (%d) times, restart more than (%d) time will manually stop.\n",
+        conf->resName, conf->cmInstanceId, conf->checkInfo.startCount, conf->checkInfo.restartTimes);
 }
 
 static inline bool NeedStopResInst(const char *resName, uint32 cmInstId)
@@ -353,7 +373,7 @@ void StopResourceCheck()
             OneResInstShutdown(&g_resConf[i]);
         }
         if (CmFileExist(g_cmManualStartPath) || !IsOneResInstWork(g_resConf[i].resName, g_resConf[i].cmInstanceId)) {
-            (void)CleanOneResInst(&g_resConf[i]);
+            OneResInstClean(&g_resConf[i]);
         }
     }
 }

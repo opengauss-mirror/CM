@@ -602,6 +602,20 @@ int CheckDatanodeStatus(const char *dataDir, int *role)
     return 0;
 }
 
+static bool IsConnBadButNotPhonyDead(const char *errMsg, int conResult)
+{
+    if (strstr(errMsg, "too many clients already")) {
+        write_runlog(LOG, "need to change conn pool number, conn result is %d.\n", conResult);
+        return true;
+    }
+    if (strstr(errMsg, "failed to request snapshot")) {
+        write_runlog(LOG, "failed to request snapshot, not phony dead, conn result is %d.\n", conResult);
+        return true;
+    }
+
+    return false;
+}
+
 int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval)
 {
     int agentConnectDb = 5;
@@ -624,8 +638,7 @@ int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval)
     if (!IsConnOk(tmpDNConn)) {
         write_runlog(ERROR, "get connect failed for dn(%s) phony dead check, errmsg is %s\n",
             pidPath, ErrorMessage(tmpDNConn));
-        if (strstr(ErrorMessage(tmpDNConn), "too many clients already")) {
-            write_runlog(LOG, "need to change conn pool number, conn result is %d.\n", Status(tmpDNConn));
+        if (IsConnBadButNotPhonyDead(ErrorMessage(tmpDNConn), Status(tmpDNConn))) {
             close_and_reset_connection(tmpDNConn);
             return 0;
         }

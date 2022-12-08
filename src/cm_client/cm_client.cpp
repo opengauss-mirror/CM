@@ -242,7 +242,7 @@ void *ConnectAgentMain(void *arg)
             ConnectCreate(g_agentConnect);
             if (g_agentConnect->isClosed) {
                 write_runlog(ERROR, "cm_client connect to cm_agent failed, retry.\n");
-                CmUsleep(CLIENT_CHECK_CONN_INTERVAL);
+                (void)usleep(CLIENT_CHECK_CONN_INTERVAL);
                 continue;
             }
             g_needReconnect = false;
@@ -273,7 +273,7 @@ void *ConnectAgentMain(void *arg)
                 continue;
             }
         }
-        CmUsleep(CLIENT_CHECK_CONN_INTERVAL);
+        (void)usleep(CLIENT_CHECK_CONN_INTERVAL);
     }
 
     return NULL;
@@ -325,7 +325,7 @@ void SendOneMsgToAgent()
     if (CmClientSendMsg(msgPkg.msgPtr, msgPkg.msgLen) != CM_SUCCESS) {
         write_runlog(ERROR, "client send msg to agent failed!\n");
         g_needReconnect = true;
-        CmUsleep(CLIENT_CHECK_CONN_INTERVAL);
+        (void)usleep(CLIENT_CHECK_CONN_INTERVAL);
     }
     free(msgPkg.msgPtr);
 }
@@ -341,7 +341,7 @@ void *SendMsgToAgentMain(void *arg)
             break;
         }
         if (g_agentConnect->isClosed) {
-            CmUsleep(CLIENT_SEND_CHECK_INTERVAL);
+            (void)usleep(CLIENT_SEND_CHECK_INTERVAL);
             continue;
         }
 
@@ -489,12 +489,12 @@ void *RecvMsgFromAgentMain(void *arg)
             break;
         }
         if (g_agentConnect->isClosed) {
-            CmUsleep(CLIENT_CHECK_CONN_INTERVAL);
+            (void)usleep(CLIENT_CHECK_CONN_INTERVAL);
             continue;
         }
         if (RecvMsgFromAgent() != CM_SUCCESS) {
             g_needReconnect = true;
-            CmUsleep(CLIENT_CHECK_CONN_INTERVAL);
+            (void)usleep(CLIENT_CHECK_CONN_INTERVAL);
         }
     }
 

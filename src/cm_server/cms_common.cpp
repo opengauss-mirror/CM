@@ -313,6 +313,7 @@ void get_paramter_coordinator_heartbeat_timeout()
 }
 #endif
 
+
 bool CheckBoolConfigParam(const char* value)
 {
     if (strcasecmp(value, "on") == 0 || strcasecmp(value, "yes") == 0 || strcasecmp(value, "true") == 0 ||
@@ -825,6 +826,31 @@ bool SetOfflineNode()
     }
 
     return false;
+}
+
+void CmsSyncStandbyMode()
+{
+    if (!g_needReloadSyncStandbyMode) {
+        return;
+    }
+    char key[MAX_PATH_LEN] = {0};
+    char value[MAX_PATH_LEN] = {0};
+    errno_t rc =
+        snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/sync_standby_mode", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+
+    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVFromDDb(key, MAX_PATH_LEN, value, MAX_PATH_LEN, &ddbResult);
+    if (st != CM_SUCCESS) {
+        g_needReloadSyncStandbyMode = false;
+        int logLevel = (ddbResult == CAN_NOT_FIND_THE_KEY) ? ERROR : LOG;
+        write_runlog(logLevel, "failed to get value with key(%s).\n", key);
+        return;
+    }
+    current_cluster_az_status = (synchronous_standby_mode)strtol(value, NULL, 10);
+    g_needReloadSyncStandbyMode = false;
+    write_runlog(LOG, "setting current cluster az status to %d.\n", (int)current_cluster_az_status);
+    return;
 }
 
 bool EnableShareDisk()

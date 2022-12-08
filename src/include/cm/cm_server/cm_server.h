@@ -83,19 +83,14 @@ typedef struct CM_Connection_t {
     gss_buffer_desc gss_outbuf;     /* GSS output token */
 #endif // KRB5
     NotifyCn_t notifyCn;
-    uint32 connSeq;
+    uint64 connSeq;
 } CM_Connection;
-
-typedef struct CM_Connections_t {
-    uint32 count;
-    uint32 max_node_id;
-    CM_Connection* connections[CM_MAX_CONNECTIONS + MAXLISTEN];
-    pthread_rwlock_t lock;
-} CM_Connections;
 
 typedef struct CM_WorkThread_t {
     pthread_t tid;
+    uint32 id;
     int type;
+    uint32 procMsgCount;
     ConnID ProcConnID; // which connection is processing now;
     volatile bool isBusy;
 } CM_WorkThread;
@@ -124,11 +119,24 @@ typedef struct CM_MonitorNodeStopThread_t {
 
 typedef struct {
     pthread_t tid;
-    int type;
     uint32 id;
     int epHandle;
+    int wakefd;
     volatile bool isBusy;
+    volatile int gotConnClose;
+    void* recvMsgQue;
+    void* sendMsgQue;
+    uint32 pushRecvQueWaitTime;
+    uint32 getSendQueWaitTime;
+    uint32 recvMsgCount;
+    uint32 sendMsgCount;
+    uint32 innerProcCount;
 } CM_IOThread;
+
+typedef struct CM_IOThreads_t {
+    uint32 count;
+    CM_IOThread threads[CM_MAX_THREADS];
+} CM_IOThreads;
 
 typedef enum CM_ThreadStatus_e {
     CM_THREAD_STARTING,
@@ -222,7 +230,6 @@ typedef struct CM_ConnDdbInfo_t {
 #define INSTANCE_ARBITRATE_DELAY_NO_SET 0
 #define INSTANCE_ARBITRATE_DELAY_HAVE_SET 1
 
-#define CM_IO_THREAD_COUNT 1
 constexpr int NO_NEED_TO_SET_PARAM = -1;
 
 typedef struct DatanodeDynamicStatusT {
@@ -315,7 +322,6 @@ extern volatile sig_atomic_t got_stop;
 extern volatile sig_atomic_t g_gotParameterReload;
 extern volatile sig_atomic_t g_SetReplaceCnStatus;
 extern volatile sig_atomic_t ha_connection_closed;
-extern volatile sig_atomic_t got_conns_close[CM_IO_THREAD_COUNT];
 extern char g_replaceCnStatusFile[MAX_PATH_LEN];
 
 void ProcessStartupPacket(int epollFd, void* arg);

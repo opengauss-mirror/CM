@@ -217,16 +217,16 @@ static const char* GetClusterResStatStr(MaxClusterResStatus stat)
     return "";
 }
 
-MaxClusterResStatus GetResNodeStat(uint32 nodeId)
+MaxClusterResStatus GetResNodeStat(uint32 nodeId, int logLevel)
 {
     uint32 ind = FindNodeReportResInterByNodeId(nodeId);
     if (ind < g_node_num) {
         if (IsReportTimeout(g_resNodeStat[ind].reportInter)) {
-            write_runlog(LOG, "recv node(%u) agent report res status msg timeout.\n", nodeId);
+            write_runlog(logLevel, "recv node(%u) agent report res status msg timeout.\n", nodeId);
             return MAX_CLUSTER_STATUS_UNAVAIL;
         }
         if (g_resNodeStat[ind].isAvail != MAX_CLUSTER_STATUS_AVAIL) {
-            write_runlog(LOG, "res node(%u) stat is (%s).\n", nodeId, GetClusterResStatStr(g_resNodeStat[ind].isAvail));
+            write_runlog(logLevel, "node(%u) stat (%s).\n", nodeId, GetClusterResStatStr(g_resNodeStat[ind].isAvail));
         }
         return g_resNodeStat[ind].isAvail;
     } else {
@@ -432,7 +432,6 @@ void ReleaseResLockOwner(const char *resName, uint32 instId)
         return;
     }
 
-    bool isSuccess = true;
     for (uint32 i = 0; i < kvCount; ++i) {
         if (kvs[i].key[0] == '\0' || kvs[i].value[0] == '\0') {
             break;
@@ -441,17 +440,10 @@ void ReleaseResLockOwner(const char *resName, uint32 instId)
             continue;
         }
         if (DelKeyInDdb(kvs[i].key, (uint32)strlen(kvs[i].key)) != CM_SUCCESS) {
-            write_runlog(ERROR, "[CLIENT] ddb del failed. key=%s, value=%s.\n", kvs[i].key, kvs[i].value);
-            isSuccess = false;
+            write_runlog(ERROR, "[CLIENT] release lock failed. key=%s, value=%s.\n", kvs[i].key, kvs[i].value);
         } else {
-            write_runlog(LOG, "[CLIENT] ddb del success. key=%s, value=%s.\n", kvs[i].key, kvs[i].value);
+            write_runlog(LOG, "[CLIENT] release lock success. key=%s, value=%s.\n", kvs[i].key, kvs[i].value);
         }
-    }
-
-    if (isSuccess) {
-        write_runlog(LOG, "[CLIENT] res(%s) inst(%u) release all lock success.\n", resName, instId);
-    } else {
-        write_runlog(ERROR, "[CLIENT] res(%s) inst(%u) release all lock failed.\n", resName, instId);
     }
 }
 

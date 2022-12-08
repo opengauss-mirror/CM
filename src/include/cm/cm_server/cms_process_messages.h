@@ -126,16 +126,7 @@ uint32 GetResStatReportInter(uint32 nodeId);
 int GetCurAz();
 uint32 GetPrimaryDnIndex(void);
 status_t InitNodeReportResStatInter();
-MaxClusterResStatus GetResNodeStat(uint32 nodeId);
-
-inline bool CheckEnableFlag()
-{
-    if (IsBoolCmParamTrue(g_enableDcf)) {
-        write_runlog(ERROR, "switchover is not support on dcf mode.\n");
-        return true;
-    }
-    return false;
-}
+MaxClusterResStatus GetResNodeStat(uint32 nodeId, int logLevel);
 
 void ProcessCtlToCmReloadMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtlToCmExecDccCmdMsg(MsgRecvInfo* recvMsgInfo, ExecDdbCmdMsg *msg);

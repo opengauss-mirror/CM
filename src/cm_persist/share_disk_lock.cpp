@@ -29,6 +29,16 @@
 
 const int BLOCK_NUMS = 3;
 const uint32 LOCK_BLOCK_NUMS = 2;
+const time_t MAX_VALID_LOCK_TIME = 125;
+const time_t BASE_VALID_LOCK_TIME = 1;
+
+time_t CalcLockTime(time_t lockTime)
+{
+    // system function execute lock cmd result range is [0, 127], 127 and 126 maybe system command failed result
+    // so get lock time valid range is [1, 125]
+    // 0:get lock success;-1:get lock failed and get lock time failed;[1,125]:get lock failed but get lock time success
+    return lockTime % MAX_VALID_LOCK_TIME + BASE_VALID_LOCK_TIME;
+}
 
 status_t CmAllocDlock(dlock_t *lock, uint64 lockAddr, int64 instId)
 {
@@ -141,28 +151,6 @@ status_t CmDiskLockS(dlock_t *lock, const char *scsiDev, int32 fd)
     return CM_SUCCESS;
 }
 
-status_t CmDiskLockfS(dlock_t *lock, const char *scsiDev)
-{
-    if (lock == NULL|| scsiDev == NULL) {
-        return CM_ERROR;
-    }
-
-    int32 fd = open(scsiDev, O_RDWR | O_DIRECT | O_SYNC);
-    if (fd < 0) {
-        (void)printf(_("CmDiskLockfS Open dev %s failed, errno %d.\n"), scsiDev, errno);
-        return CM_ERROR;
-    }
-
-    status_t ret = CmDiskLockf(lock, fd);
-    if (ret != CM_SUCCESS) {
-        (void)close(fd);
-        return ret;
-    }
-
-    (void)close(fd);
-    return CM_SUCCESS;
-}
-
 int32 CmDiskLock(dlock_t *lock, int32 fd)
 {
     uint32 buffLen = LOCK_BLOCK_NUMS * CM_DEF_BLOCK_SIZE;
@@ -172,7 +160,7 @@ int32 CmDiskLock(dlock_t *lock, int32 fd)
     }
 
     time_t t = time(NULL);
-    LOCKW_LOCK_TIME(*lock) = t;
+    LOCKW_LOCK_TIME(*lock) = CalcLockTime(t);
     LOCKW_LOCK_CREATE_TIME(*lock) = t;
     int32 ret = CmScsi3Caw(fd, lock->lockAddr / CM_DEF_BLOCK_SIZE, lock->lockr, buffLen);
     if (ret != (int)CM_SUCCESS) {
@@ -223,7 +211,7 @@ int32 CmDiskLock(dlock_t *lock, int32 fd)
     return 0;
 }
 
-status_t CmDiskLockf(dlock_t *lock, int32 fd)
+status_t CmDiskLockf(dlock_t *lock, int32 fd, int64 lockTime)
 {
     if (lock == NULL || fd < 0) {
         return CM_ERROR;
@@ -233,6 +221,7 @@ status_t CmDiskLockf(dlock_t *lock, int32 fd)
         (void)printf(_("Get lock info from dev failed, fd %d.\n"), fd);
         return CM_ERROR;
     }
+    LOCKR_LOCK_TIME(*lock) = lockTime;
     int32 ret = CmDiskLock(lock, fd);
     if (ret != (int)CM_SUCCESS) {
         return CM_ERROR;
@@ -256,3 +245,4 @@ status_t CmGetDlockInfo(dlock_t *lock, int32 fd)
     }
     return CM_SUCCESS;
 }
+

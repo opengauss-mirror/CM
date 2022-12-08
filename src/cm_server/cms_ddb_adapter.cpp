@@ -392,7 +392,7 @@ static bool IsCurrentNodeInVoteAZ()
 
 status_t InitDdbArbitrate(DrvApiInfo *drvApiInfo)
 {
-    if (g_dbType != DB_ETCD) {
+    if (g_dbType != DB_ETCD && g_dbType != DB_SHAREDISK) {
         return CM_SUCCESS;
     }
 
@@ -909,7 +909,7 @@ DdbConn *GetNextDdbConn()
     uint32 idx = 0;
     for (uint32 i = 0; i < g_sess->count; ++i) {
         idx = (g_sess->curIdx + i) % g_sess->count;
-        if (g_sess->ddbConn[idx].state == PROCESS_IN_IDLE) {
+        if (g_sess->ddbConn[idx].state != PROCESS_IN_RUNNING) {
             break;
         }
     }

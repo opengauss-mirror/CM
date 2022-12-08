@@ -265,14 +265,6 @@ static void ReleaseMaxNodeMemory()
     FreeDmsValue();
 }
 
-static inline char *GetDynamicMem(char *dynamicPtr, size_t *curSize, size_t memSize)
-{
-    size_t tmpCurSize = (*curSize);
-    char *tmp = dynamicPtr + tmpCurSize;
-    (*curSize) = tmpCurSize + memSize;
-    return tmp;
-}
-
 static status_t AllocNodeClusterMemory(NodeCluster *nodeCluster, int32 maxNodeNum)
 {
     size_t memSize = sizeof(uint32) * (uint32)(maxNodeNum);
@@ -337,9 +329,9 @@ static bool CheckPoint2PointConn(int32 resIdx1, int32 resIdx2)
     return (connRes1 && connRes2);
 }
 
-static MaxClusterResStatus GetDiskHeartbeatStat(uint32 nodeIndex, uint32 diskTimeout)
+static MaxClusterResStatus GetDiskHeartbeatStat(uint32 nodeIndex, uint32 diskTimeout, int logLevel)
 {
-    VotingDiskStatus stat = GetNodeHeartbeatStat(nodeIndex, diskTimeout);
+    VotingDiskStatus stat = GetNodeHeartbeatStat(nodeIndex, diskTimeout, logLevel);
     if (stat == VOTING_DISK_STATUS_UNAVAIL) {
         return MAX_CLUSTER_STATUS_UNAVAIL;
     } else if (stat == VOTING_DISK_STATUS_AVAIL) {
@@ -351,9 +343,9 @@ static MaxClusterResStatus GetDiskHeartbeatStat(uint32 nodeIndex, uint32 diskTim
 static bool IsAllResAvailInNode(int32 resIdx)
 {
     uint32 nodeIdx = g_clusterRes.map[resIdx].nodeIdx;
-    MaxClusterResStatus heartbeatStatus = GetDiskHeartbeatStat(nodeIdx, g_diskTimeout);
+    MaxClusterResStatus heartbeatStatus = GetDiskHeartbeatStat(nodeIdx, g_diskTimeout, DEBUG5);
     bool heartbeatRes = IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_VOTE_DISK, heartbeatStatus);
-    MaxClusterResStatus nodeStatus = GetResNodeStat(g_node[nodeIdx].node);
+    MaxClusterResStatus nodeStatus = GetResNodeStat(g_node[nodeIdx].node, DEBUG5);
     bool nodeRes = IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus);
     return (heartbeatRes && nodeRes);
 }
@@ -429,16 +421,10 @@ static int32 FindNodeCluster(int32 startPoint, int32 maxNum, NodeCluster *nodeCl
             continue;
         }
         if (!CheckPoint2PointConn(startPoint, i)) {
-            write_runlog(LOG, "(index=%d,nodeId=%u) disconnect with (index=%d,nodeId=%u).\n",
-                startPoint, GetNodeByPoint(startPoint), i, GetNodeByPoint(i));
-            PrintHbsInfo(startPoint, GetNodeByPoint(startPoint), i, GetNodeByPoint(i), LOG);
             continue;
         }
         for (j = 0; j < maxNum; ++j) {
             if (!CheckPoint2PointConn(i, nodeCluster->visNode[j])) {
-                write_runlog(LOG, "(index=%d,nodeId=%u) disconnect with (index=%d,nodeId=%u).\n",
-                    startPoint, GetNodeByPoint(startPoint), i, GetNodeByPoint(i));
-                PrintHbsInfo(startPoint, GetNodeByPoint(startPoint), i, GetNodeByPoint(i), LOG);
                 break;
             }
         }
@@ -492,7 +478,7 @@ static void PrintMaxNodeCluster(const MaxNodeCluster *maxNodeCluster, const char
     for (int32 i = 0; i < maxNodeCluster->nodeCluster.clusterNum; ++i) {
         StrcatNextNodeStr(clusterStr, MAX_PATH_LEN, maxNodeCluster->nodeCluster.cluster[i]);
     }
-    write_runlog(LOG, "%s the max node cluster: %s.\n", str, clusterStr);
+    write_runlog(logLevel, "%s the max node cluster: %s.\n", str, clusterStr);
 }
 
 static void GetClusterKeyInDdb(char *key, uint32 keyLen)
@@ -835,7 +821,7 @@ static void CopyCur2LastMaxNodeCluster(MaxNodeCluster *lastCluster, MaxNodeClust
     lastCluster->version = curCluster->version;
     SetCurMaxNodeByLast(curCluster, lastCluster);
     (void)pthread_rwlock_unlock(&(lastCluster->lock));
-    PrintMaxNodeCluster(lastCluster, "[CompareCurLastMaxNodeCluster]", FATAL);
+    PrintMaxNodeCluster(lastCluster, "[CompareCurLastMaxNodeCluster]", DEBUG1);
 }
 
 static void AddCurResInCurCluster(int32 resIdx, NodeCluster *curCluster)
@@ -889,6 +875,85 @@ static bool8 CanArbitrateMaxCluster(const NodeCluster *lastCluster, NodeCluster 
     return (bool8)(curCluster->clusterNum > lastCluster->clusterNum);
 }
 
+static bool IsNodeInCluster(int32 resIdx, const MaxNodeCluster *nodeCluster)
+{
+    for (int32 i = 0; i < nodeCluster->nodeCluster.clusterNum; ++i) {
+        if (resIdx == nodeCluster->nodeCluster.cluster[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void PrintRhbStatus()
+{
+    uint32 hwl = 0;
+    time_t hbs[MAX_RHB_NUM][MAX_RHB_NUM] = {{0}};
+    GetRhbStat(hbs, &hwl);
+    char *rhbStr = GetRhbSimple((time_t *)hbs, MAX_RHB_NUM, hwl, time(NULL), g_agentNetworkTimeout);
+    CM_RETURN_IF_NULL(rhbStr);
+    size_t rhbLen = strlen(rhbStr);
+    if (rhbLen >= MAX_LOG_BUFF_LEN) {
+        write_runlog(LOG, "rhbStr len(%lu) is exceed max log buff len(%d), can't print network stat.\n",
+            rhbLen, MAX_LOG_BUFF_LEN);
+        FREE_AND_RESET(rhbStr);
+        return;
+    }
+    write_runlog(LOG, "Network timeout:%u\n", g_agentNetworkTimeout);
+    write_runlog(LOG, "Network stat('Y' means connected, otherwise 'N'):\n%s\n", rhbStr);
+    FREE_AND_RESET(rhbStr);
+}
+
+static void PrintKickOutResult(int32 resIdx, const MaxNodeCluster *maxCluster)
+{
+    uint32 nodeIdx = g_clusterRes.map[resIdx].nodeIdx;
+
+    MaxClusterResStatus heartbeatStatus = GetDiskHeartbeatStat(nodeIdx, g_diskTimeout, LOG);
+    if (!IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_VOTE_DISK, heartbeatStatus)) {
+        write_runlog(LOG, "kick out result: node(%u) disk heartbeat timeout.\n", g_node[nodeIdx].node);
+        return;
+    }
+
+    MaxClusterResStatus nodeStatus = GetResNodeStat(g_node[nodeIdx].node, LOG);
+    if (!IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus)) {
+        write_runlog(LOG, "kick out result: node(%u) res inst manual stop or report timeout.\n", g_node[nodeIdx].node);
+        return;
+    }
+
+    for (int32 i = 0; i < maxCluster->nodeCluster.clusterNum; ++i) {
+        if (resIdx == maxCluster->nodeCluster.cluster[i]) {
+            continue;
+        }
+        if (!CheckPoint2PointConn(resIdx, maxCluster->nodeCluster.cluster[i])) {
+            write_runlog(LOG, "kick out result: (index=%d,nodeId=%u) disconnect with (index=%d,nodeId=%u).\n",
+                resIdx, GetNodeByPoint(resIdx), i, GetNodeByPoint(i));
+            PrintHbsInfo(resIdx, GetNodeByPoint(resIdx), i, GetNodeByPoint(i), LOG);
+            continue;
+        }
+    }
+    PrintRhbStatus();
+}
+
+static void PrintArbitrateResult(const MaxNodeCluster *lastCluster, const MaxNodeCluster *curCluster)
+{
+    // kick out
+    for (int32 i = 0; i < lastCluster->nodeCluster.clusterNum; ++i) {
+        if (!IsNodeInCluster(lastCluster->nodeCluster.cluster[i], curCluster)) {
+            uint32 nodeIdx = g_clusterRes.map[lastCluster->nodeCluster.cluster[i]].nodeIdx;
+            WriteKeyEventLog(KEY_EVENT_RES_ARBITRATE, 0, "node(%u) kick out.", g_node[nodeIdx].node);
+            PrintKickOutResult(lastCluster->nodeCluster.cluster[i], lastCluster);
+        }
+    }
+
+    // join in
+    for (int32 i = 0; i < curCluster->nodeCluster.clusterNum; ++i) {
+        if (!IsNodeInCluster(curCluster->nodeCluster.cluster[i], lastCluster)) {
+            uint32 nodeIdx = g_clusterRes.map[curCluster->nodeCluster.cluster[i]].nodeIdx;
+            WriteKeyEventLog(KEY_EVENT_RES_ARBITRATE, 0, "node(%u) join in cluster.", g_node[nodeIdx].node);
+        }
+    }
+}
+
 static void CompareCurLastMaxNodeCluster(MaxNodeCluster *lastCluster, MaxNodeCluster *curCluster)
 {
     if (curCluster->nodeCluster.clusterNum <= 0) {
@@ -905,6 +970,7 @@ static void CompareCurLastMaxNodeCluster(MaxNodeCluster *lastCluster, MaxNodeClu
     }
     write_runlog(LOG, "last(%lu) is different from current(%lu), result is %d.\n",
         lastCluster->version, curCluster->version, result);
+    PrintArbitrateResult(lastCluster, curCluster);
     // wait for successfully setting cluster to ddb.
     status_t st = SetCurClusterToDdb(curCluster);
     if (st != CM_SUCCESS) {

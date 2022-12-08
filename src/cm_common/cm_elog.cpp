@@ -1952,6 +1952,7 @@ void CmKeyEventInit(void)
     g_cmKeyEventType[KEY_EVENT_RECOVER]                     = "KEY_EVENT_RECOVER";
     g_cmKeyEventType[KEY_EVENT_REFRESH_OBS_DELETE_TEXT]     = "KEY_EVENT_REFRESH_OBS_DELETE_TEXT";
     g_cmKeyEventType[KEY_EVENT_DROP_CN_OBS_XLOG]            = "KEY_EVENT_DROP_CN_OBS_XLOG";
+    g_cmKeyEventType[KEY_EVENT_RES_ARBITRATE]               = "KEY_EVENT_RES_ARBITRATE";
 }
 
 void CreateKeyEventLogFile(const char *sysLogPath)

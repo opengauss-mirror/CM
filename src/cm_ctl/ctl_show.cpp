@@ -82,6 +82,7 @@ void HandleRhbAck(CmRhbStatAck *ack)
 
     (void)printf("Network stat('Y' means connected, otherwise 'N'):\n");
     char *rs = GetRhbSimple((time_t *)ack->hbs, MAX_RHB_NUM, ack->hwl, ack->baseTime, ack->timeout);
+    CM_RETURN_IF_NULL(rs);
     (void)printf("%s\n", rs);
     free(rs);
 }

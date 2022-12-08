@@ -194,9 +194,9 @@ int CM_CreateMonitorStopNode(void)
     return 0;
 }
 
-int CM_CreateIOThread(void)
+int CM_CreateIOThread(CM_IOThread &ioThread, uint32 id)
 {
-    errno_t rc = memset_s(&gIOThread, sizeof(CM_IOThread), 0, sizeof(CM_IOThread));
+    errno_t rc = memset_s(&ioThread, sizeof(CM_IOThread), 0, sizeof(CM_IOThread));
     securec_check_errno(rc, (void)rc);
 
     /* create epoll fd, MAX_EVENTS just a HINT */
@@ -206,41 +206,51 @@ int CM_CreateIOThread(void)
         return -1;
     }
 
-    gIOThread.epHandle = epollFd;
-    gIOThread.type = 0;
-    gIOThread.isBusy = false;
+    ioThread.epHandle = epollFd;
+    ioThread.id = id;
+    ioThread.isBusy = false;
+    ioThread.recvMsgQue = new PriMsgQues;
+    ioThread.sendMsgQue = new PriMsgQues;
+    InitMsgQue(*((PriMsgQues *)ioThread.sendMsgQue));
+    InitMsgQue(*((PriMsgQues *)ioThread.recvMsgQue));
 
-    if (pthread_create(&(gIOThread.tid), NULL, CM_IOThreadMain, &gIOThread) != 0) {
+    if (pthread_create(&(ioThread.tid), NULL, CM_IOThreadMain, &ioThread) != 0) {
         return -1;
     }
+
     return 0;
 }
 
+int CM_CreateIOThreadPool(uint32 thrCount)
+{
+    int err;
+    for (uint32 i = 0; i < thrCount; i++) {
+        err = CM_CreateIOThread(gIOThreads.threads[i], i);
+        if (err != 0) {
+            return err;
+        }
+        gIOThreads.count++;
+    }
 
-int CM_CreateWorkThreadPool(int thrCount)
+    return 0;
+}
+
+static int createWorkerThread(uint32 thrCount, int type)
 {
     CM_WorkThread* thrinfo = NULL;
-    int err;
     errno_t rc = 0;
-    int trueThrCount = thrCount;
+    int err;
 
-    /* include cm_ctl, so g_node_num need add. */
-    int ctlThreadNum = GetCtlThreadNum();
-    if (thrCount > ((int)g_node_num + ctlThreadNum)) {
-        trueThrCount = ((int)g_node_num + ctlThreadNum);
-    }
-    if (trueThrCount <= ctlThreadNum) {
-        trueThrCount += ctlThreadNum;
-    }
+    for (uint32 i = 0; i < thrCount; i++) {
+        uint32 thread_idx = gWorkThreads.count;
+        thrinfo = &(gWorkThreads.threads[thread_idx]);
 
-    for (int i = 0; i < trueThrCount; i++) {
-        thrinfo = &(gWorkThreads.threads[i]);
-
-        rc = memset_s(&gWorkThreads.threads[i], sizeof(CM_WorkThread), 0, sizeof(CM_WorkThread));
+        rc = memset_s(thrinfo, sizeof(CM_WorkThread), 0, sizeof(CM_WorkThread));
         securec_check_errno(rc, (void)rc);
 
-        thrinfo->type = (i >= trueThrCount - ctlThreadNum) ? CM_CTL : CM_AGENT;
+        thrinfo->type = type;
         thrinfo->isBusy = false;
+        thrinfo->id = i;
 
         if ((err = pthread_create(&thrinfo->tid, NULL, CM_WorkThreadMain, thrinfo)) != 0) {
             write_runlog(ERROR, "Failed to create a new CM_WorkThreadMain %d: %d\n", err, errno);
@@ -249,6 +259,21 @@ int CM_CreateWorkThreadPool(int thrCount)
 
         gWorkThreads.count++;
     }
+
+    return 0;
+}
+
+int CM_CreateWorkThreadPool(uint32 ctlWorkerCount, uint32 agentWorkerCount)
+{
+    gWorkThreads.count = 0;
+    if (createWorkerThread(ctlWorkerCount, CM_CTL) != 0) {
+        return -1;
+    }
+
+    if (createWorkerThread(agentWorkerCount, CM_AGENT) != 0) {
+        return -1;
+    }
+
     return 0;
 }
 

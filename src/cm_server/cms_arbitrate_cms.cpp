@@ -127,20 +127,6 @@ static void coordinator_notify_msg_reset(void)
     }
 }
 
-static void IncrementTermIfCmRestart()
-{
-    if (!IsNeedSyncDdb()) {
-        return;
-    }
-    (void)pthread_rwlock_wrlock(&term_update_rwlock);
-    int incrementTermSesult = IncrementTermToDdb();
-    (void)pthread_rwlock_unlock(&term_update_rwlock);
-    if (incrementTermSesult != 0) {
-        write_runlog(ERROR, "Incrtement term to ddb failed, %d:node(%u) cm_server role is %s, will to primary.\n",
-            __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role));
-    }
-}
-
 static void clean_cn_heart_beat(int cmServerCurrentRole, int cm_server_last_role)
 {
     if ((cmServerCurrentRole != CM_SERVER_PRIMARY) && (cm_server_last_role == CM_SERVER_PRIMARY)) {
@@ -157,26 +143,6 @@ static void clean_cn_heart_beat(int cmServerCurrentRole, int cm_server_last_role
                 g_instance_role_group_ptr[i].instanceMember[0].instanceId);
         }
     }
-}
-
-static void CmsSyncStandbyMode()
-{
-    char key[MAX_PATH_LEN] = {0};
-    char value[MAX_PATH_LEN] = {0};
-    errno_t rc =
-        snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/sync_standby_mode", pw->pw_name);
-    securec_check_intval(rc, (void)rc);
-
-    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
-    status_t st = GetKVFromDDb(key, MAX_PATH_LEN, value, MAX_PATH_LEN, &ddbResult);
-    if (st != CM_SUCCESS) {
-        int logLevel = (ddbResult == CAN_NOT_FIND_THE_KEY) ? ERROR : LOG;
-        write_runlog(logLevel, "failed to get value with key(%s).\n", key);
-        return;
-    }
-    current_cluster_az_status = (synchronous_standby_mode)strtol(value, NULL, 10);
-    write_runlog(LOG, "setting to %d.\n", current_cluster_az_status);
-    return;
 }
 
 static void CleanSwitchoverCommand()
@@ -257,8 +223,6 @@ static void check_server_role_changed(int cm_server_role)
                 (int)cm_server_start_mode, g_node_num);
         }
 #endif
-        /* get the ddb key-value of the synchronize-standby-mode */
-        CmsSyncStandbyMode();
     }
 }
 
@@ -420,13 +384,21 @@ static void CmsChange2Primary(int32 *cmsDemoteDelayOnConnLess)
     if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
         return;
     }
-    IncrementTermIfCmRestart();
+    if (IsNeedSyncDdb()) {
+        (void)pthread_rwlock_wrlock(&term_update_rwlock);
+        g_needIncTermToDdbAgain = true;
+        (void)pthread_rwlock_unlock(&term_update_rwlock);
+        g_needReloadSyncStandbyMode = true;
+    }
+
     write_runlog(LOG, "node(%u) cms role is %s, change to primary by ddb, and g_ddbRole is %d.\n",
         g_currentNode->node, server_role_to_string(g_HA_status->local_role), (int)g_ddbRole);
     g_HA_status->local_role = CM_SERVER_PRIMARY;
     *cmsDemoteDelayOnConnLess = cmserver_demote_delay_on_conn_less;
     ClearSyncWithDdbFlag();
-    NotifyDdb(DDB_ROLE_LEADER);
+    if (g_dbType != DB_SHAREDISK) {
+        NotifyDdb(DDB_ROLE_LEADER);
+    }
 }
 
 static void PromoteCmsDirect(int32 *cmsDemoteDelayOnConnLess)

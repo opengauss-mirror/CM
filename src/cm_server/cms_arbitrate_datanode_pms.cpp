@@ -781,6 +781,10 @@ uint32 GetPrimaryTerm(const DnArbCtx *ctx)
 
 static bool DnArbitrateInAsync(DnArbCtx *ctx)
 {
+    if (g_needReloadSyncStandbyMode) {
+        write_runlog(LOG, "line %d: wait to reload sync standby mode ddb value.\n", __LINE__);
+        return true;
+    }
     int azIndex = GetAzIndex(ctx);
     if (azIndex == -1) {
         return true;

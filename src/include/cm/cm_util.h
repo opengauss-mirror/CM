@@ -28,27 +28,31 @@
 #include <pthread.h>
 #include "c.h"
 
+const int CM_NSEC_COUNT_PER_MS  = 1000000;
+const int  CM_MS_COUNT_PER_SEC  = 1000;
+
 int CmMkdirP(char *path, unsigned int omode);
 char *gs_getenv_r(const char *name);
 uint64 GetMonotonicTimeMs();
 
-enum class CMMutexPrio {
-    CM_MUTEX_PRIO_NONE,
-    CM_MUTEX_PRIO_NORMAL,
-    CM_MUTEX_PRIO_HIGH,
+enum class CMFairMutexType {
+    CM_MUTEX_NODE,
+    CM_MUTEX_READ,
+    CM_MUTEX_WRITE,
 };
-
-using CMPrioMutex = struct CMPrioMutexSt {
+ 
+using CMFairMutex = struct CMFairMutexSt {
     pthread_mutex_t lock;
     pthread_mutex_t innerLock;
     pthread_cond_t cond;
-    uint32 highPrioCount;
-    CMMutexPrio curPrio;
+    uint32 readerCount;
+    uint32 writerCount;
+    CMFairMutexType curType;
 };
-
-void CMPrioMutexInit(CMPrioMutex &mutex);
-int CMPrioMutexLock(CMPrioMutex &mutex, CMMutexPrio prio);
-void CMPrioMutexUnLock(CMPrioMutex &mutex);
+ 
+void CMFairMutexInit(CMFairMutex &mutex);
+int CMFairMutexLock(CMFairMutex &mutex, CMFairMutexType type);
+void CMFairMutexUnLock(CMFairMutex &mutex);
 char *GetDynamicMem(char *dynamicPtr, size_t *curSize, size_t memSize);
 
 #endif  // CM_UTIL_H

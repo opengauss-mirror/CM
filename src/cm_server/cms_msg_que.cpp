@@ -22,44 +22,25 @@
  * -------------------------------------------------------------------------
  */
 
-#include <queue>
-#include <pthread.h>
 #include "elog.h"
 #include "cm_c.h"
 #include "cm_util.h"
+#include "cm_msg_buf_pool.h"
+
 #include "cms_msg_que.h"
 
-
-using MsgQueType = std::deque<const char *>;
-using MsgQuePtr = MsgQueType*;
-
-struct PriMsgQues {
-    MsgQuePtr Ques[MSG_PRI_COUNT];
-    pthread_mutex_t msg_lock;
-    pthread_cond_t msg_cond;
-    CMPrioMutex prioLock;
-};
-
-static PriMsgQues g_recvMsgQues;
-static PriMsgQues g_sendMsgQues;
 
 static wakeSenderFuncType wakeSenderFunc = NULL;
 static CanProcThisMsgFunType CanProcThisMsgFun = NULL;
 
-static void InitMsgQue(PriMsgQues &que)
+void InitMsgQue(PriMsgQues &que)
 {
-    for (int i = 0; i < (int)MSG_PRI_COUNT; i++) {
-        que.Ques[i] = NULL;
+    for (int i = 0; i < (int)MSG_SRC_COUNT; i++) {
+        CMFairMutexInit(que.ques[i].fairLock);
     }
 
-    (void)pthread_mutex_init(&que.msg_lock, NULL);
-    (void)pthread_cond_init(&que.msg_cond, NULL);
-    CMPrioMutexInit(que.prioLock);
-}
-void InitMsgQue()
-{
-    InitMsgQue(g_recvMsgQues);
-    InitMsgQue(g_sendMsgQues);
+    (void)pthread_mutex_init(&que.msgLock, NULL);
+    (void)pthread_cond_init(&que.msgCond, NULL);
 }
 
 void setWakeSenderFunc(wakeSenderFuncType func)
@@ -71,147 +52,147 @@ void SetCanProcThisMsgFun(CanProcThisMsgFunType func)
 {
     CanProcThisMsgFun = func;
 }
-static void pushToQue(PriMsgQues *priQue, MsgPriority pri, const char *msg)
+
+size_t getMsgCount(PriMsgQues *priQue)
 {
-    if (priQue->Ques[pri] == NULL) {
-        priQue->Ques[pri] = new MsgQueType;
-        if (priQue->Ques[pri] == NULL) {
-            write_runlog(ERROR, "pushToQue:out of memory.\n");
-            return;
-        }
-    }
-    priQue->Ques[pri]->push_back(msg);
-}
+    size_t count = 0;
 
-void pushRecvMsg(const MsgRecvInfo *msg, MsgPriority pri)
-{
-    Assert(pri >= 0 && pri < MSG_PRI_COUNT);
-    PriMsgQues *priQue = &g_recvMsgQues;
-
-    (void)CMPrioMutexLock(priQue->prioLock, CMMutexPrio::CM_MUTEX_PRIO_HIGH);
-    pushToQue(priQue, pri, (const char*)msg);
-    CMPrioMutexUnLock(priQue->prioLock);
-
-    (void)pthread_cond_broadcast(&priQue->msg_cond);
-}
-
-const MsgRecvInfo *getRecvMsg(MsgPriority pri, uint32 waitTime, void *threadInfo)
-{
-    Assert(pri >= 0 && pri < MSG_PRI_COUNT);
-    PriMsgQues *priQue = &g_recvMsgQues;
-    const MsgRecvInfo *msg = NULL;
-    struct timespec tv;
-
-    (void)CMPrioMutexLock(priQue->prioLock, CMMutexPrio::CM_MUTEX_PRIO_NORMAL);
-
-    for (int i = 0; i < (int)pri + 1; i++) {
-        MsgQuePtr que = priQue->Ques[i];
-        if (que == NULL) {
-            continue;
-        }
-
-        MsgQueType::iterator it = que->begin();
-        for (; it != que->end(); ++it) {
-            if (CanProcThisMsgFun == NULL || CanProcThisMsgFun(threadInfo, *it)) {
-                msg = (const MsgRecvInfo *)*it;
-                (void)que->erase(it);
-                break;
-            }
-        }
-
-        if (msg != NULL) {
-            break;
-        }
+    for (int i = 0; i < (int)MSG_SRC_COUNT; i++) {
+        MsgQuePtr que = &priQue->ques[i].que;
+        count += que->size();
     }
 
-    CMPrioMutexUnLock(priQue->prioLock);
-
-    if (msg == NULL && waitTime > 0) {
-        (void)clock_gettime(CLOCK_REALTIME, &tv);
-        tv.tv_sec = tv.tv_sec + (long long)waitTime;
-        (void)pthread_mutex_lock(&priQue->msg_lock);
-        (void)pthread_cond_timedwait(&priQue->msg_cond, &priQue->msg_lock, &tv);
-        (void)pthread_mutex_unlock(&priQue->msg_lock);
-    }
-
-    return msg;
+    return count;
 }
 
-void pushSendMsg(const MsgSendInfo *msg, MsgPriority pri)
+bool existMsg(const PriMsgQues *priQue)
 {
-    Assert(pri >= 0 && pri < MSG_PRI_COUNT);
-    PriMsgQues *priQue = &g_sendMsgQues;
-    
-    (void)CMPrioMutexLock(priQue->prioLock, CMMutexPrio::CM_MUTEX_PRIO_NORMAL);
-    pushToQue(priQue, pri, (const char*)msg);
-    CMPrioMutexUnLock(priQue->prioLock);
-    
-    if (wakeSenderFunc != NULL) {
-        wakeSenderFunc();
-    }
-}
-
-const MsgSendInfo *getSendMsg()
-{
-    const MsgSendInfo *msg = NULL;
-    PriMsgQues *priQue = &g_sendMsgQues;
-
-    uint64 now = GetMonotonicTimeMs();
-    (void)CMPrioMutexLock(priQue->prioLock, CMMutexPrio::CM_MUTEX_PRIO_HIGH);
-
-    for (int i = 0; i < (int)MSG_PRI_COUNT; i++) {
-        MsgQuePtr que = priQue->Ques[i];
-        if (que == NULL) {
-            continue;
-        }
-
-        MsgQueType::iterator it = que->begin();
-        for (; it != que->end(); ++it) {
-            const MsgSendInfo* sendMsg = (MsgSendInfo*)(*it);
-            if (sendMsg->procTime == 0 || sendMsg->procTime <= now) {
-                msg = (const MsgSendInfo *)(*it);
-                (void)que->erase(it);
-                break;
-            }
-        }
-
-        if (msg != NULL) {
-            break;
-        }
-    }
-
-    CMPrioMutexUnLock(priQue->prioLock);
-
-    return msg;
-}
-bool existSendMsg()
-{
-    PriMsgQues *priQue = &g_sendMsgQues;
-    for (int i = 0; i < (int)MSG_PRI_COUNT; i++) {
-        MsgQuePtr que = priQue->Ques[i];
-        if (que != NULL) {
-            if (!que->empty()) {
-                return true;
-            }
+    for (int i = 0; i < (int)MSG_SRC_COUNT; i++) {
+        ConstMsgQuePtr que = &priQue->ques[i].que;
+        if (!que->empty()) {
+            return true;
         }
     }
 
     return false;
 }
 
-size_t getSendMsgCount()
+void pushRecvMsg(PriMsgQues *priQue, MsgRecvInfo *msg, MsgSourceType src)
 {
-    PriMsgQues *priQue = &g_sendMsgQues;
-    size_t count = 0;
+    Assert(src >= 0 && src < MSG_SRC_COUNT);
 
-    (void)CMPrioMutexLock(priQue->prioLock, CMMutexPrio::CM_MUTEX_PRIO_HIGH);
-    for (int i = 0; i < (int)MSG_PRI_COUNT; i++) {
-        MsgQuePtr que = priQue->Ques[i];
-        if (que != NULL) {
-            count += que->size();
-        }
-    }
-    CMPrioMutexUnLock(priQue->prioLock);
+    (void)CMFairMutexLock(priQue->ques[src].fairLock, CMFairMutexType::CM_MUTEX_WRITE);
+    msg->connID.t2 = GetMonotonicTimeMs();
+    priQue->ques[src].que.push_back((const char *)msg);
+    CMFairMutexUnLock(priQue->ques[src].fairLock);
 
-    return count;
+    (void)pthread_cond_broadcast(&priQue->msgCond);
 }
+
+static const MsgRecvInfo *getRecvMsgInner(PriMsgQues *priQue, MsgSourceType src, void *threadInfo)
+{
+    Assert(src >= 0 && src < MSG_SRC_COUNT);
+    MsgRecvInfo *msg = NULL;
+    uint64 t3 = GetMonotonicTimeMs();
+
+    if (!existMsg(priQue)) {
+        return NULL;
+    }
+
+    for (int i = 0; i < (int)MSG_SRC_COUNT; i++) {
+        MsgQuePtr que = &priQue->ques[src].que;
+        (void)CMFairMutexLock(priQue->ques[src].fairLock, CMFairMutexType::CM_MUTEX_READ);
+        MsgQueType::iterator it = que->begin();
+        for (; it != que->end(); ++it) {
+            if (CanProcThisMsgFun == NULL || CanProcThisMsgFun(threadInfo, *it)) {
+                msg = (MsgRecvInfo *)*it;
+                (void)que->erase(it);
+                msg->connID.t3 = t3;
+                msg->connID.t4 = GetMonotonicTimeMs();
+                break;
+            }
+        }
+        CMFairMutexUnLock(priQue->ques[src].fairLock);
+
+        if (msg != NULL) {
+            break;
+        }
+        src = (src == MsgSrcAgent) ? MsgSrcCtl : MsgSrcAgent;  // switch src type;
+    }
+
+    return msg;
+}
+
+const MsgRecvInfo *getRecvMsg(PriMsgQues *priQue, MsgSourceType src, uint32 waitTime, void *threadInfo)
+{
+    struct timespec tv;
+    if (priQue == NULL) {
+        return NULL;
+    }
+
+    const MsgRecvInfo* msg = getRecvMsgInner(priQue, src, threadInfo);
+
+    if (msg == NULL && waitTime > 0) {
+        (void)clock_gettime(CLOCK_REALTIME, &tv);
+        tv.tv_sec = tv.tv_sec + (long long)waitTime;
+        (void)pthread_mutex_lock(&priQue->msgLock);
+        (void)pthread_cond_timedwait(&priQue->msgCond, &priQue->msgLock, &tv);
+        (void)pthread_mutex_unlock(&priQue->msgLock);
+    }
+
+    return msg;
+}
+
+void pushSendMsg(PriMsgQues *priQue, MsgSendInfo *msg, MsgSourceType src)
+{
+    Assert(src >= 0 && src < MSG_SRC_COUNT);
+    ConnID connID = msg->connID;
+    (void)CMFairMutexLock(priQue->ques[src].fairLock, CMFairMutexType::CM_MUTEX_WRITE);
+    priQue->ques[src].que.push_back((const char*)msg);
+    msg->connID.t6 = GetMonotonicTimeMs();
+    CMFairMutexUnLock(priQue->ques[src].fairLock);
+
+    if (wakeSenderFunc != NULL) {
+        wakeSenderFunc(connID);
+    }
+}
+
+const MsgSendInfo *getSendMsg(PriMsgQues *priQue, MsgSourceType src)
+{
+    const MsgSendInfo *msg = NULL;
+
+    if (!existMsg(priQue)) {
+        return NULL;
+    }
+
+    uint64 now = GetMonotonicTimeMs();
+    for (int i = 0; i < (int)MSG_SRC_COUNT; i++) {
+        MsgQuePtr que = &priQue->ques[src].que;
+        (void)CMFairMutexLock(priQue->ques[src].fairLock, CMFairMutexType::CM_MUTEX_READ);
+        MsgQueType::iterator it = que->begin();
+        for (; it != que->end(); ++it) {
+            MsgSendInfo *sendMsg = (MsgSendInfo *)(*it);
+            if (sendMsg->procTime == 0 || sendMsg->procTime <= now) {
+                msg = sendMsg;
+                (void)que->erase(it);
+                sendMsg->connID.t7 = now;
+                sendMsg->connID.t8 = GetMonotonicTimeMs();
+                break;
+            }
+        }
+        CMFairMutexUnLock(priQue->ques[src].fairLock);
+
+        if (msg != NULL) {
+            break;
+        }
+        src = (src == MsgSrcAgent) ? MsgSrcCtl : MsgSrcAgent;
+    }
+
+    return msg;
+}
+
+bool existSendMsg(const PriMsgQues *priQue)
+{
+    return existMsg(priQue);
+}
+

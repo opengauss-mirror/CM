@@ -49,6 +49,7 @@ typedef enum KeyEventTypeEn {
     KEY_EVENT_RECOVER = 16,
     KEY_EVENT_REFRESH_OBS_DELETE_TEXT = 17,
     KEY_EVENT_DROP_CN_OBS_XLOG = 18,
+    KEY_EVENT_RES_ARBITRATE = 19,
     KEY_EVENT_TYPE_CEIL, // new event types should be added before this.
 } KeyEventType;
 

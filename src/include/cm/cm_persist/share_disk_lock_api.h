@@ -46,5 +46,4 @@ typedef struct _DISK_LRW_HANDLER {
 } diskLrwHandler;
 
 status_t InitDiskLockHandle(diskLrwHandler *sdLrwHandler, const char *scsi_dev, uint32 offset, int64 instId);
-status_t ShareDiskGetDlock(diskLrwHandler *handler);
 #endif

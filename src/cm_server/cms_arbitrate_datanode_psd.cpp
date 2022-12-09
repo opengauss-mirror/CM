@@ -1072,6 +1072,14 @@ void datanode_instance_arbitrate_for_psd(MsgRecvInfo* recvMsgInfo, const agent_t
         return;
     }
 
+    if (g_needReloadSyncStandbyMode) {
+        write_runlog(LOG,
+            "instance(node=%u instanceid=%u) arbitrate will wait to reload sync standby mode ddb value.\n",
+            node,
+            instanceId);
+        return;
+    }
+
     GetDatanodeDynamicConfigChangeFromDdb(group_index);
     (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
 

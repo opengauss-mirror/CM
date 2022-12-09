@@ -30,10 +30,6 @@
 #include "securec.h"
 #include "share_disk_lock_api.h"
 
-const int LOCK_WAIT_INTERVAL = 10 * 1000;
-const int FORCE_LOCK_TRY_TIMES = 3;
-const int LOCK_WAIT_MAX_TIMTS = 500;
-
 status_t ShareDiskHandlerInit(diskLrwHandler *handler)
 {
     if (CmAllocDlock(&handler->headerLock, handler->offset, handler->instId) != CM_SUCCESS) {
@@ -63,48 +59,5 @@ status_t InitDiskLockHandle(diskLrwHandler *sdLrwHandler, const char *scsi_dev, 
     }
 
     return CM_SUCCESS;
-}
-
-status_t ShareDiskGetDlock(diskLrwHandler *handler)
-{
-    status_t ret = CM_SUCCESS;
-    int32 times = 0;
-    int32 delayTimes = 0;
-    bool hasRefreshLockTime = false;
-
-    time_t lockTime = 0;
-    do {
-        ret = CmDiskLockS(&handler->headerLock, handler->scsiDev, handler->fd);
-        if (ret == CM_SUCCESS) {
-            return CM_SUCCESS;
-        }
-        if (lockTime != LOCKR_LOCK_TIME(handler->headerLock)) {
-            lockTime = LOCKR_LOCK_TIME(handler->headerLock);
-            delayTimes = 0;
-            if (hasRefreshLockTime) {
-                (void)printf(_("Get lock failed for lock time has been refreshed by other process\n"));
-                return CM_ERROR;
-            }
-            hasRefreshLockTime = true;
-        }
-
-        if (lockTime == LOCKR_LOCK_TIME(handler->headerLock)) {
-            if (delayTimes < LOCK_WAIT_MAX_TIMTS) {
-                (void)usleep(LOCK_WAIT_INTERVAL);
-                delayTimes++;
-                continue;
-            }
-
-            ret = CmDiskLockfS(&handler->headerLock, handler->scsiDev);
-            if (ret != CM_SUCCESS) {
-                (void)printf(_("Get lock failed when force %d times\n"), ++times);
-                return CM_ERROR;
-            }
-            (void)printf(_("Get lock success when force %d times.\n"), ++times);
-            return CM_SUCCESS;
-        }
-
-        (void)usleep(LOCK_WAIT_INTERVAL);
-    } while (1);
 }
 

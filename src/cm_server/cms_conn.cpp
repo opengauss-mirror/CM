@@ -23,6 +23,7 @@
  */
 #include <map>
 #include <sys/eventfd.h>
+#include <sys/prctl.h>
 #include <sys/epoll.h>
 #include "cm/cm_elog.h"
 #include "cms_common.h"
@@ -38,31 +39,34 @@
 #include "cm_util.h"
 
 static const int EPOLL_TIMEOUT = 1000;
-static const int SEND_COUNT = 100;
 static const uint32 ALL_AGENT_NODE_ID = 0xffffffff;
 static const uint32 MAX_MSG_BUF_POOL_SIZE = 102400;
 static const uint32 MAX_MSG_BUF_POOL_COUNT = 200;
+static const uint32 MAX_MSG_IN_QUE = 100;
 
 struct DdbPreAgentCon {
     uint32 connCount;
     char conFlag[DDB_MAX_CONNECTIONS];
 };
 
-using MapConns = std::map<uint32, CM_Connection*>;
+using MapConns = std::map<uint64, CM_Connection*>;
 
 struct TempConns {
     MapConns tempConns;
-    uint32 tempConnSeq;
     pthread_mutex_t lock;
 };
 
+using CM_Connections = struct CM_Connections_t {
+    uint32 count;
+    uint32 max_node_id;
+    CM_Connection* connections[CM_MAX_CONNECTIONS + MAXLISTEN];
+    pthread_rwlock_t lock;
+} ;
 
 TempConns g_tempConns;
 CM_Connections gConns;
 DdbPreAgentCon g_preAgentCon = {0};
 uint8 g_msgProcFlag[MSG_CM_TYPE_CEIL];
-static int g_wakefd = -1;
-
 int32 InitConn()
 {
     MsgPoolInit(MAX_MSG_BUF_POOL_SIZE, MAX_MSG_BUF_POOL_COUNT);
@@ -247,7 +251,6 @@ void AddCMAgentConnection(CM_Connection *con)
         errno_t rc = memset_s(g_preAgentCon.conFlag, sizeof(g_preAgentCon.conFlag), 0, sizeof(g_preAgentCon.conFlag));
         securec_check_errno(rc, (void)pthread_rwlock_unlock(&gConns.lock));
     }
-    con->connSeq = 0;
     (void)pthread_rwlock_unlock(&gConns.lock);
     con->notifyCn = setNotifyCnFlagByNodeId(con->port->node_id);
 }
@@ -255,11 +258,9 @@ void AddCMAgentConnection(CM_Connection *con)
 void AddTempConnection(CM_Connection *con)
 {
     (void)pthread_mutex_lock(&g_tempConns.lock);
-    g_tempConns.tempConnSeq++;
-    con->connSeq = g_tempConns.tempConnSeq;
     (void)g_tempConns.tempConns.insert(make_pair(con->connSeq, con));
     (void)pthread_mutex_unlock(&g_tempConns.lock);
-    write_runlog(DEBUG5, "AddTempConnection:connSeq=%u\n", con->connSeq);
+    write_runlog(DEBUG5, "AddTempConnection:connSeq=%lu.\n", con->connSeq);
 }
 
 void RemoveTempConnection(CM_Connection *con)
@@ -267,7 +268,7 @@ void RemoveTempConnection(CM_Connection *con)
     (void)pthread_mutex_lock(&g_tempConns.lock);
     (void)g_tempConns.tempConns.erase(con->connSeq);
     (void)pthread_mutex_unlock(&g_tempConns.lock);
-    write_runlog(DEBUG5, "RemoveTempConnection:connSeq=%u\n", con->connSeq);
+    write_runlog(DEBUG5, "RemoveTempConnection:connSeq=%lu.\n", con->connSeq);
 }
 
 CM_Connection* GetTempConnection(uint64 connSeq)
@@ -452,20 +453,23 @@ void ConnFree(Port* conn)
     free(conn);
 }
 
-
-static void CloseAllConnections(volatile sig_atomic_t& gotConnsClose, int epollHandle)
+static void CloseAllConnections(CM_IOThread *thrinfo)
 {
     CM_Connection* con = NULL;
 
-    if (gotConnsClose == 1) {
+    if (thrinfo->gotConnClose == 1) {
         /* left some time, other thread maybe use the mem of conn. */
         cm_sleep(1);
         bool findepollHandle = false;
         (void)pthread_rwlock_wrlock(&gConns.lock);
         write_runlog(LOG, "receive signal to close all the agent connections now, conn count is %u.\n", gConns.count);
         for (uint32 i = 0; i < gConns.max_node_id + 1; i++) {
+            if (i % gIOThreads.count != thrinfo->id) {
+                continue;
+            }
+
             con = gConns.connections[i];
-            if (con != NULL && epollHandle == con->epHandle) {
+            if (con != NULL && thrinfo->epHandle == con->epHandle) {
                 Assert(con->port->remote_type == CM_AGENT);
 
                 EventDel(con->epHandle, con);
@@ -479,12 +483,12 @@ static void CloseAllConnections(volatile sig_atomic_t& gotConnsClose, int epollH
             }
         }
         if (gConns.count == 0 || g_HA_status->local_role == CM_SERVER_PRIMARY) {
-            gotConnsClose = 0;
+            thrinfo->gotConnClose = 0;
             write_runlog(LOG, "reset close conn flag.\n");
         }
         (void)pthread_rwlock_unlock(&gConns.lock);
         if (!findepollHandle) {
-            write_runlog(LOG, "can't get epollHandle %d.\n", epollHandle);
+            write_runlog(LOG, "can't get epollHandle %d.\n", thrinfo->epHandle);
         }
     }
 }
@@ -538,8 +542,9 @@ void* CM_WorkThreadMain(void* argp)
 
     CM_WorkThread* thrinfo = (CM_WorkThread*)argp;
 
-    thread_name = (thrinfo->type == CM_AGENT) ? "NORMAL WORKER" : "CTL WORKER";
-    MsgPriority pri = (thrinfo->type == CM_AGENT) ? MsgPriNormal : MsgPriHigh;
+    thread_name = (thrinfo->type == CM_AGENT) ? "AGENT_WORKER" : "CTL_WORKER";
+    MsgSourceType src = (thrinfo->type == CM_AGENT) ? MsgSrcAgent : MsgSrcCtl;
+    (void)prctl(PR_SET_NAME, thread_name);
 
     (void)pthread_detach(pthread_self());
 
@@ -548,8 +553,14 @@ void* CM_WorkThreadMain(void* argp)
     write_runlog(LOG, "cmserver pool thread %lu starting, \n", thrinfo->tid);
     SetCanProcThisMsgFun(CanProcThisMsg);
 
-    uint32 msgCount = 0;
+    uint32 preMsgCount = 0;
+    uint64 totalWaitTime = 0;
+    uint64 totalProcTime = 0;
     MsgRecvInfo *msg = NULL;
+    uint64 t0 = GetMonotonicTimeMs();
+
+    uint32 ioThreadIdx = thrinfo->id % gIOThreads.count;
+    CM_IOThread* ioThrInfo = &gIOThreads.threads[ioThreadIdx];
 
     for (;;) {
         if (got_stop == true) {
@@ -558,14 +569,16 @@ void* CM_WorkThreadMain(void* argp)
             continue;
         }
 
+        uint64 t1 = GetMonotonicTimeMs();
         thrinfo->isBusy = false;
         do {
-            msg = (MsgRecvInfo*)(getRecvMsg(pri, 1, argp));
+            msg = (MsgRecvInfo*)(getRecvMsg((PriMsgQues*)ioThrInfo->recvMsgQue, src, 1, argp));
         } while (msg == NULL);
+        uint64 t2 = GetMonotonicTimeMs();
 
         thrinfo->isBusy = true;
         write_runlog(DEBUG5,
-            "get message from recv que:remote_type:%s,connSeq=%u,agentNodeId=%u,qtype=%c,len=%d.\n",
+            "get message from recv que:remote_type:%s,connSeq=%lu,agentNodeId=%u,qtype=%c,len=%d.\n",
             msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
             msg->connID.connSeq,
             msg->connID.agentNodeId,
@@ -573,22 +586,35 @@ void* CM_WorkThreadMain(void* argp)
             msg->msg.len);
 
         cm_server_process_msg(msg);
+        uint64 t3 = GetMonotonicTimeMs();
         thrinfo->ProcConnID.remoteType = 0;
         thrinfo->ProcConnID.connSeq = 0;
         thrinfo->ProcConnID.agentNodeId = 0;
         FreeBufFromMsgPool((void *)msg);
         msg = NULL;
+        thrinfo->procMsgCount++;
 
-        if (msgCount % (MSG_COUNT_FOR_LOG) == 0 && msgCount >= (MSG_COUNT_FOR_LOG)) {
-            write_runlog(DEBUG1, "the thread has deal 300 msg at this time.\n");
-            msgCount = 0;
+        totalWaitTime += t2 - t1;
+        totalProcTime += t3 - t2;
+
+        if (t3 - t0 > MSG_TIME_FOR_LOG * CM_MS_COUNT_PER_SEC) {
+            write_runlog(DEBUG5,
+                "the thread process message:total count:%u,this time:%u,wait time=%lums,proc time=%lums\n",
+                thrinfo->procMsgCount,
+                thrinfo->procMsgCount - preMsgCount,
+                totalWaitTime,
+                totalProcTime);
+            totalWaitTime = 0;
+            totalProcTime = 0;
+            t0 = t3;
+            preMsgCount = thrinfo->procMsgCount;
         }
     }
 
     return thrinfo;
 }
 
-void pushMsgToQue(CM_Connection* con)
+void pushMsgToQue(CM_IOThread *thrinfo, CM_Connection* con)
 {
     uint32 totalFreeCount, totalAllocCount, freeCount, allocCount, typeCount;
 
@@ -606,21 +632,17 @@ void pushMsgToQue(CM_Connection* con)
         write_runlog(LOG,
             "alloc memory for msg failed,totalFreeCount(%u), totalAllocCount(%u). this type(%u) "
             "freeCount(%u), allocCount(%u).\n",
-            totalFreeCount,
-            totalAllocCount,
-            allocLen,
-            freeCount,
-            allocCount);
+            totalFreeCount, totalAllocCount, allocLen, freeCount, allocCount);
         return;
     }
-
+    errno_t rc = memset_s(msgInfo, (size_t)allocLen, 0, (size_t)allocLen);
+    securec_check_errno(rc, (void)rc);
     msgInfo->connID.remoteType = con->port->remote_type;
     msgInfo->msgProcFlag = 0;
     msgInfo->msg = *con->inBuffer;
     msgInfo->msg.data = (char*)&msgInfo->data[0];
     if (con->inBuffer->len > 0) {
-        errno_t rc =
-            memcpy_s(msgInfo->msg.data, (size_t)con->inBuffer->len, con->inBuffer->data, (size_t)con->inBuffer->len);
+        rc = memcpy_s(msgInfo->msg.data, (size_t)con->inBuffer->len, con->inBuffer->data, (size_t)con->inBuffer->len);
         securec_check_errno(rc, (void)rc);
     }
     msgInfo->connID.connSeq = con->connSeq;
@@ -631,7 +653,7 @@ void pushMsgToQue(CM_Connection* con)
     }
 
     write_runlog(DEBUG5,
-        "push message to recv que:remote_type:%s,connSeq=%u,agentNodeId=%u,qtype=%c,len=%d.\n",
+        "push message to recv que:remote_type:%s,connSeq=%lu,agentNodeId=%u,qtype=%c,len=%d.\n",
         msgInfo->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
         msgInfo->connID.connSeq,
         msgInfo->connID.agentNodeId,
@@ -639,11 +661,15 @@ void pushMsgToQue(CM_Connection* con)
         msgInfo->msg.len);
 
     // push the message to the queue
+    uint64 t1 = GetMonotonicTimeMs();
+    msgInfo->connID.t1 = t1;
     if (con->port->remote_type == CM_CTL) {
-        pushRecvMsg(msgInfo, MsgPriHigh);
+        pushRecvMsg((PriMsgQues*)thrinfo->recvMsgQue, msgInfo, MsgSrcCtl);
     } else {
-        pushRecvMsg(msgInfo, MsgPriNormal);
+        pushRecvMsg((PriMsgQues*)thrinfo->recvMsgQue, msgInfo, MsgSrcAgent);
     }
+    uint64 t2 = GetMonotonicTimeMs();
+    thrinfo->pushRecvQueWaitTime += (uint32)(t2 - t1);
 }
 
 static bool checkMsg(CM_Connection* con)
@@ -730,7 +756,7 @@ static void CleanConBuffer(CM_Connection *con)
  * @param  events           My Param doc
  * @param  arg              My Param doc
  */
-static void cm_server_recv_msg(void* arg)
+static void cm_server_recv_msg(CM_IOThread *thrinfo, void* arg)
 {
     CM_Connection* con = (CM_Connection*)arg;
     int qtype = 0;
@@ -754,7 +780,7 @@ static void cm_server_recv_msg(void* arg)
                 if (!checkMsg(con)) {
                     break;
                 }
-                pushMsgToQue(con);
+                pushMsgToQue(thrinfo, con);
 #ifdef KRB5
                 }
 #endif // KRB5
@@ -811,18 +837,17 @@ static void cm_server_recv_msg(void* arg)
     }
 }
 
-static void recvMsg(const volatile sig_atomic_t& gotConnsClose, int fds, struct epoll_event *events)
+static void recvMsg(int fds, struct epoll_event *events, CM_IOThread *thrinfo)
 {
-    static uint32 msgCount = 0;
     eventfd_t value = 0;
 
     for (int i = 0; i < fds; i++) {
-        if (gotConnsClose) {
+        if (thrinfo->gotConnClose) {
             return;
         }
 
-        if (events[i].data.fd == g_wakefd) {
-            int ret = eventfd_read(g_wakefd, &value);
+        if (events[i].data.fd == thrinfo->wakefd) {
+            int ret = eventfd_read(thrinfo->wakefd, &value);
             write_runlog(DEBUG5, "eventfd_read ret = %d,value=%lu.\n", ret, value);
             continue;
         }
@@ -832,15 +857,10 @@ static void recvMsg(const volatile sig_atomic_t& gotConnsClose, int fds, struct 
         /* read event */
         if (events[i].events & EPOLLIN) {
             if ((con != NULL) && (con->port != NULL)) {
-                cm_server_recv_msg(con->arg);
-                msgCount++;
+                cm_server_recv_msg(thrinfo, con->arg);
+                thrinfo->recvMsgCount++;
             }
         }
-    }
-
-    if (msgCount % (MSG_COUNT_FOR_LOG) == 0 && msgCount >= (MSG_COUNT_FOR_LOG)) {
-        write_runlog(DEBUG1, "the thread has received %d msg(s) at this time.\n", MSG_COUNT_FOR_LOG);
-        msgCount = 0;
     }
 }
 
@@ -871,10 +891,47 @@ static CM_Connection *getConnect(const MsgSendInfo* msg)
         }
     }
 
-    write_runlog(DEBUG5, "getConnect:remote_type=%d,connSeq=%u,agentNodeId=%u,msg_type=%d.\n",
+    write_runlog(DEBUG5, "getConnect:remote_type=%d,connSeq=%lu,agentNodeId=%u,msg_type=%d.\n",
         msg->connID.remoteType, msg->connID.connSeq, msg->connID.agentNodeId, msgType);
 
     return con;
+}
+
+static inline uint64 GetIOThreadID(const ConnID connID)
+{
+    if (connID.remoteType == CM_AGENT) {
+        return connID.agentNodeId % gIOThreads.count;
+    } else if (connID.remoteType == CM_CTL) {
+        return connID.connSeq % gIOThreads.count;
+    }
+
+    CM_ASSERT(0);
+    return 0;
+}
+
+static void pushMsgToSendQue(MsgSendInfo *msg, MsgSourceType src)
+{
+    if (msg->connID.remoteType == CM_AGENT && msg->connID.agentNodeId == ALL_AGENT_NODE_ID) {
+        for (uint32 i = 1; i < gIOThreads.count; i++) {
+            uint32 len = sizeof(MsgSendInfo) + msg->dataSize;
+            MsgSendInfo *msg_cpy = (MsgSendInfo *)AllocBufFromMsgPool(len);
+            if (msg_cpy == NULL) {
+                write_runlog(ERROR, "pushMsgToSendQue:AllocBufFromMsgPool failed,size=%u\n", len);
+                return;
+            }
+            errno_t rc = memcpy_s(msg_cpy, len, msg, len);
+            securec_check_errno(rc, (void)rc);
+            CM_IOThread *thrinfo = &gIOThreads.threads[i];
+            pushSendMsg((PriMsgQues *)thrinfo->sendMsgQue, msg_cpy, src);            
+        }
+
+        CM_IOThread *thrinfo = &gIOThreads.threads[0];
+        pushSendMsg((PriMsgQues *)thrinfo->sendMsgQue, msg, src);
+    } else {
+        uint64 id = GetIOThreadID(msg->connID);
+        CM_IOThread *thrinfo = &gIOThreads.threads[id];
+        pushSendMsg((PriMsgQues *)thrinfo->sendMsgQue, msg, src);
+    }
 }
 
 static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
@@ -884,7 +941,7 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
     uint64 now = GetMonotonicTimeMs();
     bool retryProc = false;
     static const int retrySSLAcceptDetayMs = 10;
-    write_runlog(LOG, "[InnerProcSSLAccept] now=%lu,procTime=%lu,startTime=%lu,connSeq=%u.\n",
+    write_runlog(LOG, "[InnerProcSSLAccept] now=%lu,procTime=%lu,startTime=%lu,connSeq=%lu.\n",
         now, msg->procTime, connMsg->startConnTime, con->connSeq);
 
     status = cm_cs_ssl_accept(g_ssl_acceptor_fd, &con->port->pipe);
@@ -892,9 +949,9 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
         if (now < connMsg->startConnTime + CM_SSL_IO_TIMEOUT) {
             retryProc = true;
             status = CM_SUCCESS;
-            write_runlog(LOG, "[ProcessSslConnRequest]retry ssl connect,connSeq=%u.\n", con->connSeq);
+            write_runlog(LOG, "[ProcessSslConnRequest]retry ssl connect,connSeq=%lu.\n", con->connSeq);
         } else {
-            write_runlog(ERROR, "[ProcessSslConnRequest]ssl connect timeout,connSeq=%u.\n", con->connSeq);
+            write_runlog(ERROR, "[ProcessSslConnRequest]ssl connect timeout,connSeq=%lu.\n", con->connSeq);
         }
     }
 
@@ -909,9 +966,9 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
         errno_t rc = memcpy_s(nextConnMsg, msgSize, msg, msgSize);
         securec_check_errno(rc, (void)rc);
         nextConnMsg->procTime = now + retrySSLAcceptDetayMs;
-        pushSendMsg(nextConnMsg, MsgPriNormal);
+        pushMsgToSendQue(nextConnMsg, msg->connID.remoteType == CM_AGENT ? MsgSrcAgent : MsgSrcCtl);
         write_runlog(LOG,
-            "[ProcessSslConnRequest]retry ssl connect later,procTime=%lu,connSeq=%u.\n",
+            "[ProcessSslConnRequest]retry ssl connect later,procTime=%lu,connSeq=%lu.\n",
             nextConnMsg->procTime,
             con->connSeq);
         return;
@@ -920,7 +977,7 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
     (void)EventAdd(con->epHandle, (int)EPOLLIN, con);
 
     if (status != CM_SUCCESS) {
-        write_runlog(ERROR, "[ProcessSslConnRequest]srv ssl accept failed,connSeq=%u.\n", con->connSeq);
+        write_runlog(ERROR, "[ProcessSslConnRequest]srv ssl accept failed,connSeq=%lu.\n", con->connSeq);
         DisableRemoveConn(con);
         return;
     }
@@ -930,7 +987,7 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
         AddCMAgentConnection(con);
         RemoveTempConnection(con);
     }
-    write_runlog(LOG, "[ProcessSslConnRequest]srv ssl connect success,connSeq=%u.\n", con->connSeq);
+    write_runlog(LOG, "[ProcessSslConnRequest]srv ssl connect success,connSeq=%lu.\n", con->connSeq);
 }
 
 /**
@@ -988,7 +1045,9 @@ static int32 AssignCmaConnToThread(CM_Connection *con)
     }
 
     /* assign new connection to a work thread by round robin */
-    if (CMAssignConnToThread(con, &gIOThread) != STATUS_OK) {
+    uint32 threadID = con->port->node_id % gIOThreads.count;
+    CM_IOThread *ioThread = &gIOThreads.threads[threadID];
+    if (CMAssignConnToThread(con, ioThread) != STATUS_OK) {
         write_runlog(LOG, "Assign new CM_AGENT connection to worker thread failed, confd is %d.\n", con->fd);
         return -1;
     }
@@ -1000,8 +1059,10 @@ static int32 AssignCmctlConnToThread(CM_Connection *con)
     if (con->fd < 0) {
         return -1;
     }
+    uint64 threadID = con->connSeq % gIOThreads.count;
+    CM_IOThread *ioThread = &gIOThreads.threads[threadID];
     AddTempConnection(con);
-    if (CMAssignConnToThread(con, &gIOThread) != STATUS_OK) {
+    if (CMAssignConnToThread(con, ioThread) != STATUS_OK) {
         write_runlog(
             LOG, "Assign new connection %d to worker thread failed, confd is %d.\n", con->port->remote_type, con->fd);
         return -1;
@@ -1035,7 +1096,7 @@ static inline CM_Connection *GetCmConnect(const MsgSendInfo* msg)
     CM_Connection *con = getConnect(msg);
     if (con == NULL) {
         write_runlog(ERROR,
-            "[sendMsgs]get connection failed:remote_type=%s,connSeq=%u,agentNodeId=%u.\n",
+            "[sendMsgs]get connection failed:remote_type=%s,connSeq=%lu,agentNodeId=%u.\n",
             msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
             msg->connID.connSeq,
             msg->connID.agentNodeId);
@@ -1079,7 +1140,7 @@ static void CheckConnectAssignThread(const MsgSendInfo* msg)
     AssignConnToThread(*(CM_Connection **)msg->data);
 }
 
-void InnerProc(const MsgSendInfo* msg)
+void InnerProc(MsgSendInfo* msg)
 {
     switch (msg->procMethod) {
         case PM_REMOVE_CONN:
@@ -1095,13 +1156,16 @@ void InnerProc(const MsgSendInfo* msg)
         case PM_ASSIGN_CONN:
             CheckConnectAssignThread(msg);
             break;
-        default:;
+        default:
+            write_runlog(ERROR, "unknown procMethod:%d.\n", (int)msg->procMethod);
     }
+    msg->connID.t9 = GetMonotonicTimeMs();
 }
 
-static int sendMsg(const MsgSendInfo *msg, CM_Connection *con)
+static int sendMsg(MsgSendInfo *msg, CM_Connection *con)
 {
     int ret = CmsSendAndFlushMsg(con, msg->msgType, (const char *)&msg->data[0], msg->dataSize, msg->log_level);
+    msg->connID.t9 = GetMonotonicTimeMs();
     if (ret != 0) {
         write_runlog(ERROR, "CmsSendAndFlushMsg error.\n");
     } else {
@@ -1115,11 +1179,15 @@ static int sendMsg(const MsgSendInfo *msg, CM_Connection *con)
     return ret;
 }
 
-static void sendMsg(const MsgSendInfo *msg)
+static void sendMsg(uint32 id, MsgSendInfo *msg)
 {
     if (msg->connID.remoteType == CM_AGENT && msg->connID.agentNodeId == ALL_AGENT_NODE_ID) {
         (void)pthread_rwlock_wrlock(&gConns.lock);
         for (uint32 i = 0; i < gConns.max_node_id + 1; i++) {
+            if (i % gIOThreads.count != id) {
+                continue;
+            }
+
             CM_Connection *con = gConns.connections[i];
             if (con == NULL) {
                 continue;
@@ -1135,7 +1203,7 @@ static void sendMsg(const MsgSendInfo *msg)
         CM_Connection *con = getConnect(msg);
         if (con == NULL) {
             write_runlog(ERROR,
-                "[sendMsgs]get connection failed:remote_type=%s,connSeq=%u,agentNodeId=%u.\n",
+                "[sendMsgs]get connection failed:remote_type=%s,connSeq=%lu,agentNodeId=%u.\n",
                 msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
                 msg->connID.connSeq,
                 msg->connID.agentNodeId);
@@ -1148,31 +1216,73 @@ static void sendMsg(const MsgSendInfo *msg)
     }
 }
 
-static void procSendMsg(const MsgSendInfo *msg)
+static void procSendMsg(CM_IOThread &thrinfo, MsgSendInfo *msg)
 {
+    static const int log_interval = 5;
+    static const int expire_time = 7000;
     if (msg->procMethod == (int)PM_NONE) {
-        sendMsg(msg);
+        thrinfo.sendMsgCount++;
+        sendMsg(thrinfo.id, msg);
     } else {
         write_runlog(DEBUG5, "innerProc,method=%d.\n", msg->procMethod);
+        thrinfo.innerProcCount++;
         InnerProc(msg);
+    }
+
+    if (msg->connID.t1 != 0 && msg->connID.t9 != 0 && msg->connID.t9 - msg->connID.t1 > expire_time) {
+        static volatile time_t pre = 0;
+        static volatile uint32 discard = 0;
+        time_t now = time(NULL);
+        if (now > pre + log_interval) {
+            write_runlog(WARNING,
+                "msg_delay:type=%c,procMethod=%d,msgProcFlag=%d,msgType=%d,remoteType=%d,pushRecvQue=%lu,inRecvQue=%lu,"
+                "getRecvQue=%lu,proc=%lu,pushSendQue=%lu,inSendQue=%lu,getSendQue=%lu,send=%lu,discard=%u\n",
+                msg->msgType,
+                (int)msg->procMethod,
+                (int)msg->msgProcFlag,
+                msg->dataSize > sizeof(int) ? *((int *)msg->data) : -1,
+                msg->connID.remoteType,
+                msg->connID.t2 - msg->connID.t1,
+                msg->connID.t3 - msg->connID.t2,
+                msg->connID.t4 - msg->connID.t3,
+                msg->connID.t5 - msg->connID.t4,
+                msg->connID.t6 - msg->connID.t5,
+                msg->connID.t7 - msg->connID.t6,
+                msg->connID.t8 - msg->connID.t7,
+                msg->connID.t9 - msg->connID.t8,
+                discard);
+            pre = now;
+            discard = 0;
+        } else {
+            ++discard;
+        }
     }
 }
 
-static void sendMsgs()
+static void sendMsgs(CM_IOThread &thrinfo)
 {
-    static uint32 msgCount = 0;
-    size_t total = getSendMsgCount();
+    PriMsgQues *sendQue = (PriMsgQues*)thrinfo.sendMsgQue;
+    size_t total = getMsgCount(sendQue);
     size_t procCount = 0;
 
+    if (total == 0) {
+        return;
+    }
+
     for (;;) {
-        MsgSendInfo *msg = (MsgSendInfo*)(getSendMsg());
+        uint64 t1 = GetMonotonicTimeMs();
+        MsgSendInfo *msg = (MsgSendInfo *)(getSendMsg(sendQue, MsgSrcAgent));
         if (msg == NULL) {
-            write_runlog(DEBUG5, "no message in send que.\n");
+            uint64 t2 = GetMonotonicTimeMs();
+            thrinfo.getSendQueWaitTime += (uint32)(t2 - t1);
             break;
         }
 
+        uint64 t2 = GetMonotonicTimeMs();
+        thrinfo.getSendQueWaitTime += (uint32)(t2 - t1);
+
         write_runlog(DEBUG5,
-            "get message from send que:remote_type:%s,connSeq=%u,agentNodeId=%u,msgType=%c:%d,len=%u.\n",
+            "get message from send que:remote_type:%s,connSeq=%lu,agentNodeId=%u,msgType=%c:%d,len=%u.\n",
             msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
             msg->connID.connSeq,
             msg->connID.agentNodeId,
@@ -1180,13 +1290,9 @@ static void sendMsgs()
             msg->dataSize > sizeof(int) ? *((int *)msg->data) : 0,  // internal process message's datasize maybe 0
             msg->dataSize);
 
-        procSendMsg(msg);
+        procSendMsg(thrinfo, msg);
         FreeBufFromMsgPool(msg);
         msg = NULL;
-
-        if (msgCount++ % SEND_COUNT == 0) {
-            write_runlog(DEBUG1, "the thread has send %u msg at this time.\n", msgCount);
-        }
 
         procCount++;
         if (procCount >= total) {
@@ -1195,11 +1301,14 @@ static void sendMsgs()
     }
 }
 
-static void WakeSenderFunc(void)
+static void WakeSenderFunc(const ConnID connID)
 {
+    uint64 id = GetIOThreadID(connID);
+    CM_IOThread *thrinfo = &gIOThreads.threads[id];
+    int wakefd = thrinfo->wakefd;
     eventfd_t value = pthread_self();
-    if (g_wakefd >= 0) {
-        int ret = eventfd_write(g_wakefd, value);
+    if (wakefd >= 0) {
+        int ret = eventfd_write(wakefd, value);
         if (ret != 0) {
             write_runlog(ERROR, "eventfd_write failed.ret = %d,errno=%d,value=%lu.\n", ret, errno, value);
         }
@@ -1208,44 +1317,48 @@ static void WakeSenderFunc(void)
     }
 }
 
-static int CreateWakeupEvent(int epollHandle)
+static int CreateWakeupEvent(int epollHandle, int &wakefd)
 {
-    g_wakefd = eventfd(0, 0);
-    if (g_wakefd < 0) {
+    wakefd = eventfd(0, 0);
+    if (wakefd < 0) {
         write_runlog(ERROR, "eventfd error :%d.\n", errno);
         return CM_ERROR;
     }
 
-    write_runlog(LOG, "eventfd :%d.\n", g_wakefd);
+    write_runlog(LOG, "eventfd :%d.\n", wakefd);
 
-    struct epoll_event ev = {.events = (uint32)EPOLLIN, {.fd = g_wakefd}};
-    if (epoll_ctl(epollHandle, EPOLL_CTL_ADD, g_wakefd, &ev) != 0) {
+    struct epoll_event ev = {.events = (uint32)EPOLLIN, {.fd = wakefd}};
+    if (epoll_ctl(epollHandle, EPOLL_CTL_ADD, wakefd, &ev) != 0) {
         write_runlog(ERROR, "epoll_ctl error :%d.\n", errno);
-        (void)close(g_wakefd);
-        g_wakefd = -1;
+        (void)close(wakefd);
+        wakefd = -1;
         return CM_ERROR;
     }
 
     return CM_SUCCESS;
 }
 
-void* CM_IOThreadMain(void* argp)
+void *CM_IOThreadMain(void *argp)
 {
     int epollHandle;
     struct epoll_event events[MAX_EVENTS];
     sigset_t block_sig_set;
+    CM_IOThread *thrinfo = (CM_IOThread *)argp;
+    time_t time1 = time(NULL);
 
-    CM_IOThread* thrinfo = (CM_IOThread*)argp;
-    thread_name = "IO_THREAD";
+    thread_name = "IO_WORKER";
+    (void)prctl(PR_SET_NAME, thread_name);
     epollHandle = thrinfo->epHandle;
-    if (CreateWakeupEvent(epollHandle) != CM_SUCCESS) {
+    if (CreateWakeupEvent(epollHandle, thrinfo->wakefd) != CM_SUCCESS) {
         return NULL;
     }
+
+    uint64 epollWait = 0, recvMsgTime = 0, sendMsgTime = 0, count = 0;
+
     (void)pthread_detach(pthread_self());
     setBlockSigMask(&block_sig_set);
     setWakeSenderFunc(WakeSenderFunc);
     int waitTime = EPOLL_TIMEOUT;
-    volatile sig_atomic_t& gotConnsClose = got_conns_close[thrinfo->id];
     write_runlog(LOG, "cmserver pool thread %lu starting, epollfd is %d.\n", thrinfo->tid, epollHandle);
     for (;;) {
         if (got_stop == 1) {
@@ -1254,15 +1367,10 @@ void* CM_IOThreadMain(void* argp)
             continue;
         }
 
-        CloseAllConnections(gotConnsClose, epollHandle);
+        CloseAllConnections(thrinfo);
 
         thrinfo->isBusy = false;
-        /* wait for events to happen, 5s timeout */
-        if (existSendMsg()) {
-            waitTime = 1;
-        } else {
-            waitTime = EPOLL_TIMEOUT;
-        }
+        uint64 t2 = GetMonotonicTimeMs();
         int fds = epoll_pwait(epollHandle, events, MAX_EVENTS, waitTime, &block_sig_set);
         if (fds < 0) {
             if (errno != EINTR && errno != EWOULDBLOCK) {
@@ -1271,20 +1379,48 @@ void* CM_IOThreadMain(void* argp)
             }
         }
         thrinfo->isBusy = true;
+        uint64 t3 = GetMonotonicTimeMs();
         if (fds > 0) {
-            recvMsg(gotConnsClose, fds, events);
+            recvMsg(fds, events, thrinfo);
         }
+        uint64 t4 = GetMonotonicTimeMs();
+        sendMsgs(*thrinfo);
+        uint64 t5 = GetMonotonicTimeMs();
 
-        sendMsgs();
+        epollWait += t3 - t2;
+        recvMsgTime += t4 - t3;
+        sendMsgTime += t5 - t4;
+        count++;
+        time_t time2 = time(NULL);
+        if (time2 - time1 >= MSG_TIME_FOR_LOG) {
+            size_t totalRecvMsg = getMsgCount((PriMsgQues *)thrinfo->recvMsgQue);
+            size_t totalSendMsg = getMsgCount((PriMsgQues *)thrinfo->sendMsgQue);
+            if (totalRecvMsg >= MAX_MSG_IN_QUE || totalSendMsg >= MAX_MSG_IN_QUE) {
+                write_runlog(LOG,
+                    "total receive count:%u,send count:%u,innerProc count:%u;recv que size:%lu,send que size:%lu,"
+                    "push send msg wait:%u,get send msg wait:%u,epoll wait=%lu,recv msg=%lu,send msg=%lu,count=%lu\n",
+                    thrinfo->recvMsgCount, thrinfo->sendMsgCount, thrinfo->innerProcCount, totalRecvMsg, totalSendMsg,
+                    thrinfo->pushRecvQueWaitTime / CM_MS_COUNT_PER_SEC,
+                    thrinfo->getSendQueWaitTime / CM_MS_COUNT_PER_SEC,
+                    epollWait, recvMsgTime, sendMsgTime, count);
+            }
+            epollWait = recvMsgTime = sendMsgTime = 0;
+            count = 0;
+            time1 = time2;
+        }
     }
 
     (void)close(epollHandle);
-    (void)close(g_wakefd);
-    g_wakefd = -1;
+    thrinfo->epHandle = -1;
+    (void)close(thrinfo->wakefd);
+    thrinfo->wakefd = -1;
+    delete (PriMsgQues*)thrinfo->recvMsgQue;
+    thrinfo->recvMsgQue = NULL;
+    delete (PriMsgQues*)thrinfo->sendMsgQue;
+    thrinfo->sendMsgQue = NULL;
 
     return thrinfo;
 }
-
 
 /**
  * @brief add/mod an event to epoll
@@ -1626,9 +1762,7 @@ static int asyncSendMsgInner(const ConnID& connID, uint8 msgProcFlag, char msgty
         write_runlog(ERROR, "RespondMsg:AllocBufFromMsgPool failed,size=%u\n", (uint32)(sizeof(MsgSendInfo) + len));
         return (int)ERR_ALLOC_MEMORY;
     }
-    msg->connID.remoteType = connID.remoteType;
-    msg->connID.agentNodeId = connID.agentNodeId;
-    msg->connID.connSeq = connID.connSeq;
+    msg->connID = connID;
     msg->procTime = 0;
     msg->log_level = log_level;
     msg->dataSize = (uint32)len;
@@ -1641,25 +1775,22 @@ static int asyncSendMsgInner(const ConnID& connID, uint8 msgProcFlag, char msgty
     }
 
     write_runlog(DEBUG1,
-        "push message to send que:remote_type:%s,connSeq=%u,agentNodeId=%u,msgType=%c,len=%u.\n",
+        "push message to send que:remote_type:%s,connSeq=%lu,agentNodeId=%u,msgType=%c,len=%u.\n",
         msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
         msg->connID.connSeq,
         msg->connID.agentNodeId,
         msg->msgType,
         msg->dataSize);
 
-    pushSendMsg(msg, msg->connID.remoteType == CM_AGENT ? MsgPriNormal : MsgPriHigh);
+    pushMsgToSendQue(msg, msg->connID.remoteType == CM_CTL ? MsgSrcCtl : MsgSrcAgent);
 
     return 0;
 }
 
-int RespondMsg(const MsgRecvInfo* recvMsg, char msgtype, const char *s, size_t len, int log_level)
+int RespondMsg(MsgRecvInfo* recvMsg, char msgtype, const char *s, size_t len, int log_level)
 {
-    ConnID connID;
-    connID.remoteType = recvMsg->connID.remoteType;
-    connID.connSeq = recvMsg->connID.connSeq;
-    connID.agentNodeId = recvMsg->connID.agentNodeId;
-    return asyncSendMsgInner(connID, recvMsg->msgProcFlag, msgtype, s, len, log_level);
+    recvMsg->connID.t5 = GetMonotonicTimeMs();
+    return asyncSendMsgInner(recvMsg->connID, recvMsg->msgProcFlag, msgtype, s, len, log_level);
 }
 
 int SendToAgentMsg(uint agentNodeId, char msgtype, const char *s, size_t len, int log_level)
@@ -1687,9 +1818,7 @@ void AsyncProcMsg(const MsgRecvInfo *recvMsg, IOProcMethond procMethod, const ch
         write_runlog(ERROR, "[%s] AllocBufFromMsgPool failed.\n", __FUNCTION__);
         return;
     }
-    msg->connID.remoteType = recvMsg->connID.remoteType;
-    msg->connID.connSeq = recvMsg->connID.connSeq;
-    msg->connID.agentNodeId = recvMsg->connID.agentNodeId;
+    msg->connID = recvMsg->connID;
     msg->procTime = 0;
     msg->dataSize = len;
     msg->msgType = 0;
@@ -1704,12 +1833,12 @@ void AsyncProcMsg(const MsgRecvInfo *recvMsg, IOProcMethond procMethod, const ch
     }
 
     write_runlog(logLevel,
-        "push message to send que:remote_type:%s,connSeq=%u,agentNodeId=%u,procMethod=%d,len=%u.\n",
+        "push message to send que:remote_type:%s,connSeq=%lu,agentNodeId=%u,procMethod=%d,len=%u.\n",
         msg->connID.remoteType == CM_CTL ? "CM_CTL" : "CM_AGENT",
         msg->connID.connSeq,
         msg->connID.agentNodeId,
         (int)msg->procMethod,
         msg->dataSize);
 
-    pushSendMsg(msg, msg->connID.remoteType == CM_AGENT ? MsgPriNormal : MsgPriHigh);
+    pushMsgToSendQue(msg, msg->connID.remoteType == CM_CTL ? MsgSrcCtl : MsgSrcAgent);
 }

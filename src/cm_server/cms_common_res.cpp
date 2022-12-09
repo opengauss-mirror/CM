@@ -583,9 +583,11 @@ void NotifyCmaDoReg(uint32 destNodeId)
                 continue;
             }
             ResIsregStatus isreg = GetIsregStatusByCmInstId(resInfo->resStat[j].cmInstanceId);
-            if (isreg == CM_RES_ISREG_UNREG || isreg == CM_RES_ISREG_PENDING || isreg == CM_RES_ISREG_INIT) {
+            if (isreg == CM_RES_ISREG_REG) {
+                UpdateIsworkList(resInfo->resStat[j].cmInstanceId, RES_INST_WORK_STATUS_AVAIL);
+            } else if (isreg == CM_RES_ISREG_UNREG || isreg == CM_RES_ISREG_PENDING || isreg == CM_RES_ISREG_INIT) {
                 SendRegMsgToCma(destNodeId, 1, resInfo->resStat[j].resInstanceId, resInfo->resName);
-            } else if (isreg == CM_RES_ISREG_REG || isreg == CM_RES_ISREG_NOT_SUPPORT) {
+            } else if (isreg == CM_RES_ISREG_NOT_SUPPORT && resInfo->resStat[j].status == (uint32)CM_RES_STAT_OFFLINE) {
                 UpdateIsworkList(resInfo->resStat[j].cmInstanceId, RES_INST_WORK_STATUS_AVAIL);
             }
         }

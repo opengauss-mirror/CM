@@ -34,7 +34,7 @@
 #endif // KRB5
 
 #define CM_SERVER_PACKET_ERROR_MSG 128
-#define MSG_COUNT_FOR_LOG 300
+#define MSG_TIME_FOR_LOG  5
 #include "cms_msg_que.h"
 
 enum IOProcMethond {
@@ -71,7 +71,7 @@ void EventDel(int epollFd, CM_Connection* con);
 void CMPerformAuthentication(CM_Connection* con);
 int ReadCommand(CM_Connection *con, const char *str);
 int get_authentication_type(const char* config_file);
-int RespondMsg(const MsgRecvInfo* recvMsg, char msgtype, const char *s, size_t len, int log_level = LOG);
+int RespondMsg(MsgRecvInfo* recvMsg, char msgtype, const char *s, size_t len, int log_level = LOG);
 int SendToAgentMsg(uint agentNodeId, char msgtype, const char *s, size_t len, int log_level = LOG);
 int BroadcastMsg(char msgtype, const char *s, size_t len, int log_level = LOG);
 void AsyncProcMsg(const MsgRecvInfo* recvMsg, IOProcMethond procMethod, const char *s, uint32 len);

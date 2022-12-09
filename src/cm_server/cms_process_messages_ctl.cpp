@@ -550,11 +550,6 @@ void process_ctl_to_cm_switchover_full_msg(
     cm_to_ctl_command_ack msgSwitchoverFullAck = {0};
     msgSwitchoverFullAck.msg_type = MSG_CM_CTL_SWITCHOVER_FULL_ACK;
 
-    if (CheckEnableFlag()) {
-        msgSwitchoverFullAck.command_result = CM_INVALID_COMMAND;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
-        return;
-    }
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverFullAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
         (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
@@ -928,11 +923,6 @@ void ProcessCtlToCmSwitchoverFullCheckMsg(MsgRecvInfo* recvMsgInfo)
     cm_to_ctl_switchover_full_check_ack msgSwitchoverFullCheckAck;
     msgSwitchoverFullCheckAck.msg_type = MSG_CM_CTL_SWITCHOVER_FULL_CHECK_ACK;
 
-    if (CheckEnableFlag()) {
-        msgSwitchoverFullCheckAck.switchoverDone = INVALID_COMMAND;
-        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgSwitchoverFullCheckAck), sizeof(msgSwitchoverFullCheckAck));
-        return;
-    }
     int32 switchoverDone = GetSwitchoverDone("[ProcessCtlToCmSwitchoverFullCheckMsg]");
     msgSwitchoverFullCheckAck.switchoverDone = switchoverDone;
 
@@ -958,11 +948,6 @@ void ProcessCtlToCmSwitchoverAzCheckMsg(MsgRecvInfo* recvMsgInfo)
     cm_to_ctl_switchover_az_check_ack msgSwitchoverAZCheckAck;
     msgSwitchoverAZCheckAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_CHECK_ACK;
 
-    if (CheckEnableFlag()) {
-        msgSwitchoverAZCheckAck.switchoverDone = INVALID_COMMAND;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAZCheckAck), sizeof(msgSwitchoverAZCheckAck));
-        return;
-    }
     int32 switchoverDone = GetSwitchoverDone("[ProcessCtlToCmSwitchoverAzCheckMsg]");
     msgSwitchoverAZCheckAck.switchoverDone = switchoverDone;
 
@@ -2153,11 +2138,6 @@ void ProcessCtlToCmSwitchoverAllMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_sw
     cm_to_ctl_command_ack msgSwitchoverAllAck = { 0 };
 
     msgSwitchoverAllAck.msg_type = MSG_CM_CTL_SWITCHOVER_ALL_ACK;
-    if (CheckEnableFlag()) {
-        msgSwitchoverAllAck.command_result = CM_INVALID_COMMAND;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));
-        return;
-    }
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverAllAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
         (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));

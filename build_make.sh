@@ -78,7 +78,7 @@ function update_dcc_dependency() {
     fi
 
     if [ "x${THIRD_BIN_PATH}" != "x" ]; then
-        local dccHome="${THIRD_BIN_PATH}/kernel/component/dcc"
+        local dcc_home="${THIRD_BIN_PATH}/kernel/component/dcc"
 
         if [ -d "${dcc_home}" ]; then
             echo "We well get dcc lib from 3rd[${dcc_home}]."

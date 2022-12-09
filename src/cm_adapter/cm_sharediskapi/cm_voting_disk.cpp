@@ -189,10 +189,10 @@ status_t InitVotingDisk(const char *votingDiskPath)
     return CM_SUCCESS;
 }
 
-VotingDiskStatus GetNodeHeartbeatStat(uint32 nodeIndex, uint32 diskTimeout)
+VotingDiskStatus GetNodeHeartbeatStat(uint32 nodeIndex, uint32 diskTimeout, int logLevel)
 {
     if (nodeIndex >= VOTING_DISK_MAX_NODE_NUM) {
-        write_runlog(ERROR, "[%s] node index %u exceeds max node number of voting disk .\n", __FUNCTION__, nodeIndex);
+        write_runlog(logLevel, "[%s] node index %u exceeds max node of voting disk .\n", __FUNCTION__, nodeIndex);
         return VOTING_DISK_STATUS_UNAVAIL;
     }
     if (diskTimeout == 0) {
@@ -211,7 +211,7 @@ VotingDiskStatus GetNodeHeartbeatStat(uint32 nodeIndex, uint32 diskTimeout)
 
     time_t curTime = time(NULL);
     if (IsRhbTimeout(g_heartbeat[nodeIndex], curTime, (int)diskTimeout)) {
-        write_runlog(ERROR, "[%s] nodeIndex %u heartbeat timeout, diskTimeout=%u, nodeTime: %s\n",
+        write_runlog(logLevel, "[%s] nodeIndex %u heartbeat timeout, diskTimeout=%u, nodeTime: %s\n",
             __FUNCTION__, nodeIndex, diskTimeout, timeBuf);
         return VOTING_DISK_STATUS_UNAVAIL;
     }

@@ -28,7 +28,7 @@
 #include "cm_misc.h"
 
 int SystemExecute(const char *scriptPath, const char *oper, uint32 timeout);
-void StartOneResInst(const CmResConfList *conf);
+status_t StartOneResInst(const CmResConfList *conf);
 void StopOneResInst(const CmResConfList *conf);
 void OneResInstShutdown(const CmResConfList *oneResConf);
 status_t RegOneResInst(const CmResConfList *conf, uint32 destInstId);

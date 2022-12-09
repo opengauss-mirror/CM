@@ -102,9 +102,8 @@ status_t CmAllocDlock(dlock_t *lock, uint64 lockAddr, int64 instId);
 void CmInitDlock(dlock_t *lock, uint64 lockAddr, int64 instId);        // init lockw header and body
 void CmInitDlockHeader(dlock_t *lock, uint64 lockAddr, int64 instId);  // init lockw and lockr header
 status_t CmDiskLockS(dlock_t *lock, const char *scsiDev, int32 fd);
-status_t CmDiskLockfS(dlock_t *lock, const char *scsiDev);
 
 int32 CmDiskLock(dlock_t *lock, int32 fd);
-status_t CmDiskLockf(dlock_t *lock, int32 fd);
+status_t CmDiskLockf(dlock_t *lock, int32 fd, int64 lockTime);
 status_t CmGetDlockInfo(dlock_t *lock, int32 fd);
 #endif

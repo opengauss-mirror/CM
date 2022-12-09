@@ -53,8 +53,8 @@ volatile sig_atomic_t g_SetReplaceCnStatus = 0;
 
 /* main thread exit after HA thread close connection */
 volatile sig_atomic_t ha_connection_closed = 0;
-volatile sig_atomic_t got_conns_close[CM_IO_THREAD_COUNT] = {0};
 pid_t cm_agent = 0;
+uint64 gConnSeq = 0;
 
 const char* g_progname;
 static char g_appPath[MAXPGPATH] = {0};
@@ -140,8 +140,8 @@ static void stop_signal_reaper(int arg)
 
 static void close_all_agent_connections(int arg)
 {
-    for (int i = 0; i < CM_IO_THREAD_COUNT; i++) {
-        got_conns_close[i] = 1;
+    for (uint32 i = 0; i < gIOThreads.count; i++) {
+        gIOThreads.threads[i].gotConnClose = 1;
     }
 }
 
@@ -1594,7 +1594,7 @@ static int32 CmSetConnState(CM_Connection *con)
         errno_t rc = memset_s(&recvMsg, sizeof(MsgRecvInfo), 0, sizeof(MsgRecvInfo));
         securec_check_errno(rc, (void)rc);
         recvMsg.connID.agentNodeId = con->port->node_id;
-        recvMsg.connID.connSeq = 0;
+        recvMsg.connID.connSeq = con->connSeq;
         recvMsg.connID.remoteType = con->port->remote_type;
         AsyncProcMsg(&recvMsg, PM_ASSIGN_CONN, (const char *)&con, sizeof(CM_Connection *));
     } else {
@@ -1866,6 +1866,7 @@ static CM_Connection* makeConnection(int fd, Port* port)
     listenCon->fd = fd;
     listenCon->port = port;
     listenCon->inBuffer = CM_makeStringInfo();
+    listenCon->connSeq = gConnSeq++;
 
     Assert(listenCon->inBuffer != NULL);
 
@@ -2620,22 +2621,41 @@ int main(int argc, char** argv)
         }
     }
 
-    status = CM_CreateWorkThreadPool(cm_thread_count);
-    if (status < 0) {
-        write_runlog(ERROR, "Create Threads Pool failed!\n");
-        CloseAllDdbSession();
-        FreeNotifyMsg();
-        return -1;
+    // worker：     total [5,1000] s  5     6   10  32 50  100 200 500 1000
+    // IO worker      a = s/3         1  2   3   10 16  33  66  166  333
+    // clt worker     b = (s-a)/2     2  2   3   11 17  33  66  167  333
+    // agent worker   c = s-a-b       2  2   4   11 17  34  68  167  334
+ 
+    // node num                       <32    <32  >32  >32
+    // agent worker                   <=4    >4   <=4  >4
+    // ctl worker                      2     2    2    4
+ 
+    const uint32 workerCountPerNode = 3;
+    uint32 totalWorker = cm_thread_count;
+    if ((uint32)cm_thread_count > g_node_num * workerCountPerNode) {
+        totalWorker = g_node_num * workerCountPerNode;
     }
-
-    status = CM_CreateIOThread();
+ 
+    uint32 ioWorkerCount = totalWorker / 3;
+    uint32 cltWorkerCount = (totalWorker - ioWorkerCount) / 2;
+    uint32 agentWorkerCount = (totalWorker - ioWorkerCount) - cltWorkerCount;
+ 
+    status = CM_CreateIOThreadPool(ioWorkerCount);
     if (status < 0) {
         write_runlog(ERROR, "Create IOThreads failed!\n");
         CloseAllDdbSession();
         FreeNotifyMsg();
         return -1;
     }
-
+ 
+    status = CM_CreateWorkThreadPool(cltWorkerCount, agentWorkerCount);
+    if (status < 0) {
+        write_runlog(ERROR, "Create Threads Pool failed!\n");
+        CloseAllDdbSession();
+        FreeNotifyMsg();
+        return -1;
+    }
+    
     g_inMaintainMode = IsMaintainFileExist();
 
     status = CM_CreateHA();

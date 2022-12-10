@@ -2635,6 +2635,9 @@ int main(int argc, char** argv)
     if ((uint32)cm_thread_count > g_node_num * workerCountPerNode) {
         totalWorker = g_node_num * workerCountPerNode;
     }
+    if (totalWorker < workerCountPerNode) {
+        totalWorker = workerCountPerNode;
+    }
  
     uint32 ioWorkerCount = totalWorker / 3;
     uint32 cltWorkerCount = (totalWorker - ioWorkerCount) / 2;

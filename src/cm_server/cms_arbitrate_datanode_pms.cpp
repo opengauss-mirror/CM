@@ -982,7 +982,7 @@ static void GetCandiCateOtherMsg(DnArbCtx *ctx, int32 memIdx)
 static void GetCandiCateTermLsn(DnArbCtx *ctx, int32 memIdx)
 {
     cm_local_replconninfo *localRepl = &(ctx->dnReport[memIdx].local_status);
-    if (!ctx->cond.hasDynamicPrimary && ctx->dnReport[memIdx].sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES) {
+    if (ctx->dyPrim.count == 0 && ctx->dnReport[memIdx].sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES) {
         return;
     }
 
@@ -991,7 +991,7 @@ static void GetCandiCateTermLsn(DnArbCtx *ctx, int32 memIdx)
         ctx->cond.maxLsn = ctx->dnReport[memIdx].local_status.last_flush_lsn;
     }
 
-    if (!ctx->cond.hasDynamicPrimary && localRepl->disconn_mode != PROHIBIT_CONNECTION) {
+    if (ctx->dyPrim.count == 0 && localRepl->disconn_mode != PROHIBIT_CONNECTION) {
         return;
     }
 

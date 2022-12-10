@@ -322,7 +322,7 @@ void GetCandiInfoBackup(DnArbCtx *ctx, int32 memIdx)
     if (ctx->roleGroup->instanceMember[memIdx].role == INSTANCE_ROLE_PRIMARY) {
         ctx->cond.staticPriIdx = memIdx;
     }
-    if (!ctx->cond.hasDynamicPrimary && ctx->dnReport[memIdx].sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES) {
+    if (ctx->dyPrim.count == 0 && ctx->dnReport[memIdx].sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES) {
         return;
     }
     if (XLByteWE_W_TERM(localRepl->term, localRepl->last_flush_lsn, ctx->cond.maxTerm, ctx->cond.maxLsn)) {

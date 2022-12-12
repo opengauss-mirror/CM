@@ -1271,6 +1271,52 @@ int ProcessDnBarrierInfoResp(const cm_to_agent_barrier_info *barrierRespMsg)
     return 0;
 }
 
+void PushMsgToClientSendQue(char *msgPtr, uint32 msgLen, uint32 conId)
+{
+    AgentMsgPkg msgPkg = {0};
+    msgPkg.msgPtr = msgPtr;
+    msgPkg.msgLen = msgLen;
+    msgPkg.conId = conId;
+    (void)pthread_mutex_lock(&g_sendQueue.lock);
+    g_sendQueue.msg.push(msgPkg);
+    (void)pthread_mutex_unlock(&g_sendQueue.lock);
+    (void)pthread_cond_signal(&g_sendQueue.cond);
+}
+
+void PushMsgToClientRecvQue(char *msgPtr, uint32 msgLen)
+{
+    AgentMsgPkg msgPkg = {0};
+    msgPkg.msgPtr = msgPtr;
+    msgPkg.msgLen = msgLen;
+    (void)pthread_mutex_lock(&g_recvQueue.lock);
+    g_recvQueue.msg.push(msgPkg);
+    (void)pthread_mutex_unlock(&g_recvQueue.lock);
+    (void)pthread_cond_signal(&g_recvQueue.cond);
+}
+
+void CleanClientMsgQueueCore(MsgQueue &msgQueue, uint32 conId)
+{
+    (void)pthread_mutex_lock(&msgQueue.lock);
+    queue<AgentMsgPkg> newQue;
+    while (!msgQueue.msg.empty()) {
+        if (msgQueue.msg.front().conId == conId) {
+            free(msgQueue.msg.front().msgPtr);
+            msgQueue.msg.pop();
+            continue;
+        }
+        newQue.push(msgQueue.msg.front());
+        msgQueue.msg.pop();
+    }
+    swap(msgQueue.msg, newQue);
+    (void)pthread_mutex_unlock(&msgQueue.lock);
+}
+
+void CleanClientMsgQueue(uint32 conId)
+{
+    CleanClientMsgQueueCore(g_sendQueue, conId);
+    CleanClientMsgQueueCore(g_recvQueue, conId);
+}
+
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 static int GetDnInstanceIdStr(const CmToAgentGsGucSyncList *msgTypeDoGsGuc, char *ids, size_t idsLen)
 {

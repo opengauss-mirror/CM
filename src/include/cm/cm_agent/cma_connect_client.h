@@ -31,7 +31,7 @@ typedef struct ClientConnSt {
     uint32 resInstanceId;
 } ClientConn;
 
-vector<ClientConn> &GetClientConnect();
+ClientConn *GetClientConnect();
 void *RecvClientEventsMain(void * const arg);
 void *SendMessageToClientMain(void * const arg);
 void *ProcessMessageMain(void * const arg);

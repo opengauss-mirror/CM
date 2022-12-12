@@ -764,7 +764,7 @@ void kerberos_status_check_and_report()
     }
     agent_to_cm_kerberos_status_report report_msg;
     char kerberosConfigPath[MAX_PATH_LEN] = {0};
-    int isKerberos = cmagent_getenv("MPPDB_KRB5_FILE_PATH", kerberosConfigPath, sizeof(kerberosConfigPath)); 
+    int isKerberos = cmagent_getenv("MPPDB_KRB5_FILE_PATH", kerberosConfigPath, sizeof(kerberosConfigPath));
     if (isKerberos != EOK) {
         write_runlog(DEBUG1, "kerberos_status_check_and_report: MPPDB_KRB5_FILE_PATH get fail.\n");
         return;
@@ -790,21 +790,20 @@ void kerberos_status_check_and_report()
 }
 
 /* agent send report_msg to cm_server */
-static void ResourceStatusReport(cma_resource_status_msg *statusMsg)
+static void SendResStatReportMsg(const OneNodeResourceStatus *nodeStat)
 {
-    if (agent_cm_server_connect == NULL) {
-        return;
-    }
-
-    int ret;
-
-    statusMsg->msg_type = MSG_AGENT_CM_RESOURCE_STATUS;
-
-    ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char*)(statusMsg), sizeof(cma_resource_status_msg));
-    if (ret != 0) {
-        write_runlog(ERROR, "cm_client_send_msg send resource info fail !\n");
-        CloseConnToCmserver();
-        return;
+    errno_t rc;
+    for (uint32 i = 0; i < nodeStat->count; ++i) {
+        ReportResStatus reportMsg = {0};
+        reportMsg.msgType = MSG_AGENT_CM_RESOURCE_STATUS;
+        rc = memcpy_s(&reportMsg.stat, sizeof(CmResourceStatus), &nodeStat->status[i], sizeof(CmResourceStatus));
+        securec_check_errno(rc, (void)rc);
+        if (cm_client_send_msg(agent_cm_server_connect, 'C', (char*)(&reportMsg), sizeof(ReportResStatus)) !=
+            CM_SUCCESS) {
+            write_runlog(ERROR, "cm_client_send_msg send resource info fail !\n");
+            CloseConnToCmserver();
+            return;
+        }
     }
 }
 
@@ -1423,140 +1422,72 @@ void* KerberosStatusCheckMain(void* const arg)
     }
 }
 
-static void DoCheckResourceStatus(RES_PTR resInfo, cma_resource_status_msg *report_msg, uint32 ind)
+static void CheckOneResInstStatus(const CmResConfList *resConf, CmResourceStatus *resStat, uint32 timeout)
 {
-    long curr_time = time(NULL);
-    int ret;
-    errno_t rc;
+    errno_t rc = strcpy_s(resStat->resName, CM_MAX_RES_NAME, resConf->resName);
+    securec_check_errno(rc, (void)rc);
+    ResStatus ret = CheckOneResInst(resConf->script, resConf->resInstanceId, timeout);
+    if (ret == CM_RES_STAT_ONLINE) {
+        resStat->status = (uint32)CM_RES_ONLINE;
+    } else if (ret == CM_RES_STAT_OFFLINE) {
+        resStat->status = (uint32)CM_RES_OFFLINE;
+    } else {
+        resStat->status = (uint32)CM_RES_UNKNOWN;
+    }
+}
 
-    uint32 resInstanceId = resInfo->resInstanceId;
-    uint32 instanceId = resInfo->cmInstanceId;
-    uint32 interval = resInfo->checkInterval;
-    int timeOut = (int)resInfo->timeOut;
-    char *scriptPath = resInfo->scriptPath;
-    uint32 status = report_msg->node_status.status[ind].status;
+static void DoCheckResourceStatus(CmResConfList *resConf, CmResourceStatus *resStat)
+{
+    static uint32 lastResStatus = 0;
+    long currTime = time(NULL);
+    if (resConf->checkInfo.checkTime == 0) {
+        CheckOneResInstStatus(resConf, resStat, resConf->checkInfo.timeOut);
+        lastResStatus = resStat->status;
+        resConf->checkInfo.checkTime = currTime;
+        return;
+    }
+    if((currTime - resConf->checkInfo.checkTime) < resConf->checkInfo.checkInterval) {
+        resStat->status = lastResStatus;
+        return;
+    }
+    CheckOneResInstStatus(resConf, resStat, resConf->checkInfo.timeOut);
+    resConf->checkInfo.checkTime = currTime;
+    lastResStatus = resStat->status;
+}
 
-    for (uint32 i = 0; i < CM_MAX_RES_COUNT; i++) {
-        if (g_resStatusCheck[i].instanceId == 0) {
-            g_resStatusCheck[i].instanceId = instanceId;
-            g_resStatusCheck[i].checkTime = curr_time;
-            return;
-        }
-
-        if(g_resStatusCheck[i].instanceId != instanceId) {
-            continue;
-        }
-
-        curr_time = time(NULL);
-        if((curr_time - g_resStatusCheck[i].checkTime) < interval) {
-            continue;
-        }
-
-        if((status == PROCESS_CORPSE) && (curr_time - g_resStatusCheck[i].checkTime) > timeOut) {
-            StopOneResourceInstance(scriptPath, resInstanceId);
-            g_resStatusCheck[i].checkTime = curr_time;
-            continue;
-        }
-
-        ret = CheckOneResourceState(scriptPath, resInstanceId);
-        report_msg->node_status.status[ind].instanceId = instanceId;
-        report_msg->node_status.status[ind].resInstanceId = resInstanceId;
-        rc = strcpy_s(report_msg->node_status.status[ind].resName, CM_MAX_RES_NAME, resInfo->resName);
+void CheckResourceState(OneNodeResourceStatus *nodeStat)
+{
+    nodeStat->node = g_currentNode->node;
+    for (uint32 i = 0; i < (uint32)g_resConf.size(); ++i) {
+        errno_t rc = strcpy_s(nodeStat->status[i].resName, CM_MAX_RES_NAME, g_resConf[i].resName);
         securec_check_errno(rc, (void)rc);
-        if (ret == PROCESS_RUNNING) {
-            report_msg->node_status.status[ind].status = (uint32)CM_RES_ONLINE;
-        } else if (ret == PROCESS_NOT_EXIST) {
-            report_msg->node_status.status[ind].status = (uint32)CM_RES_OFFLINE;
-        } else {
-            report_msg->node_status.status[ind].status = PROCESS_CORPSE;
-        }
-        g_resStatusCheck[i].checkTime = curr_time;
+        nodeStat->status[i].nodeId = g_resConf[i].nodeId;
+        nodeStat->status[i].cmInstanceId = g_resConf[i].cmInstanceId;
+        nodeStat->status[i].resInstanceId = g_resConf[i].resInstanceId;
+        DoCheckResourceStatus(&g_resConf[i], &nodeStat->status[i]);
+        nodeStat->status[i].isWorkMember = g_resConf[i].isWorkMember;
     }
-}
+    nodeStat->count = (uint32)g_resConf.size();
 
-void CheckResourceState(cma_resource_status_msg *report_msg)
-{
-    errno_t rcs = memset_s(&report_msg->node_status, sizeof(OneNodeResourceStatus),
-        0, sizeof(OneNodeResourceStatus));
-    securec_check_errno(rcs, (void)rcs);
-
-    report_msg->node_status.node = g_currentNode->node;
-
-    RES_PTR resInfo;
-    uint32 i = 0;
-    for (resInfo = g_res_list.begin(); resInfo != g_res_list.end(); resInfo++) {
-        if (resInfo->nodeId != g_currentNode->node) {
-            continue;
-        }
-
-        DoCheckResourceStatus(resInfo, report_msg, i);
-        i++;
-    }
-    report_msg->node_status.count = i;
     return;
-}
-
-void InitResourceGlobalVal()
-{
-    errno_t rcs = 0;
-    rcs = memset_s(g_resStatusCheck, sizeof(cm_res_status_check_time) * CM_MAX_RES_COUNT, 
-        0, sizeof(cm_res_status_check_time) * CM_MAX_RES_COUNT);
-    securec_check_errno(rcs, (void)rcs);
-
-    rcs = memset_s(&g_cmResourceReportMsg.node_msg, sizeof(cma_resource_status_msg), 
-        0, sizeof(cma_resource_status_msg));
-    securec_check_errno(rcs, (void)rcs);
 }
 
 void *ResourceStatusCheckMain(void * const arg)
 {
-    bool isNeedReport;
-    cma_resource_status_msg statusMsg;
-    pthread_t threadId = pthread_self();
-    CmResStatList &statusList = GetResStatusListApi();
-
-    set_thread_state(threadId);
-    InitResourceGlobalVal();
-
-    write_runlog(LOG, "Resource status check thread start, threadid %lu.\n", threadId);
-
+    OneNodeResourceStatus nodeStat = {0};
+    write_runlog(LOG, "Resource status check thread start.\n");
     for (;;) {
         if (g_shutdownRequest || g_node_num > CM_MAX_RES_NODE_COUNT) {
             cm_sleep(5);
             continue;
         }
 
-        (void)CheckResourceState(&statusMsg);
-        statusMsg.isStatusChanged = false;
-        isNeedReport = false;
+        CheckResourceState(&nodeStat);
+        SendResStatReportMsg(&nodeStat);
 
-        (void)pthread_rwlock_wrlock(&(statusList.lock));
-        if (statusMsg.node_status.count != statusList.nodeStatus[statusMsg.node_status.node - 1].count) {
-            write_runlog(LOG, "the real res count(%u) is no same with storage(%u), notify cms.\n",
-                statusMsg.node_status.count, statusList.nodeStatus[statusMsg.node_status.node - 1].count);
-            ResourceStatusReport(&statusMsg);
-            (void)pthread_rwlock_unlock(&(statusList.lock));
-            cm_sleep(agent_check_interval);
-            continue;
-        }
-        for (uint32 i = 0; i < statusMsg.node_status.count; ++i) {
-            uint32 currStatus = statusMsg.node_status.status[i].status;
-            uint32 saveStatus = statusList.nodeStatus[statusMsg.node_status.node - 1].status[i].status;
+        errno_t rc = memset_s(&nodeStat, sizeof(OneNodeResourceStatus), 0, sizeof(OneNodeResourceStatus));
+        securec_check_errno(rc, (void)rc);
 
-            if (currStatus == saveStatus) {
-                continue;
-            }
-            isNeedReport = true;
-            if (currStatus != CM_RES_UNKNOWN && saveStatus != CM_RES_UNKNOWN) {
-                statusMsg.isStatusChanged = true;
-            }
-        }
-        if (isNeedReport) {
-            write_runlog(LOG, "res status is changed, need notify cms.\n");
-            ResourceStatusReport(&statusMsg);
-        }
-
-        (void)pthread_rwlock_unlock(&(statusList.lock));
         cm_sleep(agent_check_interval);
     }
 
@@ -1607,7 +1538,7 @@ static void PingPeerIP(int* count, const char localIP[CM_IP_LENGTH], const char 
     uint32 tryTimes = 3;
 
     int rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
-        "ping -c 1 -w 1 -I %s %s > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;", 
+        "ping -c 1 -w 1 -I %s %s > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
         localIP, peerIP);
     securec_check_intval(rc, (void)rc);
     write_runlog(DEBUG1, "ping command is: %s.\n", command);

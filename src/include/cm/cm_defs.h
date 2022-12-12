@@ -44,6 +44,14 @@ typedef enum en_status {
     CM_TIMEDOUT = 1,
 } status_t;
 
+typedef enum ResStatusEn {
+    CM_RES_STAT_UNKNOWN = 0,
+    CM_RES_STAT_ONLINE = 1,
+    CM_RES_STAT_OFFLINE = 2,
+    /********************/
+    CM_RES_STAT_COUNT = 3,
+} ResStatus;
+
 #define CM_EXIT ((int)-2)
 #define CM_FALSE (uint8)0
 #define CM_TRUE  (uint8)1

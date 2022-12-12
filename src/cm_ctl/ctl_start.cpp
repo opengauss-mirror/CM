@@ -116,22 +116,25 @@ static void StartResourceInstance();
 
 status_t DoCheckAndStartRes()
 {
-    bool find = false;
-    RES_PTR resInfo;
-    for (resInfo = g_res_list.begin(); resInfo != g_res_list.end(); resInfo++) {
-        if (resInfo->cmInstanceId != g_commandOperationInstanceId) {
-            continue;
-        } else {
-            find = true;
-            break;
-        }
-    }
-    if (!find) {
-        write_runlog(FATAL, "instanceId specified is illegal.\n");
+    /* check whether cm_agent is running */
+    if (GetAgentStatus() != PROCESS_RUNNING) {
+        write_runlog(ERROR, "The state of cm_agent is abnormal, maybe the cluster is not running.\n");
         return CM_ERROR;
     }
-    StartResourceInstance();
-    return CM_SUCCESS;
+
+    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
+        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            if (g_resStatus[i].status.resStat[j].cmInstanceId == g_commandOperationInstanceId) {
+                StartResourceInstance();
+                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+                return CM_SUCCESS;
+            }
+        }
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+    }
+    write_runlog(FATAL, "instanceId specified is illegal.\n");
+    return CM_ERROR;
 }
 
 status_t StartWholeCluster()
@@ -409,12 +412,12 @@ static void StartResourceInstance()
 
     ret = runCmdByNodeId(command, g_commandOperationNodeId);
     if (ret != 0) {
-        write_runlog(DEBUG1, "Failed to stop the etcd node with executing the command: command=\"%s\", "
+        write_runlog(ERROR, "Failed to start the resource instance with executing the command: command=\"%s\", "
             "nodeId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
             command, g_commandOperationNodeId, ret, SHELL_RETURN_CODE(ret), errno);
+    } else {
+        write_runlog(LOG, "Start resource instance successfully.\n");
     }
-
-    write_runlog(LOG, "start resource instance successfully.\n");
 }
 
 /*
@@ -1506,15 +1509,31 @@ static void* check_cluster_start_status(void* arg)
 
     if ((g_command_operation_azName == NULL) && !g_commandOperationNodeId && ('\0' == g_cmData[0]) &&
         g_cluster_start_status != CM_STATUS_NORMAL && g_cluster_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
-        write_runlog(ERROR, "start cluster failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+            "start cluster failed in (%d)s!\n\n"
+            "HINT: Maybe the cluster is continually being started in the background.\n"
+            "You can wait for a while and check whether the cluster starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            g_waitSeconds);
     else if (!g_commandOperationNodeId && ('\0' == g_cmData[0]) && g_az_start_status != CM_STATUS_NORMAL &&
              g_az_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
-        write_runlog(ERROR, "start availability zone failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+            "start availability zone failed in (%d)s!\n\n"
+            "HINT: Maybe the availability zone is continually being started in the background.\n"
+            "You can wait for a while and check whether the availability zone starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            g_waitSeconds);
     else if (('\0' == g_cmData[0]) && g_node_start_status != CM_STATUS_NORMAL &&
              g_node_start_status != CM_STATUS_NORMAL_WITH_CN_DELETED)
-        write_runlog(ERROR, "start node failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+            "start node failed in (%d)s!\n\n"
+            "HINT: Maybe the node is continually being started in the background.\n"
+            "You can wait for a while and check whether the node starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            g_waitSeconds);
     else if (g_instance_start_status != CM_STATUS_NORMAL)
-        write_runlog(ERROR, "start instance failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+            "start instance failed in (%d)s!\n\n"
+            "HINT: Maybe the instance is continually being started in the background.\n"
+            "You can wait for a while and check whether the instance starts, or increase the value of parameter \"-t\", e.g -t 600.\n",
+            g_waitSeconds);
 
     exit(-1);
 }

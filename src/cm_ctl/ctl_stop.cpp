@@ -108,26 +108,25 @@ extern bool g_stopAbnormal;
 
 void DoCheckAndStopRes()
 {
-    if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
-        bool find = false;
-        RES_PTR resInfo;
-        for (resInfo = g_res_list.begin(); resInfo != g_res_list.end(); resInfo++) {
-            if (resInfo->cmInstanceId != g_commandOperationInstanceId) {
-                continue;
-            } else {
-                find = true;
-                break;
+    /* check whether cm_agent is running */
+    if (GetAgentStatus() != PROCESS_RUNNING) {
+        write_runlog(ERROR, "The state of cm_agent is abnormal, maybe the cluster is not running.\n");
+        exit(1);
+    }
+
+    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
+        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            if (g_resStatus[i].status.resStat[j].cmInstanceId == g_commandOperationInstanceId) {
+                StopResourceInstance();
+                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+                exit(0);
             }
         }
-
-        if (!find) {
-            write_runlog(FATAL, "instanceId specified is illegal.\n");
-            exit(1);
-        }
-
-        StopResourceInstance();
-        exit(0);
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
+    write_runlog(FATAL, "instanceId specified is illegal.\n");
+    exit(1);
 }
 
 void do_stop(void)
@@ -143,7 +142,9 @@ void do_stop(void)
         exit(0);
     }
 #endif
-    DoCheckAndStopRes();
+    if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
+        DoCheckAndStopRes();
+    }
     if (NULL == g_command_operation_azName && 0 == g_commandOperationNodeId) {
         write_runlog(LOG, "stop cluster. \n");
         stop_cluster();
@@ -630,11 +631,26 @@ restop:
                 g_waitSeconds);
         }
     } else if (g_az_stop_status == CM_STOP_STATUS_INIT) {
-        write_runlog(ERROR, "stop availability zone failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+                     "stop availability zone failed in (%d)s!\n\n"
+                     "HINT: Maybe the availability zone is continually being stopped in the background.\n"
+                     "You can wait for a while and check whether the availability zone stops, or immediately stop the cluster using "
+                     "\"cm_ctl stop -z <azid> -m i\".\n",
+                     g_waitSeconds);
     } else if (g_node_stop_status == CM_STOP_STATUS_INIT) {
-        write_runlog(ERROR, "stop node failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+                     "stop node failed in (%d)s!\n\n"
+                     "HINT: Maybe the node is continually being stopped in the background.\n"
+                     "You can wait for a while and check whether the node stops, or immediately stop the node using "
+                     "\"cm_ctl stop -n <nodeid> -m i\".\n",
+                     g_waitSeconds);
     } else if (g_instance_stop_status == CM_STOP_STATUS_INIT) {
-        write_runlog(ERROR, "stop instance failed in (%d)s.\n", g_waitSeconds);
+        write_runlog(ERROR,
+                     "stop instance failed in (%d)s!\n\n"
+                     "HINT: Maybe the instance is continually being stopped in the background.\n"
+                     "You can wait for a while and check whether the instance stops, or immediately stop the instance using "
+                     "\"cm_ctl stop -D <datapath> -m i\".\n",
+                     g_waitSeconds);
     }
 
     exit(-1);
@@ -1039,12 +1055,12 @@ static void StopResourceInstance()
 
     ret = runCmdByNodeId(command, g_commandOperationNodeId);
     if (ret != 0) {
-        write_runlog(DEBUG1, "Failed to stop the etcd node with executing the command: command=\"%s\","
+        write_runlog(ERROR, "Failed to stop the resource instance with executing the command: command=\"%s\","
             " nodeId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
             command, g_commandOperationNodeId, ret, SHELL_RETURN_CODE(ret), errno);
+    } else {
+        write_runlog(LOG, "Stop resource instance successfully.\n");
     }
-
-    write_runlog(LOG, "stop resource instance successfully.\n");
 }
 
 

@@ -62,7 +62,7 @@ void* DNConnectionStatusCheckMain(void * const arg);
 void* KerberosStatusCheckMain(void * const arg);
 void InitResourceGlobalVal(void);
 void *ResourceStatusCheckMain(void * const arg);
-void CheckResourceState(cma_resource_status_msg *report_msg);
+void CheckResourceState(OneNodeResourceStatus *nodeStat);
 
 int CreateCheckNodeStatusThread(void);
 

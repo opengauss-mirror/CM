@@ -295,6 +295,7 @@ static void ReloadParametersFromConfigfile()
     if (g_enableE2ERto == 1) {
         instance_heartbeat_timeout = INSTANCE_HEARTBEAT_TIMEOUT_FOR_E2E_RTO;
     }
+    g_cm_agent_kill_instance_time = get_uint32_value_from_config(configDir, "agent_fault_timeout", 60);
     get_config_param(configDir, "enable_transaction_read_only", g_enableSetReadOnly, sizeof(g_enableSetReadOnly));
     if (!CheckBoolConfigParam(g_enableSetReadOnly)) {
         rcs = strcpy_s(g_enableSetReadOnly, sizeof(g_enableSetReadOnly), "on");
@@ -788,6 +789,37 @@ static void UpdateCheckInterval(MonitorContext *ctx)
     ctx->takeTime = checkEnd.tv_sec;
 }
 
+static void SetResStatUnknown(uint32 nodeId)
+{
+    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
+        (void)pthread_rwlock_wrlock(&g_resStatus[i].rwlock);
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            if ((g_resStatus[i].status.resStat[j].nodeId == nodeId) &&
+                (g_resStatus[i].status.resStat[j].status != (uint32)CM_RES_STAT_UNKNOWN)) {
+                write_runlog(LOG, "res(%s) inst(%u) heartbeat abnormal, set status CM_RES_STAT_UNKNOWN.\n",
+                             g_resStatus[i].status.resName, g_resStatus[i].status.resStat[j].cmInstanceId);
+                g_resStatus[i].status.resStat[j].status = (uint32)CM_RES_STAT_UNKNOWN;
+                ++g_resStatus[i].status.version;
+                ProcessReportResChangedMsg(false, g_resStatus[i].status);
+            }
+        }
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+    }
+}
+
+static void CheckAllResReportByNode()
+{
+    static const uint32 resNormalTimeout = 5;
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        uint32 inter = GetResStatReportInter(g_node[i].node);
+        if (inter > resNormalTimeout) {
+            SetResStatUnknown(g_node[i].node);
+        } else {
+            SetResStatReportInter(g_node[i].node);
+        }
+    }
+}
+
 static void DoMonitor(MonitorContext *ctx)
 {
     CheckKerberosHB();
@@ -840,6 +872,10 @@ static void DoMonitor(MonitorContext *ctx)
     if (g_cluster_unbalance_check_interval <= 0) {
         g_cluster_unbalance_check_interval = cluster_unbalance_check_interval;
         check_cluster_balance_status();
+    }
+
+    if (!g_resStatus.empty()) {
+        CheckAllResReportByNode();
     }
 
     cm_sleep(1);

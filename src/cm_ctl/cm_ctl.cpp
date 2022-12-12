@@ -1254,7 +1254,7 @@ static int CheckCtlInputParameter(const CtlOption *ctx)
         ctl_command == CM_ENCRYPT_COMMAND;
     if (condition) {
         if ('\0' == g_cmData[0]) {
-            write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("no cm directory specified."),
+            write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("no data directory specified."),
                 errdetail("N/A"), errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
                 erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
             return 1;
@@ -2030,6 +2030,22 @@ static void CtlCheckOther(const CtlOption *ctlCtx)
     ExitFlagForCommand();
 }
 
+void GetClusterWorkMode(void)
+{
+    if (g_dn_replication_num > 0) {
+#ifdef ENABLE_MULTIPLE_NODES
+        g_cluster_work_mode = g_resStatus.empty() ? CM_INNER_DISTRIBUTE : CM_INNER_DISTRIBUTE_AND_DEFINED;
+#else
+        g_cluster_work_mode = g_resStatus.empty() ? CM_INNER_CENTRALIZE : CM_INNER_CENTRALIZE_AND_DEFINED;
+#endif
+        return;
+    }
+
+    if (!g_resStatus.empty()) {
+        g_cluster_work_mode = CM_SELF_DEFINED_ONLY;
+    }
+}
+
 #ifdef ENABLE_MULTIPLE_NODES
 static void DoRestartCommand(void)
 {
@@ -2304,6 +2320,9 @@ int main(int argc, char** argv)
         exit(-1);
     }
     (void)read_logic_cluster_name(g_logicClusterListPath, lcList, &err_no);
+    if (ReadResourceDefConfig(false) != CM_SUCCESS) {
+        exit(-1);
+    }
 
     /* support cm_ctl ddb */
     CtlDccCommand(argc, argv);

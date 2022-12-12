@@ -56,5 +56,7 @@ extern int GetHomePath(char *outputEnvValue, uint32 envValueLen, int32 logLevel 
 
 bool IsSharedStorageMode();
 bool IsBoolCmParamTrue(const char *param);
+status_t TcpSendMsg(int socket, const char *buf, size_t remainSize);
+status_t TcpRecvMsg(int socket, char *buf, size_t remainSize);
 
 #endif // CM_MISC_API_H

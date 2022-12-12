@@ -43,7 +43,7 @@ static void PrintParallelRedoResult(uint32 *pre_node, cm_to_ctl_instance_status 
 static void PrintSimpleResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
 static void print_simple_DN_result(uint32 node_index, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
 static void QueryResourceStatus(int *clusterState);
-static void GetRersourceStatusInfo(int *clusterState);
+static void GetResourceStatusInfo(int *clusterState);
 
 static bool hasFindCmSP = false;
 static bool hasFindEtcdL = false;
@@ -71,6 +71,7 @@ extern CM_Conn* CmServer_conn1;
 extern CM_Conn* CmServer_conn2;
 extern bool g_logFileSet;
 extern char* g_commandMinortityAzName;
+extern uint32 maxResNameLen;
 
 
 extern bool g_gtmBalance;
@@ -642,33 +643,19 @@ static void QueryResourceStatus(int *clusterState)
 {
     uint32 node_len = MAX_NODE_ID_LEN + SPACE_LEN + max_node_name_len + SPACE_LEN;
     int instance_len = INSTANCE_ID_LEN + SPACE_LEN + 4;
-    int res_len = 9;
+    /* There are three states of resources: OnLine, OffLine, Unknown. */
+    const int maxResStateLen = strlen("OffLine");
 
     fprintf(g_logFilePtr, "\n[ Defined Resource State ]\n\n");
-    if (g_ipQuery) {
-        fprintf(g_logFilePtr,
-            "%-*s%-*s%-*s%-*s%-s\n",
-            node_len,
-            "node",
-            MAX_IP_LEN + 1,
-            "node_ip",
-            res_len,
-            "res_name",
-            instance_len,
-            "instance",
-            "state");
-    } else {
-        fprintf(
-            g_logFilePtr, "%-*s%-*s%-*s%-s\n", node_len, "node", res_len, "res_name", instance_len, "instance", "state");
-    }
-    for (uint32 i = 0; i < node_len + instance_len + INSTANCE_DYNAMIC_ROLE_LEN + res_len +
-                        (g_ipQuery ? (MAX_IP_LEN + 1) : 0);
-        i++) {
+    fprintf(
+        g_logFilePtr, "%-*s%-*s%-*s%-s\n", node_len, "node", maxResNameLen + SPACE_LEN, "res_name", instance_len, "instance", "state");
+    uint32 lineLen = node_len + maxResNameLen + SPACE_LEN + instance_len + maxResStateLen;
+    for (uint32 i = 0; i < lineLen; i++) {
         fprintf(g_logFilePtr, "-");
     }
     fprintf(g_logFilePtr, "\n");
 
-    GetRersourceStatusInfo(clusterState);
+    GetResourceStatusInfo(clusterState);
 }
 
 static int GetStatusFromMsg(uint32 instanceId, const OneNodeResourceStatus *nodeStatus)
@@ -680,9 +667,8 @@ static int GetStatusFromMsg(uint32 instanceId, const OneNodeResourceStatus *node
         if (nodeStatus[i].node == 0) {
             continue;
         }
-        for (uint32 j = 0; j < nodeStatus[i].count; j++)
-        {
-            if (instanceId == nodeStatus[i].status[j].instanceId) {
+        for (uint32 j = 0; j < nodeStatus[i].count; j++) {
+            if (instanceId == nodeStatus[i].status[j].cmInstanceId) {
                 return nodeStatus[i].status[j].status;
             }
         }
@@ -692,33 +678,37 @@ static int GetStatusFromMsg(uint32 instanceId, const OneNodeResourceStatus *node
 
 static void PrintResStatusLine(const OneNodeResourceStatus *nodeStatus, int *clusterState)
 {
-    char *status = NULL;
-    int32 ret = 0;
+    const char *status;
 
-    RES_PTR resInfo;
-    for(resInfo = g_res_list.begin(); resInfo != g_res_list.end(); resInfo++) { 
-        ret = GetStatusFromMsg(resInfo->cmInstanceId, nodeStatus);
-        if (ret == 1) {
-            status = "OnLine";
-        } else if (ret == 2) {
-            status = "OffLine";
-            *clusterState = CM_STATUS_NEED_REPAIR;
-        } else {
-            status = "Unknown";
-            *clusterState = CM_STATUS_NEED_REPAIR;
+    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
+        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            uint32 ret = GetStatusFromMsg(g_resStatus[i].status.resStat[j].cmInstanceId, nodeStatus);
+            if (ret == 1) {
+                status = "OnLine";
+            } else if (ret == 2) {
+                status = "OffLine";
+                *clusterState = CM_STATUS_NEED_REPAIR;
+            } else {
+                status = "Unknown";
+                *clusterState = CM_STATUS_NEED_REPAIR;
+            }
+            fprintf(g_logFilePtr, "%-2u ", g_resStatus[i].status.resStat[j].nodeId);
+            fprintf(g_logFilePtr, "%-*s ", max_node_name_len,
+                g_node[g_resStatus[i].status.resStat[j].nodeId - 1].nodeName);
+            fprintf(g_logFilePtr, "%-*s ", maxResNameLen, g_resStatus[i].status.resName);
+            fprintf(g_logFilePtr, "%-8u ", g_resStatus[i].status.resStat[j].cmInstanceId);
+            fprintf(g_logFilePtr, "%s\n", status);
         }
-        fprintf(g_logFilePtr, "%u %s  %s    %s    %u    %s\n", resInfo->nodeId,
-            g_node[resInfo->nodeId - 1].nodeName, g_node[resInfo->nodeId - 1].sshChannel[0], resInfo->resName,
-            resInfo->cmInstanceId, status);
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
-
     fprintf(g_logFilePtr, "\n");
     return;
 }
 
-static int ProcessRersourceStatusInfo()
+static int ProcessResourceStatusInfo()
 {
-    cm_to_ctl_group_resource_status *cm_query_instance_status_ptr = NULL;
+    CmsToCtlGroupResStatus *cm_query_instance_status_ptr = NULL;
     cm_msg_type *cm_msg_type_ptr = NULL;
     char* receiveMsg = NULL;
     OneNodeResourceStatus *group_status;
@@ -748,7 +738,7 @@ static int ProcessRersourceStatusInfo()
             if (receiveMsg != NULL) {
                 cm_msg_type_ptr = (cm_msg_type*)receiveMsg;
                 if (cm_msg_type_ptr->msg_type == MSG_CM_QUERY_INSTANCE_STATUS) {
-                    cm_query_instance_status_ptr = (cm_to_ctl_group_resource_status*)receiveMsg;
+                    cm_query_instance_status_ptr = (CmsToCtlGroupResStatus*)receiveMsg;
                     if (cm_query_instance_status_ptr->msg_step != QUERY_STATUS_CMSERVER_STEP) {
                         CmSleep(1);
                         doGetAckTryTime--;
@@ -768,19 +758,16 @@ static int ProcessRersourceStatusInfo()
     return clusterState;
 }
 
-static void GetRersourceStatusInfo(int *clusterState)
+static void GetResourceStatusInfo(int *clusterState)
 {
-    cm_to_ctl_group_resource_status  cm_query_instance_status_content;
-    int ret;
-
-    size_t count = g_res_list.size();
-    if (count == 0) {
+    if (g_resStatus.empty()) {
         return;
     }
 
-    cm_query_instance_status_content.msg_type = MSG_CTL_CM_RESOURCE_STATUS;
-    cm_query_instance_status_content.msg_step = QUERY_STATUS_CMSERVER_STEP;
-    cm_query_instance_status_content.instance_type = PROCESS_RESOURCE;
+    CmsToCtlGroupResStatus queryMsg = {0};
+    queryMsg.msg_type = MSG_CTL_CM_RESOURCE_STATUS;
+    queryMsg.msg_step = QUERY_STATUS_CMSERVER_STEP;
+    queryMsg.instance_type = PROCESS_RESOURCE;
 
     if (CmServer_conn == NULL) {
         do_conn_cmserver(false, 0);
@@ -790,15 +777,14 @@ static void GetRersourceStatusInfo(int *clusterState)
         }
     }
 
-    ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&cm_query_instance_status_content, sizeof(cm_to_ctl_group_resource_status));
-    if (ret != 0) {
+    if (cm_client_send_msg(CmServer_conn, 'C', (char*)&queryMsg, sizeof(CmsToCtlGroupResStatus)) != 0) {
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
         exit(0);
     }
     CmSleep(1);
 
-    *clusterState = ProcessRersourceStatusInfo(); 
+    *clusterState = ProcessResourceStatusInfo();
 }
 
 

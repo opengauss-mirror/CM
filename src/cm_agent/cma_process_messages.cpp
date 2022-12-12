@@ -1733,25 +1733,6 @@ static void MsgCmAgentResStatusList(const CM_Result* msg, char *dataPath, const 
     ProcessResStatusList(msgResStatusList);
 }
 
-static void MsgCmAgentReportSetStatus(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
-{
-    const CmsReportSetDataResult *msgSetState =
-        (const CmsReportSetDataResult *)CmGetmsgbytesPtr(msg, sizeof(CmsReportSetDataResult));
-    if (msgSetState == NULL) {
-        return;
-    }
-    ProcessResDataSetResult(msgSetState);
-}
-
-static void MsgCmAgentReportResData(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
-{
-    const CmsReportResData *msgResData = (const CmsReportResData *)CmGetmsgbytesPtr(msg, sizeof(CmsReportResData));
-    if (msgResData == NULL) {
-        return;
-    }
-    ProcessResDataFromCms(msgResData);
-}
-
 static void MsgCmAgentClientDdbOperAck(const CM_Result* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     const CmSendDdbOperRes *msgDdbOper =
@@ -1940,8 +1921,6 @@ void CmServerCmdProcessorInit(void)
     g_cmsCmdProcessor[MSG_CM_AGENT_DN_SYNC_LIST]                = MsgCmAgentDnSyncList;
     g_cmsCmdProcessor[MSG_CM_AGENT_RES_STATUS_CHANGED]          = MsgCmAgentResStatusChanged;
     g_cmsCmdProcessor[MSG_CM_AGENT_RES_STATUS_LIST]             = MsgCmAgentResStatusList;
-    g_cmsCmdProcessor[MSG_CM_AGENT_REPORT_SET_STATUS]           = MsgCmAgentReportSetStatus;
-    g_cmsCmdProcessor[MSG_CM_AGENT_REPORT_RES_DATA]             = MsgCmAgentReportResData;
     g_cmsCmdProcessor[MSG_CM_CLIENT_DDB_OPER_ACK]               = MsgCmAgentClientDdbOperAck;
     g_cmsCmdProcessor[MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER]   = MsgCmAgentDnInstanceBarrier;
     g_cmsCmdProcessor[MSG_GET_SHARED_STORAGE_INFO_ACK]          = MsgCmAgentGetSharedStorageModeAck;

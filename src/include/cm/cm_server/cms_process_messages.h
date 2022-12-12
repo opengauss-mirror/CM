@@ -80,7 +80,7 @@ void ProcessCtlToCmSwitchoverAzCheckMsg(CM_Connection* con);
 void process_ctl_to_cm_switchover_az_timeout_msg(CM_Connection* con);
 void process_ctl_to_cm_setmode(CM_Connection* con);
 void ProcessCtlToCmSetMsg(CM_Connection* con, const ctl_to_cm_set* ctl_to_cm_set_ptr);
-void ProcessResInstanceStatusMsg(CM_Connection *con, const cm_to_ctl_group_resource_status *query_status_ptr);
+void ProcessResInstanceStatusMsg(CM_Connection *con, const CmsToCtlGroupResStatus *queryStatusPtr);
 void process_ctl_to_cm_balance_check_msg(CM_Connection* con);
 void ProcessCtlToCmsSwitchMsg(CM_Connection *con, CtlToCmsSwitch *switchMsg);
 
@@ -103,8 +103,11 @@ void ProcessCtl2CmOneInstanceBarrierQueryMsg(CM_Connection* con, uint32 node, ui
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 void ProcessGetDnSyncListMsg(CM_Connection *con, AgentToCmserverDnSyncList *agentToCmserverDnSyncList);
 #endif
-void process_agent_to_cm_resource_status_report_msg(
-    CM_Connection *con, const cma_resource_status_msg *resourceStatusPtr);
+void ProcessAgent2CmResStatReportMsg(const ReportResStatus *resStatusPtr);
+void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList &status);
+void SetResStatReportInter(uint32 nodeId);
+status_t InitNodeReportResStatInter();
+uint32 GetResStatReportInter(uint32 nodeId);
 
 int GetCurAz();
 uint32 GetPrimaryDnIndex(void);
@@ -121,9 +124,6 @@ inline bool CheckEnableFlag()
 void ProcessCtlToCmReloadMsg(CM_Connection *con);
 void ProcessCtlToCmExecDccCmdMsg(CM_Connection *con, ExecDdbCmdMsg *msg);
 void ProcessRequestResStatusListMsg(CM_Connection *con);
-void ProcessSetInstanceDataMsg(const ReportSetInstanceData *recvMsg);
-void ProcessReportSetResDataMsg(CM_Connection *con, ReportSetResData *recvMsg);
-void ProcessRequestGetResData(CM_Connection *con, RequestGetResData *recvMsg);
 void ProcessCltSendOper(CM_Connection *con, CltSendDdbOper *ddbOper);
 void ProcessSslConnRequest(CM_Connection *con, const AgentToCmConnectRequest *requestMsg);
 void ProcessSharedStorageMsg(CM_Connection *con);

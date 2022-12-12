@@ -99,6 +99,7 @@ const char *g_cmsParamInfo[] = {
     "ddb_max_log_file_size|string|0,0|NULL|NULL|",
     "ddb_log_suppress_enable|int|0,1|NULL|NULL|",
     "ddb_election_timeout|int|1,600|NULL|NULL|",
+    "agent_fault_timeout|int|0,2147483647|NULL|NULL|",
 #ifdef ENABLE_MULTIPLE_NODES
     "coordinator_heartbeat_timeout|int|0,2592000|NULL|if set 0,the function is disabled|",
     "cluster_starting_aribt_delay|int|1,2592000|NULL|NULL|",

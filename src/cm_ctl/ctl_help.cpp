@@ -89,7 +89,7 @@ static void UsageHelp(const char *projectName)
         "-n NODEID -D DATADIR [-t SECS]\n"), projectName);
 #endif
     (void)printf(_("  %s reload --param [--agent | --server]\n"), projectName);
-    (void)printf(_("  %s list --param --agent | --server\n"), projectName);
+    (void)printf(_("  %s list --param --agent | --server [-n NODEID]\n"), projectName);
     (void)printf(_("  %s encrypt [-M MODE] -D DATADIR\n"), projectName);
     (void)printf(_("  %s ddb DCC_CMD\n"), projectName);
     (void)printf(_("  %s switch [--ddb_type=[DDB]] [--commit] [--rollback]\n"), projectName);

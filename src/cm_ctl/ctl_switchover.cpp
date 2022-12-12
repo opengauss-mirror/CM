@@ -239,7 +239,11 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     }
 
     if (timePass >= g_waitSeconds) {
-        write_runlog(ERROR, "switchover command timeout.\n");
+        write_runlog(ERROR,
+                "switchover command timeout!\n\n"
+                "HINT: Maybe the switchover action is continually running in the background.\n"
+                "You can wait for a while and check the status of current cluster using "
+                "\"cm_ctl query -Cv\".\n");
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
         return -3;
@@ -347,6 +351,10 @@ static int DoSwitchoverFull(const CtlOption *ctx)
                     hasWarning = true;
                     break;
 
+                case MSG_CM_CTL_BACKUP_OPEN:
+                    write_runlog(ERROR, "disable switchover in recovery mode.\n");
+                    FINISH_CONNECTION();
+
                 default:
                     write_runlog(ERROR, "unknown the msg type is %d.\n", msgType->msg_type);
                     break;
@@ -388,7 +396,11 @@ static int DoSwitchoverFull(const CtlOption *ctx)
         }
 
         if (timePass > g_waitSeconds) {
-            write_runlog(ERROR, "switchover command timeout.\n");
+            write_runlog(ERROR,
+                "switchover command timeout!\n\n"
+                "HINT: Maybe the switchover action is continually running in the background.\n"
+                "You can wait for a while and check the status of current cluster using "
+                "\"cm_ctl query -Cv\".\n");
             CMPQfinish(CmServer_conn);
             CmServer_conn = NULL;
             return -3;
@@ -445,7 +457,11 @@ static int BalanceResultReq(int &timePass, bool waitBalance, int &sendCheckCount
     }
 
     if (timePass > g_waitSeconds) {
-        write_runlog(ERROR, "switchover command timeout.\n");
+        write_runlog(ERROR,
+            "switchover command timeout!\n\n"
+            "HINT: Maybe the switchover action is continually running in the background.\n"
+            "You can wait for a while and check the status of current cluster using "
+            "\"cm_ctl query -Cv\".\n");
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
         return -3;

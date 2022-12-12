@@ -33,7 +33,6 @@
 #include <pthread.h>
 #include <sys/time.h>
 
-
 #define CM_MAX_SENDER_NUM 2
 #define LOGIC_CLUSTER_NUMBER (32 + 1)  // max 32 logic + 1 elastic group
 #define CM_LOGIC_CLUSTER_NAME_LEN 64
@@ -49,7 +48,7 @@
 
 #define PROCESS_RESOURCE 2
 #define CM_MAX_RES_NAME 32
-#define CM_MAX_INSTANCES 32
+#define CM_MAX_INSTANCES 64
 #define CM_MAX_RES_COUNT 16
 #define CM_MAX_RES_NODE_COUNT 16
 
@@ -258,6 +257,7 @@ typedef enum CM_MessageType {
     MSG_AGENT_CM_DATANODE_LOCAL_PEER = 156,
     MSG_GET_SHARED_STORAGE_INFO = 157,
     MSG_GET_SHARED_STORAGE_INFO_ACK = 158,
+    MSG_AGENT_CLIENT_INIT_ACK = 159,
 
     MSG_CM_TYPE_CEIL, // new message types should be added before this.
 } CM_MessageType;
@@ -376,8 +376,6 @@ const int INSTANCE_WALSNDSTATE_UNKNOWN = 6;
 #define MAX_OBS_CN_COUNT   (64)
 #define MAX_OBS_DEL_TEXT_LEN  (CN_BUILD_TASK_ID_MAX_LEN * MAX_OBS_CN_COUNT + DEL_TEXT_HEADER_LEN_V1)
 
-#define CM_MAX_RES_DATA_SIZE 1024
-
 #define SSL_ENABLE (1)
 #define SSL_DISABLE (2)
 
@@ -395,12 +393,6 @@ typedef enum DDB_OPER_t {
     DDB_GET_OPER,
     DDB_DEL_OPER,
 } DDB_OPER;
-
-typedef enum {
-    RES_START,
-    RES_STOP,
-    RES_CHECK
-} CM_RES_OPER;
 
 typedef struct DatanodeSyncList {
     int count;
@@ -1087,14 +1079,6 @@ typedef enum cm_coordinate_group_mode {
     GROUP_MODE_BUTT
 } cm_coordinate_group_mode;
 
-typedef enum cm_resource_group_mode {
-    INSTANCE_UNKNOWN,
-    INSTANCE_ONLINE,
-    INSTANCE_OFFLINE,
-    MODE_BUTT
-} cm_resource_group_mode;
-
-
 #define AGENT_TO_INSTANCE_CONNECTION_BAD 0
 #define AGENT_TO_INSTANCE_CONNECTION_OK 1
 
@@ -1602,60 +1586,27 @@ typedef struct cm_to_ctl_instance_coordinate_status {
     /* no notify map in ctl */
 } cm_to_ctl_instance_coordinate_status;
 
-typedef struct ResInstanceInfo {
+typedef struct CmResourceStatusSt {
+    char resName[CM_MAX_RES_NAME];
     uint32 nodeId;
     uint32 cmInstanceId;
     uint32 resInstanceId;
-} ResInstanceInfo;
-
-typedef struct cm_resource_status {
-    uint32 instanceId;
-    uint32 resInstanceId;
     uint32 status;
-    int64 instanceData;
-    bool isMaster;
-    char resName[CM_MAX_RES_NAME];
-} cm_resource_status;
+    uint32 isWorkMember;
+} CmResourceStatus;
 
 typedef struct OneNodeResourceStatusSt {
     uint32 node;
     uint32 count;
-    cm_resource_status status[CM_MAX_RES_COUNT];
+    CmResourceStatus status[CM_MAX_RES_COUNT];
 } OneNodeResourceStatus;
 
-typedef struct cm_to_ctl_group_resource_status {
+typedef struct CmsToCtlGroupResStatusSt {
     int msg_type;
     uint32 instance_type;
     int msg_step;
     OneNodeResourceStatus group_status[CM_MAX_RES_NODE_COUNT];
-} cm_to_ctl_group_resource_status;
-
-typedef struct CmResStatList {
-    uint64 version;
-    pthread_rwlock_t lock;
-    OneNodeResourceStatus nodeStatus[CM_MAX_RES_NODE_COUNT];
-} CmResStatList;
-
-typedef struct OneNodeResStatusInfoSt {
-    pthread_rwlock_t lk_lock;
-    OneNodeResourceStatus nodeStatus;
-} OneNodeResStatusInfo;
-
-typedef struct cma_resource_status_msg {
-    int msg_type;
-    bool isStatusChanged;
-    OneNodeResourceStatus node_status;
-} cma_resource_status_msg;
-
-typedef struct cma_resource_status_report {
-    pthread_rwlock_t lk_lock;
-    cma_resource_status_msg  node_msg;
-} cma_resource_status_report;
-
-typedef struct cm_res_status_check_time {
-    uint32 instanceId;
-    long checkTime;
-} cm_res_status_check_time;
+} CmsToCtlGroupResStatus;
 
 typedef struct cm_to_ctl_instance_status {
     int msg_type;
@@ -1935,36 +1886,25 @@ typedef struct ExecDdbCmdAckMsgSt {
     char errMsg[ERR_MSG_LENGTH];
 } ExecDdbCmdAckMsg;
 
-typedef enum ResStatusEn {
-    CM_RES_STAT_UNKNOWN = 0,
-    CM_RES_STAT_ONLINE = 1,
-    CM_RES_STAT_OFFLINE = 2,
-    /********************/
-    CM_RES_STAT_COUNT = 3,
-} ResStatus;
-
 typedef struct CmResStatInfoSt {
     uint32 nodeId;
     uint32 cmInstanceId;
     uint32 resInstanceId;
-    char resName[CM_MAX_RES_NAME];
-    ResStatus stat;
-    long long instanceData;
+    uint32 isWorkMember;
+    uint32 status;
 } CmResStatInfo;
 
 typedef struct OneResStatListSt {
     unsigned long long version;
-    unsigned int masterNodeId;
     uint32 instanceCount;
+    char resName[CM_MAX_RES_NAME];
     CmResStatInfo resStat[CM_MAX_INSTANCES];
 } OneResStatList;
 
-typedef struct ResDataSt {
-    uint64 version;
-    uint64 slotId;
-    uint32 size;
-    char data[CM_MAX_RES_DATA_SIZE];
-} ResData;
+typedef struct CmResStatListSt {
+    pthread_rwlock_t rwlock;
+    OneResStatList status;
+} CmResStatList;
 
 typedef struct ResInfoSt {
     uint32 resInstanceId;
@@ -1972,55 +1912,25 @@ typedef struct ResInfoSt {
     char resName[CM_MAX_RES_NAME];
 } ResInfo;
 
-typedef struct SetResultSt {
-    bool isSetSuccess;
+typedef struct InitResultSt {
+    bool isSuccess;
     char reserve[7];
-} SetResult;
-
-typedef struct CmsReportSetDataResultSt {
-    int msgType;
-    uint32 conId;
-    uint64 slotId;
-    bool isSetSuccess;
-    char reserve[7];
-} CmsReportSetDataResult;
-
-typedef struct CmsReportResDataSt {
-    int msgType;
-    uint32 conId;
-    ResData resData;
-} CmsReportResData;
+} InitResult;
 
 typedef struct CmsReportResStatListSt {
     int msgType;
-    CmResStatList resList;
+    OneResStatList resList;
 } CmsReportResStatList;
 
 // agent send msg to cm server
-typedef struct ReportSetInstanceDataSt {
+typedef struct ReportResStatusSt {
     int msgType;
-    uint32 nodeId;
-    uint32 instanceId;
-    int64 data;
-} ReportSetInstanceData;
+    CmResourceStatus stat;
+} ReportResStatus;
 
 typedef struct RequestResStatListSt {
     int msgType;
 } RequestResStatList;
-
-typedef struct ReportSetResDataSt {
-    int msgType;
-    uint32 conId;
-    char resName[CM_MAX_RES_NAME];
-    ResData resData;
-} ReportSetResData;
-
-typedef struct RequestGetResDataSt {
-    int msgType;
-    uint32 conId;
-    uint64 slotId;
-    char resName[CM_MAX_RES_NAME];
-} RequestGetResData;
 
 typedef struct MsgHeadSt {
     uint32 msgType;
@@ -2029,24 +1939,15 @@ typedef struct MsgHeadSt {
 } MsgHead;
 
 // agent send message
-typedef struct AgentToClientHbAckSt {
-    MsgHead head;
-} AgentToClientHbAck;
-
 typedef struct AgentToClientResListSt {
     MsgHead head;
     OneResStatList resStatusList;
 } AgentToClientResList;
 
-typedef struct AgentToClientSetDataResultSt {
+typedef struct AgentToClientInitResultSt {
     MsgHead head;
-    SetResult result;
-} AgentToClientSetDataResult;
-
-typedef struct AgentToClientResDataSt {
-    MsgHead head;
-    ResData msgData;
-} AgentToClientResData;
+    InitResult result;
+} AgentToClientInitResult;
 
 typedef struct ClientHbMsgSt {
     MsgHead head;
@@ -2057,20 +1958,5 @@ typedef struct ClientInitMsgSt {
     MsgHead head;
     ResInfo resInfo;
 } ClientInitMsg;
-
-typedef struct ClientSetDataMsgSt {
-    MsgHead head;
-    int64 instanceData;
-} ClientSetDataMsg;
-
-typedef struct ClientSetResDataMsgSt {
-    MsgHead head;
-    ResData data;
-} ClientSetResDataMsg;
-
-typedef struct ClientGetResDataMsgSt {
-    MsgHead head;
-    uint64 slotId;
-} ClientGetResDataMsg;
 
 #endif

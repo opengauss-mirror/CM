@@ -101,7 +101,7 @@ class InstallImpl:
         status, output = subprocess.getstatusoutput(getCMVersionCmd)
         if status != 0:
             self.logger.logExit("Failed to get CM pacakage version.")
-        cmVersionList = re.findall(r'openGauss CM (\d.*\d) build', output)
+        cmVersionList = re.findall(r'.*CM (\d.*\d) build', output)
         if len(cmVersionList) == 0:
             self.logger.logExit("Failed to get CM pacakage version.")
         cmVersion = cmVersionList[0]
@@ -230,11 +230,11 @@ class InstallImpl:
 
         # set crontab on localhost
         status, output = subprocess.getstatusoutput(setCronCmd)
+        os.remove(cronContentTmpFile)
         if status != 0:
             self.logger.debug("Command: " + setCronCmd)
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit(ErrorCode.GAUSS_508["GAUSS_50801"] + errorDetail)
-        os.remove(cronContentTmpFile)
 
         status, output = subprocess.getstatusoutput(killMonitorCmd + startMonitorCmd)
         if status != 0:

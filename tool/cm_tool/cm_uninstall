@@ -145,7 +145,8 @@ General options:
         cmd = """
             crontab -l > {cronContentTmpFile};
             sed '/.*om_monitor.*/d' {cronContentTmpFile} -i;
-            crontab {cronContentTmpFile}
+            crontab {cronContentTmpFile} && 
+            rm -f {cronContentTmpFile}
             """.format(cronContentTmpFile=cronContentTmpFile)
         for host in self.hostnames:
             isLocal = False

@@ -185,7 +185,12 @@ General options:
         if status != 0:
             self.logger.logExit((ErrorCode.GAUSS_514["GAUSS_51400"] % cmd) + \
                 "\nStatus:%d\nOutput:" + output)
-        nodesStaticInfo = re.split("=+", output)[1:]
+        nodesStaticInfoStr = re.split("azName.*:.*", output)
+        if len(nodesStaticInfoStr) == 0:
+            self.logger.logExit("Failed to get cluster info from static file.")
+        if len(nodesStaticInfoStr) < 2:
+            self.logger.logExit("CM is not supported in single instance.")
+        nodesStaticInfo = nodesStaticInfoStr[1:]
         for nodeInfo in nodesStaticInfo:
             if nodeInfo == "":
                 continue

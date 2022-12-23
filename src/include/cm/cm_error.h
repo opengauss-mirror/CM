@@ -95,7 +95,10 @@ typedef enum en_cm_errno {
     ERR_DISKRW_DISK_HEAD_FULL = 47,
     ERR_DISKRW_WRITE_KEY      = 48,
     ERR_DISKRW_INSERT_KEY     = 49,
-    ERR_INVALID_DDB_CMD       = 50,
+    ERR_DDB_CMD_INVALID       = 50,
+    ERR_DDB_CMD_UNKNOWN       = 51,
+    ERR_DDB_CMD_PREFIX_INVALID = 52,
+    ERR_DDB_CMD_ARG_INVALID   = 53,
     ERR_MAX_COUNT
 } cm_errno_t;
 

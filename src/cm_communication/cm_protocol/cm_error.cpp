@@ -93,7 +93,10 @@ const char *g_errorDesc[ERR_MAX_COUNT] = {
     [ERR_DISKRW_DISK_HEAD_FULL]    = "disk head is already full when write key %s value %s",
     [ERR_DISKRW_WRITE_KEY]         = "write key %s to disk failed",
     [ERR_DISKRW_INSERT_KEY]        = "insert key %s to memory failed",
-    [ERR_INVALID_DDB_CMD]          = "Server command content is error"
+    [ERR_DDB_CMD_INVALID]          = "ddb command content is invalid",
+    [ERR_DDB_CMD_UNKNOWN]          = "ddb command %s is unknown",
+    [ERR_DDB_CMD_PREFIX_INVALID]   = "ddb command --prefix only used with --get or --delete command",
+    [ERR_DDB_CMD_ARG_INVALID]      = "ddb command has too many args",
     };
 
 void CmStrUpper(char *str)

@@ -123,6 +123,7 @@ status_t ParseDdbCmd(char **argv, int32 argc, int cur, DdbCommand *ddbCommand)
             ++cur;
             hasCmd = true;
             if (g_cmdOptions[i].parseCommand(argv, argc, &cur, ddbCommand) != CM_SUCCESS) {
+                CM_SET_DISKRW_ERROR(ERR_DDB_CMD_INVALID);
                 return CM_ERROR;
             }
             break;
@@ -130,6 +131,7 @@ status_t ParseDdbCmd(char **argv, int32 argc, int cur, DdbCommand *ddbCommand)
     }
 
     if (!hasCmd) {
+        CM_SET_DISKRW_ERROR(ERR_DDB_CMD_UNKNOWN, argv[cur]);
         return CM_ERROR;
     }
     return ParseDdbCmd(argv, argc, cur, ddbCommand);
@@ -303,7 +305,7 @@ status_t ExecuteDdbCmd(char *cmd, char *output, int *outputLen, uint32 maxBufLen
         argc++;
         if (argc >= CMD_PARAMETER_CNT) {
             write_runlog(ERROR, "ExecuteDdbCmd: server command:%s has %d parameters.\n", cmd, argc);
-            CM_SET_DISKRW_ERROR(ERR_INVALID_DDB_CMD);
+            CM_SET_DISKRW_ERROR(ERR_DDB_CMD_ARG_INVALID);
             return CM_ERROR;
         }
         pLeft = strtok_r(NULL, " ", &pSave);
@@ -314,13 +316,14 @@ status_t ExecuteDdbCmd(char *cmd, char *output, int *outputLen, uint32 maxBufLen
     securec_check_errno(rc, (void)rc);
     if (ParseDdbCmd(argv, argc, 0, &ddbCmd) != CM_SUCCESS) {
         write_runlog(ERROR, "ExecuteDdbCmd: parse server command content %s failed.\n", cmd);
-        CM_SET_DISKRW_ERROR(ERR_INVALID_DDB_CMD);
         return CM_ERROR;
     }
 
     if (ddbCmd.prefix && (ddbCmd.type != CMD_KEYWORD_GET && ddbCmd.type != CMD_KEYWORD_DELETE)) {
-        write_runlog(ERROR, "ExecuteDdbCmd: parse server command content %s failed.\n", cmd);
-        CM_SET_DISKRW_ERROR(ERR_INVALID_DDB_CMD);
+        write_runlog(ERROR,
+            "ExecuteDdbCmd: parse server command content %s failed for prefix only used with get or delete cmd.\n",
+            cmd);
+        CM_SET_DISKRW_ERROR(ERR_DDB_CMD_PREFIX_INVALID);
         return CM_ERROR;
     }
 

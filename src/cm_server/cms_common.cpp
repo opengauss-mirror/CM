@@ -29,10 +29,6 @@
 #include "cms_ddb_adapter.h"
 #include "cms_common.h"
 
-const int CM_LARGE_CLUSTER_NODE_NUM = 32;
-const int CM_CTL_MORE_THREADS = 4;
-const int CM_CTL_LESS_THREADS = 2;
-
 void ExecSystemSsh(uint32 remoteNodeid, const char *cmd, int *result, const char *resultPath)
 {
     int rc;
@@ -602,34 +598,11 @@ void clean_init_cluster_state()
 
 void SendSignalToAgentThreads()
 {
-    uint32 ctlThreadNum = (uint32)GetCtlThreadNum();
-    for (unsigned int i = 0; i < (gWorkThreads.count - ctlThreadNum); i++) {
-        if (pthread_kill(gWorkThreads.threads[i].tid, SIGUSR1) != 0) {
-            write_runlog(ERROR, "send SIGUSR1 to thread %lu failed.\n", gWorkThreads.threads[i].tid);
-        } else {
-            write_runlog(LOG, "send SIGUSR1 to thread %lu.\n", gWorkThreads.threads[i].tid);
-        }
+    if (pthread_kill(gIOThreads.threads[0].tid, SIGUSR1) != 0) {
+        write_runlog(ERROR, "send SIGUSR1 to thread %lu failed.\n", gIOThreads.threads[0].tid);
+    } else {
+        write_runlog(LOG, "send SIGUSR1 to thread %lu.\n", gIOThreads.threads[0].tid);
     }
-}
-
-int GetCtlThreadNum()
-{
-    /* Before cm version C20, thread_count range is [2 - 255],
-    If process cm_ctl thread num set to 4,
-    But user maybe configed thread_count to 2,
-    Then it will no thead process agent report msg.
-    so if user configed thread_count less than 4,
-    will only alloc one thread to process cm_ctl msg.
-    */
-    if (g_node_num < CM_LARGE_CLUSTER_NODE_NUM) {
-        return CM_CTL_LESS_THREADS;
-    }
-
-    if (cm_thread_count <= CM_CTL_MORE_THREADS) {
-        return CM_CTL_LESS_THREADS;
-    }
-
-    return CM_CTL_MORE_THREADS;
 }
 
 void FreeNotifyMsg()

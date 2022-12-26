@@ -42,6 +42,7 @@ typedef enum {
 } ReadOnlyFsmState;
 
 typedef enum {
+    DISK_USAGE_INIT,
     DISK_USAGE_NORMAL,
     DISK_USAGE_EXCEEDS_THRESHOLD,
     READ_ONLY_EVENT_MAX
@@ -55,6 +56,7 @@ typedef enum {
     SET_READ_ONLY_OFF,
     RECORD_MANUALLY_SET_READ_ONLY,
     SET_DDB_1_CONDITIONAL,
+    RECORD_DISK_USAGE_ABNORMAL,
     READ_ONLY_ACT_MAX
 } ReadOnlyFsmAct;
 
@@ -212,7 +214,9 @@ static int InitNodeReadonlyInfo()
 
 static ReadOnlyFsmEvent GetReadOnlyFsmEvent(const DataNodeReadOnlyInfo *instance)
 {
-    if (instance->dataDiskUsage >= g_readOnlyThreshold) {
+    if (instance->dataDiskUsage == 0) {
+        return DISK_USAGE_INIT;
+    } else if (instance->dataDiskUsage >= g_readOnlyThreshold) {
         g_allHealth = false;
         return DISK_USAGE_EXCEEDS_THRESHOLD;
     } else {
@@ -234,11 +238,18 @@ static ReadOnlyFsmState GetReadOnlyFsmState(const DataNodeReadOnlyInfo *instance
 }
 
 static ReadOnlyFsmEntry g_readOnlyEntry[READ_ONLY_EVENT_MAX][READ_ONLY_STATE_MAX] = {
+    /* DISK_USAGE_INIT */
+    {
+        {RECORD_DISK_USAGE_ABNORMAL, ALM_AT_Resume},    /* NOT_READ_ONLY_AND_DDB_0 */
+        {RECORD_DISK_USAGE_ABNORMAL, ALM_AT_Resume},    /* NOT_READ_ONLY_AND_DDB_1 */
+        {RECORD_DISK_USAGE_ABNORMAL, ALM_AT_Resume},    /* READ_ONLY_AND_DDB_0 */
+        {RECORD_DISK_USAGE_ABNORMAL, ALM_AT_Resume},    /* READ_ONLY_AND_DDB_1 */
+    },
     /* DISK_USAGE_NORMAL */
     {
         {DO_NOTING, ALM_AT_Resume},                     /* NOT_READ_ONLY_AND_DDB_0 */
         {SET_DDB_0, ALM_AT_Resume},                     /* NOT_READ_ONLY_AND_DDB_1 */
-        {SET_DDB_1_CONDITIONAL, ALM_AT_Resume}, /* READ_ONLY_AND_DDB_0 */
+        {SET_DDB_1_CONDITIONAL, ALM_AT_Resume},         /* READ_ONLY_AND_DDB_0 */
         {SET_READ_ONLY_OFF, ALM_AT_Resume},             /* READ_ONLY_AND_DDB_1 */
     },
     /* DISK_USAGE_EXCEEDS_THRESHOLD */
@@ -483,6 +494,14 @@ bool ReadOnlyActSetDdbTo1Conditional(DataNodeReadOnlyInfo *instance)
     return false;
 }
 
+bool ReadOnlyActRecordDiskUsageAbnormal(DataNodeReadOnlyInfo *instance)
+{
+    write_runlog(WARNING, "[%s] instance %u disk usage abnormal, disk_usage:%u, read_only_threshold:%u\n",
+        __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+    instance->finalState = false;
+    return false;
+}
+
 static void InitReadOnlyFsmActFunc()
 {
     g_readOnlyActFunc[DO_NOTING] = ReadOnlyActDoNoting;
@@ -492,6 +511,7 @@ static void InitReadOnlyFsmActFunc()
     g_readOnlyActFunc[SET_READ_ONLY_OFF] = ReadOnlyActSetReadOnlyOff;
     g_readOnlyActFunc[RECORD_MANUALLY_SET_READ_ONLY] = ReadOnlyActRecordManuallySetReadOnly;
     g_readOnlyActFunc[SET_DDB_1_CONDITIONAL] = ReadOnlyActSetDdbTo1Conditional;
+    g_readOnlyActFunc[RECORD_DISK_USAGE_ABNORMAL] = ReadOnlyActRecordDiskUsageAbnormal;
 }
 
 void* StorageDetectMain(void* arg)

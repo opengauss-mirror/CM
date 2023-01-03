@@ -38,8 +38,8 @@ pthread_t g_recvSendThreadId = 0;
 
 void AllocCmaMsgQueueMemory()
 {
-    g_sendQueue = new AgentMsgQueue;
-    g_recvQueue = new AgentMsgQueue;
+    g_sendQueue = new AgentMsgQueue();
+    g_recvQueue = new AgentMsgQueue();
 }
 
 void FreeMsgQueueMemory()

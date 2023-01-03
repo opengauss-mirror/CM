@@ -619,7 +619,7 @@ void ShutdownClient()
 
 void AllocClientMemory()
 {
-    g_clientCtx = new ClientCtx;
+    g_clientCtx = new ClientCtx();
     g_lockFlag = &g_clientCtx->lockFlag;
     g_initFlag = &g_clientCtx->initFlag;
     g_agentConnect = &g_clientCtx->agentConnect;

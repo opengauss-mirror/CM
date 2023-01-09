@@ -75,6 +75,10 @@ static inline void WakeCmaSendThread()
 
 void PushMsgToCmsSendQue(const char *msgPtr, uint32 msgLen, const char *msgInfo)
 {
+    if (msgPtr != NULL && msgLen >= sizeof(int32) && *(int32*)msgPtr == 0) {
+        write_runlog(LOG, "%s msgPtr is 0. it may be error.\n", msgInfo);
+    }
+
     AgentMsgPkg msgPkg = {0};
     msgPkg.msgLen = msgLen;
     msgPkg.msgPtr = GetMsgBufAndFillBuf(msgPtr, msgLen);

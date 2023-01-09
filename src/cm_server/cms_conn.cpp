@@ -1370,6 +1370,12 @@ void *CM_IOThreadMain(void *argp)
         CloseAllConnections(thrinfo);
 
         thrinfo->isBusy = false;
+        /* wait for events to happen, 5s timeout */
+        if (existSendMsg((PriMsgQues*)thrinfo->sendMsgQue)) {
+            waitTime = 1;
+        } else {
+            waitTime = EPOLL_TIMEOUT;
+        }
         uint64 t2 = GetMonotonicTimeMs();
         int fds = epoll_pwait(epollHandle, events, MAX_EVENTS, waitTime, &block_sig_set);
         if (fds < 0) {

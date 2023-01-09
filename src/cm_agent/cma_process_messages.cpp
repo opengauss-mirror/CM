@@ -31,6 +31,7 @@
 #include "cma_connect.h"
 #include "cma_process_messages_client.h"
 #include "cma_instance_management.h"
+#include "cma_instance_management_res.h"
 #include "cma_instance_check.h"
 #include "cma_mes.h"
 #include "cma_process_messages.h"
@@ -59,8 +60,10 @@ static void InstancesStatusCheckAndReport(void)
     fenced_UDF_status_check_and_report();
     etcd_status_check_and_report();
     kerberos_status_check_and_report();
-    SendResStatReportMsg();
-    SendResIsregReportMsg();
+    if (IsCusResExistLocal()) {
+        SendResStatReportMsg();
+        SendResIsregReportMsg();
+    }
 }
 
 static void AgentSendHeartbeat()

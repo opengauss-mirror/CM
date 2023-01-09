@@ -13,11 +13,11 @@
 * See the Mulan PSL v2 for more details.
 * -------------------------------------------------------------------------
 *
-* cma_instance_management.h
+* cma_instance_management_res.h
 *
 *
 * IDENTIFICATION
-*    include/cm/cm_agent/cma_instance_management.h
+*    include/cm/cm_agent/cma_instance_management_res.h
 *
 * -------------------------------------------------------------------------
 */

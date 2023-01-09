@@ -288,10 +288,6 @@ void *ResourceStatusCheckMain(void *arg)
 
 void SendResStatReportMsg()
 {
-    if (!IsCusResExistLocal()) {
-        return;
-    }
-
     ReportResStatus reportMsg = {0};
     reportMsg.msgType = (int)MSG_AGENT_CM_RESOURCE_STATUS;
 

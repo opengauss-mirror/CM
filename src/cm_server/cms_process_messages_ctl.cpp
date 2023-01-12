@@ -553,11 +553,6 @@ void process_ctl_to_cm_switchover_full_msg(CM_Connection* con, const ctl_to_cm_s
     cm_to_ctl_command_ack msgSwitchoverFullAck = {0};
     msgSwitchoverFullAck.msg_type = MSG_CM_CTL_SWITCHOVER_FULL_ACK;
 
-    if (CheckEnableFlag()) {
-        msgSwitchoverFullAck.command_result = CM_INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
-        return;
-    }
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverFullAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
         (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
@@ -640,15 +635,7 @@ void ProcessCtlToCmSwitchoverAzMsg(CM_Connection* con, ctl_to_cm_switchover* ctl
 {
     ctl_to_cm_swithover_ptr->azName[CM_AZ_NAME - 1] = '\0';
     int instanceType = 0;
-
-    cm_to_ctl_switchover_az_check_ack msgSwitchoverAZAck;
-    msgSwitchoverAZAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_ACK;
-
-    if (CheckEnableFlag()) {
-        msgSwitchoverAZAck.switchoverDone = INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZAck), sizeof(msgSwitchoverAZAck));
-        return;
-    }
+    cm_msg_type msgSwitchoverAZAck;
 
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverAZAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
@@ -939,11 +926,6 @@ void ProcessCtlToCmSwitchoverFullCheckMsg(CM_Connection* con)
     cm_to_ctl_switchover_full_check_ack msgSwitchoverFullCheckAck;
     msgSwitchoverFullCheckAck.msg_type = MSG_CM_CTL_SWITCHOVER_FULL_CHECK_ACK;
 
-    if (CheckEnableFlag()) {
-        msgSwitchoverFullCheckAck.switchoverDone = INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverFullCheckAck), sizeof(msgSwitchoverFullCheckAck));
-        return;
-    }
     int32 switchoverDone = GetSwitchoverDone("[ProcessCtlToCmSwitchoverFullCheckMsg]");
     msgSwitchoverFullCheckAck.switchoverDone = switchoverDone;
 
@@ -969,11 +951,6 @@ void ProcessCtlToCmSwitchoverAzCheckMsg(CM_Connection* con)
     cm_to_ctl_switchover_az_check_ack msgSwitchoverAZCheckAck;
     msgSwitchoverAZCheckAck.msg_type = MSG_CM_CTL_SWITCHOVER_AZ_CHECK_ACK;
 
-    if (CheckEnableFlag()) {
-        msgSwitchoverAZCheckAck.switchoverDone = INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAZCheckAck), sizeof(msgSwitchoverAZCheckAck));
-        return;
-    }
     int32 switchoverDone = GetSwitchoverDone("[ProcessCtlToCmSwitchoverAzCheckMsg]");
     msgSwitchoverAZCheckAck.switchoverDone = switchoverDone;
 
@@ -2189,11 +2166,6 @@ void ProcessCtlToCmSwitchoverAllMsg(CM_Connection *con, const ctl_to_cm_switchov
     cm_to_ctl_command_ack msgSwitchoverAllAck = {0};
 
     msgSwitchoverAllAck.msg_type = MSG_CM_CTL_SWITCHOVER_ALL_ACK;
-    if (CheckEnableFlag()) {
-        msgSwitchoverAllAck.command_result = CM_INVALID_COMMAND;
-        (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));
-        return;
-    }
     if (backup_open != CLUSTER_PRIMARY) {
         msgSwitchoverAllAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
         (void)cm_server_send_msg(con, 'S', (char*)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));

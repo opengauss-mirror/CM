@@ -37,6 +37,7 @@ static cltPqConn_t* g_dnConnSend[CM_MAX_DATANODE_PER_NODE] = {NULL};
 #define MAX_SQLCOMMAND_LENGTH 1024
 
 static int g_lastBuildRole = INSTANCE_ROLE_INIT;
+extern bool g_isDnFirstStart;
 
 static int ProcessStatusFromStateFile(agent_to_cm_datanode_status_report *reportMsg, const GaussState *state)
 {
@@ -1302,6 +1303,10 @@ void StartDatanodeCheck(void)
                     write_runlog(ERROR, "run system command failed %d! %s, errno=%d.\n", ret, command, errno);
                 } else {
                     GaussdbNotExistProcessRestartCmdSuccess(ii);
+                    // set the g_isDnFirstStart to false, only when the first startup is successful
+                    if (g_isDnFirstStart) {
+                        g_isDnFirstStart = false;
+                    }
                 }
             }
 

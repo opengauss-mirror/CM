@@ -51,6 +51,7 @@
 #define MINORITY_AZ_START "minority_az_start"
 #define MINORITY_AZ_ARBITRATE "minority_az_arbitrate_hist"
 #define RESUMING_CN_STOP "resuming_cn_stop"
+#define CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
 
 char* g_bin_name = NULL;
 char* g_bin_path = NULL;
@@ -138,6 +139,7 @@ static char cm_server_bin[MAXPGPATH];
 static char g_logicClusterListPath[MAX_PATH_LEN];
 char minority_az_start_file[MAX_PATH_LEN];
 char g_minorityAzArbitrateFile[MAX_PATH_LEN];
+char manualPauseFile[MAXPGPATH];
 
 uint32 g_nodeId = 0;
 uint32 g_commandOperationNodeId = 0;
@@ -219,7 +221,9 @@ unordered_map<string, CtlCommand> g_optToCommand {
 #endif
     {"switchover", CM_SWITCHOVER_COMMAND},
     {"res", CM_RES_COMMAND},
-    {"show", CM_SHOW_COMMAND}
+    {"show", CM_SHOW_COMMAND},
+    {"pause", CM_PAUSE_COMMAND},
+    {"resume", CM_RESUME_COMMAND}
 };
 
 static void InitializeCmServerNodeIndex(void)
@@ -805,6 +809,8 @@ static void init_ctl_global_variable()
         securec_check_intval(ret, (void)ret);
         ret = snprintf_s(g_tlsPath.keyFile, ETCD_MAX_PATH_LEN, ETCD_MAX_PATH_LEN - 1,
             "%s/share/sslcert/etcd/client.key", g_appPath);
+        securec_check_intval(ret, (void)ret);
+        ret = snprintf_s(manualPauseFile, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, CLUSTER_MANUAL_PAUSE);
         securec_check_intval(ret, (void)ret);
     } else {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("Get GAUSSHOME failed."),
@@ -2200,6 +2206,12 @@ static void CtlCommandProcessCore(int *status, CtlOption *ctlCtx)
             break;
         case CM_SHOW_COMMAND:
             *status = DoShowCommand();
+            break;
+        case CM_PAUSE_COMMAND:
+            *status = DoPause();
+            break;
+        case CM_RESUME_COMMAND:
+            *status = DoResume();
             break;
         default:
             write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("The option parameter is not specified."),

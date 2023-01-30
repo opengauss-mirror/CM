@@ -378,6 +378,8 @@ int get_prog_path()
 #endif
     rc = memset_s(g_autoRepairPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_cmManualPausePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
     if (GetHomePath(exec_path, sizeof(exec_path)) != 0) {
         (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
@@ -426,6 +428,9 @@ int get_prog_path()
         securec_check_intval(rcs, (void)rcs);
 #endif
         rcs = snprintf_s(g_autoRepairPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/stop_auto_repair", exec_path);
+        securec_check_intval(rcs, (void)rcs);
+        rcs = snprintf_s(
+            g_cmManualPausePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, CM_CLUSTER_MANUAL_PAUSE);
         securec_check_intval(rcs, (void)rcs);
         InitClientCrt(exec_path);
     }
@@ -1022,10 +1027,25 @@ void server_loop(void)
     (void)clock_gettime(CLOCK_MONOTONIC, &startTime);
     (void)clock_gettime(CLOCK_MONOTONIC, &g_disconnectTime);
 
+    const int pauseLogInterval = 5;
+    int pauseLogTimes = 0;
     for (;;) {
         if (g_shutdownRequest) {
             cm_sleep(5);
             continue;
+        }
+
+        if (access(g_cmManualPausePath, F_OK) == 0) {
+            g_isPauseArbitration = true;
+            // avoid log swiping
+            if (pauseLogTimes == 0) {
+                write_runlog(LOG, "The cluster has been paused.\n");
+            }
+            ++pauseLogTimes;
+            pauseLogTimes = pauseLogTimes % pauseLogInterval;
+        } else {
+            g_isPauseArbitration = false;
+            pauseLogTimes = 0;
         }
 
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);

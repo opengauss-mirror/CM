@@ -71,6 +71,8 @@ extern bool g_gtmBalance;
 extern bool g_datanodesBalance;
 extern cm_to_ctl_central_node_status g_centralNode;
 extern FILE* g_logFilePtr;
+bool g_isPauseArbitration = false;
+extern char manualPauseFile[MAXPGPATH];
 
 int do_global_barrier_query(void)
 {
@@ -249,6 +251,12 @@ status_t ProcessMsgAndPrintStatus(CM_Conn *pCmsCon)
 {
     int wait_time;
     int ret;
+
+    if (access(manualPauseFile, F_OK) == 0) {
+        g_isPauseArbitration = true;
+    } else {
+        g_isPauseArbitration = false;
+    }
 
     wait_time = g_waitSeconds * 1000;
     bool recDataEnd = false;

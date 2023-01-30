@@ -158,6 +158,7 @@ typedef enum ThreadProcessStatusE {
 #define INSTANCE_MAINTANCE "instance_maintance"
 #define CM_PID_FILE "cm_server.pid"
 #define CLUSTER_MAINTANCE "cluster_maintance"
+#define CM_CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
 
 #define PRIMARY "PRIMARY"
 #define STANDBY "STANDBY"
@@ -458,6 +459,8 @@ extern DdbArbiCon g_ddbArbiCon;
 extern ssl_ctx_t *g_ssl_acceptor_fd;
 extern uint32 g_delayArbiTime;
 extern int32 g_clusterArbiTime;
+extern bool g_isPauseArbitration;
+extern char g_cmManualPausePath[MAX_PATH_LEN];
 
 extern void clean_init_cluster_state();
 extern void instance_delay_arbitrate_time_out_direct_clean(uint32 group_index, int member_index,

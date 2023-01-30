@@ -56,6 +56,7 @@ static const int SIG_TYPE = 2;
 #else
 static const int SIG_TYPE = 9;
 #endif
+bool g_isDnFirstStart = true;
 
 typedef void (*StartCheck)(void);
 typedef bool (*StartDnCheck)(void);
@@ -381,8 +382,17 @@ void start_instance_check(void)
     StartInstanceAndCheck(start_cmserver_check, "[start_cmserver_check]");
 
     bool needStartDnCheck = CheckDnCanStart(CheckStartDN, "[CheckStartDN]");
-    if (needStartDnCheck && !g_enableSharedStorage) {
-        StartInstanceAndCheck(StartDatanodeCheck, "[StartDatanodeCheck]");
+    /* ignore pausing state when firstly starting, otherwise 
+     * skip StartDatanodeCheck and StartResourceCheck in pausing state
+     */
+    if (g_isDnFirstStart) {
+        if (needStartDnCheck && !g_enableSharedStorage) {
+            StartInstanceAndCheck(StartDatanodeCheck, "[StartDatanodeCheck]");
+        }
+    } else {
+        if (!g_isPauseArbitration && needStartDnCheck && !g_enableSharedStorage) {
+            StartInstanceAndCheck(StartDatanodeCheck, "[StartDatanodeCheck]");
+        }
     }
 
     StartInstanceAndCheck(CheckAgentNicDown, "[CheckAgentNicDown]");
@@ -659,6 +669,11 @@ void stop_datanode_check(uint32 i)
                 immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
             }
         }
+
+        if (!g_isDnFirstStart) {
+            g_isDnFirstStart = true;
+        }
+
     }
 }
 

@@ -46,6 +46,7 @@
 #define INSTANCE_MAINTANCE "instance_maintance"
 #define SYSTEM_CALL_LOG "system_call"
 #define MAX_LOGFILE_TIMESTAMP "99991231235959"
+#define CM_CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
 
 #define CONN_FAIL_TIMES 3
 /* time style length */

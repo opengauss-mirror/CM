@@ -191,6 +191,8 @@ static int get_prog_path()
     securec_check_errno(rc, (void)rc);
     rc = memset_s(cluster_maintance_path, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_cmManualPausePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
     if (GetHomePath(g_appPath, sizeof(g_appPath)) != 0) {
         (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
@@ -238,6 +240,9 @@ static int get_prog_path()
             cluster_maintance_path, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", g_appPath, CLUSTER_MAINTANCE);
         securec_check_intval(rcs, (void)rcs);
         canonicalize_path(cluster_maintance_path);
+        rcs = snprintf_s(
+            g_cmManualPausePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", g_appPath, CM_CLUSTER_MANUAL_PAUSE);
+        securec_check_intval(rcs, (void)rcs);
         InitClientCrt(g_appPath);
     }
 
@@ -2105,10 +2110,27 @@ static int server_loop(void)
     /* event loop */
     struct epoll_event events[MAX_EVENTS];
 
+    const int pauseLogInterval = 5;
+    int pauseLogTimes = 0;
     for (;;) {
         if (got_stop == 1) {
             return 1;
         }
+
+        // if cluster_manual_pause file exists
+        if (access(g_cmManualPausePath, F_OK) == 0) {
+            g_isPauseArbitration = true;
+            // avoid log swiping
+            if (pauseLogTimes == 0) {
+                write_runlog(LOG, "The cluster has been paused.\n");
+            }
+            ++pauseLogTimes;
+            pauseLogTimes = pauseLogTimes % pauseLogInterval;
+        } else {
+            g_isPauseArbitration = false;
+            pauseLogTimes = 0;
+        }
+
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);
         if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
             if (g_isStart && (endTime.tv_sec - startTime.tv_sec) >= totalTime) {

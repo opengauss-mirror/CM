@@ -1479,7 +1479,8 @@ void* DNConnectionStatusCheckMain(void *arg)
             if (count == 0) {
                 write_runlog(LOG, "dn(%u) is disconnected from other dn.\n", g_currentNode->datanode[i].datanodeId);
                 g_dnPingFault[i] = true;
-                if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+                if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY  && 
+                    !g_isPauseArbitration) {
                     immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
                 }
             } else {

@@ -18,19 +18,13 @@
 # Description  : CreateCMCACert.sh
 #############################################################################
 set -e
-envfile=$1
-if [ "$envfile" = "" ]; then
-    echo "Envfile is needed."
-    exit 1
-fi
 
-activePeriod=$2
+activePeriod=$1
 if [ "$activePeriod" == "" ]; then
     activePeriod=10950
 fi
 
 read -s passwd
-source $envfile
 certPath=$GAUSSHOME/share/sslcert/cm
 if [ ! -f "$certPath/openssl.cnf" ]; then
     echo "CM ssl conf does not exist."

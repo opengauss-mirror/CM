@@ -393,7 +393,7 @@ class InstallImpl:
         curPath = os.path.split(os.path.realpath(__file__))[0]
         createCMCACert = os.path.realpath(os.path.join(curPath, "CreateCMCACert.sh"))
         passwd = self._getPassword()
-        cmd = "echo \"%s\" | sh %s %s" % (passwd, createCMCACert, self.envFile)
+        cmd = "source %s; echo \"%s\" | sh %s" % (self.envFile, passwd, createCMCACert)
         # once used, set password to null and release it
         passwd = ""
         del passwd

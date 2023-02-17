@@ -389,6 +389,11 @@ void ReloadParametersFromConfigfile()
     log_saved_days = (uint32)get_int_value_from_config(configDir, "log_saved_days", 90);
     log_max_count = (uint32)get_int_value_from_config(configDir, "log_max_count", 10000);
 
+#ifndef ENABLE_MULTIPLE_NODES
+    if (get_config_param(configDir, "enable_fence_dn", g_enableFenceDn, sizeof(g_enableFenceDn)) < 0)
+        write_runlog(ERROR, "get_config_param() get enable_fence_dn fail.\n");
+#endif
+
     write_runlog(LOG,
         "reload cm_agent parameters:\n"
         "  log_min_messages=%d, maxLogFileSize=%d, sys_log_path=%s, \n  alarm_component=%s, "
@@ -397,7 +402,11 @@ void ReloadParametersFromConfigfile()
         "agent_check_interval=%u, agent_kill_instance_timeout=%u,\n"
         "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, upgrade_from=%u,\n"
         "  enableLogCompress=%s, security_mode=%s, incremental_build=%d, unix_socket_directory=%s, "
+#ifndef ENABLE_MULTIPLE_NODES
+        "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s, enable_fence_dn=%s\n",
+#else
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s\n",
+#endif
         log_min_messages,
         maxLogFileSize,
         sys_log_path,
@@ -421,7 +430,12 @@ void ReloadParametersFromConfigfile()
         g_unixSocketDirectory,
         g_enableE2ERto,
         g_disasterRecoveryType,
+#ifndef ENABLE_MULTIPLE_NODES
+        g_environmentThreshold,
+        g_enableFenceDn);
+#else
         g_environmentThreshold);
+#endif
 }
 
 int ReadDBStateFile(GaussState *state, const char *statePath)

@@ -53,6 +53,9 @@ const char *g_cmaParamInfo[] = {
     "disk_timeout|int|0,2147483647|NULL|NULL|",
     "voting_disk_path|string|0,0|NULL|NULL|",
     "agent_rhb_interval|int|0,2147483647|NULL|NULL|",
+#ifndef ENABLE_MULTIPLE_NODES
+    "enable_fence_dn|string|0,0|NULL|NULL|",
+#endif
 #ifdef ENABLE_MULTIPLE_NODES
     "enable_cn_auto_repair|bool|0,0|NULL|NULL|",
     "enable_gtm_phony_dead_check|int|0,1|NULL|NULL|",

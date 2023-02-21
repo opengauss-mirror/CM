@@ -560,6 +560,11 @@ void fast_stop_one_instance(const char *instDataPath, InstanceTypes instance_typ
             kill_instance_force(instDataPath, instance_type);
         }
     }
+
+    if (instance_type == INSTANCE_DN) {
+        ExecuteEventTrigger(EVENT_STOP);
+    }
+
     write_runlog(LOG, "%s shutting down.\n", type_int_to_str_name(instance_type));
 }
 
@@ -646,6 +651,7 @@ void stop_datanode_check(uint32 i)
                             shutdownModeStr,
                             cmd);
                     }
+                    ExecuteEventTrigger(EVENT_STOP);
                 }
             } else {
                 if (g_isCmaBuildingDn[i]) {
@@ -1265,6 +1271,11 @@ static void normal_stop_one_instance(const char *instDataPath, InstanceTypes ins
         kill_instance_force(instDataPath, instance_type);
         return;
     }
+
+    if (instance_type == INSTANCE_DN) {
+        ExecuteEventTrigger(EVENT_STOP);
+    }
+
     write_runlog(LOG, "%s shutting down.\n", type_int_to_str_name(instance_type));
 }
 

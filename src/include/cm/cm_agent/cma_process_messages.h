@@ -45,4 +45,7 @@ extern void process_rep_most_available_command(const char* dataDir, int instance
 extern void process_heartbeat_command(int cluster_status);
 #endif
 
+extern void RunCmd(const char* command);
+
+
 #endif

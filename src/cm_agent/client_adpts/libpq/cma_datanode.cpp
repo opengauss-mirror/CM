@@ -1303,6 +1303,7 @@ void StartDatanodeCheck(void)
                     write_runlog(ERROR, "run system command failed %d! %s, errno=%d.\n", ret, command, errno);
                 } else {
                     GaussdbNotExistProcessRestartCmdSuccess(ii);
+                    ExecuteEventTrigger(EVENT_START);
                     // set the g_isDnFirstStart to false, only when the first startup is successful
                     if (g_isDnFirstStart) {
                         g_isDnFirstStart = false;

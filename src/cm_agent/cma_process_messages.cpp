@@ -215,6 +215,10 @@ void kill_instance_force(const char* data_path, InstanceTypes ins_type)
     /* if kill cn/dn/gtm success by syscmd, clear some obsoleted paramter. */
     ResetPhonyDeadCount(data_path, ins_type);
 
+    if (ins_type == INSTANCE_DN) {
+        ExecuteEventTrigger(EVENT_STOP);
+    }
+
     write_runlog(LOG, "%s stopped.\n", type_int_to_str_name(ins_type));
     return;
 }
@@ -388,6 +392,10 @@ static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint
     }
     RunCmd(command);
 
+    if (instanceType == INSTANCE_TYPE_DATANODE) {
+        ExecuteEventTrigger(EVENT_SWITCHOVER);
+    }
+
     return;
 }
 
@@ -471,6 +479,10 @@ static void process_failover_command(const char* dataDir, int instanceType, uint
             return;
     }
     RunCmd(command);
+
+    if (instanceType == INSTANCE_TYPE_DATANODE) {
+        ExecuteEventTrigger(EVENT_FAILOVER);
+    }
 
     return;
 }

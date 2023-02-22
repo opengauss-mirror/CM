@@ -4,6 +4,8 @@ set(TGT_client_INC ${PROJECT_INC_BASE}/cm/cm_client)
 # other project may dependens on client library use dlopen, so we need to ensure its symbols integrity.
 set(TGT_LINK_LIBS pthread cmcommon_static securec ${MEMCHECK_LIBS})
 
+add_link_options(-Wl,--exclude-libs,ALL)
+
 if (ENABLE_UT)
     add_shared_tgt(utcmclient TGT_client_SRC TGT_client_INC)
     target_link_libraries(utcmclient ${TGT_LINK_LIBS})

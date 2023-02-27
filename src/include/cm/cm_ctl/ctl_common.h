@@ -127,7 +127,9 @@ typedef enum {
     CM_ENCRYPT_COMMAND,
     CM_SWITCH_COMMAND,
     CM_RES_COMMAND,
-    CM_SHOW_COMMAND
+    CM_SHOW_COMMAND,
+    CM_PAUSE_COMMAND,
+    CM_RESUME_COMMAND
 } CtlCommand;
 
 
@@ -351,5 +353,8 @@ void ReleaseConn(CM_Conn *con);
 bool IsCmSharedStorageMode();
 void CtlGetCmJsonConf();
 int DoRhbPrint();
+int DoPause();
+int DoResume();
+bool CheckTrustAndNet();
 
 #endif

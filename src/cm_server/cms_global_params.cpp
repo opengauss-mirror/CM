@@ -321,6 +321,8 @@ ThreadExecStatus g_loopState = {0};
 DdbArbiCon g_ddbArbiCon = {0};
 uint32 g_delayArbiTime = 0;
 int32 g_clusterArbiTime = 300;
+bool g_isPauseArbitration = false;
+char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 
 bool isLargerNode()
 {
@@ -540,7 +542,7 @@ bool isMaintenanceInstance(const char *file_path, uint32 notify_instance_id)
 
     FILE *fd = fopen(file_path, "r");
     if (fd == NULL) {
-        write_runlog(DEBUG1, "cann't open the  MaintenanceInstance file\n");
+        write_runlog(DEBUG1, "can't open the  MaintenanceInstance file\n");
         return instanceMaintenance;
     }
 

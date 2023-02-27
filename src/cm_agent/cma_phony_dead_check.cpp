@@ -74,6 +74,13 @@ static bool DnPhonyDeadProcessE2E(int dnId, int phonyDead)
             write_runlog(WARNING, "dn_%u Core Dump\n", g_currentNode->datanode[dnId].datanodeId);
             return true;
         }
+
+        if (g_isPauseArbitration) {
+            write_runlog(WARNING, "dn_%u phony dead T, but now CM is paused, so do nothing for now.\n",
+                g_currentNode->datanode[dnId].datanodeId);
+            return false;
+        }
+
         write_runlog(WARNING, "dn_%u phony dead T, immediate shutdown\n", g_currentNode->datanode[dnId].datanodeId);
         immediate_stop_one_instance(g_currentNode->datanode[dnId].datanodeLocalDataPath, INSTANCE_DN);
         return true;
@@ -124,8 +131,13 @@ static bool DnPhonyDeadStatusCheck(int dnId, uint32 *agentCheckTimeInterval)
             rc = check_disc_state(g_currentNode->datanode[i].datanodeId);
         }
         if (rc != 0 && g_enableE2ERto == 1 && g_dnPhonyDeadTimes[i] >= PHONY_DEAD_THRESHOLD) {
-            write_runlog(WARNING, "dn_%u phony dead, immediate shutdown\n", g_currentNode->datanode[i].datanodeId);
-            immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
+            if (g_isPauseArbitration) {
+                write_runlog(WARNING, "dn_%u phony dead, but now CM is pausing, so do nothing for now.\n",
+                    g_currentNode->datanode[i].datanodeId);
+            } else {
+                write_runlog(WARNING, "dn_%u phony dead, immediate shutdown\n", g_currentNode->datanode[i].datanodeId);
+                immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
+            }
         }
         return (rc == 0) ? false : true;
     }

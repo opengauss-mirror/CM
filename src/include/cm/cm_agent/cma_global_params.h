@@ -308,5 +308,8 @@ extern bool g_dn_report_msg_ok;
 #define CPU_AFFINITY_MAX 2
 #endif
 
+extern bool g_isPauseArbitration;
+extern char g_cmManualPausePath[MAX_PATH_LEN];
+
 
 #endif

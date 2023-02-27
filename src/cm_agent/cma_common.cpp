@@ -363,6 +363,7 @@ void ReloadParametersFromConfig()
     dilatation_shard_count_for_disk_capacity_alarm = get_uint32_value_from_config(
         configDir, "dilatation_shard_count_for_disk_capacity_alarm", dilatation_shard_count_for_disk_capacity_alarm);
     g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
+    GetEventTrigger();
 }
 
 void ReloadParametersFromConfigfile()

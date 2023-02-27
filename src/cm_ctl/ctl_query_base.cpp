@@ -48,6 +48,7 @@ extern bool g_gtmBalance;
 extern bool g_datanodesBalance;
 extern cm_to_ctl_central_node_status g_centralNode;
 extern FILE* g_logFilePtr;
+extern bool g_isPauseArbitration;
 
 static void PrintClusterStatus(int clusterStatus = CM_STATUS_UNKNOWN, bool redistributing = false,
     int switchedCount = -1, int nodeID = -1);
@@ -96,6 +97,10 @@ static void PrintClusterStatus(int clusterStatus, bool redistributing, int switc
         } else {
             (void)fprintf(g_logFilePtr, "current_az      : %s\n", "AZ_DOWN");
         }
+    }
+
+    if (g_isPauseArbitration) {
+        (void)fprintf(g_logFilePtr, "pausing         : Yes\n");
     }
 }
 
@@ -271,8 +276,12 @@ int ProcessDataBeginMsg(const char *receiveMsg, bool *recDataEnd)
             "redistributing            : %s\n",
             clusterStatusPtr->is_all_group_mode_pending ? "Yes" : "No");
         (void)fprintf(g_logFilePtr,
-            "balanced                  : %s\n\n",
+            "balanced                  : %s\n",
             (clusterStatusPtr->switchedCount == 0) ? "Yes" : "No");
+        if (g_isPauseArbitration) {
+            (void)fprintf(g_logFilePtr, "pausing                   : Yes\n");
+        }
+        (void)fprintf(g_logFilePtr, "\n");
         (void)fprintf(g_logFilePtr,
             "-----------------------------------------------------------------------\n\n");
     }

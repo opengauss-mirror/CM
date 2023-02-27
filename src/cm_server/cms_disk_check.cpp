@@ -269,7 +269,7 @@ static ReadOnlyFsmEntry ReadOnlyFsmGetEntryPtr(ReadOnlyFsmEvent event, ReadOnlyF
 static bool ReadOnlyFsmActRun(ReadOnlyFsmAct action, DataNodeReadOnlyInfo *instance)
 {
     ReadOnlyFsmActFunc actionFunc = g_readOnlyActFunc[action];
-    if (actionFunc != NULL) {
+    if (actionFunc != NULL && !g_isPauseArbitration) {
         return actionFunc(instance);
     }
     return false;

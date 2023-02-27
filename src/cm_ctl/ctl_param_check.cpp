@@ -16,6 +16,7 @@
 #include "securec_check.h"
 #include "cm/libpq-fe.h"
 #include "ctl_common.h"
+#include "cjson/cJSON.h"
 
 const char *g_cmaParamInfo[] = {
     "log_dir|string|0,0|NULL|NULL|",
@@ -61,6 +62,7 @@ const char *g_cmaParamInfo[] = {
     "enable_gtm_phony_dead_check|int|0,1|NULL|NULL|",
     "environment_threshold|string|0,0|NULL|NULL|",
 #endif
+    "event_triggers|string|0,0|NULL|NULL|"
 };
 
 const char *g_cmsParamInfo[] = {
@@ -192,6 +194,29 @@ static const int THRESHOLD_FORMAT = 4;
 static const int THRESHOLD_MAX_VALUE = 100;
 static const int THRESHOLD_MIN_VALUE = 0;
 
+using EventTriggerType = enum EventTriggerTypeEn {
+    EVENT_UNKNOWN = -1,
+    EVENT_START = 0,
+    EVENT_STOP,
+    EVENT_FAILOVER,
+    EVENT_SWITCHOVER,
+    EVENT_COUNT
+};
+
+typedef struct TriggerTypeStringMap {
+    EventTriggerType type;
+    char *typeStr;
+} TriggerTypeStringMap;
+
+const TriggerTypeStringMap triggerTypeStringMap[EVENT_COUNT] = {
+    {EVENT_START, "on_start"},
+    {EVENT_STOP, "on_stop"},
+    {EVENT_FAILOVER, "on_failover"},
+    {EVENT_SWITCHOVER, "on_switchover"}
+};
+
+static status_t CheckEventTriggers(const char *value);
+
 static status_t CheckParameterNameType(const char *param)
 {
     if (param == NULL) {
@@ -224,7 +249,7 @@ static status_t CheckParameterValueType(const char *value)
         return CM_ERROR;
     }
     if ((!isdigit((unsigned char)(value[0]))) && (value[0] != '\'') && (value[0] != '(') &&
-        (!isalpha((unsigned char)(value[0]))) && (value[0] != '-') && (value[0] != ')')) {
+        (!isalpha((unsigned char)(value[0]))) && (value[0] != '-') && (value[0] != ')') && (value[0] != '{')) {
         write_runlog(ERROR, "The parameter value(%s) exists illegal character:\"%c\".\n", value, value[0]);
         return CM_ERROR;
     }
@@ -925,6 +950,13 @@ static status_t CheckEnvThresholdSize(const char *value)
 
 static status_t CheckStringTypeValue(const char *param, const char *value)
 {
+    size_t valueLen = strlen(value);
+    for (size_t i = 0; i < valueLen; ++i) {
+        if (value[i] == ' ') {
+            write_runlog(ERROR, "The parameter value(%s) exists illegal character:\" \".\n", value);
+            return CM_ERROR;
+        }
+    }
     if ((strncmp(param, "log_dir", strlen("log_dir")) == 0) ||
         (strncmp(param, "alarm_component", strlen("alarm_component")) == 0) ||
         (strncmp(param, "unix_socket_directory", strlen("unix_socket_directory")) == 0)) {
@@ -938,6 +970,9 @@ static status_t CheckStringTypeValue(const char *param, const char *value)
     }
     if (strncmp(param, "environment_threshold", strlen("environment_threshold")) == 0) {
         return CheckEnvThresholdSize(value);
+    }
+    if (strncmp(param, "event_triggers", strlen("event_triggers")) == 0) {
+        return CheckEventTriggers(value);
     }
 
     return CM_SUCCESS;
@@ -1078,5 +1113,120 @@ status_t CheckGucOptionValidate(const GucOption &gucCtx)
         return CM_ERROR;
     }
 
+    return CM_SUCCESS;
+}
+
+static EventTriggerType GetTriggerTypeFromStr(const char *typeStr)
+{
+    for (int i = EVENT_START; i < EVENT_COUNT; ++i) {
+        if (strcmp(typeStr, triggerTypeStringMap[i].typeStr) == 0) {
+            return triggerTypeStringMap[i].type;
+        }
+    }
+    write_runlog(ERROR, "Event trigger type %s is not supported.\n", typeStr);
+    return EVENT_UNKNOWN;
+}
+
+/*
+ * check trigger item, key and value can't be empty and must be string,
+ * value must be shell script file, current user has right permission.
+ */
+static status_t CheckEventTriggersItem(const cJSON *item)
+{
+    if (!cJSON_IsString(item)) {
+        write_runlog(ERROR, "The trigger value must be string.\n");
+        return CM_ERROR;
+    }
+
+    char *valuePtr = item->valuestring;
+    if (valuePtr == NULL || strlen(valuePtr) == 0) {
+        write_runlog(ERROR, "The trigger value can't be empty.\n");
+        return CM_ERROR;
+    }
+
+    if (valuePtr[0] != '/') {
+        write_runlog(ERROR, "The trigger script path must be absolute path.\n");
+        return CM_ERROR;
+    }
+
+    const char *extention = ".sh";
+    const size_t shExtLen = strlen(extention);
+    size_t pathLen = strlen(valuePtr);
+    if (pathLen < shExtLen ||
+        strncmp((valuePtr + (pathLen - shExtLen)), extention, shExtLen) != 0) {
+        write_runlog(ERROR, "The trigger value %s is not shell script.\n", valuePtr);
+        return CM_ERROR;
+    }
+
+    if (access(valuePtr, F_OK) != 0) {
+        write_runlog(ERROR, "The trigger script %s is not a file or does not exist.\n", valuePtr);
+        return CM_ERROR;
+    }
+    if (access(valuePtr, R_OK | X_OK) != 0) {
+        write_runlog(ERROR, "Current user has no permission to access the "
+            "trigger script %s.\n", valuePtr);
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+/*
+ * event_triggers sample:
+ * {
+ *     "on_start": "/dir/on_start.sh",
+ *     "on_stop": "/dir/on_stop.sh",
+ *     "on_failover": "/dir/on_failover.sh",
+ *     "on_switchover": "/dir/on_switchover.sh"
+ * }
+ */
+static status_t CheckEventTriggers(const char *value)
+{
+    if (value == NULL || value[0] == 0) {
+        write_runlog(ERROR, "The value of event_triggers is empty.\n");
+        return CM_ERROR;
+    }
+    if (CheckStringLen(value) == CM_ERROR) {
+        return CM_ERROR;
+    }
+
+    cJSON *root = NULL;
+    root = cJSON_Parse(value);
+    if (!root) {
+        write_runlog(ERROR, "The value of event_triggers is not a json.\n");
+        return CM_ERROR;
+    }
+    if (!cJSON_IsObject(root)) {
+        write_runlog(ERROR, "The value of event_triggers must be an object.\n");
+        cJSON_Delete(root);
+        return CM_ERROR;
+    }
+
+    int triggerNums[EVENT_COUNT] = {0};
+    cJSON *item = root->child;
+    while (item != NULL) {
+        if (CheckEventTriggersItem(item) == CM_ERROR) {
+            cJSON_Delete(root);
+            return CM_ERROR;
+        }
+
+        char *typeStr = item->string;
+        EventTriggerType type = GetTriggerTypeFromStr(typeStr);
+        if (type == EVENT_UNKNOWN) {
+            write_runlog(ERROR, "The trigger type %s does support.\n", typeStr);
+            cJSON_Delete(root);
+            return CM_ERROR;
+        }
+
+        ++triggerNums[type];
+        if (triggerNums[type] > 1) {
+            write_runlog(ERROR, "Duplicated trigger %s are supported.\n", typeStr);
+            cJSON_Delete(root);
+            return CM_ERROR;
+        }
+
+        item = item->next;
+    }
+    cJSON_Delete(root);
     return CM_SUCCESS;
 }

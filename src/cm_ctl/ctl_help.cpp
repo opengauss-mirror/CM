@@ -96,6 +96,8 @@ static void UsageHelp(const char *projectName)
     (void)printf(_("  %s res [--add | --edit | --del | --check] --res_name=\"NAME\" [--res_type=\"RES_TYPE\" "
         "--res_attr=\"RES_INFO\" | --add_inst=\"INST_INFO\" | --del_inst=\"INST_INFO\"]\n"), projectName);
     (void)printf(_("  %s show\n"), projectName);
+    (void)printf(_("  %s pause\n"), projectName);
+    (void)printf(_("  %s resume\n"), projectName);
 }
 
 static void CommonHelp()

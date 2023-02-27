@@ -46,6 +46,7 @@
 #define INSTANCE_MAINTANCE "instance_maintance"
 #define SYSTEM_CALL_LOG "system_call"
 #define MAX_LOGFILE_TIMESTAMP "99991231235959"
+#define CM_CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
 
 #define CONN_FAIL_TIMES 3
 /* time style length */
@@ -82,6 +83,29 @@ typedef struct {
     char dbname[NAMEDATALEN];
     uint32 oid;
 } DNDatabaseInfo;
+
+using EventTriggerType = enum EventTriggerTypeEn {
+    EVENT_UNKNOWN = -1,
+    EVENT_START = 0,
+    EVENT_STOP,
+    EVENT_FAILOVER,
+    EVENT_SWITCHOVER,
+    EVENT_COUNT
+};
+
+typedef struct TriggerTypeStringMap {
+    EventTriggerType type;
+    char *typeStr;
+} TriggerTypeStringMap;
+
+const TriggerTypeStringMap triggerTypeStringMap[EVENT_COUNT] = {
+    {EVENT_START, "on_start"},
+    {EVENT_STOP, "on_stop"},
+    {EVENT_FAILOVER, "on_failover"},
+    {EVENT_SWITCHOVER, "on_switchover"}
+};
+
+extern void GetEventTrigger();
 
 /*
  *        Cut time from trace name.
@@ -221,6 +245,8 @@ extern gtm_failover* g_gtmsFailover;
 extern pthread_rwlock_t g_datanodesFailoverLock;
 extern pthread_rwlock_t g_gtmsFailoverLock;
 extern int g_gtmMode;
+extern char *g_eventTriggers[EVENT_COUNT];
+extern void ExecuteEventTrigger(const EventTriggerType triggerType);
 
 extern int node_match_find(const char *node_type, const char *node_port, const char *node_host, const char *node_port1,
     const char *node_host1, int *node_index, int *instance_index, int *inode_type);

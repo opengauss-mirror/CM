@@ -457,6 +457,11 @@ void* ConnCmsPMain(void* arg)
                     } else {
                         write_runlog(LOG, "agent disconnect from cm_server %u seconds, stop instances in this node. "
                             "sync_dropped_coordinator change to false.\n", agentStopInstanceDelayTime);
+
+                        if (g_isPauseArbitration) {
+                            continue;
+                        }
+
                         g_syncDroppedCoordinator = false;
                         have_killed_nodes = true;
 

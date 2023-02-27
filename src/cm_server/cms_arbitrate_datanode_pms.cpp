@@ -2186,6 +2186,17 @@ void DatanodeInstanceArbitrate(MsgRecvInfo* recvMsgInfo, const agent_to_cm_datan
     (void)pthread_rwlock_wrlock(ctx.lock);
     ResetHeartbeat(&ctx);
     SaveDnStatusFromReport(agentRep, &ctx);
+
+    /* skip arbitration when the cluster is pausing,
+     * but cm_ctl operation is allowed, it's necessary to clean some falgs.
+     */
+    if (g_isPauseArbitration) {
+        write_runlog(LOG, "The cluster has been paused.\n");
+        CleanArbitInfo(&ctx);
+        (void)pthread_rwlock_unlock(ctx.lock);
+        return;
+    }
+
     InitDnInfo(&ctx);
     DnArbitrateInner(&ctx);
     (void)pthread_rwlock_unlock(ctx.lock);

@@ -843,6 +843,11 @@ static void DoUpOrDownNetworkOper(NetworkInfo *netInfo)
         write_runlog(LOG, "%s Ip: %s oper=[%d: %s], state=[%d: %s], GetNicCmd(%s).\n", str, netInfo->ips[i],
             (int32)netInfo->oper, GetOperMapString(netInfo->oper), (int32)netInfo->stateRecord[i],
             GetStateMapString(netInfo->stateRecord[i]), cmd);
+
+        if (g_isPauseArbitration) {
+            continue;
+        }
+
         res = ExecuteSystemCmd(cmd);
         if (res != 0) {
             write_runlog(ERROR, "%s failed to execute the cmd(%s), res=%d, errno is %d.\n", str, cmd, res, errno);

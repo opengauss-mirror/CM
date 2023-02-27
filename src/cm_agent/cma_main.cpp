@@ -84,6 +84,7 @@ bool g_poolerPingEndRequest = false;
 int g_gtmConnFailTimes = 0;
 int g_cnConnFailTimes = 0;
 int g_dnConnFailTimes[CM_MAX_DATANODE_PER_NODE] = {0};
+char *g_eventTriggers[EVENT_COUNT] = {NULL};
 
 static const uint32 MAX_MSG_BUF_POOL_SIZE = 102400;
 static const uint32 MAX_MSG_BUF_POOL_COUNT = 200;
@@ -378,6 +379,8 @@ int get_prog_path()
 #endif
     rc = memset_s(g_autoRepairPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_cmManualPausePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
     if (GetHomePath(exec_path, sizeof(exec_path)) != 0) {
         (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
@@ -426,6 +429,9 @@ int get_prog_path()
         securec_check_intval(rcs, (void)rcs);
 #endif
         rcs = snprintf_s(g_autoRepairPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/stop_auto_repair", exec_path);
+        securec_check_intval(rcs, (void)rcs);
+        rcs = snprintf_s(
+            g_cmManualPausePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, CM_CLUSTER_MANUAL_PAUSE);
         securec_check_intval(rcs, (void)rcs);
         InitClientCrt(exec_path);
     }
@@ -1022,10 +1028,25 @@ void server_loop(void)
     (void)clock_gettime(CLOCK_MONOTONIC, &startTime);
     (void)clock_gettime(CLOCK_MONOTONIC, &g_disconnectTime);
 
+    const int pauseLogInterval = 5;
+    int pauseLogTimes = 0;
     for (;;) {
         if (g_shutdownRequest) {
             cm_sleep(5);
             continue;
+        }
+
+        if (access(g_cmManualPausePath, F_OK) == 0) {
+            g_isPauseArbitration = true;
+            // avoid log swiping
+            if (pauseLogTimes == 0) {
+                write_runlog(LOG, "The cluster has been paused.\n");
+            }
+            ++pauseLogTimes;
+            pauseLogTimes = pauseLogTimes % pauseLogInterval;
+        } else {
+            g_isPauseArbitration = false;
+            pauseLogTimes = 0;
         }
 
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);
@@ -1434,6 +1455,7 @@ int get_agent_global_params_from_configfile()
     if (get_config_param(configDir, "enable_fence_dn", g_enableFenceDn, sizeof(g_enableFenceDn)) < 0)
         write_runlog(ERROR, "get_config_param() get enable_fence_dn fail.\n");
 #endif
+    GetEventTrigger();
 
 #ifdef __aarch64__
     agent_process_cpu_affinity = get_uint32_value_from_config(configDir, "process_cpu_affinity", 0);
@@ -1904,4 +1926,182 @@ uint32 GetLibcommPort(const char *file_path, uint32 base_port, int port_type)
     port = GetLibcommDefaultPort(base_port, port_type);
     write_runlog(LOG, "No custom %s found, use the default:%u.\n", Keywords, port);
     return port;
+}
+
+static EventTriggerType GetTriggerTypeFromStr(const char *typeStr)
+{
+    for (int i = EVENT_START; i < EVENT_COUNT; ++i) {
+        if (strcmp(typeStr, triggerTypeStringMap[i].typeStr) == 0) {
+            return triggerTypeStringMap[i].type;
+        }
+    }
+    write_runlog(ERROR, "Event trigger type %s is not supported.\n", typeStr);
+    return EVENT_UNKNOWN;
+}
+
+/*
+ * check trigger item, key and value can't be empty and must be string,
+ * value must be shell script file, current user has right permission.
+ */
+static status_t CheckEventTriggersItem(const cJSON *item)
+{
+    if (!cJSON_IsString(item)) {
+        write_runlog(ERROR, "The trigger value must be string.\n");
+        return CM_ERROR;
+    }
+
+    char *valuePtr = item->valuestring;
+    if (valuePtr == NULL || strlen(valuePtr) == 0) {
+        write_runlog(ERROR, "The trigger value can't be empty.\n");
+        return CM_ERROR;
+    }
+
+    if (valuePtr[0] != '/') {
+        write_runlog(ERROR, "The trigger script path must be absolute path.\n");
+        return CM_ERROR;
+    }
+
+    const char *extention = ".sh";
+    const size_t shExtLen = strlen(extention);
+    size_t pathLen = strlen(valuePtr);
+    if (pathLen < shExtLen ||
+        strncmp((valuePtr + (pathLen - shExtLen)), extention, shExtLen) != 0) {
+        write_runlog(ERROR, "The trigger value %s is not shell script.\n", valuePtr);
+        return CM_ERROR;
+    }
+
+    if (access(valuePtr, F_OK) != 0) {
+        write_runlog(ERROR, "The trigger script %s is not a file or does not exist.\n", valuePtr);
+        return CM_ERROR;
+    }
+    if (access(valuePtr, R_OK | X_OK) != 0) {
+        write_runlog(ERROR, "Current user has no permission to access the "
+            "trigger script %s.\n", valuePtr);
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+/*
+ * event_triggers sample:
+ * {
+ *     "on_start": "/dir/on_start.sh",
+ *     "on_stop": "/dir/on_stop.sh",
+ *     "on_failover": "/dir/on_failover.sh",
+ *     "on_switchover": "/dir/on_switchover.sh"
+ * }
+ */
+static void ParseEventTriggers(const char *value)
+{
+    if (value == NULL || value[0] == 0) {
+        write_runlog(ERROR, "The value of event_triggers is empty.\n");
+        return;
+    }
+    if (strlen(value) > MAX_PATH_LEN) {
+        write_runlog(ERROR, "The string value \"%s\" is longer than 1024.\n", value);
+        return;
+    }
+
+    cJSON *root = NULL;
+    root = cJSON_Parse(value);
+    if (!root) {
+        write_runlog(ERROR, "The value of event_triggers is not a json.\n");
+        return;
+    }
+    if (cJSON_IsArray(root)) {
+        write_runlog(ERROR, "The value of event_triggers can't be a json item array.\n");
+        cJSON_Delete(root);
+        return;
+    }
+
+    int triggerNums[EVENT_COUNT] = {0};
+    cJSON *item = root->child;
+    /* when the new value is invalid, the old value should not be modify at all,
+     * so a temporary backup is needed, to avoid partial modifications
+     */
+    char *eventTriggers[EVENT_COUNT] = {NULL};
+    bool isValueInvalid = false;
+    while (item != NULL) {
+        if (CheckEventTriggersItem(item) == CM_ERROR) {
+            isValueInvalid = true;
+            break;
+        }
+
+        char *typeStr = item->string;
+        EventTriggerType type = GetTriggerTypeFromStr(typeStr);
+        if (type == EVENT_UNKNOWN) {
+            write_runlog(ERROR, "The trigger type %s does support.\n", typeStr);
+            isValueInvalid = true;
+            break;
+        }
+
+        char *valuePtr = item->valuestring;
+        ++triggerNums[type];
+        if (triggerNums[type] > 1) {
+            write_runlog(ERROR, "Duplicated trigger %s are supported.\n", typeStr);
+            isValueInvalid = true;
+            break;
+        }
+
+        eventTriggers[type] = (char*)CmMalloc(strlen(valuePtr));
+        int ret = snprintf_s(eventTriggers[type], MAX_PATH_LEN,
+            MAX_PATH_LEN - 1, "%s", valuePtr);
+        securec_check_intval(ret, (void)ret);
+        item = item->next;
+    }
+
+    if (isValueInvalid) {
+        for (int i = 0; i < EVENT_COUNT; ++i) {
+            if (eventTriggers[i] != NULL) {
+                FREE_AND_RESET(eventTriggers[i]);
+            }
+        }
+        cJSON_Delete(root);
+        return;
+    }
+
+    // copy the temporary backup to the global variable and clean up the temporary backup
+    for (int i = 0; i < EVENT_COUNT; ++i) {
+        if (eventTriggers[i] == NULL) {
+            if (g_eventTriggers[i] != NULL) {
+                FREE_AND_RESET(g_eventTriggers[i]);
+            }
+        } else {
+            if (g_eventTriggers[i] == NULL) {
+                g_eventTriggers[i] = (char*)CmMalloc(strlen(eventTriggers[i]));
+            }
+            int ret = snprintf_s(g_eventTriggers[i], MAX_PATH_LEN,
+                MAX_PATH_LEN - 1, "%s", eventTriggers[i]);
+            securec_check_intval(ret, (void)ret);
+            FREE_AND_RESET(eventTriggers[i]);
+            write_runlog(LOG, "Event trigger %s was added, script path = %s.\n",
+                triggerTypeStringMap[i].typeStr, g_eventTriggers[i]);
+        }
+    }
+    cJSON_Delete(root);
+}
+
+void GetEventTrigger()
+{
+    char eventTriggerString[MAX_PATH_LEN] = {0};
+    if (get_config_param(configDir, "event_triggers", eventTriggerString, MAX_PATH_LEN) < 0) {
+        write_runlog(ERROR, "get_config_param() get event_triggers fail.\n");
+        return;
+    }
+    ParseEventTriggers(eventTriggerString);
+}
+
+void ExecuteEventTrigger(const EventTriggerType triggerType)
+{
+    if (g_eventTriggers[triggerType] == NULL) {
+        return;
+    }
+    write_runlog(LOG, "Event trigger %s was triggered.\n", triggerTypeStringMap[triggerType].typeStr);
+    char execTriggerCmd[MAX_COMMAND_LEN] = {0};
+    int rc = snprintf_s(execTriggerCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
+        SYSTEMQUOTE "%s >> %s 2>&1 &" SYSTEMQUOTE, g_eventTriggers[triggerType], system_call_log);
+    securec_check_intval(rc, (void)rc);
+    write_runlog(LOG, "event trigger command: \"%s\".\n", execTriggerCmd);
+    RunCmd(execTriggerCmd);
 }

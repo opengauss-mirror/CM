@@ -24,6 +24,8 @@
 #ifndef CMA_LIBPQ_API_H
 #define CMA_LIBPQ_API_H
 
+#include <assert.h>
+
 typedef void cltPqConn_t;
 typedef void cltPqResult_t;
 

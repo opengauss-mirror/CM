@@ -28,7 +28,18 @@
 
 bool g_enableSharedStorage = false;
 CmResStatList g_resStatus[CM_MAX_RES_COUNT] = {{0}};
-uint32 g_resCount = 0;
+
+static uint32 g_resCount = 0;
+static bool8 g_isDnSSMode = CM_FALSE;
+
+typedef enum IpTypeEn {
+    IP_TYPE_INIT = 0,
+    IP_TYPE_UNKNOWN = 1,
+    IP_TYPE_IPV4,
+    IP_TYPE_IPV6,
+    IP_TYPE_NEITHER,
+    IP_TYPE_CEIL,
+} IpType;
 
 typedef struct ResConfRangeSt {
     const char *param;
@@ -36,13 +47,34 @@ typedef struct ResConfRangeSt {
     int max;
 } ResConfRange;
 
+typedef struct ResConfDefaultSt {
+    const char *param;
+    const char *defValue;
+} ResConfDefault;
+
 static ResConfRange g_resConfRange[] = {
     {"check_interval", 1, 2147483647},
     {"time_out", 1, 2147483647},
+    {"abnormal_timeout", 0, 2147483647},
     {"restart_delay", 0, 1800},
     {"restart_period", 0, 3600},
     {"restart_times", -1, 9999},
-    {"instance_id", 1, 2147483647}
+    {"res_instance_id", 0, 2147483647}
+};
+
+static ResConfDefault g_resConfDef[] = {
+    {"resources_type", "APP"},
+    {"check_interval", "1"},
+    {"time_out", "10"},
+    {"abnormal_timeout", "30"},
+    {"restart_delay", "1"},
+    {"restart_period", "1"},
+    {"restart_times", "-1"},
+    {"res_instance_id", "0"},
+    {"one instance res_instance_id", "0"},
+    {"is_critical", "true"},
+    {"location_type", "local"},
+    {"location_attr", ""}
 };
 
 typedef status_t (*InitCusRes)(const OneCusResConfJson *oneResJson, OneResStatList *oneResStat);
@@ -92,16 +124,42 @@ bool IsResConfValid(const char *param, int value)
         if (strcmp(param, g_resConfRange[i].param) != 0) {
             continue;
         }
-        int minValue = g_resConfRange[i].min;
-        int maxValue = g_resConfRange[i].max;
-        if (value >= minValue && value <= maxValue) {
-            return true;
-        } else {
-            write_runlog(ERROR, "\"%s\":%d invalid, range [%d, %d].\n", param, value, minValue, maxValue);
-            return false;
-        }
+        return (value >= g_resConfRange[i].min && value <= g_resConfRange[i].max);
     }
     return false;
+}
+
+int ResConfMaxValue(const char *param)
+{
+    uint32 arrLen = (sizeof(g_resConfRange) / sizeof(g_resConfRange[0]));
+    for (uint32 i = 0; i < arrLen; ++i) {
+        if (strcmp(param, g_resConfRange[i].param) == 0) {
+            return g_resConfRange[i].max;
+        }
+    }
+    return INT32_MAX;
+}
+
+int ResConfMinValue(const char *param)
+{
+    uint32 arrLen = (sizeof(g_resConfRange) / sizeof(g_resConfRange[0]));
+    for (uint32 i = 0; i < arrLen; ++i) {
+        if (strcmp(param, g_resConfRange[i].param) == 0) {
+            return g_resConfRange[i].min;
+        }
+    }
+    return INT32_MIN;
+}
+
+const char* ResConfDefValue(const char *param)
+{
+    uint32 arrLen = (sizeof(g_resConfDef) / sizeof(g_resConfDef[0]));
+    for (uint32 i = 0; i < arrLen; ++i) {
+        if (strcmp(param, g_resConfDef[i].param) == 0) {
+            return g_resConfDef[i].defValue;
+        }
+    }
+    return "";
 }
 
 static inline bool IsCustomResource(CusResType resType)
@@ -275,6 +333,9 @@ status_t InitAllResStat(int logLevel)
         if (!IsCustomResource(g_confJson->resource.conf[i].resType)) {
             continue;
         }
+        if (g_confJson->resource.conf[i].resType == CUSTOM_RESOURCE_DN) {
+            g_isDnSSMode = CM_TRUE;
+        }
         if (g_resCount >= CM_MAX_RES_COUNT) {
             write_runlog(ERROR, "[InitResStat] custom resource count overflow, max:%d.\n", CM_MAX_RES_COUNT);
             CleanResStat();
@@ -398,6 +459,107 @@ status_t GetResNameByCmInstId(uint32 instId, char *resName, uint32 nameLen)
     return CM_ERROR;
 }
 
+static IpType GetIpType(const char *ip)
+{
+    if (CM_IS_EMPTY_STR(ip)) {
+        return IP_TYPE_NEITHER;
+    }
+    int32 ip4Cnt = 0;
+    int32 ip6Cnt = 0;
+    const int32 ip4CntTotal = 3;
+    const int32 ip6CntMax = 7;
+    const int32 ip6CntMin = 2;
+    uint32 ipLen = (uint32)strlen(ip);
+    for (uint32 i = 0; i < ipLen; ++i) {
+        if (ip[i] == '.') {
+            ++ip4Cnt;
+        } else if (ip[i] == ':') {
+            ++ip6Cnt;
+        }
+    }
+    if (ip6Cnt == 0 && ip4Cnt == ip4CntTotal) {
+        return IP_TYPE_IPV4;
+    }
+    if (ip4Cnt == 0 && (ip6Cnt >= ip6CntMin && ip6Cnt <= ip6CntMax)) {
+        return IP_TYPE_IPV6;
+    }
+    write_runlog(ERROR, "ip(%s) is invalid, and ip4Cnt=%d, ip6Cnd=%d.\n", ip, ip4Cnt, ip6Cnt);
+    return IP_TYPE_NEITHER;
+}
+
+static uint8 CheckIpV4PartlyValid(const char *ipPart)
+{
+    if (CM_is_str_all_digit(ipPart) != 0) {
+        write_runlog(ERROR, "ip(%s) is not digital.\n", ipPart);
+        return CM_FALSE;
+    }
+    const uint32 maxLen = 3;
+    uint32 ipLen = (uint32)strlen(ipPart);
+    if (ipLen > maxLen) {
+        return CM_FALSE;
+    }
+    if (ipPart[0] == '0' && ipLen > 1) {
+        write_runlog(ERROR, "ip(%s) first is 0.\n", ipPart);
+        return CM_FALSE;
+    }
+    const int32 maxValue = 255;
+    int32 value = (int32)CmAtoi(ipPart, 0);
+    if (value < 0 || value > maxValue) {
+        write_runlog(ERROR, "ip(%s) value(%d) is not in [%d: %d].\n", ipPart, value, 0, maxValue);
+        return CM_FALSE;
+    }
+    return CM_TRUE;
+}
+
+static uint8 CheckIpV4Valid(char *ip, uint32 ipLen)
+{
+    if (CM_IS_EMPTY_STR(ip)) {
+        return CM_FALSE;
+    }
+    char baseIp[CM_IP_LENGTH] = {0};
+    errno_t rc = strncpy_s(baseIp, CM_IP_LENGTH, ip, ipLen);
+    securec_check_errno(rc, (void)rc);
+
+    const char *ipPoint = ".";
+    char *savePtr = NULL;
+    // first
+    char *subStr = strtok_r(ip, ipPoint, &savePtr);
+    CM_RETFALSE_IFNOT(CheckIpV4PartlyValid(subStr));
+
+    int cnt = 1;
+    while (!CM_IS_EMPTY_STR(savePtr)) {
+        subStr = strtok_r(NULL, ipPoint, &savePtr);
+        CM_RETFALSE_IFNOT(CheckIpV4PartlyValid(subStr));
+        ++cnt;
+    }
+    const int maxIpv4Part = 4;
+    if (cnt != maxIpv4Part) {
+        write_runlog(ERROR, "ip(%s) is invalid, cnt=%d.\n", baseIp, cnt);
+        return CM_FALSE;
+    }
+
+    return CM_TRUE;
+}
+
+uint8 CheckIpValid(const char *ip)
+{
+    char tempIp[CM_IP_LENGTH] = {0};
+    errno_t rc = strcpy_s(tempIp, CM_IP_LENGTH, ip);
+    securec_check_errno(rc, (void)rc);
+
+    if (GetIpType(tempIp) != IP_TYPE_IPV4) {
+        write_runlog(ERROR, "ip(%s) is invalid, not ipV4.\n", ip);
+        return CM_FALSE;
+    }
+
+    if (CheckIpV4Valid(tempIp, CM_IP_LENGTH) == CM_FALSE) {
+        write_runlog(ERROR, "ipV4(%s) is invalid.\n", ip);
+        return CM_FALSE;
+    }
+
+    return CM_TRUE;
+}
+
 uint32 CusResCount()
 {
     return g_resCount;
@@ -405,8 +567,23 @@ uint32 CusResCount()
 
 bool IsCusResExist()
 {
-    if (g_resCount == 0) {
-        return false;
+    return (g_resCount > 0);
+}
+
+void PrintCusInfoResList(const OneResStatList *status, const char *info)
+{
+    write_runlog(LOG, "[CUS_RES] [%s] res(%s), version=%llu, status:\n", info, status->resName, status->version);
+    for (uint32 i = 0; i < status->instanceCount; ++i) {
+        write_runlog(LOG, "[CUS_RES] nodeId=%u, cmInstId=%u, resInstId=%u, status=%u, isWork=%u;\n",
+            status->resStat[i].nodeId,
+            status->resStat[i].cmInstanceId,
+            status->resStat[i].resInstanceId,
+            status->resStat[i].status,
+            status->resStat[i].isWorkMember);
     }
-    return true;
+}
+
+bool8 IsDatanodeSSMode()
+{
+    return g_isDnSSMode;
 }

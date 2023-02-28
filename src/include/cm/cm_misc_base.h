@@ -58,7 +58,10 @@ bool IsSharedStorageMode();
 bool IsBoolCmParamTrue(const char *param);
 status_t TcpSendMsg(int socket, const char *buf, size_t remainSize, uint32 timeout = CM_TCP_TIMEOUT);
 status_t TcpRecvMsg(int socket, char *buf, size_t remainSize, uint32 timeout = CM_TCP_TIMEOUT);
+long GetCurMonotonicTimeSec();
+void InitPthreadCondMonotonic(pthread_cond_t *cond);
 
 bool CmFileExist(const char *file_path);
+bool CheckBoolConfigParam(const char* value);
 
 #endif // CM_MISC_API_H

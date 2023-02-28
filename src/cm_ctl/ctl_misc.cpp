@@ -32,6 +32,7 @@
 #include "cm/libpq-fe.h"
 #include "cm/cm_misc.h"
 #include "ctl_common.h"
+#include "ctl_process_message.h"
 #include "cm/cm_msg.h"
 #include "cm/libpq-int.h"
 #include "cm/cm_agent/cma_main.h"
@@ -1811,6 +1812,12 @@ int DoReload()
     return 0;
 }
 
+static void SetNodeInstBaseInfo(NodeInstBaseInfo *info, uint32 nodeIdx, uint32 instIdx)
+{
+    info->nodeIdx = nodeIdx;
+    info->instIdx = instIdx;
+}
+
 int FindInstanceByInstId(uint32 instId, Instance *inst)
 {
     for (uint32 nodeIdx = 0; nodeIdx < g_node_num; nodeIdx++) {
@@ -1820,6 +1827,7 @@ int FindInstanceByInstId(uint32 instId, Instance *inst)
                 inst->instType = INST_TYPE_GTM;
                 inst->node = curNode->node;
                 inst->InstNode = curNode;
+                SetNodeInstBaseInfo(&(inst->baseInfo), nodeIdx, 0);
                 return 0;
             }
         }
@@ -1829,6 +1837,7 @@ int FindInstanceByInstId(uint32 instId, Instance *inst)
                 inst->instType = INST_TYPE_CN;
                 inst->node = curNode->node;
                 inst->InstNode = curNode;
+                SetNodeInstBaseInfo(&(inst->baseInfo), nodeIdx, 0);
                 return 0;
             }
         }
@@ -1838,6 +1847,7 @@ int FindInstanceByInstId(uint32 instId, Instance *inst)
                 inst->instType = INST_TYPE_CMSERVER;
                 inst->node = curNode->node;
                 inst->InstNode = curNode;
+                SetNodeInstBaseInfo(&(inst->baseInfo), nodeIdx, 0);
                 return 0;
             }
         }
@@ -1847,6 +1857,7 @@ int FindInstanceByInstId(uint32 instId, Instance *inst)
                 inst->instType = INST_TYPE_DN;
                 inst->node = curNode->node;
                 inst->dnInst = &curNode->datanode[i];
+                SetNodeInstBaseInfo(&(inst->baseInfo), nodeIdx, i);
                 return 0;
             }
         }
@@ -2016,6 +2027,7 @@ void DoDccCmd(int argc, char **argv)
         write_runlog(ERROR, "exec ddb command without param.\n");
         return;
     }
+    InitDdbCmdMsgFunc();
     for (int i = OPTION_POS; i < argc; ++i) {
         size_t optionLen = strlen(argv[i]);
         if (optionLen > CM_PATH_LENGTH) {

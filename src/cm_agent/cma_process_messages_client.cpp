@@ -31,6 +31,15 @@
 #include "cma_instance_management_res.h"
 #include "cma_process_messages_client.h"
 
+void NotifyClientConnectClose()
+{
+    AgentToClientNotify cmaMsg = {{0}};
+    cmaMsg.head.msgType = (uint32)MSG_AGENT_CLIENT_NOTIFY_CONN_CLOSE;
+    cmaMsg.notify.isCmaConnClose = CM_TRUE;
+
+    PushMsgToAllClientSendQue((char*)&cmaMsg, sizeof(cmaMsg));
+}
+
 static void SendHeartbeatAckToClient(uint32 conId)
 {
     MsgHead hbAck = {0};
@@ -53,19 +62,10 @@ static void SendStatusListToClient(CmResStatList &statList, uint32 conId, bool i
 
     (void)pthread_rwlock_rdlock(&(statList.rwlock));
     rc = memcpy_s(&sendList.resStatusList, sizeof(OneResStatList), &statList.status, sizeof(OneResStatList));
-    (void)pthread_rwlock_unlock(&(statList.rwlock));
     securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_unlock(&(statList.rwlock));
 
-    write_runlog(LOG, "[CLIENT] send status list to res(%s), version=%llu.\n",
-        sendList.resStatusList.resName, sendList.resStatusList.version);
-    for (uint32 i = 0; i < sendList.resStatusList.instanceCount; ++i) {
-        write_runlog(LOG, "nodeId=%u,instanceId=%u,resInstanceId=%u,status=%d,isWork=%u\n",
-            sendList.resStatusList.resStat[i].nodeId,
-            sendList.resStatusList.resStat[i].cmInstanceId,
-            sendList.resStatusList.resStat[i].resInstanceId,
-            (int)sendList.resStatusList.resStat[i].status,
-            sendList.resStatusList.resStat[i].isWorkMember);
-    }
+    PrintCusInfoResList(&sendList.resStatusList, __FUNCTION__);
 
     PushMsgToClientSendQue((char*)&sendList, sizeof(AgentToClientResList), conId);
 }
@@ -242,19 +242,6 @@ static void UpdateResStatusList(CmResStatList *resStat, const OneResStatList *ne
     securec_check_errno(rc, (void)rc);
 }
 
-static void PrintLatestResStatusList(const OneResStatList *resStat)
-{
-    write_runlog(LOG, "[CLIENT] res(%s) statList changed, version=%llu.\n", resStat->resName, resStat->version);
-    for (uint32 i = 0; i < resStat->instanceCount; ++i) {
-        write_runlog(LOG, "nodeId=%u,cmInstanceId=%u,resInstanceId=%u,status=%u,isWork=%u\n",
-            resStat->resStat[i].nodeId,
-            resStat->resStat[i].cmInstanceId,
-            resStat->resStat[i].resInstanceId,
-            resStat->resStat[i].status,
-            resStat->resStat[i].isWorkMember);
-    }
-}
-
 void ProcessResStatusList(const CmsReportResStatList *msg)
 {
     if (msg->resList.instanceCount > CM_MAX_RES_INST_COUNT) {
@@ -270,7 +257,7 @@ void ProcessResStatusList(const CmsReportResStatList *msg)
     }
 
     UpdateResStatusList(&g_resStatus[index], &msg->resList);
-    PrintLatestResStatusList(&msg->resList);
+    PrintCusInfoResList(&msg->resList, __FUNCTION__);
 }
 
 void ProcessResStatusChanged(const CmsReportResStatList *msg)

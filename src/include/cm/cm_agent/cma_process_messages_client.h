@@ -29,5 +29,6 @@ void ProcessResStatusChanged(const CmsReportResStatList *msg);
 void ProcessResLockAckFromCms(const CmsReportLockResult *recvMsg);
 void ProcessResRegFromCms(const CmsNotifyAgentRegMsg *recvMsg);
 void ProcessIsregCheckListChanged(const CmsFlushIsregCheckList *recvMsg);
+void NotifyClientConnectClose();
 
 #endif // CMA_PROCESS_MESSAGES_CLIENT_H

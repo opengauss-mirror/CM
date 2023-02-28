@@ -27,6 +27,8 @@
 #include "cm/cs_ssl.h"
 #include "cma_common.h"
 #include "cma_instance_check.h"
+#include "cma_instance_management_res.h"
+#include "cma_process_messages_client.h"
 #include "cma_connect.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
@@ -368,6 +370,9 @@ static void CloseConnToCmserver(void)
         write_runlog(LOG, "close agent to cmserver connection.\n");
     }
     CleanCmsMsgQueue();
+    if (IsCusResExistLocal()) {
+        NotifyClientConnectClose();
+    }
 }
 
 static status_t SendCmsMsgMain()

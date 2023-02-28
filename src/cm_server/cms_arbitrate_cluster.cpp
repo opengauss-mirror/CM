@@ -478,7 +478,7 @@ static void PrintMaxNodeCluster(const MaxNodeCluster *maxNodeCluster, const char
     for (int32 i = 0; i < maxNodeCluster->nodeCluster.clusterNum; ++i) {
         StrcatNextNodeStr(clusterStr, MAX_PATH_LEN, maxNodeCluster->nodeCluster.cluster[i]);
     }
-    write_runlog(logLevel, "%s the max node cluster: %s.\n", str, clusterStr);
+    write_runlog(LOG, "%s the max node cluster: %s.\n", str, clusterStr);
 }
 
 static void GetClusterKeyInDdb(char *key, uint32 keyLen)

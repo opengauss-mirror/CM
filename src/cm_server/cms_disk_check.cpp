@@ -71,6 +71,9 @@ static bool g_allHealth = true;
 
 bool CheckReadOnlyStatus(uint32 instanceId)
 {
+    if (!IsBoolCmParamTrue(g_enableSetReadOnly)) {
+        return false;
+    }
     write_runlog(DEBUG1, "[%s] instanceId: %u\n", __FUNCTION__, instanceId);
     for (uint32 i = 0; i < g_node_num; i++) {
         if (g_dynamicNodeReadOnlyInfo[i].coordinateNode.readOnly &&

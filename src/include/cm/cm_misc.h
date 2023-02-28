@@ -142,12 +142,14 @@ typedef struct ResStatusCheckInfoSt {
     long brokeTime;
     int startCount;
     int onlineTimes;
+    long abnormalTime;
 
     int checkInterval;
     int timeOut;
     int restartDelay;
     int restartPeriod;
     int restartTimes;
+    int abnormalTimeout;
 } ResStatusCheckInfo;
 
 typedef struct CmResConfListSt {
@@ -170,8 +172,14 @@ typedef enum {
     INST_TYPE_FENCED_UDF = 5,
 } InstanceType;
 
+typedef struct NodeInstBaseInfoT {
+    uint32 nodeIdx;
+    uint32 instIdx;
+} NodeInstBaseInfo;
+
 typedef struct Instance_t {
     uint32 node;
+    NodeInstBaseInfo baseInfo;
     InstanceType instType;
     union {
         dataNodeInfo *dnInst;
@@ -279,4 +287,5 @@ void listen_ip_merge(uint32 ipCnt, const char (*ipListen)[CM_IP_LENGTH], char *r
 bool IsNodeIdValid(int nodeId);
 
 void FreeSslOpton();
+bool IsNeedCheckFloatIp();
 #endif

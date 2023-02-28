@@ -108,13 +108,6 @@ typedef struct st_cs_pipe {
     int32 l_linger;
 } cs_pipe_t;
 
-#pragma pack(4)
-typedef struct st_text {
-    char *str;
-    uint32 len;
-} text_t;
-#pragma pack()
-
 #define MESSAGE_BUFFER_SIZE (SIZE_M(1))
 #define PADDING_BUFFER_SIZE (SIZE_K(1))
 #define MAX_BATCH_SIZE      500
@@ -127,19 +120,6 @@ typedef struct st_text {
 #define CM_MAX_MESSAGE_BUFFER_SIZE (SIZE_M(10))
 
 #define CS_INVALID_SOCKET (-1)
-
-#define CM_TEXT_BEGIN(text)  ((text)->str[0])
-#define CM_TEXT_FIRST(text)  ((text)->str[0])
-#define CM_TEXT_SECOND(text) ((text)->str[1])
-#define CM_TEXT_END(text)    ((text)->str[(text)->len - 1])
-#define CM_TEXT_SECONDTOLAST(text)      (((text)->len >= 2) ? ((text)->str[(text)->len - 2]) : '\0')
-#define CM_NULL_TERM(text)   \
-    {                                    \
-        (text)->str[(text)->len] = '\0'; \
-    }
-#define CM_IS_EMPTY(text) (((text)->str == NULL) || ((text)->len == 0))
-#define CM_IS_QUOTE_CHAR(c1) ((c1)== '\'' || (c1) == '"' || (c1) == '`')
-#define CM_IS_QUOTE_STRING(c1, c2) ((c1) == (c2) && CM_IS_QUOTE_CHAR(c1))
 
 #define CS_WAIT_FOR_READ  1
 #define CS_WAIT_FOR_WRITE 2
@@ -157,53 +137,6 @@ typedef struct st_text {
 #define CM_SOCKET_TIMEOUT          (uint32)60000 /* mill-seconds */
 #define CM_TIME_THOUSAND_UN        (uint32)1000
 #define CM_HANDSHAKE_TIMEOUT       (uint32)600000 /* mill-seconds */
-
-#define cm_str_equal(str1, str2)       (strcmp(str1, str2) == 0)
-
-/* Remove the enclosed char or the head and the tail of the text */
-#define CM_REMOVE_ENCLOSED_CHAR(text) \
-    do {                              \
-        ++((text)->str);              \
-        (text)->len -= 2;             \
-    } while (0)
-
-static inline void cm_assert(bool condition)
-{
-    if (!condition) {
-        *((uint32 *)NULL) = 1;
-    }
-}
-
-#ifdef CM_DEBUG_VERSION
-#define CM_ASSERT(expr) cm_assert((bool)(expr))
-#else
-#define CM_ASSERT(expr) ((void)(expr))
-#endif
-
-static inline void cm_exit(int32 exitcode)
-{
-    _exit(exitcode);
-}
-
-#define CM_TEXT_CLEAR(text) ((text)->len = 0)
-
-#define CM_FILE_NAME_BUFFER_SIZE        (uint32)256
-#define CM_MAX_FILE_NAME_LEN            (uint32)(CM_FILE_NAME_BUFFER_SIZE - 1)
-
-static inline void cm_str2text(char *str, text_t *text)
-{
-    text->str = str;
-    text->len = (str == NULL) ? 0 : (uint32)strlen(str);
-}
-
-
-#define UPPER(c) (((c) >= 'a' && (c) <= 'z') ? ((c) - 32) : (c))
-#define LOWER(c) (((c) >= 'A' && (c) <= 'Z') ? ((c) + 32) : (c))
-
-#ifndef ELEMENT_COUNT
-#define ELEMENT_COUNT(x) ((uint32)(sizeof(x) / sizeof((x)[0])))
-#endif
-
 
 #endif
 

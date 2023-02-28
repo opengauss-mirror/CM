@@ -923,22 +923,28 @@ uint32 CheckDiskForLogPath(void)
     return percent;
 }
 
-int ExecuteSystemCmd(const char *cmd)
+int ExecuteSystemCmd(const char *cmd, int32 logLevel, int32 *errCode)
 {
     int ret = system(cmd);
     if (ret == -1) {
-        write_runlog(ERROR, "Fail to execute command %s, and errno=%d.\n", cmd, errno);
-        return -1;
+        // shield error codes 10 (no child processes), it may be much
+        const int32 noChildProcessesErrCode = 10;
+        int32 tmpLevel = (errno == noChildProcessesErrCode) ? logLevel : ERROR;
+        write_runlog(tmpLevel, "Fail to execute command %s, and errno=%d.\n", cmd, errno);
+        return ERROR_EXECUTE_CMD;
     }
 
     if (WIFEXITED(ret)) {
         if (WEXITSTATUS(ret) == 0) {
-            return 0;
+            return SUCCESS_EXECUTE_CMD;
         }
     }
 
-    write_runlog(ERROR, "Fail to execute command %s, script exit code %d.\n", cmd, WEXITSTATUS(ret));
-    return -1;
+    write_runlog(logLevel, "Fail to execute command %s, script exit code %d.\n", cmd, WEXITSTATUS(ret));
+    if (errCode != NULL) {
+        *errCode = WEXITSTATUS(ret);
+    }
+    return FAILED_EXECUTE_CMD;
 }
 
 void CheckDnNicDown(uint32 index)

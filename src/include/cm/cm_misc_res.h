@@ -48,6 +48,7 @@ const uint32 CM_MAX_VIP_COUNT = 16;
 #define CUS_RES_CHECK_STAT_ONLINE   0
 #define CUS_RES_CHECK_STAT_OFFLINE  1
 #define CUS_RES_CHECK_STAT_UNKNOWN  2
+#define CUS_RES_CHECK_STAT_ABNORMAL 3
 #define CUS_RES_CHECK_STAT_TIMEOUT  137
 
 #define CUS_RES_START_FAIL_DEPEND_NOT_ALIVE 6
@@ -94,6 +95,10 @@ typedef struct CmResStatListSt {
 extern bool g_enableSharedStorage;
 extern CmResStatList g_resStatus[CM_MAX_RES_COUNT];
 
+int ResConfMaxValue(const char *param);
+int ResConfMinValue(const char *param);
+const char* ResConfDefValue(const char *param);
+
 bool IsResConfValid(const char *param, int value);
 void GetCmConfJsonPath(char *path, uint32 pathLen);
 int ReadCmConfJson(void *logFunc);
@@ -108,5 +113,10 @@ uint8 CheckIpValid(const char *ip);
 uint32 CusResCount();
 bool IsCusResExist();
 const char *GetIsregStatus(int isreg);
+void PrintCusInfoResList(const OneResStatList *status, const char *info);
+bool8 IsDatanodeSSMode();
+const char* ResConfDefValue(const char *param);
+int ResConfMinValue(const char *param);
+int ResConfMaxValue(const char *param);
 
 #endif  // CM_CM_MISC_RES_H

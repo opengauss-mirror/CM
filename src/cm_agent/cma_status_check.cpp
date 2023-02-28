@@ -811,9 +811,22 @@ static void SendDiskUsageMsg(const DnStatus *pkgDnStatus, uint32 datanodeId)
     PushMsgToCmsSendQue((char *)&diskUsageMsg, (uint32)sizeof(AgentToCmDiskUsageStatusReport), "dnDiskUsage");
 }
 
+static void SendFloatIpMsg(const CmaDnFloatIpInfo *floatIpInfo, uint32 dnId)
+{
+    if (!IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
+        return;
+    }
+    if (floatIpInfo->info.count == 0) {
+        return;
+    }
+    write_runlog(DEBUG5, "dn(%u) floatIpMsg will send to cms.\n", dnId);
+    PushMsgToCmsSendQue((const char *)floatIpInfo, (uint32)sizeof(CmaDnFloatIpInfo), "dn floatIpMsg");
+}
+
 static void SendDnReportMsgCore(const DnStatus *pkgDnStatus, uint32 datanodeId, AgentToCmserverDnSyncList *syncListMsg)
 {
     SendDnReportMsg(pkgDnStatus, datanodeId);
+    SendFloatIpMsg(&(pkgDnStatus->floatIpInfo), datanodeId);
     if (g_clusterType == V3SingleInstCluster) {
         return;
     }
@@ -961,10 +974,26 @@ void InitDnLocalPeerMsg(AgentCmDnLocalPeer *lpInfo, int32 index)
     lpInfo->instanceType = INSTANCE_TYPE_DATANODE;
 }
 
+static void SetDnBaseMsg(BaseInstInfo *baseInfo, int32 index, int32 msgType)
+{
+    baseInfo->msgType = msgType;
+    baseInfo->instId = g_currentNode->datanode[index].datanodeId;
+    baseInfo->node = g_currentNode->node;
+    baseInfo->instType = INSTANCE_TYPE_DATANODE;
+}
+
+static void InitDnFloatIpMsg(CmaDnFloatIpInfo *ipInfo, int32 index)
+{
+    errno_t rc = memset_s(ipInfo, sizeof(CmaDnFloatIpInfo), 0, sizeof(CmaDnFloatIpInfo));
+    securec_check_errno(rc, (void)rc);
+    SetDnBaseMsg(&(ipInfo->baseInfo), index, (int32)MSG_AGENT_CM_FLOAT_IP);
+}
+
 void InitDNStatus(DnStatus *dnStatus, int i)
 {
     InitReportMsg(&dnStatus->reportMsg, i);
     InitDnLocalPeerMsg(&(dnStatus->lpInfo), i);
+    InitDnFloatIpMsg(&(dnStatus->floatIpInfo), i);
 }
 
 static void ChangeLocalRoleInBackup(int dnIdx, int *localDnRole)
@@ -1071,7 +1100,7 @@ void* DNStatusCheckMain(void *arg)
     int ret = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1,
         "%s_%u", "dn", g_currentNode->datanode[i].datanodeId);
     securec_check_intval(ret, (void)ret);
-    int runing = PROCESS_UNKNOWN;
+    int32 running = PROCESS_UNKNOWN;
 
     for (;;) {
         set_thread_state(threadId);
@@ -1084,8 +1113,9 @@ void* DNStatusCheckMain(void *arg)
         }
 
         InitDNStatus(&dnStatus, i);
+        running = check_one_instance_status(GetDnProcessName(), g_currentNode->datanode[i].datanodeLocalDataPath, NULL);
         if (g_currentNode->datanode[i].datanodeRole != DUMMY_STANDBY_DN) {
-            ret = DatanodeStatusCheck(&dnStatus, (uint32)i);
+            ret = DatanodeStatusCheck(&dnStatus, (uint32)i, running);
         }
 
         if (ret < 0 || g_currentNode->datanode[i].datanodeRole == DUMMY_STANDBY_DN) {
@@ -1093,13 +1123,11 @@ void* DNStatusCheckMain(void *arg)
                 write_runlog(ERROR, "DatanodeStatusCheck failed, ret=%d\n", ret);
             }
 
-            runing = check_one_instance_status(GetDnProcessName(), g_currentNode->datanode[i].datanodeLocalDataPath,
-                NULL);
             if (g_currentNode->datanode[i].datanodeRole == DUMMY_STANDBY_DN &&
-                dnStatus.reportMsg.processStatus != INSTANCE_PROCESS_RUNNING && runing != PROCESS_RUNNING) {
+                dnStatus.reportMsg.processStatus != INSTANCE_PROCESS_RUNNING && running != PROCESS_RUNNING) {
                 checkDummyTimes = CHECK_DUMMY_STATE_TIMES;
             }
-            if (runing == PROCESS_RUNNING) {
+            if (running == PROCESS_RUNNING) {
                 if (g_currentNode->datanode[i].datanodeRole == DUMMY_STANDBY_DN && checkDummyTimes > 0) {
                     checkDummyTimes--;
                 }
@@ -1206,12 +1234,16 @@ void* DNStatusCheckMain(void *arg)
         write_runlog(DEBUG5, "DatanodeStatusCheck: local role is %d, db state is %d, build reason is %d\n",
             dnStatus.reportMsg.local_status.local_role, dnStatus.reportMsg.local_status.db_state,
             dnStatus.reportMsg.local_status.buildReason);
+        DnCheckFloatIp(&dnStatus, (uint32)i, (bool8)(running == PROCESS_RUNNING));
         (void)pthread_rwlock_wrlock(&(g_dnReportMsg[i].lk_lock));
         rc = memcpy_s((void *)&(g_dnReportMsg[i].dnStatus.lpInfo), sizeof(AgentCmDnLocalPeer),
             (void *)&dnStatus.lpInfo, sizeof(AgentCmDnLocalPeer));
         securec_check_errno(rc, (void)rc);
         rc = memcpy_s((void *)&(g_dnReportMsg[i].dnStatus.reportMsg), sizeof(agent_to_cm_datanode_status_report),
             (void *)&dnStatus.reportMsg, sizeof(agent_to_cm_datanode_status_report));
+        securec_check_errno(rc, (void)rc);
+        rc = memcpy_s((void *)&(g_dnReportMsg[i].dnStatus.floatIpInfo), sizeof(CmaDnFloatIpInfo),
+            (void *)&dnStatus.floatIpInfo, sizeof(CmaDnFloatIpInfo));
         securec_check_errno(rc, (void)rc);
         (void)pthread_rwlock_unlock(&(g_dnReportMsg[i].lk_lock));
 

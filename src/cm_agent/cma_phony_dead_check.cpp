@@ -61,8 +61,10 @@ static bool IsDNCoredump(uint32 dnId)
 static bool DnPhonyDeadProcessE2E(int dnId, int phonyDead)
 {
     if (phonyDead == PROCESS_PHONY_DEAD_D) {
-        /* Verify that the short link to dn is available */
-        if (CheckDnStausPhonyDead(dnId, (int)agent_phony_dead_check_interval) != 0) {
+        if (IsDatanodeSSMode()) {
+            write_runlog(LOG, "[%s] dn is D status, but in ss mode, can't process the D status.\n", __FUNCTION__);
+        } else if (CheckDnStausPhonyDead(dnId, (int)agent_phony_dead_check_interval) != 0) {
+            /* Verify that the short link to dn is available */
             g_dnPhonyDeadD[dnId] = true;
             write_runlog(WARNING, "dn_%u phony dead D\n", g_currentNode->datanode[dnId].datanodeId);
             return true;
@@ -105,7 +107,12 @@ static bool DnPhonyDeadStatusCheck(int dnId, uint32 *agentCheckTimeInterval)
             return false;
         }
         if (phonyDead == PROCESS_PHONY_DEAD_D) {
-            return true;
+            if (IsDatanodeSSMode()) {
+                write_runlog(LOG, "[%s] dn is D status, but in ss mode, can't process the D status.\n", __FUNCTION__);
+                return false;
+            } else {
+                return true;
+            }
         }
         if (phonyDead == PROCESS_PHONY_DEAD_T) {
             if (g_clusterType != V3SingleInstCluster && g_agentCheckTStatusInterval > agent_phony_dead_check_interval) {

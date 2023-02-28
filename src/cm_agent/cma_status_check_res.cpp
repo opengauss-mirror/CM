@@ -217,19 +217,20 @@ void SendResIsregReportMsg()
 // check res status
 static void DoCheckResourceStatus(CmResConfList *resConf, CmResourceStatus *resStat)
 {
+    long curTime = GetCurMonotonicTimeSec();
     static uint32 latestStat = (uint32)CUS_RES_CHECK_STAT_UNKNOWN;
     if (resConf->checkInfo.checkTime == 0) {
         resStat->status = (uint32)CheckOneResInst(resConf);
-        resConf->checkInfo.checkTime = time(NULL);
+        resConf->checkInfo.checkTime = curTime;
         latestStat = resStat->status;
         return;
     }
-    if ((time(NULL) - resConf->checkInfo.checkTime) < resConf->checkInfo.checkInterval) {
+    if ((curTime - resConf->checkInfo.checkTime) < resConf->checkInfo.checkInterval) {
         resStat->status = latestStat;
         return;
     }
     resStat->status = (uint32)CheckOneResInst(resConf);
-    resConf->checkInfo.checkTime = time(NULL);
+    resConf->checkInfo.checkTime = curTime;
     latestStat = resStat->status;
 }
 

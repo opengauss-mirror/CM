@@ -1573,6 +1573,15 @@ void ProcessNodeDiskStatReq(MsgRecvInfo *recvMsgInfo, const CmShowStatReq *req)
     (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ack), sizeof(CmNodeDiskStatAck));
 }
 
+void ProcessFloatIpReq(MsgRecvInfo *recvMsgInfo, const CmShowStatReq *req)
+{
+    write_runlog(DEBUG1, "[ProcessFloatIpReq] receive float ip query msg.\n");
+    char sendMsg[DDB_MAX_KEY_VALUE_LEN] = {0};
+    size_t msgLen = sizeof(CmFloatIpStatAck);
+    GetFloatIpSet((CmFloatIpStatAck*)sendMsg, DDB_MAX_KEY_VALUE_LEN, &msgLen);
+    (void)RespondMsg(recvMsgInfo, 'S', sendMsg, msgLen);
+}
+
 static void MsgShowStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     CmShowStatReq *req = NULL;
@@ -1583,10 +1592,22 @@ static void MsgShowStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msg
         case MSG_CTL_CM_NODE_DISK_STATUS_REQ:
             PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessNodeDiskStatReq);
             break;
+        case MSG_CTL_CM_FLOAT_IP_REQ:
+            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessFloatIpReq);
+            break;
         default:
             write_runlog(ERROR, "[MsgShowStatus] unknown request(%d)\n", msgType);
             break;
     }
+}
+
+static void MsgGetFloatIpInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    if (!IsNeedCheckFloatIp() || (backup_open != CLUSTER_PRIMARY)) {
+        return;
+    }
+    CmaDnFloatIpInfo *floatIpInfo;
+    PROCESS_MSG_BY_TYPE(CmaDnFloatIpInfo, floatIpInfo, ProcessDnFloatIpMsg);
 }
 
 static void MsgResIsreg(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1632,6 +1653,7 @@ static void InitCmCtlCmdProc()
     g_cmdProc[MSG_CTL_CM_QUERY_RES_INST] = MsgCmQueryOneResInst;
     g_cmdProc[MSG_CTL_CM_RHB_STATUS_REQ] = MsgShowStatus;
     g_cmdProc[MSG_CTL_CM_NODE_DISK_STATUS_REQ] = MsgShowStatus;
+    g_cmdProc[MSG_CTL_CM_FLOAT_IP_REQ] = MsgShowStatus;
 }
 
 static void InitCmAgentCmdProc()
@@ -1653,7 +1675,7 @@ static void InitCmAgentCmdProc()
     g_cmdProc[MSG_GET_SHARED_STORAGE_INFO] = MsgGetSharedStorageInfo;
     g_cmdProc[MSG_CM_RES_LOCK] = MsgCmResLock;
     g_cmdProc[MSG_CM_RHB] = MsgCmRhb;
-    g_cmdProc[MSG_AGENT_CM_FLOAT_IP] = NULL;
+    g_cmdProc[MSG_AGENT_CM_FLOAT_IP] = MsgGetFloatIpInfo;
     g_cmdProc[MSG_AGENT_CM_ISREG_REPORT] = MsgResIsreg;
 }
 

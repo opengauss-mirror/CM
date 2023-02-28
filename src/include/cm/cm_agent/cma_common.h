@@ -43,6 +43,10 @@ typedef enum {
     CM_RES_CORPSE = 3,
 } CM_ResStatus;
 
+const int ERROR_EXECUTE_CMD = -2;
+const int FAILED_EXECUTE_CMD = -1;
+const int SUCCESS_EXECUTE_CMD = 0;
+
 void save_thread_id(pthread_t thrId);
 void set_thread_state(pthread_t thrId);
 void immediate_stop_one_instance(const char* instance_data_path, InstanceTypes instance_type);
@@ -73,7 +77,7 @@ int search_HA_node(uint32 localPort, uint32 LocalHAListenCount, char LocalHAIP[]
 int agentCheckPort(uint32 port);
 uint32 CheckDiskForLogPath(void);
 uint32 GetDiskUsageForPath(const char *pathName);
-int ExecuteSystemCmd(const char *cmd);
+int ExecuteSystemCmd(const char *cmd, int32 logLevel = ERROR, int32 *errCode = NULL);
 void CheckDnNicDown(uint32 index);
 void CheckDnDiskDamage(uint32 index);
 bool IsDirectoryDestoryed(const char *path);

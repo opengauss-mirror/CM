@@ -22,13 +22,17 @@
  * -------------------------------------------------------------------------
  */
 
+#include <limits.h>
 #include <netdb.h>
 #include <ifaddrs.h>
 #include <linux/if.h>
-#include "cjson/cJSON.h"
-#include "cma_global_params.h"
+
 #include "cm_util.h"
+#include "cm_text.h"
 #include "cm_json_config.h"
+#include "cm_json_parse_floatIp.h"
+
+#include "cma_global_params.h"
 #include "cma_common.h"
 #include "cma_network_check.h"
 
@@ -58,6 +62,7 @@ typedef struct NetworkInfoT {
     NetworkOper oper;
     uint32 port;
     uint32 cnt;
+    uint32 checkCnt;
     const char (*ips)[CM_IP_LENGTH];
     NetWorkAddr *netAddr;
     NetworkState *stateCheck;
@@ -90,6 +95,10 @@ typedef struct NetworkStateStringMapT {
     const char *str;
 } NetworkStateStringMap;
 
+#ifdef ENABLE_UT
+#define static
+#endif
+
 static bool GetNicstatusByAddrs(const struct ifaddrs *ifList, NetworkInfo *netInfo, int32 logLevel = WARNING,
     NetworkQuest quest = NETWORK_QUEST_CHECK);
 static void GetNicDownCmd(char *cmd, uint32 cmdLen, const NetworkInfo *netInfo, uint32 index);
@@ -97,6 +106,7 @@ static void GetNicDownCmd(char *cmd, uint32 cmdLen, const NetworkInfo *netInfo, 
 static CmNetworkInfo *g_cmNetWorkInfo = NULL;
 static uint32 g_instCnt = 0;
 static CmNetworkByType g_cmNetworkByType[CM_INSTANCE_TYPE_CEIL] = {{0}};
+static ParseFloatIpFunc g_cmaParseFuc = {0};
 
 static NetworkStateOperMap g_stateOperMap[] = {{NETWORK_STATE_UNKNOWN, NETWORK_OPER_UNKNOWN},
     {NETWORK_STATE_UP, NETWORK_OPER_UP},
@@ -104,14 +114,20 @@ static NetworkStateOperMap g_stateOperMap[] = {{NETWORK_STATE_UNKNOWN, NETWORK_O
     {NETWORK_STATE_CEIL, NETWORK_OPER_CEIL}};
 
 static const char *g_ifconfigCmd = "ifconfig";
-static const char *IFCONFIG_CMD_DEFAULT = "ifconfig";
-static const char *IFCONFIG_CMD_SUSE = "/sbin/ifconfig";
-static const char *IFCONFIG_CMD_EULER = "/usr/sbin/ifconfig";
-static const char *ARPING_CMD = "arping -w 1 -A -I";
-static const char *SHOW_IPV6_CMD = "ip addr show | grep";
-static const char *IPV6_TENTATIVE_FLAG = "tentative";
-static const char *IPV6_DADFAILED_FLAG = "dadfailed";
+static const char *const IFCONFIG_CMD_DEFAULT = "ifconfig";
+static const char *const IFCONFIG_CMD_SUSE = "/sbin/ifconfig";
+static const char *const IFCONFIG_CMD_EULER = "/usr/sbin/ifconfig";
+static const char *const ARPING_CMD = "arping -w 1 -A -I";
+static const char *const SHOW_IPV6_CMD = "ip addr show | grep";
+static const char *const IPV6_TENTATIVE_FLAG = "tentative";
+static const char *const IPV6_DADFAILED_FLAG = "dadfailed";
+static const char *const TIMEOUT_MECHA = "timeout -s SIGKILL";
+static const uint32 DEFAULT_CMD_TIMEOUT = 2;
 
+static const char *g_sudoPermCmd = "";
+static const char *const SUDO_PERM_CMD = "sudo";
+
+static DnFloatIpMapOper g_floatIpMap = {0};
 static NetworkOperStringMap g_operStringMap[NETWORK_OPER_CEIL] = {
     {NETWORK_OPER_UNKNOWN, "NETWORK_OPER_UNKNOWN"},
     {NETWORK_OPER_UP, "NETWORK_OPER_UP"},
@@ -142,6 +158,67 @@ const char *GetOperMapString(NetworkOper oper)
         }
     }
     return "unknown_oper";
+}
+
+void SetFloatIpOper(uint32 dnIdx, NetworkOper oper, const char *str)
+{
+    if (!IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
+        write_runlog(DEBUG1, "%s agent_backup_open=%d, cannot set floatIp oper.\n", str, (int32)agent_backup_open);
+        return;
+    }
+    if (dnIdx >= CM_MAX_DATANODE_PER_NODE) {
+        return;
+    }
+    g_floatIpMap.oper[dnIdx] = oper;
+    write_runlog(LOG, "%s set floatIp oper=%d.\n", str, (int32)oper);
+}
+
+NetworkOper GetFloatIpOper(uint32 dnIdx)
+{
+    if (dnIdx >= CM_MAX_DATANODE_PER_NODE) {
+        return NETWORK_OPER_UNKNOWN;
+    }
+    return g_floatIpMap.oper[dnIdx];
+}
+
+DnFloatIp *GetDnFloatIpByDnIdx(uint32 dnIdx)
+{
+    if (dnIdx >= CM_MAX_DATANODE_PER_NODE) {
+        return NULL;
+    }
+    return &(g_floatIpMap.floatIp[dnIdx]);
+}
+
+static bool8 CmaFindNodeInfoByNodeIdx(uint32 instId, uint32 *nodeIdx, uint32 *dnIdx, const char *str)
+{
+    return (bool8)FindDnIdxInCurNode(instId, dnIdx, str);
+}
+
+static DnFloatIp *CmaGetDnFloatIpByNodeInfo(uint32 nodeIdx, uint32 dnIdx)
+{
+    return GetDnFloatIpByDnIdx(dnIdx);
+}
+
+static void IncreaseDnFloatIpCnt(uint32 nodeIdx)
+{
+    ++g_floatIpMap.count;
+}
+
+static void CmaInitParseFloatIpCnt()
+{
+    g_cmaParseFuc.findNodeInfo = CmaFindNodeInfoByNodeIdx;
+    g_cmaParseFuc.getFloatIp = CmaGetDnFloatIpByNodeInfo;
+    g_cmaParseFuc.increaseCnt = IncreaseDnFloatIpCnt;
+    InitParseFloatIpFunc(&g_cmaParseFuc);
+}
+
+static inline void InitFloatIpMap()
+{
+    errno_t rc = memset_s(&(g_floatIpMap), sizeof(DnFloatIpMapOper), 0, sizeof(DnFloatIpMapOper));
+    securec_check_errno(rc, (void)rc);
+    CmaInitParseFloatIpCnt();
+    ParseVipConf(LOG);
+    write_runlog(LOG, "success to get g_floatIpMap, and this count is %u.\n", g_floatIpMap.count);
 }
 
 NetworkOper ChangeInt2NetworkOper(int32 oper)
@@ -195,7 +272,7 @@ static NetworkInfo *GetNetworkInfo(uint32 instId, CmaInstType instType, NetworkT
     return NULL;
 }
 
-bool GetNicStatus(unsigned int instId, CmaInstType instType, NetworkType type)
+bool GetNicStatus(uint32 instId, CmaInstType instType, NetworkType type)
 {
     NetworkInfo *netInfo = GetNetworkInfo(instId, instType, type);
     if (netInfo == NULL) {
@@ -272,6 +349,51 @@ static uint32 GetCurrentNodeInstNum()
     return count;
 }
 
+static void SetNetWorkAddr(NetWorkAddr *netAddr, uint32 cnt, const char (*ips)[CM_IP_LENGTH])
+{
+    if (cnt == 0 || ips == NULL || netAddr == NULL) {
+        return;
+    }
+    for (uint32 i = 0; i < cnt; ++i) {
+        netAddr[i].ip = ips[i];
+    }
+}
+
+static bool8 IsCurIpInIpPool(const char **ipPool, uint32 cnt, const char *ip)
+{
+    if (cnt == 0 || ip == NULL) {
+        return CM_FALSE;
+    }
+    for (uint32 i = 0; i < cnt; ++i) {
+        if (ipPool[i] == NULL) {
+            continue;
+        }
+        if (cm_str_equal(ipPool[i], ip)) {
+            return CM_TRUE;
+        }
+    }
+    return CM_FALSE;
+}
+ 
+static uint32 GetIpCheckCnt(const char (*ips)[CM_IP_LENGTH], uint32 cnt)
+{
+    const char *ipPool[MAX_FLOAT_IP_COUNT] = {0};
+    uint32 checkCnt = 0;
+    for (uint32 i = 0; i < cnt; ++i) {
+        if (i >= MAX_FLOAT_IP_COUNT) {
+            break;
+        }
+        if (IsCurIpInIpPool(ipPool, checkCnt, ips[i])) {
+            continue;
+        }
+        if (checkCnt < MAX_FLOAT_IP_COUNT) {
+            ipPool[checkCnt] = ips[i];
+            ++checkCnt;
+        }
+    }
+    return checkCnt;
+}
+
 static status_t SetNetWorkInfo(
     NetworkInfo *info, uint32 cnt, const char (*ips)[CM_IP_LENGTH], NetworkType type, uint32 port)
 {
@@ -285,6 +407,7 @@ static status_t SetNetWorkInfo(
             cnt, MAX_FLOAT_IP_COUNT);
     }
     info->cnt = curCnt;
+    info->checkCnt = GetIpCheckCnt(ips, cnt);
     info->oper = NETWORK_OPER_UNKNOWN;
     info->port = port;
     if (cnt == 0) {
@@ -325,10 +448,17 @@ static status_t SetCmNetWorkInfoDn(CmaInstType type, uint32 *index, const dataNo
     const dataNodeInfo *dnInfo = &(datanodeInfo[dnIdx]);
     CmNetworkInfo *cmNetWorkInfo = &(g_cmNetWorkInfo[(*index)]);
     cmNetWorkInfo->instId = dnInfo->datanodeId;
+    DnFloatIp *dnFloatIp = GetDnFloatIpByDnIdx(dnIdx);
     CM_RETURN_IFERR(SetNetWorkInfo(&(cmNetWorkInfo->manaIp[NETWORK_TYPE_LISTEN]), dnInfo->datanodeListenCount,
         dnInfo->datanodeListenIP, NETWORK_TYPE_LISTEN, dnInfo->datanodePort));
     CM_RETURN_IFERR(SetNetWorkInfo(&(cmNetWorkInfo->manaIp[NETWORK_TYPE_HA]), dnInfo->datanodeLocalHAListenCount,
         dnInfo->datanodeLocalHAIP, NETWORK_TYPE_HA, dnInfo->datanodeLocalHAPort));
+    if (dnFloatIp != NULL) {
+        NetworkInfo *netInfo = &(cmNetWorkInfo->manaIp[NETWORK_TYPE_FLOATIP]);
+        CM_RETURN_IFERR(SetNetWorkInfo(netInfo, dnFloatIp->dnFloatIpCount,
+            dnFloatIp->dnFloatIp, NETWORK_TYPE_FLOATIP, dnFloatIp->dnFloatIpPort));
+        SetNetWorkAddr(netInfo->netAddr, netInfo->cnt, dnFloatIp->baseIp);
+    }
     ++(*index);
     if (type >= CM_INSTANCE_TYPE_CEIL) {
         return CM_SUCCESS;
@@ -445,9 +575,19 @@ static void InitIfconfigCmd()
     }
 }
 
+static void InitSudoPermCmd()
+{
+    g_sudoPermCmd = "";
+    if (g_clusterType != V3SingleInstCluster) {
+        g_sudoPermCmd = SUDO_PERM_CMD;
+    }
+}
+
 static status_t InitCmNetWorkInfo()
 {
+    InitFloatIpMap();
     InitIfconfigCmd();
+    InitSudoPermCmd();
     g_instCnt = GetCurrentNodeInstNum();
     write_runlog(LOG, "current node has %u instance.\n", g_instCnt);
     size_t mallocLen = sizeof(CmNetworkInfo) * g_instCnt;
@@ -612,7 +752,7 @@ static bool GetNicstatusByAddrs(
             return false;
         }
         ++validIpCount;
-        if (validIpCount == netInfo->cnt) {
+        if (validIpCount == netInfo->checkCnt) {
             return true;
         }
     }
@@ -621,7 +761,8 @@ static bool GetNicstatusByAddrs(
     }
     char allListenIp[CM_IP_ALL_NUM_LENGTH] = {0};
     listen_ip_merge(netInfo->cnt, netInfo->ips, allListenIp, CM_IP_ALL_NUM_LENGTH);
-    write_runlog(WARNING, "can't find nic related with %s.\n", allListenIp);
+    write_runlog(WARNING, "can't find nic related with %s, cnt=[%u: %u].\n",
+        allListenIp, netInfo->cnt, netInfo->checkCnt);
     return false;
 }
 
@@ -667,6 +808,25 @@ static bool CheckNetworkStatus()
     }
     freeifaddrs(ifList);
     return true;
+}
+
+bool8 CheckNetworkStatusByIps(const char (*ips)[CM_IP_LENGTH], uint32 cnt)
+{
+    struct ifaddrs *ifList = NULL;
+    if (getifaddrs(&ifList) < 0) {
+        write_runlog(WARNING, "failed to get iflist.\n");
+        return CM_FALSE;
+    }
+    NetworkInfo netInfo;
+    errno_t rc = memset_s(&netInfo, sizeof(NetworkInfo), 0, sizeof(NetworkInfo));
+    securec_check_errno(rc, (void)rc);
+    netInfo.ips = ips;
+    netInfo.cnt = cnt;
+    netInfo.checkCnt = GetIpCheckCnt(ips, cnt);
+    netInfo.type = NETWORK_TYPE_HA;
+    CheckNicStatus(ifList, &netInfo);
+    freeifaddrs(ifList);
+    return (bool8)netInfo.networkRes;
 }
 
 static bool GetNetworkAddr(NetworkInfo *netInfo, const char *str)
@@ -722,16 +882,19 @@ static void GetNicUpCmd(char *cmd, uint32 cmdLen, const NetworkInfo *netInfo, ui
     if (netInfo->netAddr[index].netMask[0] == '\0' || netInfo->netAddr[index].netName[0] == '\0') {
         return;
     }
+
     errno_t rc = 0;
     if (netInfo->netAddr[index].family == AF_INET) {
-        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %s:%u %s netmask %s up", g_ifconfigCmd, netAddr->netName,
-            netInfo->port, netInfo->ips[index], netAddr->netMask);
+        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s:%u %s netmask %s up",
+            TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd,
+            netAddr->netName, netInfo->port, netInfo->ips[index], netAddr->netMask);
     } else if (netInfo->netAddr[index].family == AF_INET6) {
         if (!CheckIpV6Valid(netInfo, index, "[GetNicUpCmd]", LOG)) {
             return;
         }
-        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %s inet6 add %s/%s", g_ifconfigCmd, netAddr->netName,
-            netInfo->ips[index], netAddr->netMask);
+        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s inet6 add %s/%s",
+            TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd,
+            netAddr->netName, netInfo->ips[index], netAddr->netMask);
     }
     securec_check_intval(rc, (void)rc);
 }
@@ -744,11 +907,13 @@ static void GetNicDownCmd(char *cmd, uint32 cmdLen, const NetworkInfo *netInfo, 
     }
     errno_t rc = 0;
     if (netInfo->netAddr[index].family == AF_INET) {
-        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %s:%u down", g_ifconfigCmd, netAddr->netName,
+        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s:%u down",
+            TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd, netAddr->netName,
             netInfo->port);
     } else {
-        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %s inet6 del %s/%s", g_ifconfigCmd, netAddr->netName,
-            netInfo->ips[index], netAddr->netMask);
+        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s inet6 del %s/%s",
+            TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd,
+            netAddr->netName, netInfo->ips[index], netAddr->netMask);
     }
     securec_check_intval(rc, (void)rc);
 }
@@ -772,15 +937,12 @@ static void ExecuteArpingCmd(ArpingCmdRes *arpingCmd, const char *str)
 
 static void CheckArpingCmdRes(NetworkInfo *netInfo)
 {
-    if (netInfo->oper != NETWORK_OPER_UP) {
-        return;
-    }
     for (uint32 i = 0; i < netInfo->cnt; ++i) {
         ExecuteArpingCmd(&(netInfo->arpingCmd[i]), "[CheckArpingCmdRes]");
     }
 }
 
-static bool CheckNicStatusMeetsExpect(NetworkInfo *netInfo)
+static bool CheckNicStatusMeetsExpect(NetworkInfo *netInfo, bool8 *isExeArping)
 {
     if (netInfo->cnt == 0) {
         return true;
@@ -791,7 +953,7 @@ static bool CheckNicStatusMeetsExpect(NetworkInfo *netInfo)
     }
     // only float ip is up, it will notify switch
     if (netInfo->oper == NETWORK_OPER_UP) {
-        CheckArpingCmdRes(netInfo);
+        *isExeArping = CM_TRUE;
     }
     for (uint32 i = 0; i < netInfo->cnt; ++i) {
         if (netInfo->stateRecord[i] != state) {
@@ -801,7 +963,7 @@ static bool CheckNicStatusMeetsExpect(NetworkInfo *netInfo)
     return true;
 }
 
-static void GenArpingCmdAndExecute(NetworkInfo *netInfo, uint32 index)
+static void GenArpingCmd(NetworkInfo *netInfo, uint32 index, bool8 *isExeArping)
 {
     if (netInfo->oper != NETWORK_OPER_UP) {
         return;
@@ -813,12 +975,12 @@ static void GenArpingCmdAndExecute(NetworkInfo *netInfo, uint32 index)
             "%s %s %s", ARPING_CMD, netInfo->netAddr[index].netName, netInfo->ips[index]);
         securec_check_intval(rc, (void)rc);
     }
-    ExecuteArpingCmd(&(netInfo->arpingCmd[index]), "[GenArpingCmdAndExecute]");
+    *isExeArping = CM_TRUE;
 }
 
-static void DoUpOrDownNetworkOper(NetworkInfo *netInfo)
+static void DoUpOrDownNetworkOper(NetworkInfo *netInfo, bool8 *isExeArping)
 {
-    if (CheckNicStatusMeetsExpect(netInfo)) {
+    if (CheckNicStatusMeetsExpect(netInfo, isExeArping)) {
         return;
     }
     const char *str = (netInfo->oper == NETWORK_OPER_UP) ? "[DoUpNetworkOper]" : "[DoDownNetworkOper]";
@@ -838,6 +1000,7 @@ static void DoUpOrDownNetworkOper(NetworkInfo *netInfo)
             GetNicDownCmd(cmd, CM_MAX_COMMAND_LONG_LEN, netInfo, i);
         }
         if (cmd[0] == '\0') {
+            GenArpingCmd(netInfo, i, isExeArping);
             continue;
         }
         write_runlog(LOG, "%s Ip: %s oper=[%d: %s], state=[%d: %s], GetNicCmd(%s).\n", str, netInfo->ips[i],
@@ -854,20 +1017,38 @@ static void DoUpOrDownNetworkOper(NetworkInfo *netInfo)
         } else {
             netInfo->stateRecord[i] = GetNetworkStateByOper(netInfo->oper);
             write_runlog(LOG, "%s successfully to execute the cmd(%s).\n", str, cmd);
-            GenArpingCmdAndExecute(netInfo, i);
+            GenArpingCmd(netInfo, i, isExeArping);
         }
+    }
+}
+
+static void CheckAndExecuteArpingCmd()
+{
+    NetworkInfo *manaIp;
+    for (uint32 i = 0; i < g_instCnt; ++i) {
+        manaIp = &(g_cmNetWorkInfo[i].manaIp[NETWORK_TYPE_FLOATIP]);
+        CheckArpingCmdRes(manaIp);
     }
 }
 
 static void DoNetworkOper()
 {
+    if (!IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
+        write_runlog(DEBUG1, "[DoNetworkOper] agent_backup_open=%d, cannot set floatIp oper.\n",
+            (int32)agent_backup_open);
+        return;
+    }
     NetworkInfo *manaIp = NULL;
+    bool8 isExeArping = CM_FALSE;
     for (uint32 i = 0; i < g_instCnt; ++i) {
         manaIp = &(g_cmNetWorkInfo[i].manaIp[NETWORK_TYPE_FLOATIP]);
         if (manaIp->oper == NETWORK_OPER_UNKNOWN) {
             continue;
         }
-        DoUpOrDownNetworkOper(manaIp);
+        DoUpOrDownNetworkOper(manaIp, &isExeArping);
+    }
+    if (isExeArping) {
+        CheckAndExecuteArpingCmd();
     }
 }
 
@@ -894,6 +1075,31 @@ status_t CreateNetworkResource()
     return CM_SUCCESS;
 }
 
+static uint8 CheckSingleFloatIpDown(const NetworkInfo *manaIp)
+{
+    for (uint32 i = 0; i < manaIp->cnt; ++i) {
+        if (manaIp->stateRecord[i] == NETWORK_STATE_UP) {
+            return CM_FALSE;
+        }
+    }
+    return CM_TRUE;
+}
+
+static uint8 IsAllFloatIpDown()
+{
+    NetworkInfo *manaIp = NULL;
+    for (uint32 i = 0; i < g_instCnt; ++i) {
+        manaIp = &(g_cmNetWorkInfo[i].manaIp[NETWORK_TYPE_FLOATIP]);
+        if (manaIp->cnt == 0) {
+            continue;
+        }
+        if (!CheckSingleFloatIpDown(manaIp)) {
+            return CM_FALSE;
+        }
+    }
+    return CM_TRUE;
+}
+
 void *CmaCheckNetWorkMain(void *arg)
 {
     thread_name = "CheckNetWork";
@@ -902,7 +1108,7 @@ void *CmaCheckNetWorkMain(void *arg)
     uint32 sleepInterval = 1;
     bool networkRes = false;
     for (;;) {
-        if ((g_exitFlag || g_shutdownRequest)) {
+        if ((g_exitFlag || g_shutdownRequest) && IsAllFloatIpDown()) {
             cm_sleep(sleepInterval);
             continue;
         }

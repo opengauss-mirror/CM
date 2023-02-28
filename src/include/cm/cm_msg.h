@@ -224,7 +224,7 @@ typedef enum CM_MessageType_st {
     MSG_AGENT_CLIENT_HEARTBEAT_ACK = 141,
     MSG_AGENT_CLIENT_RES_STATUS_LIST = 142,
     MSG_AGENT_CLIENT_RES_STATUS_CHANGE = 143,
-    MSG_AGENT_CLIENT_SET_RES_DATA_STATUS = 144,
+    MSG_AGENT_CLIENT_NOTIFY_CONN_CLOSE = 144,
     MSG_AGENT_CLIENT_REPORT_RES_DATA = 145,
 
     MSG_EXEC_DDB_COMMAND = 146,
@@ -260,6 +260,13 @@ typedef enum CM_MessageType_st {
     MSG_FINISHREDO_RETRIVE = 173,
     MSG_AGENT_CM_ISREG_REPORT = 174,
     MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED = 175,
+    MSG_CM_AGENT_DISKUSAGE_STATUS_ACK = 176,
+    MSG_AGENT_CM_EXT_IP_STATUS = 177,
+    MSG_CTL_CM_EXT_IP_STATUS_REQ = 178,
+    MSG_CM_CTL_EXT_IP_DATA = 179,
+    MSG_CM_CTL_EXT_IP_DATA_END = 180,
+    MSG_CTL_CM_FLOAT_IP_REQ = 181,
+    MSG_CTL_CM_FLOAT_IP_ACK = 182,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -1274,6 +1281,24 @@ typedef struct BaseInstInfoT {
 
 const uint32 FLOAT_IP_MSG_RES = 512;
 
+typedef struct DnFloatIpInfoT {
+    uint32 count;
+    int32 dnNetState[MAX_FLOAT_IP_COUNT];
+    int32 nicNetState[MAX_FLOAT_IP_COUNT];
+} DnFloatIpInfo;
+
+typedef struct CmaDnFloatIpInfoT {
+    BaseInstInfo baseInfo;
+    DnFloatIpInfo info;
+    char remain[FLOAT_IP_MSG_RES];
+} CmaDnFloatIpInfo;
+
+typedef struct CmsDnFloatIpAckT {
+    BaseInstInfo baseInfo;
+    int32 oper;
+    char remain[FLOAT_IP_MSG_RES];
+} CmsDnFloatIpAck;
+
 typedef struct DnStatus_t {
     CM_MessageType barrierMsgType;
     agent_to_cm_datanode_status_report reportMsg;
@@ -1283,6 +1308,7 @@ typedef struct DnStatus_t {
     };
     AgentCmDnLocalPeer lpInfo;
     AgentToCmDiskUsageStatusReport diskUsageMsg;
+    CmaDnFloatIpInfo floatIpInfo;
 } DnStatus;
 
 typedef struct DnSyncListInfo_t {
@@ -1422,6 +1448,39 @@ typedef struct DatanodelocalPeer_t {
     uint32 peerInst;
 } DatanodelocalPeer;
 
+typedef struct CmDnReportStatusMsgT {
+    cm_local_replconninfo local_status;
+    int sender_count;
+    BuildState build_info;
+    cm_sender_replconninfo sender_status[CM_MAX_SENDER_NUM];
+    cm_receiver_replconninfo receive_status;
+    RedoStatsData parallel_redo_status;
+    cm_redo_stats local_redo_stats;
+    synchronous_standby_mode sync_standby_mode;
+    int send_gs_guc_time;
+    int dn_restart_counts;
+    bool arbitrateFlag;
+    int failoverStep;
+    int failoverTimeout;
+    int phony_dead_times;
+    int phony_dead_interval;
+    int dn_restart_counts_in_hour;
+    bool is_finish_redo_cmd_sent;
+    uint64 ckpt_redo_point;
+    char barrierID[BARRIERLEN];
+    char query_barrierId[BARRIERLEN];
+    uint64 barrierLSN;
+    uint64 archive_LSN;
+    uint64 flush_LSN;
+    DatanodeSyncList dnSyncList;
+    int32 syncDone;
+    uint32 arbiTime;
+    uint32 sendFailoverTimes;
+    bool is_barrier_exist;
+    cmTime_t printBegin; // print synclist time
+    DatanodelocalPeer dnLp;
+} CmDnReportStatusMsg;
+
 // need to keep consist with cm_to_ctl_instance_datanode_status
 typedef struct cm_instance_datanode_report_status_st {
     cm_local_replconninfo local_status;
@@ -1454,6 +1513,7 @@ typedef struct cm_instance_datanode_report_status_st {
     bool is_barrier_exist;
     cmTime_t printBegin; // print synclist time
     DatanodelocalPeer dnLp;
+    DnFloatIpInfo floatIp;
 } cm_instance_datanode_report_status;
 
 typedef struct cm_instance_gtm_report_status_st {
@@ -1585,7 +1645,7 @@ typedef struct cm_to_ctl_get_datanode_relation_ack_st {
     int member_index;
     cm_instance_role_status instanceMember[CM_PRIMARY_STANDBY_MAX_NUM];
     cm_instance_gtm_report_status gtm_member[CM_PRIMARY_STANDBY_NUM];
-    cm_instance_datanode_report_status data_node_member[CM_PRIMARY_STANDBY_MAX_NUM];
+    CmDnReportStatusMsg data_node_member[CM_PRIMARY_STANDBY_MAX_NUM];
 } cm_to_ctl_get_datanode_relation_ack;
 
 // need to keep consist with the struct cm_instance_datanode_report_status
@@ -1970,6 +2030,11 @@ typedef struct LockResultSt {
     char lockName[CM_MAX_LOCK_NAME];
 } LockResult;
 
+typedef struct CmaNotifyClientSt {
+    bool8 isCmaConnClose;
+    char reserve[7];
+} CmaNotifyClient;
+
 // cms to cma
 typedef struct CmsReportResStatListSt {
     int msgType;
@@ -2060,6 +2125,11 @@ typedef struct AgentToClientResLockResultSt {
     LockResult result;
 } AgentToClientResLockResult;
 
+typedef struct AgentToClientNotifySt {
+    MsgHead head;
+    CmaNotifyClient notify;
+} AgentToClientNotify;
+
 // client to cma
 typedef struct ClientHbMsgSt {
     MsgHead head;
@@ -2097,5 +2167,21 @@ typedef struct QueryOneResInstStatSt {
 typedef struct CmsSSLConnSt {
     uint64 startConnTime;
 } CmsSSLConnMsg;
+
+typedef struct CmFloatIpStatInfoT {
+    uint32 nodeId;
+    uint32 instId;
+    uint32 count;
+    int32 nicNetState[MAX_FLOAT_IP_COUNT];
+} CmFloatIpStatInfo;
+
+typedef struct CmFloatIpStatAckT {
+    int32 msgType;
+    bool8 canShow;
+    char reserved1[3];   // for alignment
+    char reserved2[52];  // the reserved
+    uint32 count;
+    CmFloatIpStatInfo info[0];
+} CmFloatIpStatAck;  // the totol size is 64
 
 #endif

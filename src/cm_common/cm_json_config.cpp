@@ -21,7 +21,9 @@
 *
 * -------------------------------------------------------------------------
 */
+#include "cm_defs.h"
 #include "elog.h"
+#include "cm_text.h"
 #include "cm_json_config.h"
 
 #define CM_SET_READ_JSON_ERR(errPtr, err)  \
@@ -35,6 +37,7 @@ typedef void (*ParseCusRes)(const cJSON *resJson, OneCusResConfJson *resConf);
 
 static void ParseAppResConfJson(const cJSON *resJson, OneCusResConfJson *resConf);
 static void ParseDnResConfJson(const cJSON *resJson, OneCusResConfJson *resConf);
+static void ParseVipResConfJson(const cJSON *resJson, OneCusResConfJson *resConf);
 
 static void EmptyCmJsonWriteLog(int logLevel, const char *format, ...)
 {
@@ -53,6 +56,7 @@ static CmJsonLogOutput CmJsonWriteLog = EmptyCmJsonWriteLog;
 static ParseCusResMap g_cusResMap[] = {
     {"APP", CUSTOM_RESOURCE_APP, ParseAppResConfJson},
     {"DN", CUSTOM_RESOURCE_DN, ParseDnResConfJson},
+    {"VIP", CUSTOM_RESOURCE_VIP, ParseVipResConfJson},
 };
 
 static void *CmJsonMalloc(size_t size)
@@ -188,6 +192,9 @@ static void ParseAppDnResConfJson(const cJSON *resJson, CusResConfJson *resConf)
     if (GetValueIntFromJson(&resConf->restartTimes, resJson, "restart_times") != 0) {
         resConf->restartTimes = defValue;
     }
+    if (GetValueIntFromJson(&resConf->abnormalTimeout, resJson, "abnormal_timeout") != 0) {
+        resConf->abnormalTimeout = defValue;
+    }
 }
 
 static void ParseAppResConfJson(const cJSON *resJson, OneCusResConfJson *resConf)
@@ -202,6 +209,106 @@ static void ParseDnResConfJson(const cJSON *resJson, OneCusResConfJson *resConf)
     ParseAllCusResInstConfJson(resJson, &resConf->dnResConf);
 }
 
+int FetchStrFromText(const char *textStr, char *result, uint32 len, char beginPoint)
+{
+    bool8 isFetch = CM_FALSE;
+    uint32 point = 0;
+    for (uint32 i = 0; textStr[i] != '\0'; ++i) {
+        if (!isFetch) {
+            if (textStr[i] == beginPoint) {
+                isFetch = CM_TRUE;
+            }
+            continue;
+        }
+        if (textStr[i] == SEPARATOR_CHAR) {
+            break;
+        }
+        if (point >= len) {
+            return -1;
+        }
+        result[point] = textStr[i];
+        ++point;
+    }
+    CmTrimStr(result);
+    if (result[0] == '\0') {
+        return -1;
+    }
+    return 0;
+}
+
+int GetValueStrFromText(char *result, uint32 resultLen, const char *textStr, const char *expectValue)
+{
+    const char *point = strstr(textStr, expectValue);
+    if (point == NULL) {
+        write_runlog(ERROR, "Failed to get value str from text, when textStr=[%s], expectValue=[%s].\n",
+            textStr, expectValue);
+        return -1;
+    }
+    if (FetchStrFromText(point, result, resultLen, '=') != 0) {
+        write_runlog(ERROR, "Failed to fetch text from string, when textStr=[%s], expectValue=[%s].\n",
+            textStr, expectValue);
+        return -1;
+    }
+    return 0;
+}
+
+static void ParseOneBaseIp(const cJSON *ipJson, BaseIpListConf *ipConf)
+{
+    if (GetValueIntFromJson(&ipConf->instId, ipJson, "res_instance_id") != 0) {
+        ipConf->instId = 0;
+    }
+    char baseIp[CM_JSON_STR_LEN] = {0};
+    if (GetValueStrFromJson(baseIp, CM_JSON_STR_LEN, ipJson, "inst_attr") != 0) {
+        return;
+    }
+
+    if (GetValueStrFromText(ipConf->baseIp, CM_JSON_STR_LEN, baseIp, "base_ip") != 0) {
+        errno_t rc = memset_s(ipConf->baseIp, CM_JSON_STR_LEN, 0, CM_JSON_STR_LEN);
+        securec_check_errno(rc, (void)rc);
+    }
+}
+
+static void ParseAllBaseIp(const cJSON *resJson, VipCusResConfJson *resConf)
+{
+    cJSON *baseIpArray = cJSON_GetObjectItem(resJson, "instances");
+    if (!cJSON_IsArray(baseIpArray)) {
+        if (baseIpArray != NULL) {
+            CmJsonWriteLog(WARNING, "[ReadConfJson] \"instances\" obj is not an array, can't parse continue.\n");
+        }
+        return;
+    }
+    int arrLen = cJSON_GetArraySize(baseIpArray);
+    if (arrLen <= 0) {
+        CmJsonWriteLog(WARNING, "[ReadConfJson] baseIp array len invalid, arrLen=%d, can't parse continue.\n", arrLen);
+        return;
+    }
+
+    resConf->baseIpList.count = (uint32)arrLen;
+    resConf->baseIpList.conf = (BaseIpListConf*)CmJsonMalloc((uint32)arrLen * sizeof(BaseIpListConf));
+
+    for (int i = 0; i < arrLen; ++i) {
+        cJSON *resItem = cJSON_GetArrayItem(baseIpArray, i);
+        if (resItem != NULL) {
+            ParseOneBaseIp(resItem, &resConf->baseIpList.conf[i]);
+        }
+    }
+}
+
+static void ParseVipResConfJson(const cJSON *resJson, OneCusResConfJson *resConf)
+{
+    errno_t rc;
+    if (GetValueStrFromJson(resConf->vipResConf.resName, CM_JSON_STR_LEN, resJson, "name") != 0) {
+        rc = memset_s(resConf->vipResConf.resName, CM_JSON_STR_LEN, 0, CM_JSON_STR_LEN);
+        securec_check_errno(rc, (void)rc);
+    }
+    if (GetValueStrFromJson(resConf->vipResConf.floatIp, CM_JSON_STR_LEN, resJson, "float_ip") != 0) {
+        rc = memset_s(resConf->vipResConf.floatIp, CM_JSON_STR_LEN, 0, CM_JSON_STR_LEN);
+        securec_check_errno(rc, (void)rc);
+    }
+
+    ParseAllBaseIp(resJson, &resConf->vipResConf);
+}
+
 static void ParseOneCusResConfJson(const cJSON *resItem, OneCusResConfJson *resConf)
 {
     char resType[CM_JSON_STR_LEN] = {0};
@@ -211,7 +318,7 @@ static void ParseOneCusResConfJson(const cJSON *resItem, OneCusResConfJson *resC
     }
 
     size_t arrLen = sizeof(g_cusResMap) / sizeof(g_cusResMap[0]);
-    for (size_t  i = 0; i < arrLen; ++i) {
+    for (size_t i = 0; i < arrLen; ++i) {
         if (strcmp(resType, g_cusResMap[i].resTypeName) == 0) {
             resConf->resType = g_cusResMap[i].resType;
             g_cusResMap[i].parseFunc(resItem, resConf);

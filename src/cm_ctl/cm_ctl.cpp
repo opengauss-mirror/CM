@@ -39,6 +39,7 @@
 
 #include "hotpatch/hotpatch_client.h"
 #include "ctl_common.h"
+#include "ctl_global_params.h"
 #include "config.h"
 #include "cm_util.h"
 #include "ctl_help.h"
@@ -91,9 +92,6 @@ uint32 g_normal_cm_server_node_index = PG_UINT32_MAX;
 time_t CHECK_BUILDING_DN_TIMEOUT = 60; // in seconds
 bool is_check_building_dn = true;
 
-CM_Conn* CmServer_conn = NULL;
-CM_Conn* CmServer_conn1 = NULL;
-CM_Conn* CmServer_conn2 = NULL;
 char g_appPath[MAXPGPATH] = {0};
 const char* g_progname;
 static char* pgdata_opt = NULL;
@@ -112,7 +110,6 @@ char *g_cmsPromoteMode = NULL;
 bool g_gtmBalance = true;
 bool g_datanodesBalance = true;
 cm_to_ctl_central_node_status g_centralNode;
-FILE* g_logFilePtr = NULL;
 
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 static char* hotpatch_exec = NULL;
@@ -184,12 +181,15 @@ const int DCF_PRIORITY = 17;
 const int RES_ADD = 18;
 const int RES_EDIT = 19;
 const int RES_DEL = 20;
-const int RES_CONF_CHECK = 21;
-const int RES_NAME = 22;
-const int RES_ATTR = 23;
-const int RES_ADD_INST = 24;
-const int RES_DEL_INST = 25;
-const int RES_TYPE = 26;
+const int RES_CHECK = 21;
+const int RES_NAME_INPUT = 22;
+const int RES_ATTR_INPUT = 23;
+const int RES_ADD_INST_INPUT = 24;
+const int RES_DEL_INST_INPUT = 25;
+const int RES_EDIT_INST_INPUT = 27;
+const int RES_INST_ATTR_INPUT = 28;
+const int RES_LIST = 29;
+const int RES_LIST_INST_INPUT = 30;
 const int ErrorCode = -2;
 
 unordered_map<string, CtlCommand> g_optToCommand {
@@ -1729,18 +1729,6 @@ static void MatchCmdArgCmsPmode(void)
     }
 }
 
-static void MatchCmdArgResType(CtlOption *ctlCtx)
-{
-    for (int32 i = 0; i < (int32)RES_TYPE_CEIL; ++i) {
-        if (strcmp(optarg, g_resTypeMap[i].typeStr) == 0) {
-            ctlCtx->resOpt.type = g_resTypeMap[i].type;
-            return;
-        }
-    }
-    ctlCtx->resOpt.type = RES_TYPE_APP;
-    write_runlog(WARNING, "cannot find the --res_type(%s).\n", optarg);
-}
-
 static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
 {
     switch (cmd) {
@@ -1928,34 +1916,43 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
             MatchCmdArgDcfPriority(ctlCtx);
             break;
         case RES_ADD:
-            ctlCtx->resOpt.mode = RES_ADD_CONF;
+            ctlCtx->resOpt.mode = RES_OP_ADD;
             break;
         case RES_EDIT:
-            ctlCtx->resOpt.mode = RES_EDIT_CONF;
+            ctlCtx->resOpt.mode = RES_OP_EDIT;
             break;
         case RES_DEL:
-            ctlCtx->resOpt.mode = RES_DEL_CONF;
+            ctlCtx->resOpt.mode = RES_OP_DEL;
             break;
-        case RES_CONF_CHECK:
-            ctlCtx->resOpt.mode = RES_CHECK_CONF;
+        case RES_CHECK:
+            ctlCtx->resOpt.mode = RES_OP_CHECK;
             break;
-        case RES_NAME:
+        case RES_NAME_INPUT:
             ctlCtx->resOpt.resName = xstrdup(optarg);
             break;
-        case RES_ATTR:
+        case RES_ATTR_INPUT:
             ctlCtx->resOpt.resAttr = xstrdup(optarg);
-            ctlCtx->resOpt.editMode = RES_EDIT_RES_CONF;
             break;
-        case RES_ADD_INST:
-            ctlCtx->resOpt.addInstStr = xstrdup(optarg);
-            ctlCtx->resOpt.editMode = RES_ADD_INST_CONF;
+        case RES_ADD_INST_INPUT:
+            ctlCtx->resOpt.inst.instName = xstrdup(optarg);
+            ctlCtx->resOpt.inst.mode = RES_OP_ADD;
             break;
-        case RES_DEL_INST:
-            ctlCtx->resOpt.delInstStr = xstrdup(optarg);
-            ctlCtx->resOpt.editMode = RES_DEL_INST_CONF;
+        case RES_DEL_INST_INPUT:
+            ctlCtx->resOpt.inst.instName = xstrdup(optarg);
+            ctlCtx->resOpt.inst.mode = RES_OP_DEL;
             break;
-        case RES_TYPE:
-            MatchCmdArgResType(ctlCtx);
+        case RES_EDIT_INST_INPUT:
+            ctlCtx->resOpt.inst.instName = xstrdup(optarg);
+            ctlCtx->resOpt.inst.mode = RES_OP_EDIT;
+            break;
+        case RES_INST_ATTR_INPUT:
+            ctlCtx->resOpt.inst.instAttr = xstrdup(optarg);
+            break;
+        case RES_LIST:
+            ctlCtx->resOpt.mode = RES_OP_LIST;
+            break;
+        case RES_LIST_INST_INPUT:
+            ctlCtx->resOpt.inst.mode = RES_OP_LIST;
             break;
         default:
             /* getopt_long already issued a suitable error message */
@@ -2202,7 +2199,7 @@ static void CtlCommandProcessCore(int *status, CtlOption *ctlCtx)
             *status = DoSwitch(ctlCtx);
             break;
         case CM_RES_COMMAND:
-            *status = DoResCommand(ctlCtx);
+            *status = DoResCommand(&(ctlCtx->resOpt));
             break;
         case CM_SHOW_COMMAND:
             *status = DoShowCommand();
@@ -2264,7 +2261,8 @@ int main(int argc, char** argv)
     /* support --help and --version even if invoked as root */
     CheckArgcType(argc, argv);
 
-    static struct option longOptions[] = {{"help", no_argument, NULL, '?'},
+    static struct option longOptions[] = {
+        {"help", no_argument, NULL, '?'},
         {"version", no_argument, NULL, 'V'},
         {"log", required_argument, NULL, 'l'},
         {"log_level", optional_argument, NULL, 1},
@@ -2303,14 +2301,18 @@ int main(int argc, char** argv)
         {"add", no_argument, NULL, RES_ADD},
         {"edit", no_argument, NULL, RES_EDIT},
         {"del", no_argument, NULL, RES_DEL},
-        {"check", no_argument, NULL, RES_CONF_CHECK},
-        {"res_name", required_argument, NULL, RES_NAME},
-        {"res_attr", required_argument, NULL, RES_ATTR},
-        {"add_inst", required_argument, NULL, RES_ADD_INST},
-        {"del_inst", required_argument, NULL, RES_DEL_INST},
-        {"res_type", required_argument, NULL, RES_TYPE},
+        {"check", no_argument, NULL, RES_CHECK},
+        {"list", no_argument, NULL, RES_LIST},
+        {"res_name", required_argument, NULL, RES_NAME_INPUT},
+        {"res_attr", required_argument, NULL, RES_ATTR_INPUT},
+        {"add_inst", required_argument, NULL, RES_ADD_INST_INPUT},
+        {"del_inst", required_argument, NULL, RES_DEL_INST_INPUT},
+        {"edit_inst", required_argument, NULL, RES_EDIT_INST_INPUT},
+        {"inst_attr", required_argument, NULL, RES_INST_ATTR_INPUT},
+        {"list_inst", no_argument, NULL, RES_LIST_INST_INPUT},
 
-        {NULL, 0, NULL, 0}};
+        {NULL, 0, NULL, 0}
+    };
 
     int optionIndex;
     int c;

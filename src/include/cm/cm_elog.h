@@ -58,6 +58,18 @@ typedef struct log_level_string_st {
     int level_val;
 } log_level_string;
 
+static inline int32 GetCmLogMessage()
+{
+    if (log_min_messages == WARNING) {
+        return LOG;
+    }
+
+    if (log_min_messages == LOG) {
+        return WARNING;
+    }
+    return log_min_messages;
+}
+
 typedef status_t (*SetParam)(const char *key, const char *value);
 void LoadParamterFromConfigWithPrefixKey(const char *configFile, const char *prefixKey, SetParam setParam);
 

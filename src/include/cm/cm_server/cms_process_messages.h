@@ -159,6 +159,8 @@ void ProcessCmRhbMsg(MsgRecvInfo* recvMsgInfo, const CmRhbMsg *rhbMsg);
 void ProcessResIsregMsg(MsgRecvInfo *recvMsgInfo, CmaToCmsIsregMsg *isreg);
 void ReleaseResLockOwner(const char *resName, uint32 instId);
 void ResetResNodeStat();
+void ProcessDnFloatIpMsg(MsgRecvInfo *recvMsgInfo, CmaDnFloatIpInfo *floatIp);
+void GetFloatIpSet(CmFloatIpStatAck *ack, size_t maxMsgLen, size_t *curMsgLen);
 
 #ifdef ENABLE_MULTIPLE_NODES
 void SetCmdStautus(int32 ret);

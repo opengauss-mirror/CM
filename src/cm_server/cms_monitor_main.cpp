@@ -158,6 +158,8 @@ static void datanode_status_reset(uint32 group_index, int member_index, bool isN
         .instance_status.data_node_member[member_index]
         .local_status.buildReason = INSTANCE_HA_DATANODE_BUILD_REASON_UNKNOWN;
 
+    g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index].floatIp.count = 0;
+
     rc = memset_s(&g_instance_group_report_status_ptr[group_index]
         .instance_status.data_node_member[member_index] .sender_status[0].sender_sent_location,
         8 * sizeof(XLogRecPtr), 0, 8 * sizeof(XLogRecPtr));

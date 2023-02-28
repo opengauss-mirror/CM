@@ -30,6 +30,9 @@
 #include "cm/cm_defs.h"
 #include "cm_ddb_adapter.h"
 #include "cm_cipher.h"
+#include "ctl_global_params.h"
+#include "cm_json_config.h"
+#include "ctl_res.h"
 
 #define DEFAULT_WAIT 60
 #define DYNAMIC_PRIMARY 0
@@ -200,48 +203,6 @@ typedef struct DcfOptionSt {
     int priority;
 } DcfOption;
 
-typedef enum ResOptModeEn {
-    RES_CONF_UNKNOWN = 0,
-    RES_ADD_CONF = 1,
-    RES_EDIT_CONF = 2,
-    RES_DEL_CONF = 3,
-    RES_CHECK_CONF = 4,
-} ResOptMode;
-
-typedef enum ResEditModeEn {
-    RES_EDIT_UNKNOWN = 0,
-    RES_ADD_INST_CONF = 1,
-    RES_DEL_INST_CONF = 2,
-    RES_EDIT_RES_CONF = 3,
-    RES_EDIT_CEIL,  // it must be end
-} ResEditMode;
-
-typedef enum ResTypeE {
-    RES_TYPE_UNKOWN,
-    RES_TYPE_APP,
-    RES_TYPE_DN,
-    RES_TYPE_CEIL, // it must be end
-} ResType;
-
-typedef struct ResOptionSt {
-    ResOptMode mode;
-    ResType type;
-    char *resName;
-    char *resAttr;
-    ResEditMode editMode;
-    char *addInstStr;
-    char *delInstStr;
-} ResOption;
-
-typedef status_t (*CheckResInfo)(cJSON *resItem, const char *resName);
-
-typedef struct ResTypeMapT {
-    ResType type;
-    const char *typeStr;
-    const char *value;
-    CheckResInfo check;
-} ResTypeMap;
-
 typedef struct CtlOptionSt {
     CommonOption comm;
     GucOption guc;
@@ -255,7 +216,6 @@ typedef struct CtlOptionSt {
 extern bool g_isRestop;
 extern DdbConn *g_sess;
 extern TlsAuthPath g_tlsPath;
-extern ResTypeMap g_resTypeMap[];
 
 status_t do_start(void);
 int DoStop(void);
@@ -284,12 +244,7 @@ void DoDccCmd(int argc, char **argv);
 int DoGuc(CtlOption *ctx);
 int DoEncrypt(const CtlOption *ctx);
 int DoSwitch(const CtlOption *ctx);
-int DoResCommand(const CtlOption *ctx);
 int DoShowCommand();
-
-void GetExecCmdResult(const char *option, int expCmd);
-void HandleRhbAck(CmRhbStatAck *ack);
-void HandleNodeDiskAck(CmNodeDiskStatAck *ack);
 
 void stop_etcd_cluster(void);
 int stop_check_node(uint32 node_id_check);
@@ -302,13 +257,13 @@ uint32 get_node_index(uint32 node_id);
 bool isMajority(const char* cm_arbitration_mode);
 bool isMinority(const char* cm_arbitration_mode);
 int FindInstanceIdAndType(uint32 node, const char* dataPath, uint32* instanceId, int* instanceType);
-int ssh_exec(const staticNodeConfig* node, const char* cmd);
+int ssh_exec(const staticNodeConfig* node, const char* cmd, int32 logLevel = ERROR);
 int SshExec(const staticNodeConfig* node, const char* cmd);
 int RunEtcdCmd(const char* command, uint32 nodeIndex);
-void do_conn_cmserver(bool queryCmserver, uint32 nodeIndex, bool queryEtcd = false, CM_Conn **curConn = NULL);
-int cm_client_flush_msg(CM_Conn* conn);
-int cm_client_send_msg(CM_Conn* conn, char msgtype, const char* s, size_t len);
-char* recv_cm_server_cmd(CM_Conn* conn);
+void do_conn_cmserver(bool queryCmserver, uint32 nodeIndex, bool queryEtcd = false, struct cm_conn **curConn = NULL);
+int cm_client_flush_msg(struct cm_conn* conn);
+int cm_client_send_msg(struct cm_conn* conn, char msgtype, const char* s, size_t len);
+char* recv_cm_server_cmd(struct cm_conn* conn);
 void init_hosts();
 bool is_node_stopping(uint32 checkNode, uint32 currentNode, const char *manualStartFile, const char *resultFile,
                       const char *mppEnvSeperateFile);
@@ -348,8 +303,8 @@ status_t KillAllCms(bool isNeedKillPrimaryCms);
 uint32 *GetCmsNodeIndex(void);
 status_t CheckGucOptionValidate(const GucOption &gucCtx);
 void GetUpgradeVersionFromCmaConfig();
-bool SetOfflineNode(uint32 nodeIndex, CM_Conn *con);
-void ReleaseConn(CM_Conn *con);
+bool SetOfflineNode(uint32 nodeIndex, struct cm_conn *con);
+void ReleaseConn(struct cm_conn *con);
 bool IsCmSharedStorageMode();
 void CtlGetCmJsonConf();
 int DoRhbPrint();

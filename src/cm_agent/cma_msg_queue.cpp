@@ -100,6 +100,17 @@ static inline void PushToAgentMsgQue(const AgentMsgPkg *msgPkg, MsgQueue *msgQue
     (void)pthread_cond_signal(&msgQue->cond);
 }
 
+void PushMsgToAllClientSendQue(const char *msgPtr, uint32 msgLen)
+{
+    ClientConn *clientConn = GetClientConnect();
+    for (uint32 i = 0; i < CM_MAX_RES_COUNT; ++i) {
+        if (!clientConn[i].isClosed) {
+            write_runlog(LOG, "notify inst(%u), CMA disconnect with CMS.\n", clientConn[i].cmInstanceId);
+            PushMsgToClientSendQue(msgPtr, msgLen, i);
+        }
+    }
+}
+
 void PushMsgToClientSendQue(const char *msgPtr, uint32 msgLen, uint32 conId)
 {
     AgentMsgPkg msgPkg = {0};

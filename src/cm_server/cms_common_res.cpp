@@ -285,6 +285,7 @@ void UpdateIsworkList(uint32 cmInstId, int newIswork)
                 ++g_resStatus[i].status.version;
                 ProcessReportResChangedMsg(false, g_resStatus[i].status);
                 SaveOneResStatusToDdb(&g_resStatus[i].status);
+                PrintCusInfoResList(&g_resStatus[i].status, __FUNCTION__);
                 return;
             }
         }
@@ -530,27 +531,13 @@ void GetOneResStatusFromDdb(OneResStatList *resStat)
     cJSON_Delete(root);
 }
 
-static inline void PrintNewResStatus(const OneResStatList *resStatus)
-{
-    write_runlog(LOG, "res(%s), version=%llu:\n", resStatus->resName, resStatus->version);
-    for (uint32 j = 0; j < resStatus->instanceCount; ++j) {
-        write_runlog(LOG, "nodeId=%u, cmInstId=%u, resInstId=%u, isWork=%u, status=%u;\n",
-            resStatus->resStat[j].nodeId,
-            resStatus->resStat[j].cmInstanceId,
-            resStatus->resStat[j].resInstanceId,
-            resStatus->resStat[j].isWorkMember,
-            resStatus->resStat[j].status);
-    }
-}
-
 void GetAllResStatusFromDdb()
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
         (void)pthread_rwlock_wrlock(&g_resStatus[i].rwlock);
         GetOneResStatusFromDdb(&g_resStatus[i].status);
-        write_runlog(LOG, "show res status get from ddb.\n");
-        PrintNewResStatus(&g_resStatus[i].status);
         (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+        PrintCusInfoResList(&g_resStatus[i].status, __FUNCTION__);
     }
 }
 

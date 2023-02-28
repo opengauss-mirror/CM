@@ -24,6 +24,7 @@
 #include "securec.h"
 #include "cm/cm_elog.h"
 #include "cm/cm_msg.h"
+#include "cm/cm_util.h"
 #include "cma_common.h"
 #include "cma_global_params.h"
 #include "cma_client.h"
@@ -34,6 +35,7 @@
 #include "cma_instance_management_res.h"
 #include "cma_instance_check.h"
 #include "cma_mes.h"
+#include "cma_instance_management_res.h"
 #include "cma_process_messages.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
@@ -64,6 +66,23 @@ static void InstancesStatusCheckAndReport(void)
         SendResStatReportMsg();
         SendResIsregReportMsg();
     }
+}
+
+static void WillSetFloatIpOper(uint32 instId, NetworkOper oper, const char *str)
+{
+    if (!IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
+        write_runlog(LOG, "%s agent_backup_open=%d, cannot set floatIp oper.\n", str, (int32)agent_backup_open);
+        return;
+    }
+    uint32 dnIdx = 0;
+    bool ret = FindDnIdxInCurNode(instId, &dnIdx, str);
+    if (!ret) {
+        write_runlog(ERROR, "%s cannot do the network oper in instId(%u), because it cannot be found in "
+            "current node.\n", str, instId);
+        return;
+    }
+    SetNicOper(instId, CM_INSTANCE_TYPE_DN, NETWORK_TYPE_FLOATIP, oper);
+    SetFloatIpOper(dnIdx, oper, str);
 }
 
 static void AgentSendHeartbeat()
@@ -473,6 +492,7 @@ static void process_failover_command(const char* dataDir, int instanceType, uint
                 instanceName);
             /* report the alarm */
             ReportCMAEventAlarm(AlarmFailOver, &tempAdditionalParam);
+            WillSetFloatIpOper(instance_id, NETWORK_OPER_UP, "[process_failover_command]");
             break;
         default:
             write_runlog(LOG, "node_type is unknown !\n");
@@ -1746,7 +1766,38 @@ static void MsgCmAgentResArbitrate(const AgentMsgPkg *msg, char *dataPath, const
     if (recvMsg == NULL) {
         return;
     }
-    ProcessResRegFromCms(recvMsg);
+
+    static uint64 processTime = 0;
+    static const uint64 processInterval = 1000;
+    uint64 curTime = GetMonotonicTimeMs();
+    if ((curTime - processTime) > processInterval) {
+        ProcessResRegFromCms(recvMsg);
+        processTime = curTime;
+    }
+}
+
+static void ProcessFloatIpFromCms(const CmsDnFloatIpAck *recvMsg)
+{
+    NetworkOper oper = ChangeInt2NetworkOper(recvMsg->oper);
+    if (oper == NETWORK_OPER_UNKNOWN) {
+        return;
+    }
+    write_runlog(LOG, "receive floatIp oper msg(%d=%s) from cms.\n", (int32)oper, GetOperMapString(oper));
+    WillSetFloatIpOper(recvMsg->baseInfo.instId, oper, "[ProcessFloatIpFromCms]");
+}
+
+static void MsgCmAgentFloatIpAck(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+{
+    const CmsDnFloatIpAck *recvMsg = (const CmsDnFloatIpAck *)CmGetMsgBytesPtr(msg, sizeof(CmsDnFloatIpAck));
+    if (recvMsg == NULL) {
+        return;
+    }
+    if (!IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
+        write_runlog(DEBUG1, "[MsgCmAgentFloatIpAck] agent_backup_open=%d, cannot set floatIp oper.\n",
+            (int32)agent_backup_open);
+        return;
+    }
+    ProcessFloatIpFromCms(recvMsg);
 }
 
 static void MsgCmAgentIsregCheckListChanged(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
@@ -1906,7 +1957,7 @@ void CmServerCmdProcessorInit(void)
     g_cmsCmdProcessor[MSG_GET_SHARED_STORAGE_INFO_ACK]          = MsgCmAgentGetSharedStorageModeAck;
     g_cmsCmdProcessor[MSG_CM_RES_LOCK_ACK]                      = MsgCmAgentResLockAck;
     g_cmsCmdProcessor[MSG_CM_RES_REG]                           = MsgCmAgentResArbitrate;
-    g_cmsCmdProcessor[MSG_CM_AGENT_FLOAT_IP_ACK]                = NULL;
+    g_cmsCmdProcessor[MSG_CM_AGENT_FLOAT_IP_ACK]                = MsgCmAgentFloatIpAck;
     g_cmsCmdProcessor[MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED]    = MsgCmAgentIsregCheckListChanged;
 #ifdef ENABLE_MULTIPLE_NODES
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN]                   = MsgCmAgentNotifyCn;
@@ -2010,6 +2061,7 @@ void *ProcessSendCmsMsgMain(void *arg)
     struct timespec lastReportTime = {0, 0};
     struct timespec currentTime = {0, 0};
     long expiredTime = 0;
+    const uint32 overLongTime = 1000;
     (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
     pthread_t threadId = pthread_self();
     thread_name = "SendCmsMsg";
@@ -2029,13 +2081,22 @@ void *ProcessSendCmsMsgMain(void *arg)
                 write_runlog(LOG, "connection to cm_server %u seconds timeout expired .\n", agent_heartbeat_timeout);
                 g_cmServerNeedReconnect = true;
             }
+            uint64 t1 = GetMonotonicTimeMs();
+
             ReportInstanceStatus();
+            uint64 t2 = GetMonotonicTimeMs();
+
             if (etcdTimeReportInterval >= AGENT_REPORT_ETCD_CYCLE || etcdTimeReportInterval == 0) {
                 EtcdCurrentTimeReport();
                 etcdTimeReportInterval = 0;
             }
             etcdTimeReportInterval++;
             (void)clock_gettime(CLOCK_MONOTONIC, &lastReportTime);
+            uint64 t3 = GetMonotonicTimeMs();
+            if ((t3 - t1) > overLongTime) {
+                write_runlog(LOG, "[%s] ReportInstanceStatus=%lu, EtcdCurrentTimeReport=%lu.\n",
+                    __FUNCTION__, (t2 - t1), (t3 - t2));
+            }
         }
         CmUsleep(AGENT_RECV_CYCLE);
     }
@@ -2068,21 +2129,44 @@ void *ProcessRecvCmsMsgMain(void *arg)
     thread_name = "ProcessCmsMsg";
     write_runlog(LOG, "process cms msg thread begin, threadId:%lu.\n", (unsigned long)pthread_self());
 
+    int32 msgType;
+    const uint32 overLongTime = 3000;
     for (;;) {
         if (g_shutdownRequest) {
             cm_sleep(5);
             continue;
         }
+        msgType = -1;
         MsgQueue &recvQueue = GetCmsRecvQueue();
+        uint64 t1 = GetMonotonicTimeMs();
+
         (void)pthread_mutex_lock(&recvQueue.lock);
+        uint64 t2 = GetMonotonicTimeMs();
+
         while (recvQueue.msg.empty()) {
             (void)pthread_cond_wait(&recvQueue.cond, &recvQueue.lock);
         }
+        uint64 t3 = GetMonotonicTimeMs();
+
         AgentMsgPkg msgPkg = recvQueue.msg.front();
         recvQueue.msg.pop();
+        uint64 t4 = GetMonotonicTimeMs();
+
         (void)pthread_mutex_unlock(&recvQueue.lock);
+        uint64 t5 = GetMonotonicTimeMs();
+
         ProcessCmServerCmd(&msgPkg);
+        if (msgPkg.msgLen >= (sizeof(int32))) {
+            msgType = *(int *)(msgPkg.msgPtr);
+        }
+        uint64 t6 = GetMonotonicTimeMs();
+
         FreeBufFromMsgPool(msgPkg.msgPtr);
+        uint64 t7 = GetMonotonicTimeMs();
+        if ((t7 - t1) > overLongTime) {
+            write_runlog(LOG, "[%s] lock=%lu, wait=%lu, pop=%lu, unlock=%lu, process=%lu, free=%lu, msgType=%d.\n",
+                __FUNCTION__, (t2 - t1), (t3 - t2), (t4 - t3), (t5 - t4), (t6 - t5), (t7 - t6), msgType);
+        }
     }
 
     return NULL;

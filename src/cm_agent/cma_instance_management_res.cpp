@@ -30,17 +30,29 @@
 
 uint32 g_localResConfCount = 0;
 
-int SystemExecute(const char *scriptPath, const char *oper, uint32 timeout)
+static int CusResCmdExecute(const char *scriptPath, const char *oper, uint32 timeout, bool8 needNohup)
 {
     char command[MAX_PATH_LEN + MAX_OPTION_LEN] = {0};
-    int ret = snprintf_s(command,
-        MAX_PATH_LEN + MAX_OPTION_LEN,
-        MAX_PATH_LEN + MAX_OPTION_LEN - 1,
-        SYSTEMQUOTE "timeout -s SIGKILL %us %s %s > %s" SYSTEMQUOTE,
-        timeout,
-        scriptPath,
-        oper,
-        CM_DEVNULL);
+    int ret;
+    if (needNohup) {
+        ret = snprintf_s(command,
+            MAX_PATH_LEN + MAX_OPTION_LEN,
+            MAX_PATH_LEN + MAX_OPTION_LEN - 1,
+            SYSTEMQUOTE "nohup timeout -s SIGKILL %us %s %s > %s &" SYSTEMQUOTE,
+            timeout,
+            scriptPath,
+            oper,
+            CM_DEVNULL);
+    } else {
+        ret = snprintf_s(command,
+            MAX_PATH_LEN + MAX_OPTION_LEN,
+            MAX_PATH_LEN + MAX_OPTION_LEN - 1,
+            SYSTEMQUOTE "timeout -s SIGKILL %us %s %s > %s" SYSTEMQUOTE,
+            timeout,
+            scriptPath,
+            oper,
+            CM_DEVNULL);
+    }
     securec_check_intval(ret, (void)ret);
     int status = system(command);
     if (status == -1) {
@@ -63,7 +75,7 @@ status_t StartOneResInst(const CmResConfList *conf)
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s", conf->resInstanceId, conf->arg);
     securec_check_intval(ret, (void)ret);
 
-    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_FALSE);
     if (ret == 0) {
         write_runlog(LOG, "StartOneResInst: run start script (%s %s) successfully.\n", conf->script, oper);
     } else if (ret == CUS_RES_START_FAIL_DEPEND_NOT_ALIVE) {
@@ -83,7 +95,7 @@ void StopOneResInst(const CmResConfList *conf)
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-stop %u %s", conf->resInstanceId, conf->arg);
     securec_check_intval(ret, (void)ret);
 
-    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_FALSE);
     if (ret == 0) {
         write_runlog(LOG, "StopOneResInst: run stop command (%s %s) successfully.\n", conf->script, oper);
     } else {
@@ -112,12 +124,13 @@ status_t RegOneResInst(const CmResConfList *conf, uint32 destInstId)
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-reg %u %s", destInstId, conf->arg);
     securec_check_intval(ret, (void)ret);
 
-    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_TRUE);
     if (ret != 0) {
-        write_runlog(ERROR, "RegOneResInst: reg inst cmd(%s %s) failed, ret=%d\n", conf->script, oper, ret);
+        write_runlog(ERROR, "[%s]: cmd:(%s %s) execute failed, ret=%d.\n", __FUNCTION__, conf->script, oper, ret);
         return CM_ERROR;
     }
-    write_runlog(LOG, "RegOneResInst: reg inst cmd(%s %s) success\n", conf->script, oper);
+
+    write_runlog(LOG, "[%s]: cmd:(%s %s) is executing.\n", __FUNCTION__, conf->script, oper);
     return CM_SUCCESS;
 }
 
@@ -127,12 +140,13 @@ status_t UnregOneResInst(const CmResConfList *conf, uint32 destInstId)
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-unreg %u %s", destInstId, conf->arg);
     securec_check_intval(ret, (void)ret);
 
-    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_TRUE);
     if (ret != 0) {
-        write_runlog(ERROR, "UnregOneResInst: unreg inst cmd:(%s %s) failed, ret=%d\n", conf->script, oper, ret);
+        write_runlog(ERROR, "[%s]: cmd:(%s %s) execute failed, ret=%d.\n", __FUNCTION__, conf->script, oper, ret);
         return CM_ERROR;
     }
-    write_runlog(LOG, "UnregOneResInst: unreg inst cmd:(%s %s) success\n", conf->script, oper);
+
+    write_runlog(LOG, "[%s]: cmd:(%s %s) is executing.\n", __FUNCTION__, conf->script, oper);
     return CM_SUCCESS;
 }
 
@@ -143,7 +157,7 @@ ResIsregStatus IsregOneResInst(const CmResConfList *conf, uint32 destInstId)
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-isreg %u %s", destInstId, conf->arg);
     securec_check_intval(ret, (void)ret);
 
-    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_FALSE);
     switch (ret) {
         case RES_INST_ISREG_UNKNOWN:
             write_runlog(DEBUG5, "IsregOneResInst: res(%s) inst(%u) get isreg error.\n", conf->resName, destInstId);
@@ -175,7 +189,7 @@ status_t CleanOneResInst(const CmResConfList *conf)
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-clean %u %s", conf->resInstanceId, conf->arg);
     securec_check_intval(ret, (void)ret);
 
-    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
+    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_FALSE);
     if (ret != 0) {
         write_runlog(ERROR, "CleanOneResInst: clean inst cmd(%s %s) failed, ret=%d\n", conf->script, oper, ret);
         return CM_ERROR;
@@ -184,14 +198,35 @@ status_t CleanOneResInst(const CmResConfList *conf)
     return CM_SUCCESS;
 }
 
+static void StopCurNodeFloatIp()
+{
+    for (uint32 i = 0; i < g_currentNode->datanodeCount; ++i) {
+        DelAndDownFloatIpInDn(i);
+    }
+}
+
 static inline void CleanOneInstCheckCount(CmResConfList *resConf)
 {
     if (resConf->checkInfo.startCount != 0) {
-        write_runlog(LOG, "res(%s) inst(%u) restart times will clean.\n", resConf->resName, resConf->cmInstanceId);
+        write_runlog(LOG, "res(%s) inst(%u) restart times clean.\n", resConf->resName, resConf->cmInstanceId);
     }
     resConf->checkInfo.startCount = 0;
     resConf->checkInfo.startTime = 0;
     resConf->checkInfo.brokeTime = 0;
+}
+
+static inline void CleanOneInstAbnormalStat(CmResConfList *resConf, int curStat)
+{
+    if (resConf->checkInfo.abnormalTime != 0) {
+        write_runlog(LOG, "res(%s) inst(%u) status from abnormal change to %d.\n",
+            resConf->resName, resConf->cmInstanceId, curStat);
+        resConf->checkInfo.abnormalTime = 0;
+    }
+}
+
+static inline void CleanOneInstOnlineTimes(CmResConfList *resConf)
+{
+    resConf->checkInfo.onlineTimes = 0;
 }
 
 void StopAllResInst()
@@ -199,6 +234,7 @@ void StopAllResInst()
     for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
         OneResInstClean(&g_resConf[i]);
     }
+    StopCurNodeFloatIp();
 }
 
 int CheckOneResInst(const CmResConfList *conf)
@@ -207,8 +243,9 @@ int CheckOneResInst(const CmResConfList *conf)
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-check %u %s", conf->resInstanceId, conf->arg);
     securec_check_intval(ret, (void)ret);
 
-    ret = SystemExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut);
-    if ((ret != CUS_RES_CHECK_STAT_ONLINE) && (ret != CUS_RES_CHECK_STAT_OFFLINE)) {
+    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_FALSE);
+    if ((ret != CUS_RES_CHECK_STAT_ONLINE) && (ret != CUS_RES_CHECK_STAT_OFFLINE) &&
+        (ret != CUS_RES_CHECK_STAT_ABNORMAL)) {
         write_runlog(LOG, "CheckOneResInst, run system command(%s %s) special result=%d\n",  conf->script, oper, ret);
     }
     return ret;
@@ -272,6 +309,8 @@ static inline status_t RestartOneResInst(CmResConfList *conf)
 
 static void ProcessOfflineInstance(CmResConfList *conf)
 {
+    long curTime = GetCurMonotonicTimeSec();
+
     if (conf->checkInfo.restartTimes == -1) {
         if (CanCusInstDoRestart(conf)) {
             (void)RestartOneResInst(conf);
@@ -279,22 +318,22 @@ static void ProcessOfflineInstance(CmResConfList *conf)
         return;
     }
     if (conf->checkInfo.brokeTime == 0) {
-        conf->checkInfo.brokeTime = time(NULL);
+        conf->checkInfo.brokeTime = curTime;
         return;
     }
     if (conf->checkInfo.startCount >= conf->checkInfo.restartTimes) {
         write_runlog(LOG, "res(%s) inst(%u) is offline, but restart times (%d) >= limit (%d), can't do restart again, "
-            "will do manually stop.\n", conf->resName, conf->resInstanceId, conf->checkInfo.startCount,
+            "will do manually stop.\n", conf->resName, conf->cmInstanceId, conf->checkInfo.startCount,
             conf->checkInfo.restartTimes);
         ManualStopLocalResInst(conf);
         return;
     }
-    if ((time(NULL) - conf->checkInfo.brokeTime) < conf->checkInfo.restartDelay) {
+    if ((curTime - conf->checkInfo.brokeTime) < conf->checkInfo.restartDelay) {
         write_runlog(DEBUG5, "[CLIENT] res(%s) inst(%u) curTime=%ld, brokeTime=%ld, restartDelay=%d.\n",
-            conf->resName, conf->resInstanceId, time(NULL), conf->checkInfo.brokeTime, conf->checkInfo.restartDelay);
+            conf->resName, conf->resInstanceId, curTime, conf->checkInfo.brokeTime, conf->checkInfo.restartDelay);
         return;
     }
-    if ((time(NULL) - conf->checkInfo.startTime) < conf->checkInfo.restartPeriod) {
+    if ((curTime - conf->checkInfo.startTime) < conf->checkInfo.restartPeriod) {
         write_runlog(DEBUG5, "[CLIENT] res(%s) inst(%u) startTime = %ld, restartPeriod = %d.\n",
             conf->resName, conf->resInstanceId, conf->checkInfo.startTime, conf->checkInfo.restartPeriod);
         return;
@@ -304,9 +343,47 @@ static void ProcessOfflineInstance(CmResConfList *conf)
     }
     CM_RETVOID_IFERR(RestartOneResInst(conf));
     conf->checkInfo.startCount++;
-    conf->checkInfo.startTime = time(NULL);
+    conf->checkInfo.startTime = curTime;
     write_runlog(LOG, "res(%s) inst(%u) has been restart (%d) times, restart more than (%d) time will manually stop.\n",
         conf->resName, conf->cmInstanceId, conf->checkInfo.startCount, conf->checkInfo.restartTimes);
+}
+
+static void ProcessAbnormalInstance(CmResConfList *conf)
+{
+    long curTime = GetCurMonotonicTimeSec();
+    if (conf->checkInfo.abnormalTime == 0) {
+        conf->checkInfo.abnormalTime = curTime;
+    }
+
+    const int writeLogInterval = 10;
+    int duration = (int)(curTime - conf->checkInfo.abnormalTime);
+    if (duration < conf->checkInfo.abnormalTimeout) {
+        if ((duration > 0) && (duration % writeLogInterval == 0)) {
+            write_runlog(LOG, "res(%s) inst(%u) has been abnormal (%d)s, timeout is (%d)s.\n",
+                conf->resName, conf->cmInstanceId, duration, conf->checkInfo.abnormalTimeout);
+        }
+        return;
+    }
+
+    if ((conf->checkInfo.startCount >= conf->checkInfo.restartTimes) && (conf->checkInfo.restartTimes != -1)) {
+        write_runlog(LOG, "res(%s) inst(%u) is abnormal, but restart times (%d) >= limit (%d), can't do restart again, "
+            "will do manually stop.\n",
+            conf->resName, conf->cmInstanceId, conf->checkInfo.startCount, conf->checkInfo.restartTimes);
+        ManualStopLocalResInst(conf);
+        return;
+    }
+
+    write_runlog(LOG, "res(%s) inst(%u) has been abnormal (%d)s, >= timeout(%d)s, need restart.\n",
+        conf->resName, conf->cmInstanceId, duration, conf->checkInfo.abnormalTimeout);
+
+    CM_RETVOID_IFERR(RestartOneResInst(conf));
+    conf->checkInfo.startCount++;
+    conf->checkInfo.startTime = curTime;
+
+    if (conf->checkInfo.restartTimes != -1) {
+        write_runlog(LOG, "res(%s) inst(%u) has been restart (%d) times, restart more (%d) time will manually stop.\n",
+            conf->resName, conf->cmInstanceId, conf->checkInfo.startCount, conf->checkInfo.restartTimes);
+    }
 }
 
 static inline bool NeedStopResInst(const char *resName, uint32 cmInstId)
@@ -333,18 +410,34 @@ void StartResourceCheck()
         switch (ret) {
             case CUS_RES_CHECK_STAT_ONLINE:
                 ProcessOnlineInstance(&g_resConf[i]);
+                CleanOneInstAbnormalStat(&g_resConf[i], CUS_RES_CHECK_STAT_ONLINE);
                 break;
             case CUS_RES_CHECK_STAT_OFFLINE:
-                g_resConf[i].checkInfo.onlineTimes = 0;
+                CleanOneInstOnlineTimes(&g_resConf[i]);
+                CleanOneInstAbnormalStat(&g_resConf[i], CUS_RES_CHECK_STAT_OFFLINE);
                 if (NeedStopResInst(g_resConf[i].resName, g_resConf[i].cmInstanceId)) {
                     CleanOneInstCheckCount(&g_resConf[i]);
                     break;
                 }
                 ProcessOfflineInstance(&g_resConf[i]);
                 break;
-            default :
+            case CUS_RES_CHECK_STAT_ABNORMAL:
+                CleanOneInstOnlineTimes(&g_resConf[i]);
+                if (!IsOneResInstWork(g_resConf[i].resName, g_resConf[i].cmInstanceId)) {
+                    write_runlog(LOG, "res(%s) inst(%u) is abnormal, but has been kick out, need stop it.\n",
+                        g_resConf[i].resName, g_resConf[i].cmInstanceId);
+                    (void)CleanOneResInst(&g_resConf[i]);
+                    break;
+                }
+                if (IsInstManualStopped(g_resConf[i].cmInstanceId) || CmFileExist(g_cmManualStartPath)) {
+                    CleanOneInstCheckCount(&g_resConf[i]);
+                    break;
+                }
+                ProcessAbnormalInstance(&g_resConf[i]);
+                break;
+            default:
                 write_runlog(ERROR, "StartResourceCheck, special status(%d).\n", ret);
-                break ;
+                break;
         }
     }
 }
@@ -381,7 +474,8 @@ void StopResourceCheck()
 int ResourceStoppedCheck(void)
 {
     for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
-        if (CheckOneResInst(&g_resConf[i]) == CUS_RES_CHECK_STAT_ONLINE) {
+        int ret = CheckOneResInst(&g_resConf[i]);
+        if (ret == CUS_RES_CHECK_STAT_ONLINE || ret == CUS_RES_CHECK_STAT_ABNORMAL) {
             write_runlog(LOG, "resource is running, script is %s\n", g_resConf[i].script);
             return PROCESS_RUNNING;
         }
@@ -418,12 +512,14 @@ static status_t InitResNameConf(const char *resNameJson, char *resNameConf)
     return CM_SUCCESS;
 }
 
-static inline void InitOneConfOfRes(const char *paraName, int value, int *newValue, int defValue)
+static inline void InitOneConfOfRes(const char *paraName, int value, int *newValue)
 {
     if (IsResConfValid(paraName, value)) {
         *newValue = value;
     } else {
-        *newValue = defValue;
+        *newValue = CmAtoi(ResConfDefValue(paraName), 0);
+        write_runlog(ERROR, "\"%s\":%d out of range, range [%d, %d], use default value(%d).\n",
+            paraName, value, ResConfMinValue(paraName), ResConfMaxValue(paraName), *newValue);
     }
 }
 
@@ -437,16 +533,12 @@ static status_t InitLocalCommConfOfDefRes(const CusResConfJson *resJson, CmResCo
     securec_check_errno(rc, (void)rc);
     canonicalize_path(localConf->script);
 
-    const int defCheckInterval = 1;
-    InitOneConfOfRes("check_interval", resJson->checkInterval, &localConf->checkInfo.checkInterval, defCheckInterval);
-    const int defTimeOut = 10;
-    InitOneConfOfRes("time_out", resJson->timeOut, &localConf->checkInfo.timeOut, defTimeOut);
-    const int defRestartDelay = 1;
-    InitOneConfOfRes("restart_delay", resJson->restartDelay, &localConf->checkInfo.restartDelay, defRestartDelay);
-    const int defRestartPeriod = 1;
-    InitOneConfOfRes("restart_period", resJson->restartPeriod, &localConf->checkInfo.restartPeriod, defRestartPeriod);
-    const int defRestartTimes = -1;
-    InitOneConfOfRes("restart_times", resJson->restartTimes, &localConf->checkInfo.restartTimes, defRestartTimes);
+    InitOneConfOfRes("check_interval", resJson->checkInterval, &localConf->checkInfo.checkInterval);
+    InitOneConfOfRes("time_out", resJson->timeOut, &localConf->checkInfo.timeOut);
+    InitOneConfOfRes("restart_delay", resJson->restartDelay, &localConf->checkInfo.restartDelay);
+    InitOneConfOfRes("restart_period", resJson->restartPeriod, &localConf->checkInfo.restartPeriod);
+    InitOneConfOfRes("restart_times", resJson->restartTimes, &localConf->checkInfo.restartTimes);
+    InitOneConfOfRes("abnormal_timeout", resJson->abnormalTimeout, &localConf->checkInfo.abnormalTimeout);
 
     return CM_SUCCESS;
 }
@@ -569,8 +661,5 @@ uint32 GetLocalResConfCount()
 
 bool IsCusResExistLocal()
 {
-    if (g_localResConfCount == 0) {
-        return false;
-    }
-    return true;
+    return (g_localResConfCount > 0);
 }

@@ -38,6 +38,9 @@
 
 #define CM_JSON_STR_LEN 1024
 
+const char SEPARATOR_CHAR = ',';
+const char SEPARATOR_ARRAY[] = {SEPARATOR_CHAR, '\0'};
+
 typedef void (*CmJsonLogOutput)(int logLevel, const char *format, ...) __attribute__((format(printf, 2, 3)));
 
 typedef struct CusResInstConfSt {
@@ -54,6 +57,7 @@ typedef struct CusResConfJson {
     int restartDelay;
     int restartPeriod;
     int restartTimes;
+    int abnormalTimeout;
     struct {
         CusResInstConf *conf;
         uint32 count;
@@ -65,17 +69,28 @@ typedef struct BaseIpListConfSt {
     char baseIp[CM_JSON_STR_LEN];
 } BaseIpListConf;
 
+typedef struct VipCusResConfJsonSt {
+    char resName[CM_JSON_STR_LEN];
+    char floatIp[CM_JSON_STR_LEN];
+    struct {
+        BaseIpListConf *conf;
+        uint32 count;
+    } baseIpList;
+} VipCusResConfJson;
+
 typedef enum CusResTypeEn {
     CUSTOM_RESOURCE_UNKNOWN,
     CUSTOM_RESOURCE_APP,
     CUSTOM_RESOURCE_DN,
+    CUSTOM_RESOURCE_VIP,
 } CusResType;
 
 typedef struct OneCusResConfJsonSt {
-    CusResType resType;  // resources_type (APP,DN)
+    CusResType resType;  // resources_type (APP,DN,VIP)
     union {
         AppCusResConfJson appResConf;  // APP
         DnCusResConfJson dnResConf;    // DN
+        VipCusResConfJson vipResConf;  // VIP
     };
 } OneCusResConfJson;
 
@@ -93,5 +108,7 @@ int ReadConfJsonFile(const char *jsonFile);
 void SetReadJsonConfWriteLog(CmJsonLogOutput logFunc);
 bool IsConfJsonEmpty();
 cJSON *ReadJsonFile(const char *jsonPath, int *err);
+int FetchStrFromText(const char *textStr, char *result, uint32 len, char beginPoint);
+int GetValueStrFromText(char *result, uint32 resultLen, const char *textStr, const char *expectValue);
 
 #endif  // CM_CM_JSON_CONFIG_H

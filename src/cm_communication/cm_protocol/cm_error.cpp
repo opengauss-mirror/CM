@@ -23,6 +23,7 @@
  */
 #include "cm_error.h"
 #include "cm/cm_elog.h"
+#include "cm_text.h"
 
 #ifdef __cplusplus
 extern "C" {

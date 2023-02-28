@@ -22,9 +22,9 @@
  * -------------------------------------------------------------------------
  */
 
-#include "elog.h"
 #include "cm_c.h"
 #include "cm_util.h"
+#include "cm_misc_base.h"
 #include "cm_msg_buf_pool.h"
 
 #include "cms_msg_que.h"
@@ -40,7 +40,7 @@ void InitMsgQue(PriMsgQues &que)
     }
 
     (void)pthread_mutex_init(&que.msgLock, NULL);
-    (void)pthread_cond_init(&que.msgCond, NULL);
+    InitPthreadCondMonotonic(&que.msgCond);
 }
 
 void setWakeSenderFunc(wakeSenderFuncType func)
@@ -133,7 +133,7 @@ const MsgRecvInfo *getRecvMsg(PriMsgQues *priQue, MsgSourceType src, uint32 wait
     const MsgRecvInfo* msg = getRecvMsgInner(priQue, src, threadInfo);
 
     if (msg == NULL && waitTime > 0) {
-        (void)clock_gettime(CLOCK_REALTIME, &tv);
+        (void)clock_gettime(CLOCK_MONOTONIC, &tv);
         tv.tv_sec = tv.tv_sec + (long long)waitTime;
         (void)pthread_mutex_lock(&priQue->msgLock);
         (void)pthread_cond_timedwait(&priQue->msgCond, &priQue->msgLock, &tv);

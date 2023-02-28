@@ -317,6 +317,9 @@ static void RecvClientMsgMain(int epollfd, int eventNums, const ListenPort *list
 
 void* RecvClientEventsMain(void * const arg)
 {
+    thread_name = "RecvClientMsg";
+    write_runlog(LOG, "recv msg from client thread begin, threadId:%lu.\n", (unsigned long)pthread_self());
+
     int epollfd;
     ListenPort listenfd;
     struct epoll_event events[MAX_EVENTS];

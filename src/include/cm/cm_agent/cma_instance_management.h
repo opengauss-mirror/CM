@@ -45,6 +45,7 @@ uint32 GetLibcommPort(const char* file_path, uint32 base_port, int port_type);
 extern bool UpdateLibcommConfig();
 int stop_instance_check(void);
 int killInstanceByPid(const char *processName, const char *cmdLine);
+void DelAndDownFloatIpInDn(uint32 index);
 
 #ifdef ENABLE_UT
 extern void StopOneZengine(uint32 index);

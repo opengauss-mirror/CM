@@ -34,6 +34,8 @@
 #include "cm_cipher.h"
 #include "cm_elog.h"
 #include "cm_misc_base.h"
+#include "cm_text.h"
+#include "cm_debug.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -162,44 +164,12 @@ time_t CmCurrentTime()
     return time(NULL);
 }
 
-status_t CmText2Str(const text_t *text, char *buf, uint32 buf_size)
-{
-    if (buf == NULL) {
-        return CM_ERROR;
-    }
-    uint32 copy_size;
-    CM_ASSERT(buf_size > 1);
-    copy_size = (text->len >= buf_size) ? buf_size - 1 : text->len;
-    if (copy_size > 0) {
-        int res = memcpy_sp(buf, buf_size, text->str, copy_size);
-        if (res != 0) {
-            return CM_ERROR;
-        }
-    }
-
-    buf[copy_size] = '\0';
-    return CM_SUCCESS;
-}
-
 static const char *cm_cs_ssl_init_err_string(ssl_init_error_t err)
 {
     if (err > SSL_INITERR_NONE && err < SSL_INITERR_LASTERR) {
         return g_ssl_error_string[err];
     }
     return g_ssl_error_string[0];
-}
-
-static inline bool cm_text_str_equal_ins(const text_t *text, const char *str)
-{
-    uint32 i;
-
-    for (i = 0; i < text->len; i++) {
-        if (UPPER(text->str[i]) != UPPER(str[i]) || str[i] == '\0') {
-            return false;
-        }
-    }
-
-    return (str[text->len] == '\0');
 }
 
 /*
@@ -772,7 +742,7 @@ static status_t cm_cs_ssl_match_cipher(const text_t *left, char *cipher, uint32_
     }
 
     for (i = 0; i < count; i++) {
-        if (!cm_text_str_equal_ins(left, cipher_list[i])) {
+        if (!CmTextStrEqualIns(left, cipher_list[i])) {
             continue;
         }
         *support = true;
@@ -796,59 +766,14 @@ static status_t cm_cs_ssl_match_cipher(const text_t *left, char *cipher, uint32_
     return CM_SUCCESS;
 }
 
-static void cm_split_text(const text_t *text, char split_char, char enclose_char, text_t *left, text_t *right)
-{
-    uint32 i;
-    bool is_enclosed = false;
-
-    left->str = text->str;
-
-    for (i = 0; i < text->len; i++) {
-        if (enclose_char != 0 && text->str[i] == enclose_char) {
-            is_enclosed = !is_enclosed;
-            continue;
-        }
-
-        if (is_enclosed) {
-            continue;
-        }
-
-        if (text->str[i] == split_char) {
-            left->len = i;
-            right->str = text->str + i + 1;
-            right->len = text->len - (i + 1);
-            return;
-        }
-    }
-    /* if the split_char is not found */
-    left->len = text->len;
-    right->len = 0;
-    right->str = NULL;
-}
-
-static bool cm_fetch_text(text_t *text, char split_char, char enclose_char, text_t *sub)
-{
-    text_t remain;
-    if (text->len == 0) {
-        CM_TEXT_CLEAR(sub);
-        return false;
-    }
-
-    cm_split_text(text, split_char, enclose_char, sub, &remain);
-
-    text->len = remain.len;
-    text->str = remain.str;
-    return true;
-}
-
 static status_t cm_cs_ssl_distinguish_cipher(const char *cipher, char *tls12_cipher, uint32_t *tls12_offset,
     char *tls13_cipher, uint32_t *tls13_offset)
 {
     bool support = false;
     text_t text, left, right;
 
-    cm_str2text((char *)cipher, &text);
-    cm_split_text(&text, ':', '\0', &left, &right);
+    CmStr2Text((char *)cipher, &text);
+    CmSplitText(&text, ':', '\0', &left, &right);
     text = right;
 
     while (left.len > 0) {
@@ -870,7 +795,7 @@ static status_t cm_cs_ssl_distinguish_cipher(const char *cipher, char *tls12_cip
             return CM_ERROR;
         }
 
-        cm_split_text(&text, ':', '\0', &left, &right);
+        CmSplitText(&text, ':', '\0', &left, &right);
         text = right;
     }
 
@@ -922,106 +847,13 @@ static status_t cm_cs_ssl_set_cipher(SSL_CTX *ctx, const ssl_config_t *config, b
     return CM_SUCCESS;
 }
 
-static void cm_rtrim_text(text_t *text)
-{
-    int32 index;
-
-    if (text->str == NULL) {
-        text->len = 0;
-        return;
-    } else if (text->len == 0) {
-        return;
-    }
-
-    index = (int32)text->len - 1;
-    while (index >= 0) {
-        if ((unsigned char)text->str[index] > (unsigned char)' ') {
-            text->len = (uint32)(index + 1);
-            return;
-        }
-
-        --index;
-    }
-}
-
-static bool cm_is_bracket_text(const text_t *text)
-{
-    bool in_string = false;
-    uint32 depth;
-    const int minLen = 2;
-
-    if (text->len < minLen) {
-        return false;
-    }
-
-    bool flag = CM_TEXT_BEGIN(text) != '(' || CM_TEXT_END(text) != ')';
-    if (flag) {
-        return false;
-    }
-
-    depth = 1;
-    for (uint32 i = 1; i < text->len; i++) {
-        if (text->str[i] == '\'') {
-            in_string = !in_string;
-            continue;
-        }
-
-        if (in_string) {
-            continue;
-        } else if (text->str[i] == '(') {
-            depth++;
-        } else if (text->str[i] == ')') {
-            depth--;
-            if (depth == 0) {
-                return (i == text->len - 1);
-            }
-        }
-    }
-
-    return false;
-}
-
-static void cm_ltrim_text(text_t *text)
-{
-    if (text->str == NULL) {
-        text->len = 0;
-        return;
-    } else if (text->len == 0) {
-        return;
-    }
-
-    while (text->len > 0) {
-        if ((unsigned char)*text->str > ' ') {
-            break;
-        }
-        text->str++;
-        text->len--;
-    }
-}
-
-static inline void cm_trim_text(text_t *text)
-{
-    cm_ltrim_text(text);
-    cm_rtrim_text(text);
-}
-
-static inline void cm_remove_brackets(text_t *text)
-{
-    const int lenReduce = 2;
-    while (cm_is_bracket_text(text)) {
-        text->str++;
-        text->len -= lenReduce;
-        cm_trim_text(text);
-    }
-}
-
 static inline void cm_cs_ssl_fetch_file_name(text_t *files, text_t *name)
 {
-    if (!cm_fetch_text(files, ',', '\0', name)) {
+    if (!CmFetchText(files, ',', '\0', name)) {
         return;
     }
 
-    cm_trim_text(name);
+    CmTrimText(name);
     if (name->str[0] == '\'') {
         name->str++;
         if (name->len >= 2) {
@@ -1030,7 +862,7 @@ static inline void cm_cs_ssl_fetch_file_name(text_t *files, text_t *name)
             name->len = 0;
         }
 
-        cm_trim_text(name);
+        CmTrimText(name);
     }
 }
 
@@ -1042,8 +874,8 @@ static status_t cm_cs_ssl_set_ca_chain(SSL_CTX *ctx, ssl_config_t *config, bool 
     if (config->ca_file == NULL) {
         return CM_SUCCESS;
     }
-    cm_str2text((char *)config->ca_file, &file_list);
-    cm_remove_brackets(&file_list);
+    CmStr2Text((char *)config->ca_file, &file_list);
+    CmRemoveBrackets(&file_list);
 
     cm_cs_ssl_fetch_file_name(&file_list, &file_name);
     while (file_name.len > 0) {
@@ -1102,8 +934,8 @@ static status_t cm_cs_ssl_set_crl_file(SSL_CTX *ctx, ssl_config_t *config)
     char filepath[CM_FILE_NAME_BUFFER_SIZE];
 
     if (config->crl_file != NULL) {
-        cm_str2text((char *)config->crl_file, &file_list);
-        cm_remove_brackets(&file_list);
+        CmStr2Text((char *)config->crl_file, &file_list);
+        CmRemoveBrackets(&file_list);
 
         cm_cs_ssl_fetch_file_name(&file_list, &file_name);
         while (file_name.len > 0) {
@@ -1225,7 +1057,7 @@ static status_t cm_cs_ssl_resolve_file_name(const char *filename, char *buf, uin
         *res_buf = filename;
         return CM_SUCCESS;
     }
-    cm_str2text((char *)filename, &text);
+    CmStr2Text((char *)filename, &text);
     CM_REMOVE_ENCLOSED_CHAR(&text);
     CM_RETURN_IFERR(CmText2Str(&text, buf, buf_len));
     *res_buf = buf;

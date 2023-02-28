@@ -31,7 +31,7 @@ void StartDatanodeCheck(void);
 
 int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval);
 
-int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex);
+int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProcess);
 
 int CheckDatanodeStatus(const char *dataDir, int *role);
 int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg);
@@ -42,4 +42,6 @@ void *DNSyncCheckMain(void *arg);
 void ProcessStreamingStandbyClusterBuildCommand(
     int instanceType, const char* dataDir, const cm_to_agent_build *buildMsg);
 void* DNBackupStatusCheckMain(void *arg);
+void DnCheckFloatIp(DnStatus *dnStatus, uint32 dnIdx, bool8 isRunning);
+uint32 DelFloatIpInDatanode(uint32 dnIdx);
 #endif  // CM_CMA_CLIENT_ADPT_H

@@ -172,7 +172,7 @@ int FindInstanceIdAndType(uint32 node, const char *dataPath, uint32 *instanceId,
  * ssh_exec
  * exec command in remote host.
  */
-int ssh_exec(const staticNodeConfig* node, const char* cmd)
+int ssh_exec(const staticNodeConfig* node, const char* cmd, int32 logLevel)
 {
 #define MAXLINE 1024
     char actualCmd[MAXLINE];
@@ -194,7 +194,7 @@ int ssh_exec(const staticNodeConfig* node, const char* cmd)
         }
         rc = system(actualCmd);
         if (rc != 0) {
-            write_runlog(ERROR, "ssh failed at \"%s\".\n", node->sshChannel[ii]);
+            write_runlog(logLevel, "ssh failed at \"%s\".\n", node->sshChannel[ii]);
             write_runlog(DEBUG1, "cmd is %s, rc=%d, errno=%d.\n", actualCmd, WEXITSTATUS(rc), errno);
         }
     }
@@ -1869,73 +1869,4 @@ void CtlGetCmJsonConf()
     if (InitAllResStat(DEBUG1) != CM_SUCCESS) {
         write_runlog(DEBUG1, "init res status failed.\n");
     }
-}
-
-static void OutPutCmdResult(const char *option, const ExecDdbCmdAckMsg *ackPtr)
-{
-    if (ackPtr->isSuccess) {
-        if (ackPtr->outputLen < DCC_CMD_MAX_OUTPUT_LEN) {
-            write_runlog(LOG, "exec ddb %s command success.\n", option);
-            write_runlog(LOG, "%s\n", ackPtr->output);
-        } else {
-            write_runlog(LOG, "exec ddb %s command failed, error msg's buf is smaller(%d/%d).\n",
-                option, DCC_CMD_MAX_OUTPUT_LEN, ackPtr->outputLen);
-            write_runlog(LOG, "part result is:\n %s\n", ackPtr->output);
-        }
-    } else {
-        write_runlog(LOG, "exec ddb %s command failed, err msg:\n%s\n", option, ackPtr->errMsg);
-    }
-}
-
-void GetExecCmdResult(const char *option, int expCmd)
-{
-    int ret;
-    int recvTimeOut = EXEC_DDC_CMD_TIMEOUT;
-    char *receiveMsg = NULL;
-    cm_msg_type *rcvCmd = NULL;
-
-    for (;;) {
-        ret = cm_client_flush_msg(CmServer_conn);
-        if (ret == TCP_SOCKET_ERROR_EPIPE) {
-            FINISH_CONNECTION_WITHOUT_EXIT();
-        }
-
-        receiveMsg = recv_cm_server_cmd(CmServer_conn);
-        if (receiveMsg != NULL) {
-            rcvCmd = (cm_msg_type*)receiveMsg;
-            if (rcvCmd->msg_type == expCmd) {
-                switch (rcvCmd->msg_type) {
-                    case EXEC_DDB_COMMAND_ACK: {
-                        ExecDdbCmdAckMsg *ackPtr = (ExecDdbCmdAckMsg*)(receiveMsg);
-                        OutPutCmdResult(option, ackPtr);
-                        break;
-                    }
-                    case MSG_CTL_CM_RHB_STATUS_ACK: {
-                        CmRhbStatAck *ackPtr = (CmRhbStatAck*)(receiveMsg);
-                        HandleRhbAck(ackPtr);
-                        break;
-                    }
-                    case MSG_CTL_CM_NODE_DISK_STATUS_ACK: {
-                        CmNodeDiskStatAck *ackPtr = (CmNodeDiskStatAck*)(receiveMsg);
-                        HandleNodeDiskAck(ackPtr);
-                        break;
-                    }
-                    default:
-                        break;
-                }
-            }
-        }
-        recvTimeOut--;
-        if (recvTimeOut <= 0 || (rcvCmd != NULL && rcvCmd->msg_type == expCmd)) {
-            break;
-        }
-        cm_sleep(1);
-    }
-
-    if (recvTimeOut <= 0) {
-        write_runlog(LOG, "command timeout.\n");
-        return;
-    }
-
-    return;
 }

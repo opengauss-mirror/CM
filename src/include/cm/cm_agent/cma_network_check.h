@@ -24,7 +24,11 @@
 #ifndef CMA_NETWORK_CHECK_H
 #define CMA_NETWORK_CHECK_H
 #include "cm_defs.h"
+
+#include "common/config/cm_config.h"
+
 #include "cm_msg_common.h"
+#include "cm_json_parse_floatIp.h"
 
 typedef enum CmaInstTypeE {
     CM_INSTANCE_TYPE_CMA = 0,  // it cannot smaller than 0
@@ -42,6 +46,12 @@ typedef enum NetworkTypeE {
     NETWORK_TYPE_CEIL  // it must be end
 } NetworkType;
 
+typedef struct DnFloatIpOperMapT {
+    uint32 count;
+    NetworkOper oper[CM_MAX_DATANODE_PER_NODE];
+    DnFloatIp floatIp[CM_MAX_DATANODE_PER_NODE];
+} DnFloatIpMapOper;
+
 bool GetNicStatus(unsigned int instId, CmaInstType instType, NetworkType type = NETWORK_TYPE_LISTEN);
 void SetNicOper(uint32 instId, CmaInstType instType, NetworkType type, NetworkOper oper);
 void GetFloatIpNicStatus(uint32 instId, CmaInstType instType, NetworkState *state, uint32 count);
@@ -50,6 +60,10 @@ status_t CreateNetworkResource();
 NetworkState GetNetworkStateByOper(NetworkOper oper);
 NetworkOper GetNetworkOperByState(NetworkState state);
 NetworkOper ChangeInt2NetworkOper(int32 oper);
+void SetFloatIpOper(uint32 dnIdx, NetworkOper oper, const char *str);
+NetworkOper GetFloatIpOper(uint32 dnIdx);
+DnFloatIp *GetDnFloatIpByDnIdx(uint32 dnIdx);
 const char *GetOperMapString(NetworkOper oper);
+bool8 CheckNetworkStatusByIps(const char (*ips)[CM_IP_LENGTH], uint32 cnt);
 
 #endif

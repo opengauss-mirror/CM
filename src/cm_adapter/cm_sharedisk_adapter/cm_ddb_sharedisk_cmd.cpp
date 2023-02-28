@@ -21,7 +21,7 @@
  * -------------------------------------------------------------------------
  */
 #include "cm/cm_elog.h"
-#include "cm_ssl_base.h"
+#include "cm_text.h"
 #include "cm_disk_rw.h"
 #include "cm_ddb_adapter.h"
 #include "cm_ddb_sharedisk_cmd.h"

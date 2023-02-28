@@ -310,16 +310,6 @@ void get_paramter_coordinator_heartbeat_timeout()
 #endif
 
 
-bool CheckBoolConfigParam(const char* value)
-{
-    if (strcasecmp(value, "on") == 0 || strcasecmp(value, "yes") == 0 || strcasecmp(value, "true") == 0 ||
-        strcasecmp(value, "1") == 0 || strcasecmp(value, "off") == 0 || strcasecmp(value, "no") == 0 ||
-        strcasecmp(value, "false") == 0 || strcasecmp(value, "0") == 0) {
-        return true;
-    }
-    return false;
-}
-
 void GetDdbTypeParam(void)
 {
     int32 ddbType = get_int_value_from_config(configDir, "ddb_type", 0);

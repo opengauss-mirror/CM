@@ -69,7 +69,7 @@ OneResStatList *GetClientStatusList()
 static timespec GetMutexTimeout(time_t timeout)
 {
     struct timespec releaseTime = { 0, 0 };
-    (void)clock_gettime(CLOCK_REALTIME, &releaseTime);
+    (void)clock_gettime(CLOCK_MONOTONIC, &releaseTime);
     releaseTime.tv_sec = releaseTime.tv_sec + timeout;
 
     return releaseTime;
@@ -445,6 +445,31 @@ static status_t RecvResLockAckProcess()
     return CM_SUCCESS;
 }
 
+static void SetLockApiFailed()
+{
+    (void)pthread_mutex_lock(&g_lockFlag->condLock);
+    g_lockFlag->error = (uint32)CM_RES_CLIENT_CONNECT_ERR;
+    (void)pthread_mutex_unlock(&g_lockFlag->condLock);
+    (void)pthread_cond_signal(&g_lockFlag->cond);
+}
+
+static status_t RecvCmaConnClose()
+{
+    CmaNotifyClient cmaMsg = {0};
+
+    if (CmClientRecvMsg((char*)&cmaMsg, sizeof(CmaNotifyClient)) != CM_SUCCESS) {
+        write_runlog(ERROR, "[%s] client recv msg agent fail or timeout.\n", __FUNCTION__);
+        return CM_ERROR;
+    }
+
+    if (cmaMsg.isCmaConnClose) {
+        write_runlog(LOG, "the CMA and CMS are disconnected.\n");
+        SetLockApiFailed();
+    }
+
+    return CM_SUCCESS;
+}
+
 static status_t RecvMsgFromAgent()
 {
     MsgHead msgHead = {0};
@@ -467,6 +492,9 @@ static status_t RecvMsgFromAgent()
             break;
         case MSG_CM_RES_LOCK_ACK:
             CM_RETURN_IFERR(RecvResLockAckProcess());
+            break;
+        case MSG_AGENT_CLIENT_NOTIFY_CONN_CLOSE:
+            CM_RETURN_IFERR(RecvCmaConnClose());
             break;
         default:
             write_runlog(ERROR, "recv unknown msg, msgType(%u).\n", msgHead.msgType);
@@ -567,17 +595,17 @@ static void InitGlobalVariable(const char *resName)
 
     g_initFlag->initSuccess = false;
     (void)pthread_mutex_init(&g_initFlag->lock, NULL);
-    (void)pthread_cond_init(&g_initFlag->cond, NULL);
+    InitPthreadCondMonotonic(&g_initFlag->cond);
 
     while (!g_sendMsg->sendQueue.empty()) {
         g_sendMsg->sendQueue.pop();
     }
     (void)pthread_mutex_init(&g_sendMsg->lock, NULL);
-    (void)pthread_cond_init(&g_sendMsg->cond, NULL);
+    InitPthreadCondMonotonic(&g_sendMsg->cond);
 
     (void)pthread_mutex_init(&g_lockFlag->condLock, NULL);
     (void)pthread_mutex_init(&g_lockFlag->optLock, NULL);
-    (void)pthread_cond_init(&g_lockFlag->cond, NULL);
+    InitPthreadCondMonotonic(&g_lockFlag->cond);
 }
 
 status_t PreInit(uint32 instanceId, const char *resName, CmNotifyFunc func, bool *isFirstInit)

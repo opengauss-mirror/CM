@@ -43,7 +43,6 @@ void SendSignalToAgentThreads();
 extern int GetCtlThreadNum();
 int UpdateDynamicConfig();
 void UpdateAzNodeInfo();
-bool CheckBoolConfigParam(const char* value);
 void GetDdbTypeParam(void);
 void GetDdbArbiCfg(int32 loadWay);
 status_t GetMaintainPath(char *maintainFile, uint32 fileLen);

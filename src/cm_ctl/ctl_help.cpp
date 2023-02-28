@@ -93,8 +93,10 @@ static void UsageHelp(const char *projectName)
     (void)printf(_("  %s encrypt [-M MODE] -D DATADIR\n"), projectName);
     (void)printf(_("  %s ddb DDB_CMD\n"), projectName);
     (void)printf(_("  %s switch [--ddb_type=[DDB]] [--commit] [--rollback]\n"), projectName);
-    (void)printf(_("  %s res [--add | --edit | --del | --check] --res_name=\"NAME\" [--res_type=\"RES_TYPE\" "
-        "--res_attr=\"RES_INFO\" | --add_inst=\"INST_INFO\" | --del_inst=\"INST_INFO\"]\n"), projectName);
+    (void)printf(_("  %s res {--add --res_name=\"NAME\" --res_attr=\"RES_INFO\" | "
+        "--del --res_name=\"NAME\" | --edit --res_name=\"NAME\" | --list {--res_name=\"NAME\"} "
+        "{--res_attr=\"RES_INFO\" | --add_inst=\"INST_INFO\" | --del_inst=\"INST_INFO\" | --edit_inst=\"INST_INFO\" "
+        "{--inst_attr=\"INST_ATTR\"} | --list_inst} | --check }\n"), projectName);
     (void)printf(_("  %s show\n"), projectName);
     (void)printf(_("  %s pause\n"), projectName);
     (void)printf(_("  %s resume\n"), projectName);
@@ -387,12 +389,14 @@ static void ResCmdHelp()
     (void)printf(_("  --edit                 edit one resource or resource instances configuration information.\n"));
     (void)printf(_("  --del                  delete one resource or resource instances configuration information.\n"));
     (void)printf(_("  --check                check whether the resource configuration information regular.\n"));
+    (void)printf(_("  --list                 list one resource or resource instances configuration information.\n"));
     (void)printf(_("  --res_name             specifies the name of the resource to be operated.\n"));
-    (void)printf(_("  --res_type             specifies the type of the resource to be operated, it can be \"APP\", "
-        "\"DN\".\n"));
     (void)printf(_("  --res_attr             common resource configuration information.\n"));
+    (void)printf(_("  --inst_attr            common instances configuration information.\n"));
     (void)printf(_("  --add_inst             add instances configuration information of one resource.\n"));
     (void)printf(_("  --del_inst             delete instances configuration information of one resource.\n"));
+    (void)printf(_("  --edit_inst            edit instances configuration information of one resource.\n"));
+    (void)printf(_("  --list_inst            list instances configuration information of one resource.\n"));
 }
 
 void DoHelp(const char *projectName)

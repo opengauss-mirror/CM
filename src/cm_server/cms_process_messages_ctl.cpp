@@ -2314,8 +2314,10 @@ void process_ctl_to_cm_get_datanode_relation_msg(
     for (int i = 0; i < CM_PRIMARY_STANDBY_MAX_NUM; i++) {
         ack.instanceMember[i] =
             g_instance_role_group_ptr[group_index].instanceMember[i];
-        ack.data_node_member[i] =
-            g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i];
+        errno_t rc = memcpy_s(&(ack.data_node_member[i]), sizeof(CmDnReportStatusMsg),
+            &(g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i]),
+            sizeof(CmDnReportStatusMsg));
+        securec_check_errno(rc, (void)rc);
         ack.gtm_member[i] =
             g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[i];
     }

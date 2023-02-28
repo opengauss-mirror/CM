@@ -50,6 +50,7 @@
 static bool IsCmsReplaceFlagFileExists();
 static void StopCmInstance();
 static void StopOneZengine(uint32 index);
+static bool StopCurDnFloatIp(uint32 index);
 
 #ifdef ENABLE_GCOV
 static const int SIG_TYPE = 2;
@@ -680,6 +681,7 @@ void stop_datanode_check(uint32 i)
             g_isDnFirstStart = true;
         }
 
+        (void)StopCurDnFloatIp(i);
     }
 }
 
@@ -732,6 +734,39 @@ static int cmserver_stopped_check(void)
     return PROCESS_NOT_EXIST;
 }
 
+static NetworkState CheckCurDnFloatIpStatus(uint32 index)
+{
+    DnFloatIp *dnFloatIp = GetDnFloatIpByDnIdx(index);
+    if (dnFloatIp == NULL || dnFloatIp->dnFloatIpCount == 0) {
+        return NETWORK_STATE_UNKNOWN;
+    }
+    NetworkState state[MAX_FLOAT_IP_COUNT];
+    GetFloatIpNicStatus(dnFloatIp->instId, CM_INSTANCE_TYPE_DN, state, dnFloatIp->dnFloatIpCount);
+    for (uint32 i = 0; i < dnFloatIp->dnFloatIpCount; ++i) {
+        if (state[i] == NETWORK_STATE_UP) {
+            return NETWORK_STATE_UP;
+        }
+    }
+    return NETWORK_STATE_DOWN;
+}
+
+static int32 CheckFloatIpStateInDn(uint32 index)
+{
+    uint32 count = DelFloatIpInDatanode(index);
+    if (count != 0) {
+        write_runlog(
+            LOG, "line: %d: datanode(%u) floatIp is running.\n", __LINE__, g_currentNode->datanode[index].datanodeId);
+        return PROCESS_RUNNING;
+    }
+    NetworkState state = CheckCurDnFloatIpStatus(index);
+    if (state == NETWORK_STATE_UP) {
+        write_runlog(
+            LOG, "line: %d: datanode(%u) floatIp is running.\n", __LINE__, g_currentNode->datanode[index].datanodeId);
+        return PROCESS_RUNNING;
+    }
+    return PROCESS_NOT_EXIST;
+}
+
 static int datanode_stopped_check(void)
 {
     int ret;
@@ -754,6 +789,9 @@ static int datanode_stopped_check(void)
         pgpid_t pid = get_pgpid(build_pid_path, MAXPGPATH);
         if ((ret == PROCESS_RUNNING) || (pid > 0 && is_process_alive(pid))) {
             write_runlog(LOG, "data  node is running path is %s\n", g_currentNode->datanode[ii].datanodeLocalDataPath);
+            return PROCESS_RUNNING;
+        }
+        if (CheckFloatIpStateInDn(ii) == PROCESS_RUNNING) {
             return PROCESS_RUNNING;
         }
     }
@@ -1335,6 +1373,7 @@ static void NormalShutdownAllDatanode()
         } else {
             NormalShutdownOneDatanode(dnInfo, g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role);
         }
+        DelAndDownFloatIpInDn(i);
     }
 }
 
@@ -1402,6 +1441,12 @@ static void ShutdownOneDatanode(const dataNodeInfo *dnInfo)
     immediate_stop_one_instance(dnInfo->datanodeLocalDataPath, INSTANCE_DN);
 }
 
+void DelAndDownFloatIpInDn(uint32 index)
+{
+    (void)DelFloatIpInDatanode(index);
+    SetNicOper(g_currentNode->datanode[index].datanodeId, CM_INSTANCE_TYPE_DN, NETWORK_TYPE_FLOATIP, NETWORK_OPER_DOWN);
+}
+
 static void ImmediateShutdownAllDatanode()
 {
     for (uint32 ii = 0; ii < g_currentNode->datanodeCount; ii++) {
@@ -1410,6 +1455,7 @@ static void ImmediateShutdownAllDatanode()
         } else {
             ShutdownOneDatanode(&g_currentNode->datanode[ii]);
         }
+        DelAndDownFloatIpInDn(ii);
     }
 }
 
@@ -1455,6 +1501,7 @@ static void FastShutdownAllDatanode()
         } else {
             fast_stop_one_instance(g_currentNode->datanode[ii].datanodeLocalDataPath, INSTANCE_DN);
         }
+        DelAndDownFloatIpInDn(ii);
     }
 }
 
@@ -1553,6 +1600,22 @@ void StopZengineByCmd(uint32 index)
     immediate_stop_one_instance(g_currentNode->datanode[index].datanodeLocalDataPath, INSTANCE_DN);
 }
 
+static bool StopCurDnFloatIp(uint32 index)
+{
+    uint32 count = DelFloatIpInDatanode(index);
+    if (count != 0) {
+        return false;
+    }
+    NetworkState state = CheckCurDnFloatIpStatus(index);
+    if (state != NETWORK_STATE_UP) {
+        return true;
+    }
+    write_runlog(
+        LOG, "instId(%u) FloatIp is running, it need to be stopped.\n", g_currentNode->datanode[index].datanodeId);
+    SetNicOper(g_currentNode->datanode[index].datanodeId, CM_INSTANCE_TYPE_DN, NETWORK_TYPE_FLOATIP, NETWORK_OPER_DOWN);
+    return false;
+}
+
 static void StopOneZengine(uint32 index)
 {
     bool dnManualStop = DnManualStop(index);
@@ -1574,6 +1637,11 @@ static void StopOneZengine(uint32 index)
             StopZengineByCmd(index);
             return;
         }
+
+        if (!StopCurDnFloatIp(index)) {
+            return;
+        }
+
         write_runlog(LOG,
             "datanode is not running, no need to shutdown: %s.\n",
             g_currentNode->datanode[index].datanodeLocalDataPath);

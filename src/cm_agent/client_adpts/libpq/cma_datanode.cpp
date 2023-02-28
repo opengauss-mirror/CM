@@ -213,8 +213,7 @@ void ShowPgThreadWaitStatus(cltPqConn_t* Conn, uint32 index, int instanceType)
     return;
 }
 
-int DatanodeStatusCheck(
-    DnStatus *dnStatus, uint32 dataNodeIndex)
+int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProcess)
 {
     static uint32 checkDnSql5Timer = g_check_dn_sql5_interval;
     checkDnSql5Timer++;
@@ -231,7 +230,6 @@ int DatanodeStatusCheck(
     /* in case we return 0 without set the db_state. */
     reportMsg->local_status.db_state = INSTANCE_HA_STATE_UNKONWN;
 
-    int dnProcess = check_one_instance_status(GetDnProcessName(), dataPath, NULL);
     if (g_dnConn[dataNodeIndex] == NULL) {
         rcs = snprintf_s(gaussdbStatePath, MAXPGPATH, MAXPGPATH - 1, "%s/gaussdb.state", dataPath);
         securec_check_intval(rcs, (void)rcs);

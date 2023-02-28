@@ -26,6 +26,7 @@
 #include <sys/prctl.h>
 #include <sys/epoll.h>
 #include "cm/cm_elog.h"
+#include "cm_debug.h"
 #include "cms_common.h"
 #include "cms_global_params.h"
 #include "cms_conn.h"

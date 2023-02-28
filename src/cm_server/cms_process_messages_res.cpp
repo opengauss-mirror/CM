@@ -42,16 +42,6 @@ void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList &status)
     errno_t rc = memcpy_s(&sendMsg.resList, sizeof(OneResStatList), &status, sizeof(OneResStatList));
     securec_check_errno(rc, (void)rc);
 
-    write_runlog(LOG, "[CLIENT] res(%s), version=%llu, status:\n", status.resName, status.version);
-    for (uint32 i = 0; i < status.instanceCount; ++i) {
-        write_runlog(LOG, "[CLIENT] nodeId=%u, cmInstId=%u, resInstId=%u, isWork=%u, status=%u;\n",
-            status.resStat[i].nodeId,
-            status.resStat[i].cmInstanceId,
-            status.resStat[i].resInstanceId,
-            status.resStat[i].isWorkMember,
-            status.resStat[i].status);
-    }
-
     (void)BroadcastMsg('S', (char *)(&sendMsg), sizeof(CmsReportResStatList));
 }
 
@@ -169,6 +159,7 @@ static bool IsCusResStatValid(const OneNodeResourceStatus *nodeStat)
     for (uint32 i = 0; i < nodeStat->count; ++i) {
         if (nodeStat->status[i].status != CUS_RES_CHECK_STAT_ONLINE &&
             nodeStat->status[i].status != CUS_RES_CHECK_STAT_OFFLINE &&
+            nodeStat->status[i].status != CUS_RES_CHECK_STAT_ABNORMAL &&
             nodeStat->status[i].status != CUS_RES_CHECK_STAT_TIMEOUT) {
             return false;
         }
@@ -270,6 +261,9 @@ static uint32 GetResInstStat(uint32 recvStat)
     if (recvStat == CUS_RES_CHECK_STAT_OFFLINE) {
         return (uint32)CM_RES_STAT_OFFLINE;
     }
+    if (recvStat == CUS_RES_CHECK_STAT_ABNORMAL) {
+        return (uint32)CM_RES_STAT_ONLINE;
+    }
 
     return (uint32)CM_RES_STAT_UNKNOWN;
 }
@@ -302,6 +296,7 @@ static void ProcessOneResInstStatReport(CmResourceStatus *stat)
         (void)pthread_rwlock_rdlock(&(resStat->rwlock));
         SaveOneResStatusToDdb(&resStat->status);
         (void)pthread_rwlock_unlock(&(resStat->rwlock));
+        PrintCusInfoResList(&resStat->status, __FUNCTION__);
         write_runlog(LOG, "[CLIENT] [%u:%u] res(%s) changed\n", stat->nodeId, stat->cmInstanceId, stat->resName);
     }
 }
@@ -431,6 +426,7 @@ void ReleaseResLockOwner(const char *resName, uint32 instId)
         }
         return;
     }
+    PrintKeyValueMsg(key, kvs, kvCount, DEBUG5);
 
     for (uint32 i = 0; i < kvCount; ++i) {
         if (kvs[i].key[0] == '\0' || kvs[i].value[0] == '\0') {

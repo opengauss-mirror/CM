@@ -186,8 +186,18 @@ int GetHomePath(char *outputEnvValue, uint32 envValueLen, int32 logLevel)
 
 bool IsBoolCmParamTrue(const char *param)
 {
-    return (strcmp(param, "on") == 0) || (strcmp(param, "yes") == 0) ||
-           (strcmp(param, "true") == 0) || (strcmp(param, "1") == 0);
+    return (strcasecmp(param, "on") == 0) || (strcasecmp(param, "yes") == 0) || (strcasecmp(param, "true") == 0) ||
+           (strcasecmp(param, "1") == 0);
+}
+
+bool CheckBoolConfigParam(const char* value)
+{
+    if (strcasecmp(value, "on") == 0 || strcasecmp(value, "yes") == 0 || strcasecmp(value, "true") == 0 ||
+        strcasecmp(value, "1") == 0 || strcasecmp(value, "off") == 0 || strcasecmp(value, "no") == 0 ||
+        strcasecmp(value, "false") == 0 || strcasecmp(value, "0") == 0) {
+        return true;
+    }
+    return false;
 }
 
 bool IsSharedStorageMode()
@@ -282,4 +292,20 @@ status_t TcpRecvMsg(int socket, char *buf, size_t remainSize, uint32 timeout)
     }
 
     return CM_SUCCESS;
+}
+
+long GetCurMonotonicTimeSec()
+{
+    struct timespec curTime = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &curTime);
+    return curTime.tv_sec;
+}
+
+void InitPthreadCondMonotonic(pthread_cond_t *cond)
+{
+    pthread_condattr_t attr;
+    (void)pthread_condattr_init(&attr);
+    (void)pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    (void)pthread_cond_init(cond, &attr);
+    (void)pthread_condattr_destroy(&attr);
 }

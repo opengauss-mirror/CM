@@ -274,6 +274,17 @@ typedef int socket_t;
 
 #define CM_IS_EMPTY_STR(str)     (((str) == NULL) || ((str)[0] == 0))
 
+/* simple mathematical calculation */
+#define CM_MIN(A, B) ((B) < (A) ? (B) : (A))
+#define CM_MAX(A, B) ((B) > (A) ? (B) : (A))
+#define CM_SWAP(type, A, B) \
+    do {                    \
+        type t_ = (A);      \
+        (A) = (B);          \
+        (B) = t_;           \
+    } while (0)
+#define CM_DELTA(A, B) (((A) > (B)) ? ((A) - (B)) : ((B) - (A)))
+
 #define CM_PASSWORD_BUFFER_SIZE (uint32)512
 #ifndef ITERATE_TIMES
 #define ITERATE_TIMES 10000

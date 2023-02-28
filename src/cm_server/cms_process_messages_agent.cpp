@@ -771,3 +771,145 @@ void ProcessDnLocalPeerMsg(MsgRecvInfo* recvMsgInfo, AgentCmDnLocalPeer *dnLpInf
         &(g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member[memIdx].dnLp.peerInst),
         groupIdx, &(dnLpInfo->dnLpInfo));
 }
+
+static status_t FindAvaliableFloatIpPrimary(uint32 groupIdx, int32 *memIdx)
+{
+    cm_instance_datanode_report_status *dnReport =
+        g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
+    cm_local_replconninfo *dnLocal;
+    uint32 primaryDnCnt = 0;
+    for (int32 i = 0; i < g_instance_role_group_ptr[groupIdx].count; ++i) {
+        dnLocal = &(dnReport[i].local_status);
+        if (dnLocal->local_role == INSTANCE_ROLE_PRIMARY && dnLocal->db_state == INSTANCE_HA_STATE_NORMAL) {
+            *memIdx = i;
+            ++primaryDnCnt;
+        }
+    }
+    if (primaryDnCnt != 1) {
+        return CM_ERROR;
+    }
+    return CM_SUCCESS;
+}
+
+static void ArbitrateFloatIpOper(
+    MsgRecvInfo *recvMsgInfo, const CmaDnFloatIpInfo *floatIp, NetworkOper oper, NetworkState state)
+{
+    CmsDnFloatIpAck ack = {{0}};
+    errno_t rc = memcpy_s(&(ack.baseInfo), sizeof(BaseInstInfo), &(floatIp->baseInfo), sizeof(BaseInstInfo));
+    securec_check_errno(rc, (void)rc);
+    ack.baseInfo.msgType = (int32)MSG_CM_AGENT_FLOAT_IP_ACK;
+    ack.oper = (int32)oper;
+    const DnFloatIpInfo *dnFloatIp = &(floatIp->info);
+    for (uint32 i = 0; i < dnFloatIp->count; ++i) {
+        if (dnFloatIp->dnNetState[i] != (int32)state || dnFloatIp->nicNetState[i] != (int32)state) {
+            (void)RespondMsg(recvMsgInfo, 'S', (const char *)(&ack), sizeof(CmsDnFloatIpAck));
+            return;
+        }
+    }
+}
+
+static void ArbitateFloatIp(MsgRecvInfo *recvMsgInfo, const CmaDnFloatIpInfo *floatIp, uint32 groupIdx, int32 memIdx)
+{
+    cm_instance_datanode_report_status *dnReport =
+        &(g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member[memIdx]);
+    (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
+    errno_t rc = memcpy_s(&(dnReport->floatIp), sizeof(DnFloatIpInfo), &(floatIp->info), sizeof(DnFloatIpInfo));
+    (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
+    securec_check_errno(rc, (void)rc);
+    int32 avaliMemIdx = -1;
+    status_t st = FindAvaliableFloatIpPrimary(groupIdx, &avaliMemIdx);
+    if (st != CM_SUCCESS) {
+        return;
+    }
+    if (avaliMemIdx == memIdx) {
+        ArbitrateFloatIpOper(recvMsgInfo, floatIp, NETWORK_OPER_UP, NETWORK_STATE_UP);
+    } else {
+        ArbitrateFloatIpOper(recvMsgInfo, floatIp, NETWORK_OPER_DOWN, NETWORK_STATE_DOWN);
+    }
+}
+
+void ProcessDnFloatIpMsg(MsgRecvInfo *recvMsgInfo, CmaDnFloatIpInfo *floatIp)
+{
+    const char *str = "[ProcessDnLocalPeerMsg]";
+    const BaseInstInfo *baseInst = &(floatIp->baseInfo);
+    if (baseInst->instType != INSTANCE_TYPE_DATANODE) {
+        write_runlog(ERROR, "%s cms get instance(%u) is not dn, this type is %d.\n",
+            str, baseInst->instId, baseInst->instType);
+        return;
+    }
+    uint32 groupIdx = 0;
+    int32 memIdx = 0;
+    uint32 node = baseInst->node;
+    uint32 instId = baseInst->instId;
+    // get groupIndex, memberIndex
+    int32 ret = find_node_in_dynamic_configure(node, instId, &groupIdx, &memIdx);
+    if (ret != 0) {
+        write_runlog(LOG, "[%s] can't find the instance(node=%u  instanceid =%u)\n", __FUNCTION__, node, instId);
+        return;
+    }
+    write_runlog(DEBUG1, "cms receive dnFloatIpMsg, and group[%u: %d], node[%u], instId[%u].\n",
+        groupIdx, memIdx, node, instId);
+    ArbitateFloatIp(recvMsgInfo, floatIp, groupIdx, memIdx);
+}
+
+static void InitFloatIpAck(CmFloatIpStatAck *ack)
+{
+    ack->msgType = (int32)MSG_CTL_CM_FLOAT_IP_ACK;
+    ack->count = 0;
+    ack->canShow = CM_TRUE;
+}
+
+static bool8 IsCurInstanceExistingFloatIp(uint32 groupIdx, int32 memIdx)
+{
+    DnFloatIpInfo *dnFloatIp =
+        &(g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member[memIdx].floatIp);
+    for (uint32 i = 0; i < dnFloatIp->count; ++i) {
+        if (dnFloatIp->nicNetState[i] == (int32)NETWORK_STATE_UP) {
+            return CM_TRUE;
+        }
+    }
+    return CM_FALSE;
+}
+
+static void GetFloatIpInfo(CmFloatIpStatAck *ack, size_t *curMsgLen, uint32 groupIdx, int32 memIdx)
+{
+    uint32 point = ack->count;
+    CmFloatIpStatInfo *info = &(ack->info[point]);
+    info->nodeId = g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].node;
+    info->instId = g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].instanceId;
+    if (!IsCurInstanceExistingFloatIp(groupIdx, memIdx)) {
+        return;
+    }
+    DnFloatIpInfo *dnFloatIp =
+        &(g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member[memIdx].floatIp);
+    (void)pthread_rwlock_rdlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
+    uint32 i = 0;
+    for (; i < dnFloatIp->count && i < MAX_FLOAT_IP_COUNT; ++i) {
+        info->nicNetState[i] = dnFloatIp->nicNetState[i];
+    }
+    info->count = i;
+    (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
+    ++ack->count;
+    *curMsgLen += sizeof(CmFloatIpStatInfo);
+}
+
+void GetFloatIpSet(CmFloatIpStatAck *ack, size_t maxMsgLen, size_t *curMsgLen)
+{
+    InitFloatIpAck(ack);
+    if (!IsNeedCheckFloatIp() || (backup_open != CLUSTER_PRIMARY)) {
+        ack->canShow = CM_FALSE;
+        return;
+    }
+    for (uint32 i = 0; i < g_dynamic_header->relationCount; ++i) {
+        if (g_instance_role_group_ptr[i].instanceMember[0].instanceType != INSTANCE_TYPE_DATANODE) {
+            continue;
+        }
+        for (int32 j = 0; j < g_instance_role_group_ptr[i].count; ++j) {
+            if (*curMsgLen + sizeof(CmFloatIpStatInfo) > maxMsgLen) {
+                write_runlog(LOG, "tmpMsgLen is %zu, and maxMsgLen is %zu.\n", *curMsgLen, maxMsgLen);
+                return;
+            }
+            GetFloatIpInfo(ack, curMsgLen, i, j);
+        }
+    }
+}

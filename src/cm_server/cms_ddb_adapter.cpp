@@ -259,10 +259,6 @@ status_t GetAllKVFromDDb(char *key, uint32 keyLen, DrvKeyValue *keyValue, uint32
             *ddbResult = SUCCESS_GET_VALUE;
         }
     }
-    if (getStatus == CM_SUCCESS) {
-        logLevel = (g_HA_status->local_role == CM_SERVER_PRIMARY) ? LOG : DEBUG1;
-        PrintKeyValueMsg(key, keyValue, len, logLevel);
-    }
     RestDdbConn(ddbConn, getStatus, ddbResult);
     return getStatus;
 }

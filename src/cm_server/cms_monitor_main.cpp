@@ -30,12 +30,17 @@
 #include "cms_process_messages.h"
 #include "cms_write_dynamic_config.h"
 #include "cms_arbitrate_cluster.h"
+#include "cjson/cJSON.h"
 #include "cms_monitor_main.h"
 
 /* cluster unbalance check interval */
 const int cluster_unbalance_check_interval = 10;
 static int g_cluster_unbalance_check_interval = cluster_unbalance_check_interval;
 static const uint32 CHECK_SLEEP_INTERVAL = 5;
+static const uint32 MAX_VOTE_NUM = 2;
+static const uint32 DDB_STATUS_CHECK_INTERVAL = 2;
+static const uint32 CMS_ID_INDEX_ONE = 1;
+static const uint32 CMS_ID_INDEX_TWO = 2;
 static void RmAllBlackFile(const char *blackFile);
 
 using MonitorContext = struct StMonitorContext {
@@ -339,6 +344,10 @@ static void ReloadParametersFromConfigfile()
     g_agentNetworkTimeout = get_uint32_value_from_config(configDir, "agent_network_timeout", 6);
     GetDnArbitrateMode();
 
+    if (g_cm_server_num == CMS_ONE_PRIMARY_ONE_STANDBY) {
+        GetTwoNodesArbitrateParams();
+    }
+
 #ifdef ENABLE_MULTIPLE_NODES
     write_runlog(LOG,
         "reload cm_server parameters:\n"
@@ -498,6 +507,15 @@ static void CheckHB()
     } else {
         g_clusterStartingTimeout = 0;
         g_clusterStarting = false;
+    }
+}
+
+static inline void CheckDdbClusterStatusOn2Nodes()
+{
+    if (g_ddbNetworkIsolationTimeout > 0) {
+        g_ddbNetworkIsolationTimeout--;
+    } else {
+        g_ddbNetworkIsolationTimeout = 0;
     }
 }
 
@@ -842,6 +860,311 @@ static void CheckMaxCluster()
     CheckMaxClusterHeartbeartValue();
 }
 
+static status_t IsPeerCmsReachableOn2Nodes()
+{
+    if (!ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes)) {
+        write_runlog(ERROR, "should be called by two node cluster with enabling auto failover only.\n");
+        return CM_ERROR;
+    }
+
+    // create socket
+    int socketFd = socket(AF_INET, SOCK_STREAM, 0);
+    if (socketFd == -1) {
+        write_runlog(ERROR, "could not create socket.\n");
+        return CM_ERROR;
+    }
+
+    struct timeval tv = { 0, 0 };
+    tv.tv_sec = CM_TCP_TIMEOUT;
+    (void)setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+    (void)setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
+
+    struct sockaddr_in sockAddr;
+    status_t ret = CM_SUCCESS;
+    for (uint32 i = 0; i < g_cm_server_num; i++) {
+        if (g_node[i].cmServerId == g_currentNode->cmServerId) {
+            continue;
+        }
+
+        // got peer cms info
+        sockAddr.sin_addr.s_addr = inet_addr(g_node[i].cmServerLocalHAIP[0]);
+        sockAddr.sin_family = AF_INET;
+        sockAddr.sin_port = htons(g_node[i].cmServerLocalHAPort);
+
+        // Connect to peer cms dcc ip:port
+        if (connect(socketFd , (struct sockaddr *)&sockAddr , sizeof(sockAddr)) < 0) {
+            write_runlog(LOG, "could not connect to peer cms %s:%d.\n",
+                g_node[i].cmServerLocalHAIP[0], g_node[i].cmServerLocalHAPort);
+            ret = CM_ERROR;
+        } else {
+            write_runlog(DEBUG1, "connect to peer cms %s:%d successfuly.\n",
+                g_node[i].cmServerLocalHAIP[0], g_node[i].cmServerLocalHAPort);
+            ret = CM_SUCCESS;
+        }
+
+        break;
+    }
+
+    close(socketFd);
+    return ret;
+}
+
+static status_t GetClusterInfoFromDDb(char *info, int outLen)
+{
+    if (g_inMaintainMode) {
+        write_runlog(LOG, "in maintain mode, can't do ddb cmd.\n");
+        return CM_SUCCESS;
+    }
+
+    char cmd[DCC_CMD_MAX_LEN] = {0};
+    char errMsg[ERR_MSG_LENGTH] = {0};
+    status_t ret = CM_SUCCESS;
+
+    errno_t rc = snprintf_s(cmd, DCC_CMD_MAX_LEN, DCC_CMD_MAX_LEN - 1, " %s", CM_DDB_CLUSTER_INFO_CMD);
+    securec_check_intval(rc, (void)rc);
+    ret = DoDdbExecCmd(cmd, info, &outLen, errMsg, DCC_CMD_MAX_OUTPUT_LEN);
+    if (ret != CM_SUCCESS) {
+        write_runlog(ERROR, "get ddb cluster info failed. error: %s\n", errMsg);
+    }
+
+    return ret;
+}
+
+static status_t IsPeerApplyIndexChanged(cJSON *nodes)
+{
+    static int peerApplyIndex = 0;
+    int prevPeerApplyIndex = peerApplyIndex;
+    cJSON *applyIndex = NULL;
+
+    if (g_currentNode->cmServerId == CMS_ID_INDEX_ONE) {
+        applyIndex = cJSON_GetObjectItem(cJSON_GetArrayItem(nodes, 1), "apply_index");
+    } else if (g_currentNode->cmServerId == CMS_ID_INDEX_TWO) {
+        applyIndex = cJSON_GetObjectItem(cJSON_GetArrayItem(nodes, 0), "apply_index");
+    } else {
+        write_runlog(ERROR, "wrong cm server id: %d\n", g_currentNode->cmServerId);
+        exit(1);
+    }
+
+    if (applyIndex == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {apply_index}.\n");
+        return CM_ERROR;
+    }
+    peerApplyIndex = applyIndex->valueint;
+    write_runlog(DEBUG5, "prevPeerApplyIndex: %d peerApplyIndex: %d g_ddbNetworkIsolationTimeout: %d\n",
+        prevPeerApplyIndex, peerApplyIndex, g_ddbNetworkIsolationTimeout);
+
+    if (peerApplyIndex == prevPeerApplyIndex) {
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+static status_t IsPeerCmsRolePrimary(cJSON *nodes)
+{
+    int peerCmserverRole = -1;
+    cJSON *role = NULL;
+
+    if (g_currentNode->cmServerId == CMS_ID_INDEX_ONE) {
+        role = cJSON_GetObjectItem(cJSON_GetArrayItem(nodes, 1), "role");
+    } else if (g_currentNode->cmServerId == CMS_ID_INDEX_TWO) {
+        role = cJSON_GetObjectItem(cJSON_GetArrayItem(nodes, 0), "role");
+    }
+
+    if (role == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {role}.\n");
+        return CM_ERROR;
+    }
+    peerCmserverRole = strcmp(cJSON_GetStringValue(role), "LEADER") == 0 ? CM_SERVER_PRIMARY : CM_SERVER_STANDBY;
+    write_runlog(DEBUG5, "peerCmserverRole: %s g_ddbNetworkIsolationTimeout: %d\n",
+        peerCmserverRole == CM_SERVER_PRIMARY ? "Primary" : "Standby", g_ddbNetworkIsolationTimeout);
+
+    if (peerCmserverRole != CM_SERVER_PRIMARY) {
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+static status_t IsDdbLogSyncOn2Nodes(char * info)
+{
+    if (info == NULL) {
+        return CM_ERROR;
+    }
+
+    write_runlog(DEBUG5, "ddb cluster info: %s\n", info);
+    cJSON *root = cJSON_Parse(info);
+    if (root == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {root}.\n");
+        return CM_ERROR;
+    }
+
+    cJSON *stream = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "stream_list"), 0);
+    if (stream == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {stream_list}.\n");
+	cJSON_Delete(root);
+        return CM_ERROR;
+    }
+
+    cJSON *nodes = cJSON_GetObjectItem(stream, "nodes");
+    if (nodes == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {nodes}.\n");
+	cJSON_Delete(root);
+        return CM_ERROR;
+    }
+
+    switch (g_HA_status->local_role) {
+        case CM_SERVER_PRIMARY:
+            return IsPeerApplyIndexChanged(nodes);
+        case CM_SERVER_STANDBY:
+            return IsPeerCmsRolePrimary(nodes);
+        default:
+            write_runlog(ERROR, "unexpected local_role: %d\n", g_HA_status->local_role);
+            return CM_ERROR;
+    }
+    
+    cJSON_Delete(root);
+    return CM_SUCCESS;
+}
+
+static inline void DdbSetDdbWorkMode(ddb_work_mode workMode, unsigned int voteNum, uint32 isBigVoteNum)
+{
+    if (SetDdbWorkMode(workMode, voteNum) != CM_SUCCESS) {
+        write_runlog(ERROR, "setting work mode: %d failed with minVoteNum: %d isBigVoteNum: %d\n",
+            workMode, voteNum, isBigVoteNum);
+        return;
+    }
+    g_ddbWorkMode = workMode;
+    if (workMode == DDB_WORK_MODE_MINORITY) {
+        g_bigVoteNumInMinorityMode = isBigVoteNum;
+    }
+}
+
+static void DdbMinorityWorkModeSetInMajority()
+{
+    uint32 minVoteNum = 1;
+    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS) {
+        // third party gateway is reachable, setting a small vote num to make sure current node works as primary.
+        write_runlog(LOG, "promote node to primary\n");
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
+    } else {
+        // third party gateway is not reachable, setting a big vote num to make sure current node works as standby.
+        minVoteNum += MAX_VOTE_NUM;
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 1);
+
+        if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
+            // primary node need to demote to standby
+            write_runlog(LOG, "demote node to standby\n");
+            if (DemoteDdbRole2Standby() != CM_SUCCESS) {
+                write_runlog(ERROR, "demote node to standby failed\n");
+                return;
+            }
+        }
+    }
+
+    write_runlog(LOG, "go into minority work mode with minVoteNum: %d g_bigVoteNumInMinorityMode: %d.\n",
+        minVoteNum, g_bigVoteNumInMinorityMode);
+    (void)pthread_rwlock_wrlock(&term_update_rwlock);
+    IncrementTermToDdb(CM_INCREMENT_BIG_TERM_VALUE);
+    (void)pthread_rwlock_unlock(&term_update_rwlock);
+}
+
+static void DdbMinorityWorkModeSetInMinority()
+{
+    uint32 minVoteNum = 1;
+    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS && g_bigVoteNumInMinorityMode == 1) {
+        write_runlog(LOG, "reset minority work mode and become primary.\n");
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
+    } else if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) != CM_SUCCESS && g_bigVoteNumInMinorityMode == 0) {
+        minVoteNum += MAX_VOTE_NUM;
+        write_runlog(LOG, "reset minority work mode and become standby.\n");
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 1);
+
+        if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
+            write_runlog(LOG, "demote node to standby\n");
+            if (DemoteDdbRole2Standby() != CM_SUCCESS) {
+                write_runlog(ERROR, "demote node to standby failed\n");
+            }
+        }
+    }
+}
+
+static void DdbMinorityWorkModeSetInStartup()
+{
+    uint32 minVoteNum = 1;
+    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS) {
+        write_runlog(LOG, "start up with minority work mode and minVoteNum: %d.\n", minVoteNum);
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
+    } else {
+        minVoteNum += MAX_VOTE_NUM;
+        write_runlog(LOG, "start up with minority work mode and minVoteNum: %d.\n", minVoteNum);
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 1);
+        DemoteDdbRole2Standby();
+    }
+
+}
+
+static int DdbStatusCheck() {
+    /*
+    * start to do dcc cluster status check.
+    */
+    char info[DCC_CMD_MAX_OUTPUT_LEN] = {0};
+    if (IsPeerCmsReachableOn2Nodes() == CM_SUCCESS ||
+        (GetClusterInfoFromDDb(info, DCC_CMD_MAX_OUTPUT_LEN) == CM_SUCCESS
+        && IsDdbLogSyncOn2Nodes(info) == CM_SUCCESS)) {
+        /*
+        * network are good between two nodes. reset g_ddbNetworkIsolationTimeout.
+        */
+        g_ddbNetworkIsolationTimeout = g_paramsOn2Nodes.cmsNetworkIsolationTimeout;
+        return CM_SUCCESS;
+    }
+
+    return CM_ERROR;
+}
+
+static void DoDdbStatusCheckAndSet()
+{
+    /*
+     * if the cluster are not two nodes cluster, or don't enable auto failover, skip check.
+     */
+    if (!ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes)) {
+        cm_sleep(DDB_STATUS_CHECK_INTERVAL);
+        return;
+    }
+
+    if (DdbStatusCheck() == CM_SUCCESS) {
+        if (g_ddbWorkMode != DDB_WORK_MODE_MAJORITY) {
+            write_runlog(LOG, "go into majority work mode.\n");
+            DdbSetDdbWorkMode(DDB_WORK_MODE_MAJORITY, 0, 0);
+        }
+        cm_sleep(DDB_STATUS_CHECK_INTERVAL);
+        return;
+    }
+
+    if (g_ddbNetworkIsolationTimeout != 0) {
+        cm_sleep(DDB_STATUS_CHECK_INTERVAL);
+        return;
+    }
+
+    /*
+    * go into minority work mode, because:
+    * 1. we cannot get ddb cluster info sync within g_cms_ddb_log_sync_timeout
+    * 2. we cannot reach peer node dcc ip:port
+    */
+    switch (g_ddbWorkMode) {
+        case DDB_WORK_MODE_MAJORITY:
+            DdbMinorityWorkModeSetInMajority();
+            break;
+        case DDB_WORK_MODE_MINORITY:
+            DdbMinorityWorkModeSetInMinority();
+            break;
+        default:
+            DdbMinorityWorkModeSetInStartup();
+    }
+    cm_sleep(DDB_STATUS_CHECK_INTERVAL);
+    return;
+}
+
 static void DoMonitor(MonitorContext *ctx)
 {
     CheckKerberosHB();
@@ -855,6 +1178,16 @@ static void DoMonitor(MonitorContext *ctx)
 #endif
 
     CheckHB();
+
+    if (g_dbType == DB_DCC &&
+        ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes)) {
+        /*
+         * two nodes cluster and enable auto failover.
+         * when network isolation happened, cms choice a node as new primary if
+         * the node can reach the third party gateway.
+         */
+        CheckDdbClusterStatusOn2Nodes();
+    }
 
     CheckMaxCluster();
 
@@ -925,6 +1258,22 @@ void *CM_ThreadMonitorMain(void *argp)
 
     for (;;) {
         DoMonitor(&ctx);
+    }
+    return NULL;
+}
+
+void *CM_ThreadDdbStatusCheckAndSetMain(void *argp)
+{
+    CM_DdbStatusCheckAndSetThread *pCheckThread = (CM_DdbStatusCheckAndSetThread *)argp;
+    /* unify log style */
+    thread_name = "DdbStatusCheck";
+
+    write_runlog(LOG, "Starting Ddb Status Check thread\n");
+
+    pCheckThread->thread.type = THREAD_TYPE_DDB_STATUS_CHECKER;
+
+    for (;;) {
+        DoDdbStatusCheckAndSet();
     }
     return NULL;
 }
@@ -1365,3 +1714,4 @@ void *CheckGtmModMain(void *arg)
     return NULL;
 }
 #endif
+

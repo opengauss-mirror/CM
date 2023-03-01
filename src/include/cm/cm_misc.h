@@ -40,6 +40,14 @@ using namespace std;
 extern "C" {
 #endif
 
+// two nodes arch usage
+typedef struct st_arbitrate_params_on2nodes {
+    char thirdPartyGatewayIp[CM_IP_LENGTH];
+    bool cmsEnableFailoverOn2Nodes;
+    bool cmsEnableDbCrashRecovery;
+    uint32 cmsNetworkIsolationTimeout;
+} ArbitrateParamsOn2Nodes;
+
 typedef struct st_conn_option {
     int connect_timeout; /* ms */
     int socket_timeout;  /* ms */
@@ -189,6 +197,9 @@ typedef struct Instance_t {
 
 extern conn_option_t g_sslOption;
 
+/* two nodes arch usage */
+extern ArbitrateParamsOn2Nodes g_paramsOn2Nodes;
+
 /**
  * @def SHELL_RETURN_CODE
  * @brief Get the shell command return code.
@@ -287,5 +298,9 @@ void listen_ip_merge(uint32 ipCnt, const char (*ipListen)[CM_IP_LENGTH], char *r
 bool IsNodeIdValid(int nodeId);
 
 void FreeSslOpton();
+
+status_t IsReachableIP(char *ip);
+bool IsIPAddrValid(const char *ipAddr);
+
 bool IsNeedCheckFloatIp();
 #endif

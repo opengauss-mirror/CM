@@ -41,8 +41,8 @@ extern void ReportReadOnlyAlarm(AlarmType alarmType, const char* instanceName, u
 extern void InstanceAlarmItemInitialize(void);
 extern void report_phony_dead_alarm(AlarmType alarmType, const char* instanceName, uint32 instanceid);
 extern void report_unbalanced_alarm(AlarmType alarmType);
-
-
+extern void ReportClusterDoublePrimaryAlarm(
+    AlarmType alarmType, AlarmId alarmId, uint32 instanceId, const char* serviceType);
 extern void UnbalanceAlarmItemInitialize(void);
 extern void ServerSwitchAlarmItemInitialize(void);
 extern void report_server_switch_alarm(AlarmType alarmType, const char* instanceName);

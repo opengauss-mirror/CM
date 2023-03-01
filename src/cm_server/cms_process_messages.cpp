@@ -606,7 +606,9 @@ static void SetNodeMsgCurState(InitNodeMsg *nodeMsg, int32 status)
 static int ProcessHaStatus2AzStartSyncThr(int count, int groupDnNum, InitNodeMsg *nodeMsg)
 {
     SetNodeMsgMethodStr(nodeMsg, "[ProcessHaStatus2AzStartSyncThr]");
-    if ((nodeMsg->norPrimInCurSL + nodeMsg->normalVoteAzPrimary) != 1 || nodeMsg->normStdbInCurSL < count / 2) {
+    // note that, number of normal standby in sync list should >= groupDnNum/2, and groupDnNum should >= 3
+    if ((nodeMsg->norPrimInCurSL + nodeMsg->normalVoteAzPrimary) != 1 ||
+        (g_cm_server_num > CMS_ONE_PRIMARY_ONE_STANDBY && nodeMsg->normStdbInCurSL < count / 2)) {
         SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
         return -1;
     }

@@ -386,6 +386,10 @@ void ReloadParametersFromConfigfile()
         check_input_for_security(g_unixSocketDirectory);
     }
 
+    if (get_config_param(configDir, "db_service_vip", g_dbServiceVip, sizeof(g_dbServiceVip)) < 0) {
+        write_runlog(ERROR, "get_config_param() get db_service_vip fail.\n");
+    }
+
     log_max_size = get_int_value_from_config(configDir, "log_max_size", 10240);
     log_saved_days = (uint32)get_int_value_from_config(configDir, "log_saved_days", 90);
     log_max_count = (uint32)get_int_value_from_config(configDir, "log_max_count", 10000);
@@ -404,7 +408,8 @@ void ReloadParametersFromConfigfile()
         "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, upgrade_from=%u,\n"
         "  enableLogCompress=%s, security_mode=%s, incremental_build=%d, unix_socket_directory=%s, "
 #ifndef ENABLE_MULTIPLE_NODES
-        "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s, enable_fence_dn=%s\n",
+        "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s, "
+        "db_service_vip=%s, enable_fence_dn=%s\n",
 #else
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s\n",
 #endif
@@ -433,6 +438,7 @@ void ReloadParametersFromConfigfile()
         g_disasterRecoveryType,
 #ifndef ENABLE_MULTIPLE_NODES
         g_environmentThreshold,
+        g_dbServiceVip,
         g_enableFenceDn);
 #else
         g_environmentThreshold);

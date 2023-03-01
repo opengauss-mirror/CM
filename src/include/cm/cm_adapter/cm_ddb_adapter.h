@@ -237,6 +237,8 @@ typedef status_t (*DrvDdbExecCmd)(DrvCon_t session, char *cmdLine, char *value, 
 typedef status_t (*DrvDdbSetBlocked)(unsigned int setBlock, unsigned int waitTimeoutMs);
 typedef status_t (*DrvSetParam)(const char *key, const char *value);
 typedef status_t (*DrvStop)(bool *ddbStop);
+typedef status_t (*DrvSetWorkMode)(DrvCon_t session, unsigned int workMode, unsigned int voteNum);
+typedef status_t (*DrvDemoteDdbRole)(DrvCon_t session);
 
 typedef struct DdbDriverSt {
     pthread_rwlock_t lock;
@@ -268,6 +270,9 @@ typedef struct DdbDriverSt {
     DrvDdbSetBlocked setBlocked;  // set ddb block
     DrvSetParam setParam;         // set ddb param
     DrvStop stop;
+    DrvSetWorkMode setWorkMode; // set ddb work mode
+    DrvDemoteDdbRole demoteDdbRole;
+
     bool ddbStopped;
 } DdbDriver;
 
@@ -311,5 +316,7 @@ status_t DdbExecCmd(DdbConn *ddbConn, char *cmdLine, char *output, int *outputLe
 status_t DdbSetBlocked(const DdbConn *ddbConn, unsigned int setBlock, unsigned waitTimeoutMs);
 status_t DDbSetParam(const DdbConn *ddbConn, const char *key, const char *value);
 status_t DdbStop(DdbConn *ddbConn);
+status_t DdbSetWorkMode(DdbConn *ddbConn, unsigned int workMode, unsigned int voteNum);
+status_t DdbDemoteRole2Standby(DdbConn *ddbConn);
 
 #endif

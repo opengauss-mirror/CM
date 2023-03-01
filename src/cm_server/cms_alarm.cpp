@@ -311,6 +311,25 @@ void report_unbalanced_alarm(AlarmType alarmType)
     AlarmReporter(UnbalanceAlarmItem, alarmType, &tempAdditionalParam);
 }
 
+void ReportClusterDoublePrimaryAlarm(
+    AlarmType alarmType, AlarmId alarmId, uint32 instanceId, const char* serviceType)
+{
+    AlarmItemInitialize(DoublePrimaryAlarmItem, alarmId, ALM_AS_Normal, NULL);
+
+    char instanceInfo[RESERVE_LEN] = {0};
+    int32 ret = -1;
+    ret = sprintf_s(instanceInfo, RESERVE_LEN, "%s_%d", serviceType, instanceId);
+    securec_check_intval(ret, (void)ret);
+
+    AlarmAdditionalParam tempAdditionalParam;
+
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceInfo, "", "", "",
+        DoublePrimaryAlarmItem, alarmType, instanceInfo);
+    /* report the alarm */
+    AlarmReporter(DoublePrimaryAlarmItem, alarmType, &tempAdditionalParam);
+}
+
 void report_ddb_fail_alarm(AlarmType alarmType, const char* instanceName, int alarmIndex)
 {
     Alarm* alarm = GetDdbAlarm(alarmIndex);

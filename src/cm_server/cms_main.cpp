@@ -2691,6 +2691,16 @@ int main(int argc, char** argv)
         return -1;
     }
 
+    if (g_cm_server_num == CMS_ONE_PRIMARY_ONE_STANDBY && g_dbType == DB_DCC) {
+        status = CM_CreateDdbStatusCheckThread();
+        if (status < 0) {
+            write_runlog(ERROR, "CM_CreateDdbStatusCheckThread  failed!\n");
+            CloseAllDdbSession();
+            FreeNotifyMsg();
+            return -1;
+        }
+    }
+
     GetMultiAzNodeInfo();
     g_loopState.count = 1;
     st = CmsCreateThreads();

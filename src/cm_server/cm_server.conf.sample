@@ -70,4 +70,18 @@ ddb_max_log_file_size = 10M              # Maximum number of bytes in a log
 ddb_log_suppress_enable = 1              # Indicates whether to enable the log suppression function. 1: open 0, close
 ddb_election_timeout = 3                 # DCC election timeout interval [1S,600S]
 share_disk_path = ''
+third_party_gateway_ip = ''				 # used in 2 nodes cluster for ddb role arbitration with network isolation, 
+										 # when cms_enable_failover_on2nodes is true.
+										 # default ''. if cms_enable_failover_on2nodes is true, this param must be configured.
+cms_enable_failover_on2nodes = false	 # used in 2 nodes cluster. if true, will use third_party_gateway_ip as an arbitrator, 
+										 # when network isolation happens.
+										 # default false.
+cms_enable_db_crash_recovery = false	 # used in 2 nodes cluster. when network recovers from isolation, 
+										 # if there are two db primary nodes,
+										 # if this param is true, cms will choice a new db primary, and demote the other db.
+										 # if false, cms will choice a new db primary, but manually stop the other db.
+										 # default false
+cms_network_isolation_timeout = 20		 # cms judges the network is isolated when it finds ddb cluster is not sync with each other nodes,
+										 # after cms_network_isolation_timeout times.
+										 # default 20
 ############### must leave a new line at the end ###################

@@ -230,6 +230,12 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
     /* in case we return 0 without set the db_state. */
     reportMsg->local_status.db_state = INSTANCE_HA_STATE_UNKONWN;
 
+    if (strcmp(g_dbServiceVip, "") != 0) {
+        reportMsg->dnVipStatus = IsReachableIP(g_dbServiceVip);
+    } else {
+        reportMsg->dnVipStatus = CM_ERROR;
+    }
+
     if (g_dnConn[dataNodeIndex] == NULL) {
         rcs = snprintf_s(gaussdbStatePath, MAXPGPATH, MAXPGPATH - 1, "%s/gaussdb.state", dataPath);
         securec_check_intval(rcs, (void)rcs);

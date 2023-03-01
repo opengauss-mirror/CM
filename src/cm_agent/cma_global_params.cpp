@@ -226,6 +226,7 @@ uint32 g_sslCertExpireCheckInterval = SECONDS_PER_DAY;
 uint32 g_cmaRhbItvl = 1000;
 CmResConfList g_resConf[CM_MAX_RES_INST_COUNT] = {{{0}}};
 #ifndef ENABLE_MULTIPLE_NODES
+char g_dbServiceVip[CM_IP_LENGTH] = {0};
 char g_enableFenceDn[10] = {0};
 #endif
 bool g_isPauseArbitration = false;

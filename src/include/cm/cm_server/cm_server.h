@@ -51,6 +51,8 @@
 
 #define CM_INCREMENT_TERM_VALUE 100
 
+#define CM_INCREMENT_BIG_TERM_VALUE 10000
+
 #define CM_UINT32_MAX 0xFFFFFFFFU
 
 #define CM_MIN_CONN_TO_DDB (2)
@@ -112,6 +114,10 @@ typedef struct CM_HAThreads_t {
 typedef struct CM_MonitorThread_t {
     CM_WorkThread thread;
 } CM_MonitorThread;
+
+typedef struct CM_DdbStatusCheckAndSetThread_t {
+    CM_WorkThread thread;
+} CM_DdbStatusCheckAndSetThread;
 
 typedef struct CM_MonitorNodeStopThread_t {
     CM_WorkThread thread;
@@ -199,6 +205,7 @@ typedef struct CM_ConnDdbInfo_t {
 #define THREAD_TYPE_AGENT_SERVER 4
 #define THREAD_TYPE_INIT 5
 #define THREAD_TYPE_ALARM_CHECKER 6
+#define THREAD_TYPE_DDB_STATUS_CHECKER 7
 
 #define MONITOR_CYCLE_TIMER 1000000
 #define MONITOR_CYCLE_TIMER_OUT 6000000

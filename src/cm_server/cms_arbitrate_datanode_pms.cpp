@@ -28,6 +28,7 @@
 #include "cms_arbitrate_datanode_pms_utils.h"
 #include "cms_common.h"
 #include "cms_disk_check.h"
+#include "cms_alarm.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cms_arbitrate_gtm.h"
 #endif
@@ -454,6 +455,11 @@ static void SaveDnStatusFromReport(const agent_to_cm_datanode_status_report *age
             __LINE__, ctx->localRep->phony_dead_interval, ctx->instId);
     }
     ctx->localRep->phony_dead_times = agentRep->phony_dead_times;
+    if (undocumentedVersion == 0) {
+        ctx->localRep->dnVipStatus = agentRep->dnVipStatus;
+    } else {
+        ctx->localRep->dnVipStatus = CM_ERROR;
+    }
     /* cluster streaming standby ignore term */
     if (backup_open == CLUSTER_STREAMING_STANDBY) {
         ctx->localRep->local_status.term = FirstTerm;
@@ -539,9 +545,30 @@ static status_t RestartSmallerTermDynamicPrimary(DnArbCtx *ctx)
     uint32 localTerm = ctx->localRep->local_status.term;
     if (localTerm < info.maxTerm && ctx->localRep->local_status.local_role == INSTANCE_ROLE_PRIMARY &&
         ctx->localRep->local_status.db_state == INSTANCE_HA_STATE_NORMAL && localTerm != InvalidTerm) {
-        SendRestartMsg(ctx, "[SmallerTerm]");
-        write_runlog(LOG, "line %d: instance %u local term(%u) is not max term(%u), "
-            "restart to pending.\n", __LINE__, ctx->instId, localTerm, info.maxTerm);
+         /*
+          * stop instance only when
+          * enable CM cluster auto failover and unable DB cluster auto crash recovery in two node deployment arch
+          */
+        if (ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) &&
+            !g_paramsOn2Nodes.cmsEnableDbCrashRecovery) {
+            write_runlog(ERROR,
+                "line %d: split brain failure in db service, instance %u local term(%u) is not max term(%u). "
+                "Due to auto crash recovery is disabled, will not restart current instance, "
+                "waiting for manual intervention.\n",
+                __LINE__, ctx->instId, localTerm, ctx->maxTerm);
+            ReportClusterDoublePrimaryAlarm(
+                ALM_AT_Event,
+                ALM_AI_DbInstanceDoublePrimary,
+                ctx->instId,
+                SERVICE_TYPE_DB);
+
+            // try to stop fake primary db instance from cms
+            StopFakePrimaryResourceInstance(ctx);
+        } else {
+            SendRestartMsg(ctx, "[SmallerTerm]");
+            write_runlog(LOG, "line %d: instance %u local term(%u) is not max term(%u), "
+                "restart to pending.\n", __LINE__, ctx->instId, localTerm, ctx->maxTerm);
+        }
         return CM_ERROR;
     }
     /* The connection between the CMA and the DN may be abnormal. Need to restart this Primary. */
@@ -1442,10 +1469,38 @@ static bool MoreDyPrimary(DnArbCtx *ctx, const char *typeName)
     /* restart dn instance */
     if (ctx->info.dbRestart) {
         GroupStatusShow(typeName, ctx->groupIdx, ctx->instId, ctx->cond.vaildCount, ctx->cond.finishRedo);
-        SendRestartMsg(ctx, typeName);
-        write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
-            "send restart msg to instance(%u).\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
-        ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+         /*
+          * stop instance only when
+          * enable CM cluster auto failover and unable DB cluster auto crash recovery in two node deployment arch
+          */
+        if (ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) &&
+            !g_paramsOn2Nodes.cmsEnableDbCrashRecovery) {
+            write_runlog(ERROR,
+                "%s, line %d: split brain failure in db service, more dynamic primary and their term(%u) "
+                "are the most(%u). Due to auto crash recovery is disabled, no need send restart msg to instance(%u) "
+                "that had been restarted, waiting for manual intervention.\n",
+                typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
+
+            /* compare local term, local lsn, noidid */
+            if (XLByteWE_W_TERM(ctx->maxTerm, ctx->cond.maxLsn,
+                ctx->dnReport[ctx->memIdx].local_status.term, ctx->dnReport[ctx->memIdx].local_status.last_flush_lsn) ||
+                IsInstanceIdMax(ctx)) {
+                ReportClusterDoublePrimaryAlarm(
+                    ALM_AT_Event,
+                    ALM_AI_DbInstanceDoublePrimary,
+                    ctx->instId,
+                    SERVICE_TYPE_DB);
+
+                /* try to stop fake primary db instance from cms */
+                StopFakePrimaryResourceInstance(ctx);
+            }
+        } else {
+            SendRestartMsg(ctx, typeName);
+            write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
+                "send restart msg to instance(%u) that had been restarted.\n",
+                typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
+            ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+        }
         return true;
     }
 
@@ -1475,10 +1530,37 @@ static bool MoreDyPrimary(DnArbCtx *ctx, const char *typeName)
     /* restart dn instance */
     if (ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting) {
         GroupStatusShow(typeName, ctx->groupIdx, ctx->instId, ctx->cond.vaildCount, ctx->cond.finishRedo);
-        SendRestartMsg(ctx, typeName);
-        write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
-            "send restart msg to instance(%u).\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
-        ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+         /*
+          * stop instance only when
+          * enable CM cluster auto failover and unable DB cluster auto crash recovery in two node deployment arch
+          */
+        if (ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) &&
+            !g_paramsOn2Nodes.cmsEnableDbCrashRecovery) {
+            write_runlog(ERROR,
+                "%s, line %d: split brain failure in db service, more dynamic primary and their term(%u) "
+                "are the most(%u). Due to auto crash recovery is disabled, no need send restart msg to instance(%u),  "
+                "waiting for manual intervention.\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
+
+            /* compare local term, local lsn, noidid */
+            if (XLByteWE_W_TERM(ctx->maxTerm, ctx->cond.maxLsn,
+                ctx->dnReport[memIdx].local_status.term, ctx->dnReport[memIdx].local_status.last_flush_lsn) ||
+                IsInstanceIdMax(ctx)) {
+                ReportClusterDoublePrimaryAlarm(
+                    ALM_AT_Event,
+                    ALM_AI_DbInstanceDoublePrimary,
+                    ctx->instId,
+                    SERVICE_TYPE_DB);
+
+                /* try to stop fake primary db instance from cms */
+                StopFakePrimaryResourceInstance(ctx);
+            }
+        } else {
+            SendRestartMsg(ctx, typeName);
+            write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
+                "send restart msg to instance(%u).\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
+            ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+        }
+
         return true;
     }
     return false;
@@ -1880,6 +1962,15 @@ static void ArbitrateStandbyInQuarm(DnArbCtx *ctx, const char *str)
             str, ctx->instId, ctx->cond.isPrimaryValid, ctx->cond.dyPrimNormalIdx, ctx->cond.vaildPrimIdx);
         return;
     }
+
+    if (ctx->localRep->dnVipStatus == CM_SUCCESS) {
+        write_runlog(DEBUG1, "%s, instanceId %u dnVipStatus is %s, dyPrimNormalIdx is %d, vaildPrimIdx is %d, "
+            "not need to arbitrate.\n",
+            str, ctx->instId, ctx->localRep->dnVipStatus == CM_SUCCESS ? "good" : "bad",
+            ctx->cond.dyPrimNormalIdx, ctx->cond.vaildPrimIdx);
+        return;
+    }
+    
     if (ChangeStaticPrimaryRoleInStandby(ctx, str)) {
         return;
     }
@@ -2200,4 +2291,61 @@ void DatanodeInstanceArbitrate(MsgRecvInfo* recvMsgInfo, const agent_to_cm_datan
     InitDnInfo(&ctx);
     DnArbitrateInner(&ctx);
     (void)pthread_rwlock_unlock(ctx.lock);
+}
+
+void StopFakePrimaryResourceInstance(const DnArbCtx *ctx)
+{
+    int ret = -1;
+    uint32 ii = 0;
+    uint32 jj = 0;
+    bool isFound = false;
+    char command[MAX_PATH_LEN] = {0};
+
+    // find fake primary instance's local data path
+    for (ii = 0; ii < g_node_num; ii++) {
+        for (jj = 0; jj < g_node[ii].datanodeCount; jj++) {
+	    if (g_node[ii].datanode[jj].datanodeId == ctx->instId) {
+                isFound = true;
+		break;
+	    }
+        }
+	if (isFound) {
+	    break;
+	}
+    }
+
+    if (ii >= g_node_num) {
+        write_runlog(ERROR, "cannot find dn instance: nodeid=%u.\n", g_node[ii].node);
+        return;
+    }
+
+    // stop fake primary instance
+    ret = snprintf_s(command, sizeof(command), sizeof(command) - 1,
+        SYSTEMQUOTE "cm_ctl stop -n %u -D %s" SYSTEMQUOTE, ctx->node, g_node[ii].datanode[jj].datanodeLocalDataPath);
+    securec_check_intval(ret, (void)ret);
+
+    ret = system(command);
+    if (ret != 0) {
+        write_runlog(ERROR, "failed to stop db instance with command: \"%s\","
+            "nodeId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
+            command, ctx->node, ret, SHELL_RETURN_CODE(ret), errno);
+        return;
+    }
+
+    write_runlog(LOG, "stop db instance successfully, nodeid: %u, instanceid %u.\n", ctx->node, ctx->instId);
+}
+
+// judge whether current instance's id is the max
+bool IsInstanceIdMax(const DnArbCtx *ctx)
+{
+    uint32 maxId = ctx->instId;
+    for (int32 i = 0; i < ctx->dyNorPrim.count; ++i) {
+        if (!InstanceIsCandicate(ctx, ctx->dyNorPrim.itStatus[i].memIdx, true)) {
+            continue;
+        }
+
+        maxId = ctx->dyNorPrim.itStatus[i].instId > maxId ? ctx->dyNorPrim.itStatus[i].instId : maxId;
+    }
+
+    return ((maxId == ctx->instId) ? true : false);
 }

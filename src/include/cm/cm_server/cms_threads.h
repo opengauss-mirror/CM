@@ -30,6 +30,7 @@
 int CM_CreateHA(void);
 int CM_CreateMonitor(void);
 int CM_CreateMonitorStopNode(void);
+int CM_CreateDdbStatusCheckThread(void);
 int CM_CreateWorkThreadPool(uint32 ctlWorkerCount, uint32 agentWorkerCount);
 int CM_CreateIOThreadPool(uint32 thrCount);
 void CreateDnGroupStatusCheckAndArbitrateThread(void);

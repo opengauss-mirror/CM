@@ -1428,6 +1428,14 @@ int get_agent_global_params_from_configfile()
     get_start_mode(configDir);
     get_connection_mode(configDir);
     GetStringFromConf(configDir, g_environmentThreshold, sizeof(g_environmentThreshold), "environment_threshold");
+    
+    GetStringFromConf(configDir, g_dbServiceVip, sizeof(g_dbServiceVip), "db_service_vip");
+    if (g_dbServiceVip[0] == '\0') {
+        write_runlog(LOG, "parameter \"db_service_vip\" is not provided, please check!\n");
+    } else if (!IsIPAddrValid(g_dbServiceVip)) {
+        write_runlog(ERROR, "value of parameter \"db_service_vip\" is invalid, please check!\n");
+        return -1;
+    }
     agent_report_interval = get_uint32_value_from_config(configDir, "agent_report_interval", 1);
     agent_heartbeat_timeout = get_uint32_value_from_config(configDir, "agent_heartbeat_timeout", 8);
     agent_connect_timeout = get_uint32_value_from_config(configDir, "agent_connect_timeout", 1);

@@ -30,6 +30,8 @@
 static CM_ConnDdbInfo g_ddbSession = {0};
 
 static DDB_RESULT GetKVInDDb(DdbConn *ddbConn, DrvText *drvKey, DrvText *drvValue, int32 logLevel = -1);
+static status_t SetDdbWorkModeInDDb(DdbConn *ddbConn, unsigned int workMode, unsigned int voteNum);
+static status_t DemoteDdbRole2StandbyInDDb(DdbConn *ddbConn);
 
 void RestDdbConn(DdbConn *ddbConn, status_t st, const DDB_RESULT *ddbResult)
 {
@@ -561,6 +563,26 @@ void EtcdIpPortInfoBalance(ServerSocket *server, const char *azNames)
     }
 }
 
+status_t SetDdbWorkMode(unsigned int workMode, unsigned int voteNum)
+{
+    DdbConn *ddbConn = GetNextDdbConn();
+    if (ddbConn == NULL) {
+        write_runlog(ERROR, "%s:%d ddbConn is NULL.\n", __FUNCTION__, __LINE__);
+        return CM_ERROR;
+    }
+    return SetDdbWorkModeInDDb(ddbConn, workMode, voteNum);
+}
+
+status_t DemoteDdbRole2Standby()
+{
+    DdbConn *ddbConn = GetNextDdbConn();
+    if (ddbConn == NULL) {
+        write_runlog(ERROR, "%s:%d ddbConn is NULL.\n", __FUNCTION__, __LINE__);
+        return CM_ERROR;
+    }
+    return DemoteDdbRole2StandbyInDDb(ddbConn);
+}
+
 static status_t InitEtcdServerList(DrvApiInfo *drvApiInfo, const char *azNames)
 {
     size_t len = (g_etcd_num + 1) * sizeof(ServerSocket);
@@ -1026,4 +1048,24 @@ void LoadDdbParamterFromConfig()
         return;
     }
     LoadParamterFromConfigWithPrefixKey(configDir, "ddb_", SetDdbParam);
+}
+
+static status_t SetDdbWorkModeInDDb(DdbConn *ddbConn, unsigned int workMode, unsigned int voteNum)
+{
+    if (g_dbType != DB_DCC) {
+        const char *dbStr = GetDdbToString(g_dbType);
+        write_runlog(ERROR, "current ddbType is %s, don't support this operation", dbStr);
+        return CM_ERROR;
+    }
+    return DdbSetWorkMode(ddbConn, workMode, voteNum);
+}
+
+static status_t DemoteDdbRole2StandbyInDDb(DdbConn *ddbConn)
+{
+    if (g_dbType != DB_DCC) {
+        const char *dbStr = GetDdbToString(g_dbType);
+        write_runlog(ERROR, "current ddbType is %s, don't support this operation", dbStr);
+        return CM_ERROR;
+    }
+    return DdbDemoteRole2Standby(ddbConn);
 }

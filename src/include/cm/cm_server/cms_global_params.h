@@ -84,6 +84,12 @@ typedef enum GET_HEART_BEAT_FROM_ETCD {
     CAN_GET_HEARTBEART
 } getHeartBeatFromEtcd;
 
+typedef enum DDB_WORK_MODE_ {
+    DDB_WORK_MODE_MAJORITY = 0,
+    DDB_WORK_MODE_MINORITY,
+    DDB_WORK_MODE_NONE,
+} ddb_work_mode;
+
 /* data structures to record instances that are in switchover procedure */
 typedef struct switchover_instance_t {
     uint32 node;
@@ -220,7 +226,7 @@ typedef enum ThreadProcessStatusE {
     " -t 60 -O ConnectTimeout=" SSH_CONNECT_TIMEOUT " -O ConnectionAttempts=" SSH_CONNECT_ATTEMPTS \
     " -O ServerAliveInterval=" SSH_SERVER_ALIVE_INTERVAL " -O ServerAliveCountMax=" SSH_SERVER_ALIVE_COUNT_MAX " "
 #define PSSH_TIMEOUT " -t 30 "
-
+#define SERVICE_TYPE_DB "dn"
 
 #define SWITCHOVER_DEFAULT_WAIT 120  /* It needs an integer multiple of 3, because of sleep(3) */
 
@@ -252,6 +258,9 @@ const int DEFAULT_PHONY_DEAD_EFFECTIVE_TIME = 5;
             return 0;                                                                            \
         }                                                                                      \
     } while (0)
+
+#define ENABLED_AUTO_FAILOVER_ON2NODES(nodeNum, autoFailover)                                  \
+    ((nodeNum) == CMS_ONE_PRIMARY_ONE_STANDBY && (autoFailover) == true)
 
 bool &GetIsSharedStorageMode();
 
@@ -293,6 +302,7 @@ extern CM_WorkThreads gWorkThreads;
 extern CM_IOThreads gIOThreads;
 extern CM_HAThreads gHAThreads;
 extern CM_MonitorThread gMonitorThread;
+extern CM_DdbStatusCheckAndSetThread gDdbCheckThread;
 extern CM_MonitorNodeStopThread gMonitorNodeStopThread;
 extern cm_fenced_UDF_report_status* g_fenced_UDF_report_status_ptr;
 extern pthread_rwlock_t instance_status_rwlock;
@@ -306,6 +316,7 @@ extern dynamic_cms_timeline* g_timeline;
 extern DynamicNodeReadOnlyInfo *g_dynamicNodeReadOnlyInfo;
 extern Alarm UnbalanceAlarmItem[1];
 extern Alarm ServerSwitchAlarmItem[1];
+extern Alarm DoublePrimaryAlarmItem[1];
 extern Alarm* AbnormalDdbAlarmList;
 extern volatile logic_cluster_restart_mode cm_logic_cluster_restart_mode;
 extern volatile cm_start_mode cm_server_start_mode;
@@ -372,6 +383,9 @@ extern uint32 cmserver_self_vote_timeout;
 extern uint32 instance_keep_heartbeat_timeout;
 extern uint32 g_clusterStartingTimeout;
 extern uint32 g_clusterStartingArbitDelay;
+extern uint32 g_ddbNetworkIsolationTimeout;
+extern ddb_work_mode g_ddbWorkMode;
+extern uint32 g_bigVoteNumInMinorityMode;
 #ifdef ENABLE_MULTIPLE_NODES
 extern uint32 coordinator_heartbeat_timeout;
 extern int32 g_cmAgentDeleteCn;

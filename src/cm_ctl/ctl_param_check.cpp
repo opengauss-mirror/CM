@@ -62,6 +62,7 @@ const char *g_cmaParamInfo[] = {
     "enable_gtm_phony_dead_check|int|0,1|NULL|NULL|",
     "environment_threshold|string|0,0|NULL|NULL|",
 #endif
+    "db_service_vip|string|0,0|NULL|NULL|",
     "event_triggers|string|0,0|NULL|NULL|"
 };
 
@@ -122,6 +123,10 @@ const char *g_cmsParamInfo[] = {
     "coordinator_heartbeat_timeout|int|0,2592000|NULL|if set 0,the function is disabled|",
     "cluster_starting_aribt_delay|int|1,2592000|NULL|NULL|",
 #endif
+    "third_party_gateway_ip|string|0,0|NULL|NULL|",
+    "cms_enable_failover_on2nodes|bool|0,0|NULL|NULL|",
+    "cms_enable_db_crash_recovery|bool|0,0|NULL|NULL|",
+    "cms_network_isolation_timeout|int|10,2147483647|NULL|NULL|",
 };
 
 const char *g_valueTypeStr[] = {

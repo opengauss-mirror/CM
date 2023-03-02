@@ -46,6 +46,7 @@
 #include "common/config/cm_config.h"
 #include "cm/cm_cipher.h"
 #include "cm/cm_misc.h"
+#include <arpa/inet.h>
 /*
  * ssh connect does not exit automatically when the network is fault,
  * this will cause cm_ctl hang for several hours,
@@ -63,6 +64,10 @@ conn_option_t g_sslOption;
 
 #define SSL_CONNECT_TIMEOUT (5000)
 #define SSL_SOCKET_TIMEOUT (5000)
+
+/* two nodes arch usage */
+ArbitrateParamsOn2Nodes g_paramsOn2Nodes = {"", false, false, 20};
+static const int VAILD_IP_ADDR = 1;
 
 bool CmFileExist(const char *file_path)
 {
@@ -1308,6 +1313,33 @@ bool IsNodeIdValid(int nodeId)
         if (g_node[i].node == (uint32)nodeId) {
             return true;
         }
+    }
+    return false;
+}
+
+status_t IsReachableIP(char *ip)
+{
+    if (ip == nullptr) {
+        return CM_ERROR;
+    }
+    char cmd[MAXPGPATH] = {0};
+    int rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "timeout 2 ping -c 2 %s > /dev/null 2>&1", ip);
+    securec_check_intval(rc, (void)rc);
+    rc = system(cmd);
+    return rc == 0 ? CM_SUCCESS : CM_ERROR;
+}
+
+bool IsIPAddrValid(const char *ipAddr)
+{
+    if (ipAddr == nullptr) {
+        return false;
+    }
+
+    unsigned char ipAddrBuf[sizeof(struct in6_addr)];
+    // return value of function 'inet_pton' is 1 only when valid ip addr
+    if (inet_pton(AF_INET, ipAddr, &ipAddrBuf) == VAILD_IP_ADDR ||
+        inet_pton(AF_INET6, ipAddr, &ipAddrBuf) == VAILD_IP_ADDR) {
+        return true;
     }
     return false;
 }

@@ -579,6 +579,13 @@ static void ArbitratePromote(int32 *cmsDemoteDelayOnConnLess)
         return;
     }
     SetDdbMinority(false);
+
+    if (g_dbType == DB_DCC &&
+        ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) &&
+        g_ddbWorkMode == DDB_WORK_MODE_NONE) {
+        return;
+    }
+
     status_t st = CmsRoleChangeWithDdb(cmsDemoteDelayOnConnLess);
     if (st == CM_SUCCESS) {
         CheckCmsPrimaryAgentConn(cmsDemoteDelayOnConnLess);

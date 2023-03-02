@@ -155,4 +155,6 @@ typedef struct DnInstInfo_t {
 
 void DatanodeInstanceArbitrate(MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentRep);
 bool IsCurrentNodeDorado(uint32 node);
+void StopFakePrimaryResourceInstance(const DnArbCtx *ctx);
+bool IsInstanceIdMax(const DnArbCtx *ctx);
 #endif

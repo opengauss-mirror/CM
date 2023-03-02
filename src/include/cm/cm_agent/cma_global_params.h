@@ -285,6 +285,7 @@ extern char g_agentTargetBarrier[BARRIERLEN];
 extern char g_environmentThreshold[CM_PATH_LENGTH];
 extern char g_doradoIp[CM_IP_LENGTH];
 #ifndef ENABLE_MULTIPLE_NODES
+extern char g_dbServiceVip[CM_IP_LENGTH];
 extern char g_enableFenceDn[10];
 #endif
 extern uint32 g_diskTimeout;

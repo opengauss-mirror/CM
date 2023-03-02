@@ -78,6 +78,22 @@ int CM_CreateMonitor(void)
     return 0;
 }
 
+/**
+ * @brief Create a ddb cluster status check Thread object
+ *
+ * @return int
+ */
+int CM_CreateDdbStatusCheckThread(void)
+{
+    CM_DdbStatusCheckAndSetThread* pCheckThread = &gDdbCheckThread;
+    errno_t rc = memset_s(pCheckThread, sizeof(CM_DdbStatusCheckAndSetThread), 0, sizeof(CM_DdbStatusCheckAndSetThread));
+    securec_check_errno(rc, (void)rc);
+    if (pthread_create(&(gDdbCheckThread.thread.tid), NULL, CM_ThreadDdbStatusCheckAndSetMain, pCheckThread) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 #ifdef ENABLE_MULTIPLE_NODES
 status_t CmCreateCheckGtmModThread()
 {

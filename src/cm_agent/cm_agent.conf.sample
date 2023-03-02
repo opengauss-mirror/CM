@@ -45,6 +45,8 @@ agent_rhb_interval = 1000                                     # the heatbeat of 
 enable_ssl = off                                              # enable cma to cma ssl
 ssl_cert_expire_alert_threshold = 90
 ssl_cert_expire_check_interval = 86400
+db_service_vip = ''                                           # db primary virtual ip address
+                                                              # default '' means no virutal ip configured
 enable_fence_dn = off                                        #enable fence the datanode when cma cannot connect to any cms.
                                                              #if set to on, restart datenode after 30 seconds. otherwise, don't restart datanode.
                                                              #default off

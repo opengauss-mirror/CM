@@ -88,6 +88,7 @@ typedef enum AlarmId {
     ALM_AI_PgxcNodeMismatch = 0x404F0061,
     ALM_AI_StreamingDisasterRecoveryCnDisconnected = 0x404F0070,
     ALM_AI_StreamingDisasterRecoveryDnDisconnected = 0x404F0071,
+    ALM_AI_DbInstanceDoublePrimary = 0x404F007A,
     ALM_AI_BUTT = 0x7FFFFFFFFFFFFFFF             /* force compiler to decide AlarmId as uint64 */
 } AlarmId;
 

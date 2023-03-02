@@ -54,5 +54,5 @@ DDB_RESULT GetHistoryClusterExceptSyncListFromDdb(void);
 bool SetGroupExpectSyncList(uint32 groupIndex, const CurrentInstanceStatus *statusInstance);
 
 int SetTermToDdb(uint32 term);
-int IncrementTermToDdb(void);
+int IncrementTermToDdb(uint32 incTerm = CM_INCREMENT_TERM_VALUE);
 #endif

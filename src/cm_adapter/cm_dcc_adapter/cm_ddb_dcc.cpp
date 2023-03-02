@@ -640,7 +640,12 @@ status_t DrvExecDccCmd(DrvCon_t session, char *cmdLine, char *output, int *outpu
     if (outputLen != NULL) {
         *outputLen = static_cast<int>(getText.len);
     }
-    write_runlog(LOG, "Success to exec dcc cmd(%s).\n", cmdLine);
+
+    if (g_cmServerNum != ONE_PRIMARY_ONE_STANDBY) {
+        write_runlog(LOG, "Success to exec dcc cmd(%s).\n", cmdLine);
+    } else {
+        write_runlog(DEBUG5, "Success to exec dcc cmd(%s).\n", cmdLine);
+    }
 
     return CM_SUCCESS;
 }
@@ -987,6 +992,28 @@ static status_t DrvDccStop(bool *ddbStop)
     return CM_ERROR;
 }
 
+status_t DrvDccSetWorkMode(DrvCon_t session, unsigned int workMode, unsigned int voteNum)
+{
+    int32 res = 0;
+    res = srv_dcc_set_work_mode((dcc_work_mode_t)workMode, voteNum);
+    if (res != CM_SUCCESS) {
+        write_runlog(ERROR, "set work mode failed. %d \n", res);
+        return CM_ERROR;
+    }
+    return CM_SUCCESS;
+}
+
+status_t DrvDccDemoteDdbRole(DrvCon_t session)
+{
+    int32 res = 0;
+    res = srv_dcc_demote_follower();
+    if (res != CM_SUCCESS) {
+        write_runlog(ERROR, "dcc demote follower failed. %d \n", res);
+        return CM_ERROR;
+    }
+    return CM_SUCCESS;
+}
+
 static status_t DccLoadApi(const DrvApiInfo *apiInfo)
 {
     DdbDriver *drv = DrvDccGet();
@@ -1011,6 +1038,8 @@ static status_t DccLoadApi(const DrvApiInfo *apiInfo)
     drv->setBlocked = DrvDccSetBlocked;
     drv->setParam = DrvDccSetParam;
     drv->stop = DrvDccStop;
+    drv->setWorkMode = DrvDccSetWorkMode;
+    drv->demoteDdbRole = DrvDccDemoteDdbRole;
     g_cmServerNum = apiInfo->nodeNum;
     status_t st = StartDccProcess(apiInfo);
     if (st != CM_SUCCESS) {

@@ -71,6 +71,7 @@ ClusterRole backup_open = CLUSTER_PRIMARY;
 ClusterInstallType g_clusterInstallType = INSTALL_TYPE_DEFAULT;
 Alarm UnbalanceAlarmItem[1];
 Alarm ServerSwitchAlarmItem[1];
+Alarm DoublePrimaryAlarmItem[1];
 synchronous_standby_mode current_cluster_az_status = AnyFirstNo;
 volatile cm_start_mode cm_server_start_mode = MAJORITY_START; /* cm_arbitration_mode needs to be deleted. */
 
@@ -155,6 +156,9 @@ uint32 g_sslCertExpireCheckInterval = SECONDS_PER_DAY;
 uint32 g_diskTimeout = 200;
 uint32 g_agentNetworkTimeout = 6;
 DnArbitrateMode g_dnArbitrateMode = QUORUM;
+uint32 g_ddbNetworkIsolationTimeout = 20;
+ddb_work_mode g_ddbWorkMode = DDB_WORK_MODE_NONE;
+uint32 g_bigVoteNumInMinorityMode = 0;
 #ifdef ENABLE_MULTIPLE_NODES
 uint32 coordinator_heartbeat_timeout = cn_delete_default_time;
 int32 g_cmAgentDeleteCn = 30;
@@ -255,6 +259,7 @@ CM_IOThreads gIOThreads;
 CM_WorkThreads gWorkThreads;
 CM_HAThreads gHAThreads;
 CM_MonitorThread gMonitorThread;
+CM_DdbStatusCheckAndSetThread gDdbCheckThread;
 CM_MonitorNodeStopThread gMonitorNodeStopThread;
 
 /*

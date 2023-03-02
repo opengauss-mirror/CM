@@ -544,3 +544,25 @@ status_t DdbStop(DdbConn *ddbConn)
     ComputTimeInDdb(&checkBegin, msg, ddbConn->modId);
     return st;
 }
+
+status_t DdbSetWorkMode(DdbConn *ddbConn, unsigned int workMode, unsigned int voteNum)
+{
+    status_t ret = CM_ERROR;
+    CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
+    DdbSetRunning(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
+    ret = ddbConn->drv->setWorkMode(ddbConn->session, workMode, voteNum);
+    DdbSetIdle(ddbConn);
+    return ret;
+}
+
+status_t DdbDemoteRole2Standby(DdbConn *ddbConn)
+{
+    status_t ret = CM_ERROR;
+    CM_RETURN_IFERR(CheckDdbSession(ddbConn, __FUNCTION__));
+    DdbSetRunning(ddbConn);
+    CHECK_DB_SESSION_AND_STOPPED(ddbConn, CM_ERROR);
+    ret = ddbConn->drv->demoteDdbRole(ddbConn->session);
+    DdbSetIdle(ddbConn);
+    return ret;
+}

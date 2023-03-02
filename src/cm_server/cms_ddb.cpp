@@ -1194,7 +1194,7 @@ int SetFirstTermToDdb()
     return 0;
 }
 
-int IncrementTermToDdb()
+int IncrementTermToDdb(uint32 incTerm)
 {
     uint32 term = 0;
     bool firstStart = false;
@@ -1212,7 +1212,7 @@ int IncrementTermToDdb()
         return -1;
     }
 
-    term += CM_INCREMENT_TERM_VALUE;
+    term += incTerm;
     if (SetTermToDdb(term) != 0) {
         g_needIncTermToDdbAgain = true;
         return -1;

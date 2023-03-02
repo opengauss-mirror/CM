@@ -85,5 +85,7 @@ void RestDdbConn(DdbConn *ddbConn, status_t st, const DDB_RESULT *ddbResult);
 status_t DoDdbExecCmd(const char *cmd, char *output, int *outputLen, char *errMsg, uint32 maxBufLen);
 status_t DoDdbSetBlocked(unsigned int setBlock, unsigned int waitTimeoutMs);
 void LoadDdbParamterFromConfig(void);
+status_t SetDdbWorkMode(unsigned int workMode, unsigned int voteNum);
+status_t DemoteDdbRole2Standby();
 
 #endif

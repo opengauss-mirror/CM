@@ -64,6 +64,7 @@ typedef enum ClientErrorEn {
 
 typedef unsigned char bool8;
 
+#define CMS_ONE_PRIMARY_ONE_STANDBY 2
 #define CM_EXIT ((int)-2)
 #define CM_FALSE (uint8)0
 #define CM_TRUE  (uint8)1

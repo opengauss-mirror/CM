@@ -384,6 +384,9 @@ const int INSTANCE_WALSNDSTATE_UNKNOWN = 6;
 #define SSL_ENABLE (1)
 #define SSL_DISABLE (2)
 
+#define CM_DDB_CLUSTER_INFO_CMD "--cluster_info"
+
+
 extern int g_gtmPhonyDeadTimes;
 extern int g_dnPhonyDeadTimes[CM_MAX_DATANODE_PER_NODE];
 extern int g_cnPhonyDeadTimes;
@@ -1193,6 +1196,7 @@ typedef struct agent_to_cm_datanode_status_report_st {
     int dn_restart_counts;
     int phony_dead_times;
     int dn_restart_counts_in_hour;
+    int dnVipStatus;
 } agent_to_cm_datanode_status_report;
 
 typedef struct AgentToCmserverDnSyncListSt {
@@ -1499,6 +1503,7 @@ typedef struct cm_instance_datanode_report_status_st {
     int phony_dead_times;
     int phony_dead_interval;
     int dn_restart_counts_in_hour;
+    int dnVipStatus;
     bool is_finish_redo_cmd_sent;
     uint64 ckpt_redo_point;
     char barrierID[BARRIERLEN];

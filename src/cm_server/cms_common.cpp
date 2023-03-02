@@ -28,7 +28,8 @@
 #include "sys/epoll.h"
 #include "cms_ddb_adapter.h"
 #include "cms_common.h"
-
+static const int CMS_NETWORK_ISOLATION_TIMES = 20;
+static const int BOOL_STR_MAX_LEN = 10;
 void ExecSystemSsh(uint32 remoteNodeid, const char *cmd, int *result, const char *resultPath)
 {
     int rc;
@@ -332,6 +333,49 @@ void GetDdbTypeParam(void)
     }
     write_runlog(LOG, "ddbType is %d.\n", g_dbType);
 }
+/* Obtain arbitrate params from cm_server.conf in two nodes arch */
+void GetTwoNodesArbitrateParams(void) {
+    get_config_param(configDir, "third_party_gateway_ip", g_paramsOn2Nodes.thirdPartyGatewayIp,
+        sizeof(g_paramsOn2Nodes.thirdPartyGatewayIp));
+    
+    char szEnableFailover[BOOL_STR_MAX_LEN]  = {0};
+    get_config_param(configDir, "cms_enable_failover_on2nodes", szEnableFailover, sizeof(szEnableFailover));
+    if (szEnableFailover[0] == '\0') {
+        write_runlog(WARNING, "parameter \"cms_enable_failover_on2nodes\" not provided, will use defaule value [%d].\n",
+            g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes);
+    } else {
+        if (!CheckBoolConfigParam(szEnableFailover)) {
+            write_runlog(WARNING, "invalid value for parameter \" cms_enable_failover_on2nodes \" in %s, "
+                "will use default value [%d].\n", configDir, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes);
+        } else {
+            g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes = IsBoolCmParamTrue(szEnableFailover) ? true : false;
+        }
+    }
+
+    if (g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes == true && !IsIPAddrValid(g_paramsOn2Nodes.thirdPartyGatewayIp)) {
+        write_runlog(ERROR, "parameter \"cms_enable_failover_on2nodes\" is true, "
+            "but parameter \"third_party_gateway_ip\" is invalid, please check!\n");
+        exit(1);
+    }
+
+    g_paramsOn2Nodes.cmsNetworkIsolationTimeout = (uint32)get_int_value_from_config(configDir,
+        "cms_network_isolation_timeout", CMS_NETWORK_ISOLATION_TIMES);
+    
+    char szCrashRecovery[BOOL_STR_MAX_LEN] = {0};
+    get_config_param(configDir, "cms_enable_db_crash_recovery", szCrashRecovery, sizeof(szCrashRecovery));
+    if (szCrashRecovery[0] == '\0') {
+        write_runlog(WARNING,
+            "parameter \"cms_enable_db_crash_recovery\" not provided, will use defaule value [%d].\n",
+            g_paramsOn2Nodes.cmsEnableDbCrashRecovery);
+    } else {
+        if (!CheckBoolConfigParam(szCrashRecovery)) {
+            write_runlog(FATAL, "invalid value for parameter \" cms_enable_db_crash_recovery \" in %s, "
+                "will use default value [%d].\n", configDir, g_paramsOn2Nodes.cmsEnableDbCrashRecovery);
+        } else {
+            g_paramsOn2Nodes.cmsEnableDbCrashRecovery = IsBoolCmParamTrue(szCrashRecovery) ? true : false;
+        }
+    }
+}
 
 void GetCmsParaFromConfig()
 {
@@ -361,6 +405,10 @@ void GetCmsParaFromConfig()
     GetDdbTypeParam();
     GetDelayArbitTimeFromConf();
     GetDelayArbitClusterTimeFromConf();
+
+    if (g_cm_server_num == CMS_ONE_PRIMARY_ONE_STANDBY) {
+        GetTwoNodesArbitrateParams();
+    }
 }
 
 void GetDdbArbiCfg(int32 loadWay)

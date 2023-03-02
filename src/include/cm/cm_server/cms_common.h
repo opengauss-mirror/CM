@@ -45,6 +45,7 @@ int UpdateDynamicConfig();
 void UpdateAzNodeInfo();
 void GetDdbTypeParam(void);
 void GetDdbArbiCfg(int32 loadWay);
+void GetTwoNodesArbitrateParams(void);
 status_t GetMaintainPath(char *maintainFile, uint32 fileLen);
 status_t GetDdbKVFilePath(char *kvFile, uint32 fileLen);
 bool IsUpgradeCluster(void);

@@ -442,6 +442,14 @@ static void GetDnStaticRoleFromDdb(const DnArbCtx *ctx)
     } else {
         GetDatanodeDynamicConfigChangeFromDdb(ctx->groupIdx);
     }
+    if (g_needIncTermToDdbAgain) {
+        (void)pthread_rwlock_wrlock(&term_update_rwlock);
+        /* Prevent multiple worker threads from increasing term at the same time. */
+        if (g_needIncTermToDdbAgain) {
+            (void)IncrementTermToDdb();
+        }
+        (void)pthread_rwlock_unlock(&term_update_rwlock);
+    }
 }
 
 static void ResetHeartbeat(const DnArbCtx *ctx)
@@ -1482,7 +1490,9 @@ static bool MoreDyPrimary(const DnArbCtx *ctx, const char *typeName)
         if (ctx->cond.igPrimaryCount >= 1 && ctx->instId != ctx->repGroup->lastFailoverDn) {
             SendRestartMsg(ctx, typeName);
             write_runlog(LOG, "Dynamic primary %u is not last failover dn, restart to cascade_standby.\n", ctx->instId);
+            return true;
         }
+        return false;
     }
     if (ctx->dyNorPrim.count == 1 || TermIsInvalid(ctx->maxTerm)) {
         return false;

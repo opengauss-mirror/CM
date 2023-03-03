@@ -9,6 +9,15 @@ EXECUTE_PROCESS(
         OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 EXECUTE_PROCESS(
+        COMMAND bash -c "which dos2unix > /dev/null 2> /dev/null; if [[ $? -eq 0 ]]; then echo 1; else echo -1;fi"
+        OUTPUT_VARIABLE DOS2UNIX_INSTALLED
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if (${DOS2UNIX_INSTALLED} EQUAL -1)
+        message(FATAL_ERROR "Please make sure dependency 'dos2unix' is installed according to current OS plantform!")
+endif ()
+
+EXECUTE_PROCESS(
         COMMAND bash -c "dos2unix ${PROJECT_SOURCE_DIR}/build/cm.ver && source ${PROJECT_SOURCE_DIR}/build/cm.ver && echo \"\${PRODUCT} ${CMAKE_PROJECT_NAME} \${VERSION}\""
         OUTPUT_VARIABLE PRO_INFO
         OUTPUT_STRIP_TRAILING_WHITESPACE

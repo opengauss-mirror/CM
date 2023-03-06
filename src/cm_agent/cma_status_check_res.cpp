@@ -57,18 +57,14 @@ void InitIsregCheckVar()
 static int GetResInstId(const char *resName, uint32 cmInstId)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         if (strcmp(resName, g_resStatus[i].status.resName) != 0) {
-            (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
             continue;
         }
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].cmInstanceId == cmInstId) {
-                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
                 return (int)g_resStatus[i].status.resStat[j].resInstanceId;
             }
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
         write_runlog(ERROR, "can't get res_inst_id, by cm_inst_id(%u).\n", cmInstId);
         break;
     }

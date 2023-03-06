@@ -120,17 +120,18 @@ void ProcessCtl2CmOneInstanceBarrierQueryMsg(
 void ProcessGetDnSyncListMsg(AgentToCmserverDnSyncList *agentDnSyncList);
 #endif
 void ProcessAgent2CmResStatReportMsg(ReportResStatus *resStatusPtr);
-void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList &status);
-void SetResStatReportInter(uint32 nodeId);
-uint32 GetResStatReportInter(uint32 nodeId);
+void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList *status);
+void IncreaseOneResInstReportInter(const char *resName, uint32 instId);
+uint32 GetOneResInstReportInter(const char *resName, uint32 instId);
 int GetCurAz();
 uint32 GetPrimaryDnIndex(void);
-status_t InitNodeReportResStatInter();
+void InitNodeReportVar();
 MaxClusterResStatus GetResNodeStat(uint32 nodeId, int logLevel);
 
 void ProcessCtlToCmReloadMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtlToCmExecDccCmdMsg(MsgRecvInfo* recvMsgInfo, ExecDdbCmdMsg *msg);
 void ProcessRequestResStatusListMsg(MsgRecvInfo* recvMsgInfo);
+void ProcessRequestLatestResStatusListMsg(MsgRecvInfo *recvMsgInfo, RequestLatestStatList *recvMsg);
 void ProcessCltSendOper(MsgRecvInfo* recvMsgInfo, CltSendDdbOper *ddbOper);
 void ProcessSslConnRequest(MsgRecvInfo* recvMsgInfo, const AgentToCmConnectRequest *requestMsg);
 void ProcessSharedStorageMsg(MsgRecvInfo* recvMsgInfo);

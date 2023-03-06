@@ -414,12 +414,12 @@ static status_t RecvResStatusListProcess(int isNotifyChange)
     if (isNotifyChange == STAT_CHANGED) {
         g_agentConnect->callback();
     }
-    write_runlog(LOG, "version=%llu\n", g_clientStatusList->version);
+    write_runlog(LOG, "resName(%s) version=%llu\n", g_clientStatusList->resName, g_clientStatusList->version);
     for (uint32 i = 0; i < g_clientStatusList->instanceCount; ++i) {
-        write_runlog(LOG, "resName(%s):nodeId(%u),instanceId=%u,isWorkMember=%u,status=%u\n",
-            g_clientStatusList->resName,
+        write_runlog(LOG, "nodeId(%u),cmInstId=%u,resInstId=%u,isWork=%u,status=%u\n",
             g_clientStatusList->resStat[i].nodeId,
             g_clientStatusList->resStat[i].cmInstanceId,
+            g_clientStatusList->resStat[i].resInstanceId,
             g_clientStatusList->resStat[i].isWorkMember,
             g_clientStatusList->resStat[i].status);
     }

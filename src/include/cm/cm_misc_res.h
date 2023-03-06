@@ -50,6 +50,7 @@ const uint32 CM_MAX_VIP_COUNT = 16;
 #define CUS_RES_CHECK_STAT_UNKNOWN  2
 #define CUS_RES_CHECK_STAT_ABNORMAL 3
 #define CUS_RES_CHECK_STAT_TIMEOUT  137
+#define CUS_RES_CHECK_STAT_FAILED   255  // -1
 
 #define CUS_RES_START_FAIL_DEPEND_NOT_ALIVE 6
 
@@ -115,8 +116,7 @@ bool IsCusResExist();
 const char *GetIsregStatus(int isreg);
 void PrintCusInfoResList(const OneResStatList *status, const char *info);
 bool8 IsDatanodeSSMode();
-const char* ResConfDefValue(const char *param);
-int ResConfMinValue(const char *param);
-int ResConfMaxValue(const char *param);
+uint32 GetResNodeCount();
+uint32 GetResNodeId(uint32 index);
 
 #endif  // CM_CM_MISC_RES_H

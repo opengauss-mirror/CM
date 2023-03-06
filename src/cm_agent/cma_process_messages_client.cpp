@@ -156,14 +156,11 @@ static uint32 ResInstIdToCmInstId(const char *resName, uint32 resInstId)
         write_runlog(ERROR, "[CLIENT] ProcessResStatusList, unknown the res(%s) of client.\n", resName);
         return 0;
     }
-    (void)pthread_rwlock_rdlock(&(g_resStatus[index].rwlock));
     for (uint32 i = 0; i < g_resStatus[index].status.instanceCount; ++i) {
         if (g_resStatus[index].status.resStat[i].resInstanceId == resInstId) {
-            (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
             return g_resStatus[index].status.resStat[i].cmInstanceId;
         }
     }
-    (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
     return 0;
 }
 
@@ -234,12 +231,12 @@ void* ProcessMessageMain(void * const arg)
     return NULL;
 }
 
-static void UpdateResStatusList(CmResStatList *resStat, const OneResStatList *newStat)
+static inline void UpdateResStatusList(CmResStatList *resStat, const OneResStatList *newStat)
 {
     (void)pthread_rwlock_wrlock(&(resStat->rwlock));
     errno_t rc = memcpy_s(&resStat->status, sizeof(OneResStatList), newStat, sizeof(OneResStatList));
-    (void)pthread_rwlock_unlock(&(resStat->rwlock));
     securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_unlock(&(resStat->rwlock));
 }
 
 void ProcessResStatusList(const CmsReportResStatList *msg)
@@ -298,7 +295,6 @@ void ProcessResLockAckFromCms(const CmsReportLockResult *recvMsg)
             return;
         }
         bool getFlag = false;
-        (void)pthread_rwlock_rdlock(&(g_resStatus[index].rwlock));
         for (uint32 i = 0; i < g_resStatus[index].status.instanceCount; ++i) {
             if (g_resStatus[index].status.resStat[i].cmInstanceId == recvMsg->lockOwner) {
                 sendMsg.result.lockOwner = g_resStatus[index].status.resStat[i].resInstanceId;
@@ -306,7 +302,6 @@ void ProcessResLockAckFromCms(const CmsReportLockResult *recvMsg)
                 break;
             }
         }
-        (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
         if (!getFlag) {
             sendMsg.result.lockOwner = 0;
             sendMsg.result.error = (uint32)CM_RES_CLIENT_CANNOT_DO;

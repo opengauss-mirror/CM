@@ -34,6 +34,7 @@
 #include "cms_write_dynamic_config.h"
 #include "cms_barrier_check.h"
 #include "cms_arbitrate_cluster.h"
+#include "cms_cus_res.h"
 #include "cms_threads.h"
 
 static const int GET_DORADO_IP_TIMES = 3;
@@ -465,6 +466,19 @@ static void CreateArbitrateClusterThread()
     }
 }
 
+static void CreateUpdateResStatusListThread()
+{
+    int err;
+    pthread_t thrId;
+
+    if (!IsCusResExist()) {
+        return;
+    }
+    if ((err = pthread_create(&thrId, NULL, UpdateResStatusListMain, NULL)) != 0) {
+        write_runlog(ERROR, "Failed to create CreateArbitrateClusterThread: error %d\n", err);
+    }
+}
+
 status_t CmsCreateThreads()
 {
 #ifdef ENABLE_MULTIPLE_NODES
@@ -494,6 +508,7 @@ status_t CmsCreateThreads()
     CreateDealGlobalBarrierThread();
     CreateDoradoCheckThread();
     CreateArbitrateClusterThread();
+    CreateUpdateResStatusListThread();
 
     return CM_SUCCESS;
 }

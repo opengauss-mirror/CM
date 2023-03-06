@@ -27,6 +27,8 @@
 #include "cms_ddb.h"
 #include "cms_az.h"
 #include "cms_common.h"
+#include "cms_common_res.h"
+#include "cms_cus_res.h"
 #include "cms_arbitrate_datanode_pms.h"
 #include "cms_rhb.h"
 #ifdef ENABLE_MULTIPLE_NODES
@@ -1443,6 +1445,13 @@ static void MsgKerberosStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc 
 
 static void MsgAgentResourceStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
+    if (!IsCusResExist()) {
+        return;
+    }
+    if (!CanProcessResStatus()) {
+        write_runlog(LOG, "[%s], res status list invalid, can't continue.\n", __FUNCTION__);
+        return;
+    }
     ReportResStatus *cmaToCmsResStatusPtr;
     PROCESS_MSG_BY_TYPE_WITHOUT_CONN(ReportResStatus, cmaToCmsResStatusPtr, ProcessAgent2CmResStatReportMsg);
 }
@@ -1507,7 +1516,27 @@ static void MsgSwitchCmd(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgP
 
 static void MsgRequestResStatusList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
+    if (!IsCusResExist()) {
+        return;
+    }
+    if (!CanProcessResStatus()) {
+        write_runlog(LOG, "[%s], res status list invalid, can't continue.\n", __FUNCTION__);
+        return;
+    }
     ProcessRequestResStatusListMsg(recvMsgInfo);
+}
+
+static void MsgLatestResStatusList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    if (!IsCusResExist()) {
+        return;
+    }
+    if (!CanProcessResStatus()) {
+        write_runlog(LOG, "[%s], res status list invalid, can't continue.\n", __FUNCTION__);
+        return;
+    }
+    RequestLatestStatList *recvMsg;
+    PROCESS_MSG_BY_TYPE(RequestLatestStatList, recvMsg, ProcessRequestLatestResStatusListMsg);
 }
 
 static void MsgGetSharedStorageInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1529,6 +1558,9 @@ static void MsgSslConnRequest(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc 
 
 static void MsgCmResLock(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
+    if (!IsCusResExist()) {
+        return;
+    }
     CmaToCmsResLock *lockMsg = NULL;
     PROCESS_MSG_BY_TYPE(CmaToCmsResLock, lockMsg, ProcessCmResLock);
 }
@@ -1614,6 +1646,9 @@ static void MsgGetFloatIpInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc 
 
 static void MsgResIsreg(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
+    if (!IsCusResExist()) {
+        return;
+    }
     CmaToCmsIsregMsg *isregMsg;
     PROCESS_MSG_BY_TYPE(CmaToCmsIsregMsg, isregMsg, ProcessResIsregMsg);
 }
@@ -1668,17 +1703,19 @@ static void InitCmAgentCmdProc()
     g_cmdProc[MSG_AGENT_CM_ETCD_CURRENT_TIME] = MsgEtcdCurrentTime;
     g_cmdProc[MSG_CM_QUERY_INSTANCE_STATUS] = MsgQueryInstanceStatus;
     g_cmdProc[MSG_AGENT_CM_KERBEROS_STATUS] = MsgKerberosStatus;
-    g_cmdProc[MSG_AGENT_CM_RESOURCE_STATUS] = MsgAgentResourceStatus;
     g_cmdProc[MSG_AGENT_CM_DISKUSAGE_STATUS] = MsgDiskUsageStatus;
     g_cmdProc[MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER] = MsgDatanodeInstanceBarrier;
     g_cmdProc[MSG_AGENT_CM_DN_SYNC_LIST] = MsgDnSyncList;
-    g_cmdProc[MSG_AGENT_CM_REQUEST_RES_STATUS_LIST] = MsgRequestResStatusList;
     g_cmdProc[MSG_AGENT_CM_DATANODE_LOCAL_PEER] = MsgDnLocalPeer;
     g_cmdProc[MSG_GET_SHARED_STORAGE_INFO] = MsgGetSharedStorageInfo;
-    g_cmdProc[MSG_CM_RES_LOCK] = MsgCmResLock;
     g_cmdProc[MSG_CM_RHB] = MsgCmRhb;
     g_cmdProc[MSG_AGENT_CM_FLOAT_IP] = MsgGetFloatIpInfo;
+
+    g_cmdProc[MSG_CM_RES_LOCK] = MsgCmResLock;
     g_cmdProc[MSG_AGENT_CM_ISREG_REPORT] = MsgResIsreg;
+    g_cmdProc[MSG_AGENT_CM_RESOURCE_STATUS] = MsgAgentResourceStatus;
+    g_cmdProc[MSG_AGENT_CM_GET_LATEST_STATUS_LIST] = MsgLatestResStatusList;
+    g_cmdProc[MSG_AGENT_CM_REQUEST_RES_STATUS_LIST] = MsgRequestResStatusList;
 }
 
 static void InitCmClientCmdProc()

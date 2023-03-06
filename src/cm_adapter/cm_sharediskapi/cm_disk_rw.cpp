@@ -777,7 +777,7 @@ status_t FindCacheByMultiLevel(const char *key, char *buff, uint32 buffLen)
     (void)pthread_rwlock_unlock(&g_sdCacheList.lk_lock);
 
     if (offset == 0) {
-        write_runlog(WARNING, "FindCacheByMultiLevel: can't find key %s or buffLen %u is invalid.\n",
+        write_runlog(DEBUG1, "FindCacheByMultiLevel: can't find key %s or buffLen %u is invalid.\n",
             key,
             buffLen);
         CM_SET_DISKRW_ERROR(ERR_DISKRW_KEY_NOTFOUND, key);

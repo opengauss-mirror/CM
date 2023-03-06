@@ -648,10 +648,8 @@ static uint32 GetResNameMaxLen()
 {
     uint32 minLen = (uint32)strlen("res_name") + SPACE_LEN;
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         uint32 curNameLen = (uint32)strlen(g_resStatus[i].status.resName) + SPACE_LEN;
         minLen = (minLen > curNameLen) ? minLen : curNameLen;
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
     return minLen;
 }

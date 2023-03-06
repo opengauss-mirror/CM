@@ -248,6 +248,11 @@ int CheckOneResInst(const CmResConfList *conf)
         (ret != CUS_RES_CHECK_STAT_ABNORMAL)) {
         write_runlog(LOG, "CheckOneResInst, run system command(%s %s) special result=%d\n",  conf->script, oper, ret);
     }
+
+    if (ret < 0) {
+        return CUS_RES_CHECK_STAT_FAILED;
+    }
+
     return ret;
 }
 
@@ -546,9 +551,7 @@ static status_t InitLocalCommConfOfDefRes(const CusResConfJson *resJson, CmResCo
 static uint32 GetCmInstId(const CmResConfList *newConf)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         if (strcmp(g_resStatus[i].status.resName, newConf->resName) != 0) {
-            (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
             continue;
         }
         uint32 cmInstId = 0;
@@ -558,7 +561,6 @@ static uint32 GetCmInstId(const CmResConfList *newConf)
                 break;
             }
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
         return cmInstId;
     }
     return 0;

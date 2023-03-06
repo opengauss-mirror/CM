@@ -378,19 +378,6 @@ uint64 GetTimeMinus(const struct timeval checkEnd, const struct timeval checkBeg
     return (uint64)((checkEnd.tv_sec - checkBegin.tv_sec) * secTomicSec + (checkEnd.tv_usec - checkBegin.tv_usec));
 }
 
-static void GetResStatusList()
-{
-    if (!IsCusResExist()) {
-        write_runlog(DEBUG1, "[CLIENT] no resource config, don't need get res status list.\n");
-        return;
-    }
-
-    RequestResStatList sendMsg = {0};
-    sendMsg.msgType = (int)MSG_AGENT_CM_REQUEST_RES_STATUS_LIST;
-
-    PushMsgToCmsSendQue((char *)&sendMsg, (uint32)sizeof(RequestResStatList), "get res status");
-}
-
 void* ConnCmsPMain(void* arg)
 {
     (void)clock_gettime(CLOCK_MONOTONIC, &g_serverHeartbeatTime);
@@ -413,7 +400,6 @@ void* ConnCmsPMain(void* arg)
                 (void)clock_gettime(CLOCK_MONOTONIC, &g_serverHeartbeatTime);
                 have_killed_nodes = false;
                 g_agentConnCmsSuccess = true;
-                GetResStatusList();
             } else {
                 /* Firstly: We judge cma connect cms in other node is ok or disconnected.
                  * If the connection is disconnected, we need to execute the operation of stopping instances.

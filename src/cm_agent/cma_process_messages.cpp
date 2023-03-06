@@ -2044,6 +2044,18 @@ static void SendHbs()
     write_runlog(DEBUG5, "push cms msg to send queue, hbs msg.\n");
 }
 
+static void GetCusResStatListFromCms()
+{
+    RequestLatestStatList sendMsg = {0};
+    sendMsg.msgType = (int)MSG_AGENT_CM_GET_LATEST_STATUS_LIST;
+
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        sendMsg.statVersion[i] = g_resStatus[i].status.version;
+    }
+
+    PushMsgToCmsSendQue((char *)&sendMsg, (uint32)sizeof(RequestLatestStatList), "get res status");
+}
+
 static void ReportInstanceStatus()
 {
     InstancesStatusCheckAndReport();
@@ -2053,6 +2065,9 @@ static void ReportInstanceStatus()
         GetDoradoIpFromCms();
     }
     SendHbs();
+    if (IsCusResExist()) {
+        GetCusResStatListFromCms();
+    }
 }
 
 void *ProcessSendCmsMsgMain(void *arg)

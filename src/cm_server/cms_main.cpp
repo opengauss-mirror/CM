@@ -2411,6 +2411,20 @@ void ClearResource()
     write_runlog(WARNING, "receive exit message, cms has cleared resource, and cms will exit.\n");
 }
 
+static status_t InitCusResVariable()
+{
+    uint32 resNodeCount = GetResNodeCount();
+    if (resNodeCount > CM_MAX_RES_NODE_COUNT || resNodeCount == 0) {
+        write_runlog(ERROR,
+            "cus res, not support (%u) node, node count range:(0, %d].\n", resNodeCount, CM_MAX_RES_NODE_COUNT);
+        return CM_ERROR;
+    }
+    InitNodeReportVar();
+    InitIsregVariable();
+
+    return CM_SUCCESS;
+}
+
 int main(int argc, char** argv)
 {
     uid_t uid = getuid();
@@ -2619,11 +2633,10 @@ int main(int argc, char** argv)
         write_runlog(FATAL, "init res status failed.\n");
         return -1;
     }
-    if (IsCusResExist() && InitNodeReportResStatInter() != CM_SUCCESS) {
+    if (IsCusResExist() && (InitCusResVariable() != CM_SUCCESS)) {
+        write_runlog(FATAL, "init cus res variable failed.\n");
         return -1;
     }
-    InitIsregVariable();
-    GetAllResStatusFromDdb();
 
     status = CM_CreateMonitor();
     if (status < 0) {

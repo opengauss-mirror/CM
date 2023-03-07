@@ -46,6 +46,9 @@ const char *g_cmaParamInfo[] = {
     "enable_dcf|bool|0,0|NULL|NULL|",
     "disaster_recovery_type|int|0,2|NULL|NULL|",
     "agent_backup_open|int|0,2|NULL|NULL|",
+#ifndef ENABLE_PRIVATEGAUSS
+    "enable_fence_dn|string|0,0|NULL|NULL|",
+#endif
 #ifdef ENABLE_MULTIPLE_NODES
     "enable_cn_auto_repair|bool|0,0|NULL|NULL|",
     "enable_gtm_phony_dead_check|int|0,1|NULL|NULL|",

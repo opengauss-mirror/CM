@@ -279,6 +279,7 @@ extern char g_agentQueryBarrier[BARRIERLEN];
 extern char g_agentTargetBarrier[BARRIERLEN];
 extern char g_environmentThreshold[CM_PATH_LENGTH];
 extern char g_doradoIp[CM_IP_LENGTH];
+extern char g_enableFenceDn[10];
 
 extern MsgQueue g_sendQueue;
 extern MsgQueue g_recvQueue;

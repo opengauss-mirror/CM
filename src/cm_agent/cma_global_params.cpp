@@ -223,6 +223,7 @@ char g_doradoIp[CM_IP_LENGTH] = {0};
 
 MsgQueue g_sendQueue;
 MsgQueue g_recvQueue;
+char g_enableFenceDn[10] = {0};
 
 bool &GetIsSharedStorageMode()
 {

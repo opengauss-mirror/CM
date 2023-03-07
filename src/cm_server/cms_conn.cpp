@@ -942,7 +942,7 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
     uint64 now = GetMonotonicTimeMs();
     bool retryProc = false;
     static const int retrySSLAcceptDetayMs = 10;
-    write_runlog(LOG, "[InnerProcSSLAccept] now=%lu,procTime=%lu,startTime=%lu,connSeq=%lu.\n",
+    write_runlog(DEBUG5, "[InnerProcSSLAccept] now=%lu,procTime=%lu,startTime=%lu,connSeq=%lu.\n",
         now, msg->procTime, connMsg->startConnTime, con->connSeq);
 
     status = cm_cs_ssl_accept(g_ssl_acceptor_fd, &con->port->pipe);
@@ -950,7 +950,7 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
         if (now < connMsg->startConnTime + CM_SSL_IO_TIMEOUT) {
             retryProc = true;
             status = CM_SUCCESS;
-            write_runlog(LOG, "[ProcessSslConnRequest]retry ssl connect,connSeq=%lu.\n", con->connSeq);
+            write_runlog(DEBUG5, "[ProcessSslConnRequest]retry ssl connect,connSeq=%lu.\n", con->connSeq);
         } else {
             write_runlog(ERROR, "[ProcessSslConnRequest]ssl connect timeout,connSeq=%lu.\n", con->connSeq);
         }
@@ -968,7 +968,7 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
         securec_check_errno(rc, (void)rc);
         nextConnMsg->procTime = now + retrySSLAcceptDetayMs;
         pushMsgToSendQue(nextConnMsg, msg->connID.remoteType == CM_AGENT ? MsgSrcAgent : MsgSrcCtl);
-        write_runlog(LOG,
+        write_runlog(DEBUG5,
             "[ProcessSslConnRequest]retry ssl connect later,procTime=%lu,connSeq=%lu.\n",
             nextConnMsg->procTime,
             con->connSeq);
@@ -988,7 +988,7 @@ static void InnerProcSSLAccept(const MsgSendInfo *msg, CM_Connection *con)
         AddCMAgentConnection(con);
         RemoveTempConnection(con);
     }
-    write_runlog(LOG, "[ProcessSslConnRequest]srv ssl connect success,connSeq=%lu.\n", con->connSeq);
+    write_runlog(DEBUG5, "[ProcessSslConnRequest]srv ssl connect success,connSeq=%lu.\n", con->connSeq);
 }
 
 /**

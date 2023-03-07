@@ -41,9 +41,9 @@ bool IsCmInstIdInCheckList(uint32 nodeId, uint32 cmInstId);
 bool IsRecvCheckListMiss(uint32 nodeId, uint32 *checkList, uint32 checkCount);
 bool IsRecvIsregStatValid(int stat);
 
-void SaveOneResStatusToDdb(const OneResStatList *oneResStat);
-void GetOneResStatusFromDdb(OneResStatList *resStat);
-void GetAllResStatusFromDdb();
+status_t SaveOneResStatusToDdb(const OneResStatList *oneResStat);
+status_t GetOneResStatusFromDdb(OneResStatList *resStat);
+status_t GetAllResStatusFromDdb();
 
 void NotifyCmaDoReg(uint32 destNodeId);
 void NotifyCmaDoUnreg(uint32 destNodeId);

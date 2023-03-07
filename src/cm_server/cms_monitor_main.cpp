@@ -26,6 +26,7 @@
 #include "cms_ddb.h"
 #include "cms_common.h"
 #include "cms_common_res.h"
+#include "cms_cus_res.h"
 #include "cms_global_params.h"
 #include "cms_process_messages.h"
 #include "cms_write_dynamic_config.h"
@@ -818,32 +819,37 @@ static void UpdateCheckInterval(MonitorContext *ctx)
     ctx->takeTime = checkEnd.tv_sec;
 }
 
-static void SetResStatUnknown(uint32 nodeId)
+static void SetResStatUnknown(CmResStatList *resStat, uint32 instIndex)
 {
-    write_runlog(LOG, "nodeId(%u) report res stat heartbeat abnormal, set res status CM_RES_STAT_UNKNOWN.\n", nodeId);
-    for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_wrlock(&g_resStatus[i].rwlock);
-        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
-            if ((g_resStatus[i].status.resStat[j].nodeId == nodeId) &&
-                (g_resStatus[i].status.resStat[j].status != (uint32)CM_RES_STAT_UNKNOWN)) {
-                g_resStatus[i].status.resStat[j].status = (uint32)CM_RES_STAT_UNKNOWN;
-                ++g_resStatus[i].status.version;
-                ProcessReportResChangedMsg(false, g_resStatus[i].status);
-                SaveOneResStatusToDdb(&g_resStatus[i].status);
-            }
-        }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+    if (!CanProcessResStatus()) {
+        write_runlog(LOG, "[%s], res status list invalid, can't continue.\n", __FUNCTION__);
+        return;
+    }
+
+    if (resStat->status.resStat[instIndex].status != (uint32)CM_RES_STAT_UNKNOWN) {
+        (void)pthread_rwlock_wrlock(&resStat->rwlock);
+        resStat->status.resStat[instIndex].status = (uint32)CM_RES_STAT_UNKNOWN;
+        ++resStat->status.version;
+        OneResStatList tmpStat = resStat->status;
+        (void)pthread_rwlock_unlock(&resStat->rwlock);
+
+        write_runlog(LOG, "res inst(%u) report invalid status timeout, set its status unknown.\n", instIndex);
+        PrintCusInfoResList(&tmpStat, __FUNCTION__);
+        ProcessReportResChangedMsg(false, &resStat->status);
     }
 }
 
 static void CheckAllResReportByNode()
 {
-    for (uint32 i = 0; i < g_node_num; ++i) {
-        uint32 inter = GetResStatReportInter(g_node[i].node);
-        if (inter > g_agentNetworkTimeout) {
-            SetResStatUnknown(g_node[i].node);
-        } else {
-            SetResStatReportInter(g_node[i].node);
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            uint32 cmInstId = g_resStatus[i].status.resStat[j].cmInstanceId;
+            uint32 inter = GetOneResInstReportInter(g_resStatus[i].status.resName, cmInstId);
+            if (inter >= g_agentNetworkTimeout) {
+                SetResStatUnknown(&g_resStatus[i], j);
+            } else {
+                IncreaseOneResInstReportInter(g_resStatus[i].status.resName, cmInstId);
+            }
         }
     }
 }

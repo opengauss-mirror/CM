@@ -1782,17 +1782,14 @@ static int start_check_cluster()
 static bool IsAllResInstStarted(uint32 nodeId)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].nodeId != nodeId) {
                 continue;
             }
             if (GetResInstStatus(g_resStatus[i].status.resStat[j].cmInstanceId) != CM_RES_STAT_ONLINE) {
-                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
                 return false;
             }
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
     return true;
 }

@@ -90,9 +90,9 @@ void InitIsregVariable()
         }
     }
 
-    g_isregCheckList.nodeCount = g_node_num;
-    for (uint32 i = 0; i < g_node_num; ++i) {
-        g_isregCheckList.nodeCheck[i].nodeId = g_node[i].node;
+    g_isregCheckList.nodeCount = GetResNodeCount();
+    for (uint32 i = 0; i < g_isregCheckList.nodeCount; ++i) {
+        g_isregCheckList.nodeCheck[i].nodeId = GetResNodeId(i);
         g_isregCheckList.nodeCheck[i].reportInter = 0;
         g_isregCheckList.nodeCheck[i].isValid = true;
         InitCheckList(g_isregCheckList.nodeCheck[i].nodeId, &g_isregCheckList.nodeCheck[i]);
@@ -281,13 +281,16 @@ void UpdateIsworkList(uint32 cmInstId, int newIswork)
                 ReleaseResLockOwner(g_resStatus[i].status.resName, g_resStatus[i].status.resStat[j].cmInstanceId);
             }
             if (g_resStatus[i].status.resStat[j].isWorkMember != (uint32)newIswork) {
+                (void)pthread_rwlock_wrlock(&g_resStatus[i].rwlock);
                 g_resStatus[i].status.resStat[j].isWorkMember = (uint32)newIswork;
-                ++g_resStatus[i].status.version;
-                ProcessReportResChangedMsg(false, g_resStatus[i].status);
-                SaveOneResStatusToDdb(&g_resStatus[i].status);
-                PrintCusInfoResList(&g_resStatus[i].status, __FUNCTION__);
-                return;
+                ++(g_resStatus[i].status.version);
+                OneResStatList resStat = g_resStatus[i].status;
+                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+
+                ProcessReportResChangedMsg(false, &resStat);
+                PrintCusInfoResList(&resStat, __FUNCTION__);
             }
+            return;
         }
     }
 }
@@ -429,38 +432,39 @@ static status_t SetResStatJsonToDdb(const cJSON *root, const char *resName)
     return CM_SUCCESS;
 }
 
-void SaveOneResStatusToDdb(const OneResStatList *oneResStat)
+status_t SaveOneResStatusToDdb(const OneResStatList *oneResStat)
 {
     const char *resName = oneResStat->resName;
     cJSON *root = cJSON_CreateObject();
     if (!cJSON_IsObject(root)) {
         write_runlog(ERROR, "create res status json obj failed, save res(%s) status failed.\n", resName);
         cJSON_Delete(root);
-        return;
+        return CM_ERROR;
     }
 
     if (AddAllResInstStatToJson(root, oneResStat) != CM_SUCCESS) {
         write_runlog(ERROR, "fill res status json obj failed, save res(%s) status failed.\n", resName);
         cJSON_Delete(root);
-        return;
+        return CM_ERROR;
     }
 
     if (SetResStatJsonToDdb(root, resName) != CM_SUCCESS) {
         write_runlog(ERROR, "set res status json obj to ddb failed, save res(%s) status failed.\n", resName);
         cJSON_Delete(root);
-        return;
+        return CM_ERROR;
     }
 
-    write_runlog(LOG, "save res(%s) status json to ddb success.\n", resName);
+    write_runlog(LOG, "save res(%s) version(%llu) status json to ddb success.\n", resName, oneResStat->version);
     cJSON_Delete(root);
+    return CM_SUCCESS;
 }
 
-static void ParseAndProcessOneResInst(cJSON *instItem, OneResStatList *resStat)
+static status_t ParseAndProcessOneResInst(cJSON *instItem, OneResStatList *resStat)
 {
     cJSON *tmpObj = cJSON_GetObjectItem(instItem, "cmInstId");
     if (!cJSON_IsNumber(tmpObj)) {
         write_runlog(ERROR, "get cmInstId from res(%s) status json failed.\n", resStat->resName);
-        return;
+        return CM_ERROR;
     }
     uint32 cmInstId = (uint32)tmpObj->valueint;
     for (uint32 i = 0; i < resStat->instanceCount; ++i) {
@@ -470,75 +474,89 @@ static void ParseAndProcessOneResInst(cJSON *instItem, OneResStatList *resStat)
         tmpObj = cJSON_GetObjectItem(instItem, "isWorkMember");
         if (!cJSON_IsNumber(tmpObj)) {
             write_runlog(ERROR, "get isWorkMember from res(%s) status json failed.\n", resStat->resName);
-            return;
+            return CM_ERROR;
         }
         resStat->resStat[i].isWorkMember = (uint32)tmpObj->valueint;
         tmpObj = cJSON_GetObjectItem(instItem, "status");
         if (!cJSON_IsNumber(tmpObj)) {
             write_runlog(ERROR, "get status from res(%s) status json failed.\n", resStat->resName);
-            return;
+            return CM_ERROR;
         }
         resStat->resStat[i].status = (uint32)tmpObj->valueint;
     }
+
+    return CM_SUCCESS;
 }
 
-static void UpdateResStatus(OneResStatList *resStat, const cJSON * const resObj)
+static status_t UpdateResStatus(OneResStatList *resStat, const cJSON * const resObj)
 {
     cJSON *versionObj = cJSON_GetObjectItem(resObj, "version");
     if (!cJSON_IsString(versionObj)) {
         write_runlog(ERROR, "get version from res(%s) status json failed.\n", resStat->resName);
-        return;
+        return CM_ERROR;
     }
     resStat->version = (unsigned long long)CmAtol(versionObj->valuestring, 0);
     cJSON *instStatArray = cJSON_GetObjectItem(resObj, "instStatus");
     if (!cJSON_IsArray(instStatArray)) {
         write_runlog(ERROR, "get instStatus array from res(%s) status json failed.\n", resStat->resName);
-        return;
+        return CM_ERROR;
     }
+
     cJSON *instItem;
     cJSON_ArrayForEach(instItem, instStatArray) {
-        ParseAndProcessOneResInst(instItem, resStat);
+        CM_RETURN_IFERR(ParseAndProcessOneResInst(instItem, resStat));
     }
+
+    return CM_SUCCESS;
 }
 
-static cJSON *GetResStatusJson(const char *resName)
+status_t GetOneResStatusFromDdb(OneResStatList *resStat)
 {
     char key[MAX_PATH_LEN] = {0};
     char value[MAX_PATH_LEN] = {0};
-    GetResStatusDdbKey(key, MAX_PATH_LEN, resName);
+    GetResStatusDdbKey(key, MAX_PATH_LEN, resStat->resName);
     DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
     if (GetKVFromDDb(key, MAX_PATH_LEN, value, MAX_PATH_LEN, &ddbResult) != CM_SUCCESS) {
         if (ddbResult == CAN_NOT_FIND_THE_KEY) {
-            write_runlog(LOG, "not exit res(%s) status, key:\"%s\" in ddb.\n", resName, key);
+            write_runlog(LOG, "not exit res(%s) status, key:\"%s\" in ddb.\n", resStat->resName, key);
+            return CM_SUCCESS;
         } else {
-            write_runlog(ERROR, "get res(%s) status %s from ddb failed: %d.\n", resName, key, (int)ddbResult);
+            write_runlog(ERROR, "get res(%s) status %s from ddb failed: %d.\n", resStat->resName, key, (int)ddbResult);
+            return CM_ERROR;
         }
-        return NULL;
     }
-    write_runlog(LOG, "get res(%s) status json str success, str:\"%s\".\n", resName, value);
-    return cJSON_Parse(value);
-}
 
-void GetOneResStatusFromDdb(OneResStatList *resStat)
-{
-    cJSON *root = GetResStatusJson(resStat->resName);
-    if (!cJSON_IsObject(root)) {
-        write_runlog(ERROR, "parse res(%s) status json str failed.\n", resStat->resName);
-        cJSON_Delete(root);
-        return;
+    write_runlog(LOG, "get res(%s) status json str success, str:\"%s\".\n", resStat->resName, value);
+    cJSON *root = cJSON_Parse(value);
+    if (cJSON_IsObject(root)) {
+        OneResStatList tmpResStat = (*resStat);
+        if (UpdateResStatus(&tmpResStat, root) == CM_SUCCESS) {
+            errno_t rc = memcpy_s(resStat, sizeof(OneResStatList), &tmpResStat, sizeof(OneResStatList));
+            securec_check_errno(rc, (void)rc);
+        }
+    } else {
+        write_runlog(ERROR, "res(%s) status json str in ddb is irregular.\n", resStat->resName);
     }
-    UpdateResStatus(resStat, root);
+
     cJSON_Delete(root);
+    return CM_SUCCESS;
 }
 
-void GetAllResStatusFromDdb()
+status_t GetAllResStatusFromDdb()
 {
+    write_runlog(LOG, "get latest res status from ddb.\n");
     for (uint32 i = 0; i < CusResCount(); ++i) {
+        OneResStatList tmpResStat = g_resStatus[i].status;
+        CM_RETURN_IFERR(GetOneResStatusFromDdb(&tmpResStat));
+        PrintCusInfoResList(&tmpResStat, __FUNCTION__);
+
         (void)pthread_rwlock_wrlock(&g_resStatus[i].rwlock);
-        GetOneResStatusFromDdb(&g_resStatus[i].status);
+        errno_t rc = memcpy_s(&g_resStatus[i].status, sizeof(OneResStatList), &tmpResStat, sizeof(OneResStatList));
+        securec_check_errno(rc, (void)rc);
         (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
-        PrintCusInfoResList(&g_resStatus[i].status, __FUNCTION__);
     }
+
+    return CM_SUCCESS;
 }
 
 void SendRegMsgToCma(uint32 destNodeId, int resMode, uint32 resInstId, const char *resName)
@@ -563,7 +581,6 @@ void SendRegMsgToCma(uint32 destNodeId, int resMode, uint32 resInstId, const cha
 void NotifyCmaDoReg(uint32 destNodeId)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         const OneResStatList *resInfo = &g_resStatus[i].status;
         for (uint32 j = 0; j < resInfo->instanceCount; ++j) {
             if (resInfo->resStat[j].nodeId != destNodeId) {
@@ -578,14 +595,12 @@ void NotifyCmaDoReg(uint32 destNodeId)
                 UpdateIsworkList(resInfo->resStat[j].cmInstanceId, RES_INST_WORK_STATUS_AVAIL);
             }
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
 }
 
 void NotifyCmaDoUnreg(uint32 destNodeId)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         const OneResStatList *resInfo = &g_resStatus[i].status;
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].nodeId != destNodeId) {
@@ -598,6 +613,5 @@ void NotifyCmaDoUnreg(uint32 destNodeId)
                 UpdateIsworkList(g_resStatus[i].status.resStat[j].cmInstanceId, RES_INST_WORK_STATUS_UNAVAIL);
             }
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
 }

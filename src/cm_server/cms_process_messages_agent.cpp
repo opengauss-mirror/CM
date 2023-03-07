@@ -710,7 +710,7 @@ void ProcessSslConnRequest(MsgRecvInfo* recvMsgInfo, const AgentToCmConnectReque
         return;
     }
 
-    write_runlog(LOG, "ProcessSslConnRequest, node id: %u.\n", requestMsg->nodeid);
+    write_runlog(DEBUG5, "ProcessSslConnRequest, node id: %u.\n", requestMsg->nodeid);
     if (g_ssl_acceptor_fd == NULL) {
         write_runlog(ERROR, "[ProcessSslConnRequest]srv ssl_acceptor_fd null.\n");
         RemoveCmagentSslConn(recvMsgInfo);

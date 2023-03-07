@@ -22,6 +22,7 @@
 * -------------------------------------------------------------------------
 */
 #include "cms_conn.h"
+#include "cms_cus_res.h"
 #include "cms_common_res.h"
 #include "cms_ddb_adapter.h"
 #include "cms_global_params.h"
@@ -29,90 +30,188 @@
 
 typedef struct ResStatReportInfoSt {
     uint32 nodeId;
-    uint32 reportInter;
     MaxClusterResStatus isAvail;  // 0:res inst unavailable, 1:res inst available
 } ResStatReportInfo;
 
-static ResStatReportInfo *g_resNodeStat = NULL;
+typedef struct OneResStatReportInterSt {
+    uint32 nodeId;
+    uint32 cmInstId;
+    uint32 statReportInter;
+} OneResStatReportInter;
 
-void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList &status)
+typedef struct ResStatReportInterSt {
+    char resName[CM_MAX_RES_NAME];
+    uint32 instCount;
+    OneResStatReportInter resReport[CM_MAX_RES_INST_COUNT];
+} ResStatReportInter;
+
+static ResStatReportInfo *g_resNodeStat = NULL;
+static ResStatReportInter *g_resInstReport = NULL;
+
+void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList *status)
 {
     CmsReportResStatList sendMsg = {0};
     sendMsg.msgType = notifyClient ? (int)MSG_CM_AGENT_RES_STATUS_CHANGED : (int)MSG_CM_AGENT_RES_STATUS_LIST;
-    errno_t rc = memcpy_s(&sendMsg.resList, sizeof(OneResStatList), &status, sizeof(OneResStatList));
+    errno_t rc = memcpy_s(&sendMsg.resList, sizeof(OneResStatList), status, sizeof(OneResStatList));
     securec_check_errno(rc, (void)rc);
 
     (void)BroadcastMsg('S', (char *)(&sendMsg), sizeof(CmsReportResStatList));
 }
 
-static bool IsResStatusChanged(uint32 cmInstId, uint32 newStat, CmResStatList *oldResStat)
+uint32 ResCheckResultTransToResStat(uint32 recvStat)
 {
-    for (uint32 i = 0; i < oldResStat->status.instanceCount; ++i) {
-        if (cmInstId != oldResStat->status.resStat[i].cmInstanceId) {
+    if (recvStat == CUS_RES_CHECK_STAT_ONLINE) {
+        return (uint32)CM_RES_STAT_ONLINE;
+    }
+    if (recvStat == CUS_RES_CHECK_STAT_OFFLINE) {
+        return (uint32)CM_RES_STAT_OFFLINE;
+    }
+    if (recvStat == CUS_RES_CHECK_STAT_TIMEOUT) {
+        return (uint32)CM_RES_STAT_UNKNOWN;
+    }
+    if (recvStat == CUS_RES_CHECK_STAT_ABNORMAL) {
+        return (uint32)CM_RES_STAT_ONLINE;
+    }
+
+    return (uint32)CM_RES_STAT_UNKNOWN;
+}
+
+void IncreaseResReportInterMain(const char *resName, uint32 increaseInstId)
+{
+    if (g_resInstReport == NULL) {
+        return;
+    }
+
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        if (strcmp(g_resInstReport[i].resName, resName) != 0) {
             continue;
         }
-        if (newStat != oldResStat->status.resStat[i].status) {
-            oldResStat->status.resStat[i].status = newStat;
-            return true;
+        for (uint32 j = 0; j < g_resInstReport[i].instCount; ++j) {
+            if (g_resInstReport[i].resReport[j].cmInstId == increaseInstId) {
+                ++(g_resInstReport[i].resReport[j].statReportInter);
+                break;
+            }
         }
         break;
     }
+}
+
+void IncreaseOneResInstReportInter(const char *resName, uint32 instId)
+{
+    IncreaseResReportInterMain(resName, instId);
+}
+
+uint32 GetResReportInterMain(const char *resName, uint32 instId)
+{
+    if (g_resInstReport == NULL) {
+        return 0;
+    }
+
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        if (strcmp(g_resInstReport[i].resName, resName) != 0) {
+            continue;
+        }
+        for (uint32 j = 0; j < g_resInstReport[i].instCount; ++j) {
+            if (g_resInstReport[i].resReport[j].cmInstId == instId) {
+                return g_resInstReport[i].resReport[j].statReportInter;
+            }
+        }
+        break;
+    }
+    return 0;
+}
+
+uint32 GetOneResInstReportInter(const char *resName, uint32 instId)
+{
+    return GetResReportInterMain(resName, instId);
+}
+
+static bool IsOneCusResStatValid(uint32 status)
+{
+    if (status == CUS_RES_CHECK_STAT_ONLINE ||
+        status == CUS_RES_CHECK_STAT_OFFLINE ||
+        status == CUS_RES_CHECK_STAT_ABNORMAL ||
+        status == CUS_RES_CHECK_STAT_TIMEOUT) {
+        return true;
+    }
+
     return false;
 }
 
-static inline int ReportResStatInterCmp(const void *arg1, const void *arg2)
+static void CleanResReportInter(const CmResourceStatus *resStat)
 {
-    return (int)((((const ResStatReportInfo *)arg1)->nodeId) - (((const ResStatReportInfo *)arg2)->nodeId));
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        if (strcmp(g_resInstReport[i].resName, resStat->resName) != 0) {
+            continue;
+        }
+        for (uint32 j = 0; j < g_resInstReport[i].instCount; ++j) {
+            if (g_resInstReport[i].resReport[j].cmInstId != resStat->cmInstanceId) {
+                continue;
+            }
+            if (IsOneCusResStatValid(resStat->status)) {
+                g_resInstReport[i].resReport[j].statReportInter = 0;
+            }
+            break;
+        }
+        break;
+    }
 }
 
-status_t InitNodeReportResStatInter()
+static bool8 IsNodeCriticalResReportTimeout(uint32 nodeId)
 {
-    g_resNodeStat = (ResStatReportInfo*)malloc(sizeof(ResStatReportInfo) * g_node_num);
-    if (g_resNodeStat == NULL) {
-        write_runlog(ERROR, "out of memory, InitNodeReportResStatInter.\n");
-        return CM_ERROR;
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        for (uint32 j = 0; j < g_resInstReport[i].instCount; ++j) {
+            if (g_resInstReport[i].resReport[j].nodeId != nodeId) {
+                continue;
+            }
+            if (g_resInstReport[i].resReport[j].statReportInter >= g_agentNetworkTimeout) {
+                return CM_TRUE;
+            }
+        }
     }
-    errno_t rc = memset_s(g_resNodeStat, sizeof(ResStatReportInfo), 0, sizeof(ResStatReportInfo));
-    securec_check_errno(rc, (void)rc);
-    for (uint32 i = 0; i < g_node_num; ++i) {
-        g_resNodeStat[i].nodeId = g_node[i].node;
+    return CM_FALSE;
+}
+
+static void InitResInstReport()
+{
+    g_resInstReport = (ResStatReportInter*)CmMalloc(sizeof(ResStatReportInter) * CusResCount());
+
+    errno_t rc;
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        rc = strcpy_s(g_resInstReport[i].resName, CM_MAX_RES_NAME, g_resStatus[i].status.resName);
+        securec_check_errno(rc, (void)rc);
+        g_resInstReport[i].instCount = g_resStatus[i].status.instanceCount;
+        for (uint32 j = 0; j < g_resInstReport[i].instCount; ++j) {
+            g_resInstReport[i].resReport[j].nodeId = g_resStatus[i].status.resStat[j].nodeId;
+            g_resInstReport[i].resReport[j].cmInstId = g_resStatus[i].status.resStat[j].cmInstanceId;
+            g_resInstReport[i].resReport[j].statReportInter = 0;
+        }
+    }
+}
+
+static void InitResStatReport()
+{
+    g_resNodeStat = (ResStatReportInfo*)CmMalloc(sizeof(ResStatReportInfo) * GetResNodeCount());
+    for (uint32 i = 0; i < GetResNodeCount(); ++i) {
+        g_resNodeStat[i].nodeId = GetResNodeId(i);
         g_resNodeStat[i].isAvail = MAX_CLUSTER_STATUS_INIT;
     }
-#undef qsort
-    qsort(g_resNodeStat, g_node_num, sizeof(ResStatReportInfo), ReportResStatInterCmp);
-    return CM_SUCCESS;
+}
+
+void InitNodeReportVar()
+{
+    InitResInstReport();
+    InitResStatReport();
 }
 
 static uint32 FindNodeReportResInterByNodeId(uint32 nodeId)
 {
-    if (nodeId >= g_node_num || nodeId == 0) {
-        for (int i = (int)(g_node_num - 1); i >= 0; --i) {
-            if (g_resNodeStat[i].nodeId == nodeId) {
-                return (uint32)i;
-            }
-        }
-        return g_node_num;
-    }
-    // In most cases, the position is nodeId - 1.
-    uint32 comInd = nodeId - 1;
-    if (g_resNodeStat[comInd].nodeId == nodeId) {
-        return comInd;
-    }
-    if (g_resNodeStat[comInd].nodeId > nodeId) {
-        for (int i = (int)(g_node_num - 1); i >= 0; --i) {
-            if (g_resNodeStat[i].nodeId == nodeId) {
-                return (uint32)i;
-            }
-        }
-        return g_node_num;
-    }
-    // if g_resNodeStat[comInd].nodeId < nodeId
-    for (uint32 i = comInd + 1; i < g_node_num; ++i) {
+    for (uint32 i = 0; i < GetResNodeCount(); ++i) {
         if (g_resNodeStat[i].nodeId == nodeId) {
             return i;
         }
     }
-    return g_node_num;
+    return GetResNodeCount();
 }
 
 static MaxClusterResStatus GetResNodeStatByReport(uint32 stat)
@@ -149,45 +248,27 @@ static MaxClusterResStatus IsAllNodeResInstAvail(const OneNodeResourceStatus *no
 static inline void WriteGetResNodeStatErrLog(uint32 nodeId)
 {
     write_runlog(ERROR, "can't find nodeId(%u) in g_resNodeStat.\n", nodeId);
-    for (uint32 i = 0; i < g_node_num; ++i) {
+    for (uint32 i = 0; i < GetResNodeCount(); ++i) {
         write_runlog(ERROR, "g_resNodeStat[%u].nodeId = %u.\n", i, g_resNodeStat[i].nodeId);
     }
 }
 
-static bool IsCusResStatValid(const OneNodeResourceStatus *nodeStat)
-{
-    for (uint32 i = 0; i < nodeStat->count; ++i) {
-        if (nodeStat->status[i].status != CUS_RES_CHECK_STAT_ONLINE &&
-            nodeStat->status[i].status != CUS_RES_CHECK_STAT_OFFLINE &&
-            nodeStat->status[i].status != CUS_RES_CHECK_STAT_ABNORMAL &&
-            nodeStat->status[i].status != CUS_RES_CHECK_STAT_TIMEOUT) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static void RecordResStatReport(const OneNodeResourceStatus *nodeStat)
 {
-    if (g_resNodeStat == NULL) {
-        write_runlog(ERROR, "[CLIENT] g_resNodeStat is null.\n");
+    if (g_resNodeStat == NULL || g_resInstReport == NULL) {
+        write_runlog(ERROR, "g_resNodeStat or g_resInstReport is null.\n");
         return;
     }
 
     uint32 ind = FindNodeReportResInterByNodeId(nodeStat->node);
-    if (ind < g_node_num) {
-        if (IsCusResStatValid(nodeStat)) {
-            g_resNodeStat[ind].reportInter = 0;
+    if (ind < GetResNodeCount()) {
+        for (uint32 i = 0; i < nodeStat->count; ++i) {
+            CleanResReportInter(&nodeStat->status[i]);
         }
         g_resNodeStat[ind].isAvail = IsAllNodeResInstAvail(nodeStat, g_resNodeStat[ind].isAvail);
     } else {
         WriteGetResNodeStatErrLog(nodeStat->node);
     }
-}
-
-static inline bool IsReportTimeout(uint32 reportInter)
-{
-    return (reportInter >= g_agentNetworkTimeout);
 }
 
 static const char* GetClusterResStatStr(MaxClusterResStatus stat)
@@ -210,12 +291,17 @@ static const char* GetClusterResStatStr(MaxClusterResStatus stat)
 
 MaxClusterResStatus GetResNodeStat(uint32 nodeId, int logLevel)
 {
+    if (g_resNodeStat == NULL || g_resInstReport == NULL) {
+        return MAX_CLUSTER_STATUS_UNKNOWN;
+    }
+
+    if (IsNodeCriticalResReportTimeout(nodeId)) {
+        write_runlog(logLevel, "recv node(%u) agent report res status msg timeout.\n", nodeId);
+        return MAX_CLUSTER_STATUS_UNAVAIL;
+    }
+
     uint32 ind = FindNodeReportResInterByNodeId(nodeId);
-    if (ind < g_node_num) {
-        if (IsReportTimeout(g_resNodeStat[ind].reportInter)) {
-            write_runlog(logLevel, "recv node(%u) agent report res status msg timeout.\n", nodeId);
-            return MAX_CLUSTER_STATUS_UNAVAIL;
-        }
+    if (ind < GetResNodeCount()) {
         if (g_resNodeStat[ind].isAvail != MAX_CLUSTER_STATUS_AVAIL) {
             write_runlog(logLevel, "node(%u) stat (%s).\n", nodeId, GetClusterResStatStr(g_resNodeStat[ind].isAvail));
         }
@@ -227,77 +313,55 @@ MaxClusterResStatus GetResNodeStat(uint32 nodeId, int logLevel)
     return MAX_CLUSTER_STATUS_UNKNOWN;
 }
 
-void SetResStatReportInter(uint32 nodeId)
+static bool8 IsResInstStatChange(uint32 cmInstId, uint32 recvStat, CmResStatList *oldResStat, uint32 *changeInd)
 {
-    if (g_resNodeStat == NULL) {
-        return;
+    for (uint32 i = 0; i < oldResStat->status.instanceCount; ++i) {
+        if (cmInstId != oldResStat->status.resStat[i].cmInstanceId) {
+            continue;
+        }
+        if (!IsOneCusResStatValid(recvStat)) {
+            if (oldResStat->status.resStat[i].status != (uint32)CM_RES_STAT_UNKNOWN) {
+                write_runlog(LOG, "recv inst(%u) invalid res status(%u), exceed (%u)s, will set it unknown.\n",
+                    cmInstId, recvStat, g_agentNetworkTimeout);
+            }
+            return CM_FALSE;
+        }
+        uint32 newStat = ResCheckResultTransToResStat(recvStat);
+        uint32 oldStat = oldResStat->status.resStat[i].status;
+        if (oldStat != newStat) {
+            write_runlog(LOG, "inst(%u)'s old status(%u) change to new status(%u).\n", cmInstId, oldStat, newStat);
+            (*changeInd) = i;
+            return CM_TRUE;
+        } else {
+            return CM_FALSE;
+        }
     }
-    uint32 ind = FindNodeReportResInterByNodeId(nodeId);
-    if (ind < g_node_num) {
-        ++g_resNodeStat[ind].reportInter;
-    } else {
-        WriteGetResNodeStatErrLog(nodeId);
-    }
+
+    write_runlog(ERROR, "res(%s)'s inst(%u) not exist.\n", oldResStat->status.resName, cmInstId);
+    return CM_FALSE;
 }
 
-uint32 GetResStatReportInter(uint32 nodeId)
+static void ProcessOneResInstStatReport(CmResourceStatus *newStat)
 {
-    if (g_resNodeStat == NULL) {
-        return 0;
-    }
-    uint32 ind = FindNodeReportResInterByNodeId(nodeId);
-    if (ind < g_node_num) {
-        return g_resNodeStat[ind].reportInter;
-    }
-    WriteGetResNodeStatErrLog(nodeId);
-    return 0;
-}
+    newStat->resName[CM_MAX_RES_NAME - 1] = '\0';
 
-static uint32 GetResInstStat(uint32 recvStat)
-{
-    if (recvStat == CUS_RES_CHECK_STAT_ONLINE) {
-        return (uint32)CM_RES_STAT_ONLINE;
-    }
-    if (recvStat == CUS_RES_CHECK_STAT_OFFLINE) {
-        return (uint32)CM_RES_STAT_OFFLINE;
-    }
-    if (recvStat == CUS_RES_CHECK_STAT_ABNORMAL) {
-        return (uint32)CM_RES_STAT_ONLINE;
-    }
-
-    return (uint32)CM_RES_STAT_UNKNOWN;
-}
-
-static void ProcessOneResInstStatReport(CmResourceStatus *stat)
-{
     uint32 index = 0;
-    stat->resName[CM_MAX_RES_NAME - 1] = '\0';
-    if (GetGlobalResStatusIndex(stat->resName, index) != CM_SUCCESS) {
-        write_runlog(ERROR, "[CLIENT] %s, unknown the resName(%s).\n", __func__, stat->resName);
+    if (GetGlobalResStatusIndex(newStat->resName, index) != CM_SUCCESS) {
+        write_runlog(ERROR, "%s, unknown the resName(%s).\n", __func__, newStat->resName);
         return;
     }
 
-    if (stat->workStatus == RES_INST_WORK_STATUS_UNKNOWN) {
-        write_runlog(LOG, "[CLIENT] node(%u) had restart.\n", stat->nodeId);
-    }
-
-    uint32 newInstStat = GetResInstStat(stat->status);
-
-    CmResStatList *resStat = &g_resStatus[index];
-    (void)pthread_rwlock_wrlock(&(resStat->rwlock));
-    bool isChanged = IsResStatusChanged(stat->cmInstanceId, newInstStat, resStat);
+    uint32 changeInd = 0;
+    bool8 isChanged = IsResInstStatChange(newStat->cmInstanceId, newStat->status, &g_resStatus[index], &changeInd);
     if (isChanged) {
-        ++resStat->status.version;
-        ProcessReportResChangedMsg(true, resStat->status);
-    }
-    (void)pthread_rwlock_unlock(&(resStat->rwlock));
+        (void)pthread_rwlock_wrlock(&(g_resStatus[index].rwlock));
+        g_resStatus[index].status.resStat[changeInd].status = ResCheckResultTransToResStat(newStat->status);
+        ++(g_resStatus[index].status.version);
+        OneResStatList resStat = g_resStatus[index].status;
+        (void)pthread_rwlock_unlock(&(g_resStatus[index].rwlock));
 
-    if (isChanged) {
-        (void)pthread_rwlock_rdlock(&(resStat->rwlock));
-        SaveOneResStatusToDdb(&resStat->status);
-        (void)pthread_rwlock_unlock(&(resStat->rwlock));
-        PrintCusInfoResList(&resStat->status, __FUNCTION__);
-        write_runlog(LOG, "[CLIENT] [%u:%u] res(%s) changed\n", stat->nodeId, stat->cmInstanceId, stat->resName);
+        ProcessReportResChangedMsg(true, &resStat);
+        PrintCusInfoResList(&resStat, __FUNCTION__);
     }
 }
 
@@ -319,8 +383,29 @@ void ProcessRequestResStatusListMsg(MsgRecvInfo* recvMsgInfo)
     for (uint32 i = 0; i < CusResCount(); ++i) {
         (void)pthread_rwlock_rdlock(&(g_resStatus[i].rwlock));
         errno_t rc = memcpy_s(&sendMsg.resList, sizeof(OneResStatList), &g_resStatus[i].status, sizeof(OneResStatList));
-        (void)pthread_rwlock_unlock(&(g_resStatus[i].rwlock));
         securec_check_errno(rc, (void)rc);
+        (void)pthread_rwlock_unlock(&(g_resStatus[i].rwlock));
+
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&sendMsg), sizeof(CmsReportResStatList));
+    }
+}
+
+void ProcessRequestLatestResStatusListMsg(MsgRecvInfo *recvMsgInfo, RequestLatestStatList *recvMsg)
+{
+    CmsReportResStatList sendMsg = {0};
+    sendMsg.msgType = (int)MSG_CM_AGENT_RES_STATUS_LIST;
+
+    errno_t rc;
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        if (g_resStatus[i].status.version == recvMsg->statVersion[i]) {
+            continue;
+        }
+
+        (void)pthread_rwlock_rdlock(&(g_resStatus[i].rwlock));
+        rc = memcpy_s(&sendMsg.resList, sizeof(OneResStatList), &g_resStatus[i].status, sizeof(OneResStatList));
+        securec_check_errno(rc, (void)rc);
+        (void)pthread_rwlock_unlock(&(g_resStatus[i].rwlock));
+
         (void)RespondMsg(recvMsgInfo, 'S', (char*)(&sendMsg), sizeof(CmsReportResStatList));
     }
 }
@@ -450,6 +535,10 @@ static ClientError CmResLock(const CmaToCmsResLock *lockMsg)
             lockMsg->resName, lockMsg->lockName, lockMsg->cmInstId);
         return CM_RES_CLIENT_CANNOT_DO;
     }
+    if (!CanProcessResStatus()) {
+        write_runlog(LOG, "[%s], res status list invalid, can't continue.\n", __FUNCTION__);
+        return CM_RES_CLIENT_CANNOT_DO;
+    }
     if (!IsOneResInstWork(lockMsg->resName, lockMsg->cmInstId)) {
         write_runlog(ERROR, "[CLIENT] res(%s) inst(%u) has been get out of cluster, can't do lock.\n",
             lockMsg->resName, lockMsg->cmInstId);
@@ -541,6 +630,11 @@ static ClientError TransLockOwner(const CmaToCmsResLock *lockMsg)
             resName, lockName, curLockOwner, resInstId);
         return CM_RES_CLIENT_CANNOT_DO;
     }
+
+    if (!CanProcessResStatus()) {
+        write_runlog(LOG, "[%s], res status list invalid, can't continue.\n", __FUNCTION__);
+        return CM_RES_CLIENT_CANNOT_DO;
+    }
     if (!IsOneResInstWork(resName, newLockOwner)) {
         write_runlog(LOG, "[CLIENT] res(%s) inst(%u) get out of cluster, can't be lockOwner.\n", resName, newLockOwner);
         return CM_RES_CLIENT_CANNOT_DO;
@@ -602,8 +696,8 @@ static inline void CopyResStatusToSendMsg(OneResStatList *sendStat, CmResStatLis
 {
     (void)pthread_rwlock_rdlock(&saveStat->rwlock);
     errno_t rc = memcpy_s(sendStat, sizeof(OneResStatList), &saveStat->status, sizeof(OneResStatList));
-    (void)pthread_rwlock_unlock(&saveStat->rwlock);
     securec_check_errno(rc, (void)rc);
+    (void)pthread_rwlock_unlock(&saveStat->rwlock);
 }
 
 void ProcessResInstanceStatusMsg(MsgRecvInfo* recvMsgInfo, const CmsToCtlGroupResStatus *queryStatusPtr)
@@ -630,19 +724,16 @@ void ProcessQueryOneResInst(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat 
 
     uint32 destInstId = queryMsg->instId;
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].cmInstanceId != destInstId) {
                 continue;
             }
-            errno_t rc = memcpy_s(&ackMsg.instStat, sizeof(CmResStatInfo),
-                &g_resStatus[i].status.resStat[j], sizeof(CmResStatInfo));
+            (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+            ackMsg.instStat = g_resStatus[i].status.resStat[j];
             (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
-            securec_check_errno(rc, (void)rc);
             (void)RespondMsg(recvMsgInfo, 'S', (char*)&(ackMsg), sizeof(ackMsg), DEBUG5);
             return;
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
     write_runlog(ERROR, "unknown res instId(%u).\n", destInstId);
 }
@@ -690,7 +781,7 @@ void ResetResNodeStat()
     if (g_resNodeStat == NULL) {
         return;
     }
-    for (uint32 i = 0; i < g_node_num; ++i) {
+    for (uint32 i = 0; i < GetResNodeCount(); ++i) {
         g_resNodeStat[i].isAvail = MAX_CLUSTER_STATUS_INIT;
     }
 }

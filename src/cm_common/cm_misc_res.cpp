@@ -29,8 +29,10 @@
 bool g_enableSharedStorage = false;
 CmResStatList g_resStatus[CM_MAX_RES_COUNT] = {{0}};
 
-static uint32 g_resCount = 0;
 static bool8 g_isDnSSMode = CM_FALSE;
+static uint32 g_resCount = 0;
+static uint32 g_resNode[CM_MAX_RES_NODE_COUNT] = {0};
+static uint32 g_resNodeCount = 0;
 
 typedef enum IpTypeEn {
     IP_TYPE_INIT = 0,
@@ -105,6 +107,44 @@ const ResIsregStatusMap g_resIsregStatusMap[] = {
     {CM_RES_ISREG_UNKNOWN, "unknown"},
     {CM_RES_ISREG_NOT_SUPPORT, "not_support"},
 };
+
+static bool8 IsNodeInResNode(uint32 nodeId)
+{
+    for (uint32 i = 0; i < CM_MAX_RES_NODE_COUNT; ++i) {
+        if (i >= g_resNodeCount) {
+            return CM_FALSE;
+        }
+        if (g_resNode[i] == nodeId) {
+            return CM_TRUE;
+        }
+    }
+    return CM_FALSE;
+}
+
+static void UpdateResNode(uint32 nodeId)
+{
+    if (IsNodeInResNode(nodeId)) {
+        return;
+    }
+
+    if (g_resNodeCount < CM_MAX_RES_NODE_COUNT) {
+        g_resNode[g_resNodeCount] = nodeId;
+    }
+    ++g_resNodeCount;
+}
+
+uint32 GetResNodeCount()
+{
+    return g_resNodeCount;
+}
+
+uint32 GetResNodeId(uint32 index)
+{
+    if (index >= CM_MAX_RES_NODE_COUNT) {
+        return 0;
+    }
+    return g_resNode[index];
+}
 
 const char *GetIsregStatus(int isreg)
 {
@@ -209,6 +249,7 @@ static status_t InitOneAppResInstStat(const char *resName, const CusResInstConf 
 {
     if (IsNodeIdValid(resInst->nodeId)) {
         instStat->nodeId = (uint32)resInst->nodeId;
+        UpdateResNode(instStat->nodeId);
     } else {
         write_runlog(ERROR, "[InitResStat] res(%s), nodeId(%d) is invalid.\n", resName, resInst->nodeId);
         return CM_ERROR;
@@ -288,6 +329,7 @@ static status_t InitAllDnResInstStat(const DnCusResConfJson *dnResJson, OneResSt
         for (uint32 k = 0; k < g_node[i].datanodeCount; ++k) {
             InitOneDnResInstStatByStaticConfig(&g_node[i].datanode[k], &oneStat->resStat[oneStat->instanceCount]);
             oneStat->resStat[oneStat->instanceCount].nodeId = g_node[i].node;
+            UpdateResNode(oneStat->resStat[oneStat->instanceCount].nodeId);
             ++oneStat->instanceCount;
         }
     }
@@ -369,13 +411,10 @@ void GetCmConfJsonPath(char *path, uint32 pathLen)
 status_t GetGlobalResStatusIndex(const char *resName, uint32 &index)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&(g_resStatus[i].rwlock));
         if (strcmp(g_resStatus[i].status.resName, resName) == 0) {
-            (void)pthread_rwlock_unlock(&(g_resStatus[i].rwlock));
             index = i;
             return CM_SUCCESS;
         }
-        (void)pthread_rwlock_unlock(&(g_resStatus[i].rwlock));
     }
     return CM_ERROR;
 }
@@ -403,14 +442,14 @@ bool IsOneResInstWork(const char *resName, uint32 cmInstId)
 
     bool isWork = false;
     CmResStatList *resStat = &g_resStatus[index];
-    (void)pthread_rwlock_rdlock(&resStat->rwlock);
     for (uint32 i = 0; i < resStat->status.instanceCount; ++i) {
         if (resStat->status.resStat[i].cmInstanceId == cmInstId) {
+            (void)pthread_rwlock_rdlock(&resStat->rwlock);
             isWork = (resStat->status.resStat[i].isWorkMember == RES_INST_WORK_STATUS_AVAIL);
+            (void)pthread_rwlock_unlock(&resStat->rwlock);
             break;
         }
     }
-    (void)pthread_rwlock_unlock(&resStat->rwlock);
 
     return isWork;
 }
@@ -443,16 +482,13 @@ const char *ReadConfJsonFailStr(int ret)
 status_t GetResNameByCmInstId(uint32 instId, char *resName, uint32 nameLen)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].cmInstanceId == instId) {
                 errno_t rc = strcpy_s(resName, nameLen, g_resStatus[i].status.resName);
-                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
                 securec_check_errno(rc, (void)rc);
                 return CM_SUCCESS;
             }
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
 
     write_runlog(LOG, "unknown cm_inst_id %u.\n", instId);

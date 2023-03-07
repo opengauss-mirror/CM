@@ -29,6 +29,7 @@
 #include "cms_global_params.h"
 #include "cms_ddb_adapter.h"
 #include "cms_process_messages.h"
+#include "cms_cus_res.h"
 #include "cms_common_res.h"
 #include "cms_rhb.h"
 #include "cms_arbitrate_cluster.h"
@@ -788,6 +789,11 @@ void NotifyResRegOrUnreg()
 {
     if ((g_threadProcessStatus == THREAD_PROCESS_UNKNOWN) || (g_threadProcessStatus == THREAD_PROCESS_STOP) ||
         (g_threadProcessStatus == THREAD_PROCESS_INIT)) {
+        return;
+    }
+
+    if (!CanProcessResStatus()) {
+        write_runlog(LOG, "[%s], res status list invalid, can't continue.\n", __FUNCTION__);
         return;
     }
 

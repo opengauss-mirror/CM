@@ -211,7 +211,7 @@ typedef enum CM_MessageType_st {
     MSG_CM_AGENT_REPORT_RES_DATA = 131,
 
     MSG_AGENT_CM_REQUEST_RES_STATUS_LIST = 132,
-    MSG_AGENT_CM_SET_INSTANCE_DATA = 133,
+    MSG_AGENT_CM_GET_LATEST_STATUS_LIST = 133,
     MSG_AGENT_CM_SET_RES_DATA = 134,
     MSG_AGENT_CM_GET_RES_DATA = 135,
 
@@ -2079,12 +2079,10 @@ typedef struct RequestResStatListSt {
     int msgType;
 } RequestResStatList;
 
-typedef struct CmaToCmsRegResultSt {
-    int32 msgType;
-    char resName[CM_MAX_RES_NAME];
-    uint32 cmInstId;
-    uint32 workStat;  // 0:unreg 1:reg
-} CmaToCmsRegResult;
+typedef struct RequestLatestStatListSt {
+    int msgType;
+    unsigned long long statVersion[CM_MAX_RES_COUNT];
+} RequestLatestStatList;
 
 typedef struct ResInstIsregSt {
     uint32 cmInstId;

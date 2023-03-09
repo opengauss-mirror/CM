@@ -174,19 +174,18 @@ int FindInstanceIdAndType(uint32 node, const char *dataPath, uint32 *instanceId,
  */
 int ssh_exec(const staticNodeConfig* node, const char* cmd, int32 logLevel)
 {
-#define MAXLINE 1024
-    char actualCmd[MAXLINE];
+    char actualCmd[MAX_COMMAND_LEN] = {0};
     int rc = -1;
     int ret;
 
     for (uint32 ii = 0; ii < node->sshCount; ii++) {
         if (mpp_env_separate_file[0] == '\0') {
-            ret = snprintf_s(actualCmd, MAXLINE, MAXLINE - 1,
+            ret = snprintf_s(actualCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
                 "pssh %s -s -H %s \"( %s ) > %s 2>&1\" < %s > /dev/null 2>&1",
                 PSSH_TIMEOUT_OPTION, node->sshChannel[ii], cmd, "/dev/null", "/dev/null");
             securec_check_intval(ret, (void)ret);
         } else {
-            ret = snprintf_s(actualCmd, MAXLINE, MAXLINE - 1,
+            ret = snprintf_s(actualCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
                 "pssh %s -s -H %s \"( source %s;%s ) > %s 2>&1\" < %s > /dev/null 2>&1",
                 PSSH_TIMEOUT_OPTION, node->sshChannel[ii], mpp_env_separate_file, cmd,
                 "/dev/null", "/dev/null");

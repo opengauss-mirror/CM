@@ -308,13 +308,31 @@ static void GetRemoteGucCommand(const CtlOption *ctx, char *cmd, size_t cmdLen)
     securec_check_intval(ret, (void)ret);
     curLen = (size_t)ret;
 
-    if (ctx->guc.gucCommand == SET_CONF_COMMAND && ctx->guc.value != NULL && ctx->guc.parameter != NULL) {
+    if (ctx->guc.gucCommand != SET_CONF_COMMAND || ctx->guc.value == NULL || ctx->guc.parameter == NULL) {
+        return;
+    }
+
+    if (strcmp(ctx->guc.parameter, "event_triggers") != 0) {
         ret = snprintf_s((cmd + curLen), (cmdLen - curLen), ((cmdLen - curLen) - 1),
             SYSTEMQUOTE "-k %s=\\\"%s\\\" " SYSTEMQUOTE, ctx->guc.parameter, ctx->guc.value);
         securec_check_intval(ret, (void)ret);
+    } else {
+        // event_triggers value contain double quotes, so an escape character is added before remote execution
+        const char *value = ctx->guc.value;
+        char valueCopy[cmdLen] = {0};
+        int j = 0;
+        for (size_t i = 0; i < strlen(value); ++i) {
+            if (value[i] == '"') {
+                valueCopy[j++] = '\\';
+                valueCopy[j++] = '\\';
+                valueCopy[j++] = '\\';
+            }
+            valueCopy[j++] = value[i];
+        }
+        ret = snprintf_s((cmd + curLen), (cmdLen - curLen), ((cmdLen - curLen) - 1),
+            SYSTEMQUOTE "-k %s=\\\"%s\\\" " SYSTEMQUOTE, ctx->guc.parameter, valueCopy);
+        securec_check_intval(ret, (void)ret);
     }
-
-    return;
 }
 
 static void PrintOneParameterAndValue(char *line)
@@ -768,7 +786,7 @@ static status_t ListRemoteConfMain(staticNodeConfig *node, const char *cmd)
 
 static status_t ProcessInRemoteInstance(const CtlOption *ctx)
 {
-    char remoteCmd[CM_PATH_LENGTH] = {0};
+    char remoteCmd[MAX_COMMAND_LEN] = {0};
 
     if (ctx->comm.nodeId == g_currentNode->node) {
         if (ProcessInLocalInstance(&ctx->guc) == CM_ERROR) {

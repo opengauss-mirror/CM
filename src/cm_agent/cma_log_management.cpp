@@ -255,7 +255,7 @@ int GZCompress(char *inpath, uint32 inLen, char *outpath, uint32 outLen)
  * This function can process different data node but have same pattern
  */
 void groupByDirectoryAndPattern(LogFile* logFile, LogFile* sortLogFile, const char* pattern, const char* basePath,
-                                uint32 count)
+                                uint32 count, uint32 &numCompressed)
 {
     errno_t rc;
     char outpath[MAX_PATH_LEN] = {'\0'};
@@ -283,6 +283,8 @@ void groupByDirectoryAndPattern(LogFile* logFile, LogFile* sortLogFile, const ch
             rc = snprintf_s(outpath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s%s", sortLogFile[jj].fileName, ".gz");
             securec_check_intval(rc, (void)rc);
             if (GZCompress(sortLogFile[jj].fileName, MAX_PATH_LEN, outpath, MAX_PATH_LEN) == 0) {
+                write_runlog(LOG, "Compressed log file, file name: %s\n", sortLogFile[jj].fileName);
+                ++numCompressed;
                 /* Compress successful then remove the source trace, and chmod */
                 (void)chmod(outpath, S_IRUSR);
                 delLogFile(sortLogFile[jj].fileName);
@@ -379,6 +381,7 @@ static void gzCompressLogFile(const char *pattern)
     }
     
     /* Find traces of one directory */
+    uint32 numCompressed = 0;
     for (uint32 jj = 0; jj < count; jj++) {
         if (strcmp(logFile[jj].pattern, pattern) == 0 && strstr(logFile[jj].fileName, ".gz") == NULL) {
             /* Skip directory that be processed	*/
@@ -388,14 +391,16 @@ static void gzCompressLogFile(const char *pattern)
 
             basePath = logFile[jj].basePath;
             allBasePath[cnt] = logFile[jj].basePath;
-            groupByDirectoryAndPattern(logFile, sortLogFile, pattern, basePath, count);
+            groupByDirectoryAndPattern(logFile, sortLogFile, pattern, basePath, count, numCompressed);
             /* Clear sort log buffer for next directory sort */
             rc = memset_s(sortLogFile, sizeof(LogFile) * totalCount, 0, sizeof(LogFile) * totalCount);
             securec_check_errno(rc, (void)rc);
             cnt++;
         }
     }
-    write_runlog(LOG, "Compress log directory.Directory Name=%s,File Count=%u\n", pattern, cnt);
+    if (numCompressed != 0) {
+        write_runlog(LOG, "Compressed log directory, pattern name=%s, file count=%u\n", pattern, numCompressed);
+    }
     FREE_AND_RESET(sortLogFile);
     FREE_AND_RESET(logFile);
     FREE_AND_RESET(allBasePath);

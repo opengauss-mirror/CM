@@ -42,7 +42,7 @@ status_t GetVotingDiskData(char *data, uint32 dataLen, uint32 offset);
 status_t GetVotingDiskSingleNodeInfo(VotingDiskNodeInfo *nodeInfo, uint32 nodeIndex);
 status_t InitVotingDiskHandler(const char *scsiDev, uint32 offset);
 status_t InitVotingDisk(const char *votingDiskPath);
-status_t UpdateAllNodeHeartBeat();
+status_t UpdateAllNodeHeartBeat(uint32 nodeNum);
 void ResetVotingdiskHeartBeat();
 VotingDiskStatus GetNodeHeartbeatStat(uint32 nodeIndex, uint32 diskTimeout, int logLevel);
 status_t AllocVotingDiskMem();

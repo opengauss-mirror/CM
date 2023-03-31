@@ -112,14 +112,14 @@ status_t SetVotingDiskNodeData(char *data, uint32 dataLen)
     return CM_SUCCESS;
 }
 
-status_t UpdateAllNodeHeartBeat()
+status_t UpdateAllNodeHeartBeat(uint32 nodeNum)
 {
-    uint32 dataLen = VOTING_DISK_DATA_SIZE;
+    uint32 dataLen = nodeNum * VOTING_DISK_EACH_NODE_OFFSET;
     if (GetVotingDiskNodeData(g_nodeDataBuff, dataLen) != CM_SUCCESS) {
         write_runlog(ERROR, "[%s] get voting disk node data failed.\n", __FUNCTION__);
         return CM_ERROR;
     }
-    for (uint32 i = 0; i < VOTING_DISK_MAX_NODE_NUM; i++) {
+    for (uint32 i = 0; i < nodeNum; i++) {
         uint32 offset = i * VOTING_DISK_EACH_NODE_OFFSET;
         VotingDiskNodeInfo *nodeInfo = (VotingDiskNodeInfo*)(g_nodeDataBuff + offset);
         if (nodeInfo->nodeTime == 0) {

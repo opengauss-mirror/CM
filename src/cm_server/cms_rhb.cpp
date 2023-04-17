@@ -95,31 +95,13 @@ void GetRhbStat(time_t hbs[MAX_RHB_NUM][MAX_RHB_NUM], unsigned int *hwl)
     securec_check_errno(rc, (void)rc);
 }
 
-MaxClusterResStatus GetNodesConnStatByRhb(int resIdx1, int resIdx2, int timeout)
-{
-    if (timeout == 0) {
-        return MAX_CLUSTER_STATUS_AVAIL;
-    }
-
-    if (g_hbs[resIdx1][resIdx2] == 0 || g_hbs[resIdx2][resIdx1] == 0) {
-        return MAX_CLUSTER_STATUS_INIT;
-    }
-
-    time_t curTime = time(NULL);
-    if (IsRhbTimeout(g_hbs[resIdx1][resIdx2], curTime, timeout) ||
-        IsRhbTimeout(g_hbs[resIdx2][resIdx1], curTime, timeout)) {
-        return MAX_CLUSTER_STATUS_UNAVAIL;
-    }
-    return MAX_CLUSTER_STATUS_AVAIL;
-}
-
 void ResetNodeConnStat()
 {
     errno_t rc = memset_s(g_hbs, sizeof(g_hbs), 0, sizeof(g_hbs));
     securec_check_errno(rc, (void)rc);
 }
 
-void PrintOneHbInfo(int resIdx1, uint32 nodeId1, int resIdx2, uint32 nodeId2, int logLevel)
+static void PrintOneHbInfo(int resIdx1, uint32 nodeId1, int resIdx2, uint32 nodeId2, int logLevel)
 {
     struct tm result;
     GetLocalTime(&g_hbs[resIdx1][resIdx2], &result);
@@ -134,4 +116,11 @@ void PrintHbsInfo(int resIdx1, uint32 nodeId1, int resIdx2, uint32 nodeId2, int 
 {
     PrintOneHbInfo(resIdx1, nodeId1, resIdx2, nodeId2, logLevel);
     PrintOneHbInfo(resIdx2, nodeId2, resIdx1, nodeId1, logLevel);
+}
+
+void GetTimeStr(time_t baseTime, char *timeStr, uint32 strLen)
+{
+    struct tm result;
+    GetLocalTime(&baseTime, &result);
+    (void)strftime(timeStr, strLen, "%Y-%m-%d %H:%M:%S", &result);
 }

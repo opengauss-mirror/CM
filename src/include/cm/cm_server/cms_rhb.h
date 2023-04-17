@@ -26,13 +26,14 @@
 #define CMS_RHB_H
 
 #include <time.h>
-#include "cms_arbitrate_cluster.h"
+
+#define TIME_STR_MAX_LEN 20
 
 void InitDbListsByStaticConfig();
 void RefreshNodeRhbInfo(unsigned int nodeId, const time_t *hbs, unsigned int hwl);
-MaxClusterResStatus GetNodesConnStatByRhb(int resIdx1, int resIdx2, int timeout);
 void GetRhbStat(time_t hbs[MAX_RHB_NUM][MAX_RHB_NUM], unsigned int *hwl);
 void ResetNodeConnStat();
 void PrintHbsInfo(int resIdx1, uint32 nodeId1, int resIdx2, uint32 nodeId2, int logLevel);
+void GetTimeStr(time_t baseTime, char *timeStr, uint32 strLen);
 
 #endif

@@ -1727,7 +1727,7 @@ static int cm_server_process_startup_packet(int epollfd, CM_Connection* con, CM_
 
                 if ((con->port->user_name != NULL) && strncmp(con->port->user_name, pw->pw_name, SP_USER - 1)) {
                     write_runlog(WARNING, "invalid connection\n");
-                    if (CmsSendAndFlushMsg(con, 'E', "invalid connection", CM_SERVER_PACKET_ERROR_MSG) != 0) {
+                    if (CmsSendAndFlushMsg(con, 'E', "invalid connection", sizeof("invalid connection")) != 0) {
                         RemoveConnAfterSendMsgFailed(con);
                         write_runlog(ERROR, "[%s][line:%d] CmsSendAndFlushMsg fail.\n", __FUNCTION__, __LINE__);
                     }

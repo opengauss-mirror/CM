@@ -304,6 +304,7 @@ char *GetParamLineInfo(const char *paramName, const char * const *paramInfos, in
 
     if (paramInfos == NULL) {
         write_runlog(ERROR, "Fail to get param info.\n");
+        free(info);
         return NULL;
     }
 

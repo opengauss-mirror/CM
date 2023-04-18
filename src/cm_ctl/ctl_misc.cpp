@@ -1656,6 +1656,7 @@ char *DoConcatCmd(const CtlOption *ctx)
     int rc = memset_s(cmd, CM_PATH_LENGTH, 0, CM_PATH_LENGTH);
     securec_check_errno(rc, (void)rc);
     if (DoCheckRole(&ctx->dcfOption) == -1) {
+        free(cmd);
         return NULL;
     }
 

@@ -328,6 +328,7 @@ uint32 g_delayArbiTime = 0;
 int32 g_clusterArbiTime = 300;
 bool g_isPauseArbitration = false;
 char g_cmManualPausePath[MAX_PATH_LEN] = {0};
+uint32 g_waitStaticPrimaryTimes = 6;
 
 bool isLargerNode()
 {

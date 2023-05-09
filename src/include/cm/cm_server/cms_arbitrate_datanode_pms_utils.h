@@ -44,7 +44,6 @@ typedef struct DnArbitInfo_t {
     uint32 maxTerm;
 } DnArbitInfo;
 
-const uint32 DATANODE_ARBITE_DELAY = 6;
 
 extern bool CheckPotentialTermRollback();
 extern void GroupStatusShow(const char *str, const uint32 groupIndex, const uint32 instanceId,

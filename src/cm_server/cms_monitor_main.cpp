@@ -344,10 +344,17 @@ static void ReloadParametersFromConfigfile()
     g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
     g_agentNetworkTimeout = get_uint32_value_from_config(configDir, "agent_network_timeout", 6);
     GetDnArbitrateMode();
+#ifndef ENABLE_PRIVATEGAUSS
+    g_waitStaticPrimaryTimes = get_uint32_value_from_config(configDir, "wait_static_primary_times", 6);
+    if (g_waitStaticPrimaryTimes < 5) {
+        g_waitStaticPrimaryTimes = 5;
+    }
+#endif
 
     if (g_cm_server_num == CMS_ONE_PRIMARY_ONE_STANDBY) {
         GetTwoNodesArbitrateParams();
     }
+
 
 #ifdef ENABLE_MULTIPLE_NODES
     write_runlog(LOG,
@@ -379,13 +386,13 @@ static void ReloadParametersFromConfigfile()
         "datastorage_threshold_check_interval=%d,\n"
         "  max_datastorage_threshold_check=%d, enableSetReadOnly=%s, enableSetReadOnlyThreshold=%u, "
         "switch_rto=%d, force_promote=%d, cluster_starting_aribt_delay=%u, enable_e2e_rto=%u, "
-        "g_delayArbiTime=%u, g_clusterArbiTime=%d.\n",
+        "g_delayArbiTime=%u, g_clusterArbiTime=%d, wait_static_primary_times=%u.\n",
         log_min_messages, maxLogFileSize, sys_log_path, g_alarmComponentPath, g_alarmReportInterval,
         instance_heartbeat_timeout, g_ddbArbicfg.haHeartBeatTimeOut, cmserver_self_vote_timeout,
         g_ddbArbicfg.haStatusInterval, cmserver_ha_connect_timeout, instance_failover_delay_timeout,
         datastorage_threshold_check_interval, max_datastorage_threshold_check, g_enableSetReadOnly,
         g_readOnlyThreshold, switch_rto, force_promote, g_clusterStartingArbitDelay,
-        g_enableE2ERto, g_delayArbiTime, g_clusterArbiTime);
+        g_enableE2ERto, g_delayArbiTime, g_clusterArbiTime, g_waitStaticPrimaryTimes);
 #endif
 }
 

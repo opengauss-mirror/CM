@@ -127,6 +127,9 @@ const char *g_cmsParamInfo[] = {
     "cms_enable_failover_on2nodes|bool|0,0|NULL|NULL|",
     "cms_enable_db_crash_recovery|bool|0,0|NULL|NULL|",
     "cms_network_isolation_timeout|int|10,2147483647|NULL|NULL|",
+#ifndef ENABLE_PRIVATEGAUSS
+    "wait_static_primary_times|int|5,2147483647|NULL|NULL|",
+#endif
 };
 
 const char *g_valueTypeStr[] = {

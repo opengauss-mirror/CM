@@ -87,4 +87,6 @@ cms_enable_db_crash_recovery = false	 # used in 2 nodes cluster. when network re
 cms_network_isolation_timeout = 20		 # cms judges the network is isolated when it finds ddb cluster is not sync with each other nodes,
 										 # after cms_network_isolation_timeout times.
 										 # default 20
+wait_static_primary_times = 6            # Time to wait for the primary recovery after the primary stopped unexpectedly.
+                                         # default value is 6
 ############### must leave a new line at the end ###################

@@ -615,6 +615,12 @@ void get_parameters_from_configfile()
     g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
     g_agentNetworkTimeout = get_uint32_value_from_config(configDir, "agent_network_timeout", 6);
     GetDnArbitrateMode();
+#ifndef ENABLE_PRIVATEGAUSS
+    g_waitStaticPrimaryTimes = get_uint32_value_from_config(configDir, "wait_static_primary_times", 6);
+    if (g_waitStaticPrimaryTimes < 5) {
+        g_waitStaticPrimaryTimes = 5;
+    }
+#endif
 }
 
 void clean_init_cluster_state()

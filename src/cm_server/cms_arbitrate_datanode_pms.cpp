@@ -2248,7 +2248,7 @@ static void InitDnArbCond(DnArbCtx *ctx)
     ctx->cond.maxMemArbiTime = 0;
     ctx->cond.instMainta = IsMaintance(ctx->maintaMode);
     ctx->cond.switchoverIdx = INVALID_INDEX;
-    ctx->cond.arbitInterval = g_clusterStarting ? g_clusterStartingArbitDelay : DATANODE_ARBITE_DELAY;
+    ctx->cond.arbitInterval = g_clusterStarting ? g_clusterStartingArbitDelay : g_waitStaticPrimaryTimes;
     ctx->cond.arbitStaticInterval = 5;
     ctx->cond.setOffline = SetOfflineNode();
     ctx->cond.snameAzDnCount = 0;

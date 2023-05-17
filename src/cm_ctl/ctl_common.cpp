@@ -181,16 +181,15 @@ int ssh_exec(const staticNodeConfig* node, const char* cmd, int32 logLevel)
     for (uint32 ii = 0; ii < node->sshCount; ii++) {
         if (mpp_env_separate_file[0] == '\0') {
             ret = snprintf_s(actualCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
-                "pssh %s -s -H %s \"( %s ) > %s 2>&1\" < %s > /dev/null 2>&1",
-                PSSH_TIMEOUT_OPTION, node->sshChannel[ii], cmd, "/dev/null", "/dev/null");
-            securec_check_intval(ret, (void)ret);
+                "pssh %s -s -H %s \"( %s ) > %s 2>&1\" > /dev/null 2>&1",
+                PSSH_TIMEOUT_OPTION, node->sshChannel[ii], cmd, "/dev/null");
         } else {
             ret = snprintf_s(actualCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
-                "pssh %s -s -H %s \"( source %s;%s ) > %s 2>&1\" < %s > /dev/null 2>&1",
+                "pssh %s -s -H %s \"( source %s;%s ) > %s 2>&1\" > /dev/null 2>&1",
                 PSSH_TIMEOUT_OPTION, node->sshChannel[ii], mpp_env_separate_file, cmd,
-                "/dev/null", "/dev/null");
-            securec_check_intval(ret, (void)ret);
+                "/dev/null");
         }
+        securec_check_intval(ret, (void)ret);
         rc = system(actualCmd);
         if (rc != 0) {
             write_runlog(logLevel, "ssh failed at \"%s\".\n", node->sshChannel[ii]);

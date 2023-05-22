@@ -288,7 +288,7 @@ General options:
             isLocal = False
             if host == self.localhostName:
                 isLocal = True
-            findPrimaryCmd = "source %s; gs_ctl query -D %s | grep 'local_role.*Primary' > /dev/null" % \
+            findPrimaryCmd = "source %s; gs_ctl query -D %s | grep -i 'local_role.*Primary' > /dev/null" % \
                 (self.envFile, self.nodesInfo[host]["dataPath"])
             notPrimary, output = executeCmdOnHost(host, findPrimaryCmd, isLocal)
             if notPrimary == 0:

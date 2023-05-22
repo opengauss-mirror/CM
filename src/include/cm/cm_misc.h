@@ -168,6 +168,7 @@ typedef struct CmResConfListSt {
     uint32 cmInstanceId;
     uint32 resInstanceId;
     ResStatusCheckInfo checkInfo;
+    int resType;
 } CmResConfList;
 
 // instance type before INST_TYPE_UNKNOWN shouldn't be change

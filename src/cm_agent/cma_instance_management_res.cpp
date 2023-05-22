@@ -71,8 +71,14 @@ static int CusResCmdExecute(const char *scriptPath, const char *oper, uint32 tim
 
 status_t StartOneResInst(const CmResConfList *conf)
 {
+    int ret;
     char oper[MAX_OPTION_LEN] = {0};
-    int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s", conf->resInstanceId, conf->arg);
+    if (conf->resType == CUSTOM_RESOURCE_DN && undocumentedVersion > 0) {
+        ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s '-u %u'", conf->resInstanceId,
+            conf->arg, undocumentedVersion);
+    } else {
+        ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s", conf->resInstanceId, conf->arg);
+    }
     securec_check_intval(ret, (void)ret);
 
     ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_FALSE);
@@ -625,10 +631,8 @@ static status_t InitLocalAllDnResInstConf(const CusResConfJson *resJson, CmResCo
 
 static status_t InitLocalOneResConf(const OneCusResConfJson *oneResJson)
 {
-    CmResConfList newLocalConf;
-    errno_t rc = memset_s(&newLocalConf, sizeof(CmResConfList), 0, sizeof(CmResConfList));
-    securec_check_errno(rc, (void)rc);
-
+    CmResConfList newLocalConf = {{0}};
+    newLocalConf.resType = (int)oneResJson->resType;
     if (oneResJson->resType == CUSTOM_RESOURCE_APP) {
         CM_RETURN_IFERR(InitLocalCommConfOfDefRes(&oneResJson->appResConf, &newLocalConf));
         CM_RETURN_IFERR(InitLocalAllAppResInstConf(&oneResJson->appResConf, &newLocalConf));

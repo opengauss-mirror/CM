@@ -43,6 +43,8 @@ static char g_confFile[CM_PATH_LENGTH];
 extern char g_appPath[MAXPGPATH];
 extern char mpp_env_separate_file[MAXPGPATH];
 
+static status_t CheckGucOption(const GucOption &gucCtx);
+
 static inline void SkipSpace(char *&ptr)
 {
     while (isspace((unsigned char)*ptr)) {
@@ -690,39 +692,6 @@ status_t ExeGucCommand(const GucOption *gucCtx)
     return result;
 }
 
-status_t ProcessInLocalInstance(const GucOption *gucCtx)
-{
-    errno_t rc;
-    char cmDir[CM_PATH_LENGTH] = { 0 };
-    char instanceDir[CM_PATH_LENGTH] = { 0 };
-
-    rc = memcpy_s(cmDir, sizeof(cmDir), g_currentNode->cmDataPath, sizeof(cmDir));
-    securec_check_errno(rc, (void)rc);
-
-    if (cmDir[0] == '\0') {
-        write_runlog(ERROR, "Failed to get cm base data path from static config file.");
-        return CM_ERROR;
-    }
-
-    if (gucCtx->nodeType == NODE_TYPE_AGENT) {
-        rc = snprintf_s(instanceDir, sizeof(instanceDir), sizeof(instanceDir) - 1, "%s/cm_agent", cmDir);
-        securec_check_intval(rc, (void)rc);
-    } else {
-        if (g_currentNode->cmServerLevel != 1) {
-            write_runlog(LOG, "There is no cmserver instance on local node.");
-            return CM_ERROR;
-        }
-        rc = snprintf_s(instanceDir, sizeof(instanceDir), sizeof(instanceDir) - 1, "%s/cm_server", cmDir);
-        securec_check_intval(rc, (void)rc);
-    }
-    GetInstanceConfigfile(gucCtx->nodeType, instanceDir);
-    if (ExeGucCommand(gucCtx) != CM_SUCCESS) {
-        return CM_ERROR;
-    }
-
-    return CM_SUCCESS;
-}
-
 static uint32 GetNodeIndex(uint32 nodeId)
 {
     for (uint32 i = 0; i < g_node_num; ++i) {
@@ -784,18 +753,56 @@ static status_t ListRemoteConfMain(staticNodeConfig *node, const char *cmd)
     return CM_ERROR;
 }
 
+status_t ProcessInLocalInstanceExec(const GucOption *gucCtx)
+{
+    errno_t rc;
+    char cmDir[CM_PATH_LENGTH] = { 0 };
+    char instanceDir[CM_PATH_LENGTH] = { 0 };
+
+    rc = memcpy_s(cmDir, sizeof(cmDir), g_currentNode->cmDataPath, sizeof(cmDir));
+    securec_check_errno(rc, (void)rc);
+
+    if (cmDir[0] == '\0') {
+        write_runlog(ERROR, "Failed to get cm base data path from static config file.");
+        return CM_ERROR;
+    }
+
+    if (gucCtx->nodeType == NODE_TYPE_AGENT) {
+        rc = snprintf_s(instanceDir, sizeof(instanceDir), sizeof(instanceDir) - 1, "%s/cm_agent", cmDir);
+        securec_check_intval(rc, (void)rc);
+    } else {
+        if (g_currentNode->cmServerLevel != 1) {
+            write_runlog(LOG, "There is no cmserver instance on local node.");
+            return CM_ERROR;
+        }
+        rc = snprintf_s(instanceDir, sizeof(instanceDir), sizeof(instanceDir) - 1, "%s/cm_server", cmDir);
+        securec_check_intval(rc, (void)rc);
+    }
+    GetInstanceConfigfile(gucCtx->nodeType, instanceDir);
+    if (ExeGucCommand(gucCtx) != CM_SUCCESS) {
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+status_t ProcessInLocalInstance(const CtlOption *ctx)
+{
+    if (CheckGucOption(ctx->guc) != CM_SUCCESS) {
+        return CM_ERROR;
+    }
+
+    if (ctx->guc.gucCommand == SET_CONF_COMMAND && CheckGucOptionValidate(ctx->guc) != CM_SUCCESS) {
+        DoAdvice();
+        return CM_ERROR;
+    }
+
+    return ProcessInLocalInstanceExec(&ctx->guc);
+}
+
 static status_t ProcessInRemoteInstance(const CtlOption *ctx)
 {
     char remoteCmd[MAX_COMMAND_LEN] = {0};
-
-    if (ctx->comm.nodeId == g_currentNode->node) {
-        if (ProcessInLocalInstance(&ctx->guc) == CM_ERROR) {
-            write_runlog(DEBUG1, "cm_ctl fail to execute in local.\n");
-            return CM_ERROR;
-        }
-        return CM_SUCCESS;
-    }
-
     GetRemoteGucCommand(ctx, remoteCmd, sizeof(remoteCmd));
     if (ctx->guc.gucCommand == LIST_CONF_COMMAND) {
         return ListRemoteConfMain(&g_node[GetNodeIndex(ctx->comm.nodeId)], remoteCmd);
@@ -817,8 +824,10 @@ static status_t ProcessInAllNodesInstance(CtlOption *ctx)
             continue;
         }
         ctx->comm.nodeId = g_node[i].node;
-        if (ProcessInRemoteInstance(ctx) == CM_ERROR) {
-            result = CM_ERROR;
+        if (ctx->comm.nodeId == g_currentNode->node) {
+            result = ProcessInLocalInstance(ctx);
+        } else {
+            result = ProcessInRemoteInstance(ctx);
         }
     }
 
@@ -827,15 +836,21 @@ static status_t ProcessInAllNodesInstance(CtlOption *ctx)
 
 status_t ProcessClusterGucOption(CtlOption *ctx)
 {
-    status_t result;
-
     if (ctx->comm.nodeId == 0) {
-        result = ProcessInAllNodesInstance(ctx);
-    } else {
-        result = ProcessInRemoteInstance(ctx);
+        return ProcessInAllNodesInstance(ctx);
     }
 
-    return result;
+    if (ctx->comm.nodeId != g_currentNode->node) {
+        return ProcessInRemoteInstance(ctx);
+    }
+
+    status_t res = ProcessInLocalInstance(ctx);
+    if (res == CM_ERROR) {
+        write_runlog(DEBUG1, "cm_ctl fail to execute in local.\n");
+    }
+
+    return res;
+
 }
 
 static status_t CheckGucOption(const GucOption &gucCtx)
@@ -855,22 +870,10 @@ static status_t CheckGucOption(const GucOption &gucCtx)
 // cm_ctl integration guc set reload and check capacity
 int DoGuc(CtlOption *ctx)
 {
-    if (CheckGucOption(ctx->guc) != CM_SUCCESS) {
-        return 1;
-    }
+    status_t res = ProcessClusterGucOption(ctx);
+    PrintResults(res == CM_SUCCESS, ctx);
 
-    if ((ctx->guc.gucCommand == SET_CONF_COMMAND) && (CheckGucOptionValidate(ctx->guc) != CM_SUCCESS)) {
-        DoAdvice();
-        return 1;
-    }
-    
-    if (ProcessClusterGucOption(ctx) != CM_SUCCESS) {
-        PrintResults(false, ctx);
-        return 1;
-    }
-    PrintResults(true, ctx);
-
-    return 0;
+    return (int)res;
 }
 
 static void MemsetPassword(char **password)

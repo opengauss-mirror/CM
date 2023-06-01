@@ -351,7 +351,7 @@ static void ProcessRegResInst(const CmsNotifyAgentRegMsg *recvMsg)
     } else if ((isreg == CM_RES_ISREG_UNREG) || (isreg == CM_RES_ISREG_PENDING) || (isreg == CM_RES_ISREG_UNKNOWN)) {
         write_runlog(LOG, "before reg res inst, need clean res inst first.\n");
         if ((CheckOneResInst(local) == CUS_RES_CHECK_STAT_OFFLINE) || (CleanOneResInst(local) == CM_SUCCESS)) {
-            (void)RegOneResInst(local, recvMsg->resInstId);
+            (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
         }
     } else if (isreg == CM_RES_ISREG_NOT_SUPPORT) {
         write_runlog(LOG, "res inst[%s:%u] don't support reg, not need reg.\n", recvMsg->resName, recvMsg->resInstId);

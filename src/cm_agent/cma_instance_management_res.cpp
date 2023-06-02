@@ -118,13 +118,13 @@ void OneResInstClean(const CmResConfList *oneResConf)
     }
 }
 
-status_t RegOneResInst(const CmResConfList *conf, uint32 destInstId)
+status_t RegOneResInst(const CmResConfList *conf, uint32 destInstId, bool8 needNohup)
 {
     char oper[MAX_OPTION_LEN] = {0};
     int ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-reg %u %s", destInstId, conf->arg);
     securec_check_intval(ret, (void)ret);
 
-    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_TRUE);
+    ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, needNohup);
     if (ret != 0) {
         write_runlog(ERROR, "[%s]: cmd:(%s %s) execute failed, ret=%d.\n", __FUNCTION__, conf->script, oper, ret);
         return CM_ERROR;
@@ -301,8 +301,12 @@ static bool CanCusInstDoRestart(const CmResConfList *conf)
     if ((stat == CM_RES_ISREG_REG) || (stat == CM_RES_ISREG_NOT_SUPPORT)) {
         return true;
     }
-    write_runlog(LOG, "cur inst(%u) isreg stat=(%u), can't do restart.\n", conf->cmInstanceId, (uint32)stat);
-    return false;
+    if (RegOneResInst(conf, conf->resInstanceId, CM_FALSE) != CM_SUCCESS) {
+        write_runlog(LOG, "cur inst(%u) isreg stat=(%u), and reg failed, can't do restart.\n", conf->cmInstanceId,
+            (uint32)stat);
+        return false;
+    }
+    return true;
 }
 
 static inline status_t RestartOneResInst(CmResConfList *conf)

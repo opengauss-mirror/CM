@@ -859,7 +859,7 @@ int CheckShareDiskDataNodeStatus(uint32 groupIndex)
             ++unknownCnt;
         }
     }
-    if (normalPriCnt != 1) {
+    if (backup_open == CLUSTER_PRIMARY && normalPriCnt != 1) {
         g_HA_status->status = CM_STATUS_NEED_REPAIR;
         write_runlog(LOG,
             "cluster status is unavail, instanceId(%u), normalPriCnt=%d, priCnt=%d, dnFaultCnt=%d, unknownCnt=%d.\n",

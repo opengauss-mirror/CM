@@ -312,7 +312,10 @@ static status_t GetMatchPoint(char *text, char matchPoint, uint32 *point)
 
     while (CM_IS_QUOTE_CHAR(text[tempPoint])) {
         if (text[strlen(text) - 1] == text[tempPoint]) {
+            /* This tells the compiler that there will be no overflow issues */
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
             text[strlen(text) - 1] = '\0';
+#pragma GCC diagnostic pop
         }
         if ((tempPoint + 1) >= strlen(text)) {
             write_runlog(ERROR, "%d failed to getMatchPoint, bacause text=[%s], point=[%u: %zu].\n",

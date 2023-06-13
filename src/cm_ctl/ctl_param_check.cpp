@@ -379,8 +379,7 @@ static status_t GetConfigParamValue(const char *ptr, ParamEnumEntry &varList)
     int ret;
 
     if (ptr == NULL) {
-        write_runlog(DEBUG1, "Failed to parse the \"%s\" info. The value range information \"%s\" is incorrect.\n",
-            varList.name, ptr);
+        write_runlog(DEBUG1, "Failed to parse the \"%s\" info. The value is null.\n", varList.name);
         return CM_ERROR;
     }
 

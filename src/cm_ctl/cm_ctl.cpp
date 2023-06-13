@@ -43,6 +43,7 @@
 #include "config.h"
 #include "cm_util.h"
 #include "ctl_help.h"
+#include <string>
 
 #define ETCD_NUM_UPPER_LIMIT 50
 

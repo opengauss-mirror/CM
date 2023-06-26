@@ -83,7 +83,7 @@ https://gitee.com/opengauss/CM
 
 可以通过以下网站获取编译好的binarylibs。下载后请解压缩并重命名为**binarylibs**。
 
-https://opengauss.obs.cn-south-1.myhuaweicloud.com/2.1.0/openGauss-third_party_binarylibs.tar.gz
+https://opengauss.obs.cn-south-1.myhuaweicloud.com/5.1.0/binarylibs/gcc10.3/openGauss-third_party_binarylibs_openEuler_arm.tar.gz
 
 全量源码编译可下载DCC及其依赖的CBB和DCF仓，不下载编译时默认去binarylibs仓查找dcc动态库
 
@@ -152,40 +152,16 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
 
 ##### 使用命令编译代码
 
-1.执行以下脚本获取系统版本号：
+1.配置环境变量
 
    ```shell
-   [user@linux CM]$ sh build/get_PlatForm_str.sh
-   ```
-
-   > **注意** 
-   >
-   > - 命令回显信息即为CM支持的操作系统。目前CM支持的操作系统为centos7.6_x86_64和openeuler_aarch64。
-   > - 如果显示**Failed**或其他版本，表示CM不支持当前操作系统。
-
-2.配置环境变量，根据代码下载位置添加 **____**，并将***替换为上一步的结果。
-
-   ```shell
-   export THIRD_BIN_PATH=________    # Path of the binarylibs file
-   export GCC_PATH=$BINARYLIBS/buildtools/***/gcc7.3/
+   export BINARYLIBS=________    # Path of the binarylibs file
+   export GCC_PATH=$BINARYLIBS/buildtools/gcc10.3/
    export CC=$GCC_PATH/gcc/bin/gcc
    export CXX=$GCC_PATH/gcc/bin/g++
    export LD_LIBRARY_PATH=$GCC_PATH/gcc/lib64:$GCC_PATH/isl/lib:$GCC_PATH/mpc/lib/:$GCC_PATH/mpfr/lib/:$GCC_PATH/gmp/lib/:$LD_LIBRARY_PATH
    export PATH=$GCC_PATH/gcc/bin:$PATH
 
-   ```
-
-   例如，在CENTOS X86-64平台上，binarylibs目录被作为CM目录的兄弟目录。
-   在CM目录下执行以下命令。
-
-   ```
-   export THIRD_BIN_PATH=`pwd`/../binarylibs
-   export GCC_PATH=$BINARYLIBS/buildtools/centos7.6_x86_64/gcc7.3/
-   export CC=$GCC_PATH/gcc/bin/gcc
-   export CXX=$GCC_PATH/gcc/bin/g++
-   export LD_LIBRARY_PATH=$GCC_PATH/gcc/lib64:$GCC_PATH/isl/lib:$GCC_PATH/mpc/lib/:$GCC_PATH/mpfr/lib/:$GCC_PATH/gmp/lib/:$LD_LIBRARY_PATH
-   export PATH=$GCC_PATH/gcc/bin:$PATH
-   
    ```
   
  3.准备好依赖的三方组件。
@@ -296,7 +272,7 @@ sh build.sh -m debug -3rd /sdc/binarylibs -pkg           # 生成debug版本的o
 
 ### 附:DCC动态库获取
 
-DCC编译参见DCC仓库README指导，然后将便以结果按如下目录拷贝到CM代码根目录的`common_lib`文件夹
+DCC编译参见DCC仓库README指导，然后将编译结果（即DCC编译成功后include目录和lib目录下的文件）按如下目录拷贝到CM代码根目录的`common_lib`文件夹
 
  ```
  [user@linux CM]$ tree common_lib/dcc/

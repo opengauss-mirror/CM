@@ -257,7 +257,7 @@ int CheckOneResInst(const CmResConfList *conf)
     return ret;
 }
 
-static void ManualStopLocalResInst(CmResConfList *conf)
+static status_t ManualStopOneLocalResInst(CmResConfList *conf)
 {
     char instanceStartFile[MAX_PATH_LEN] = {0};
     int ret = snprintf_s(instanceStartFile, MAX_PATH_LEN, MAX_PATH_LEN - 1,
@@ -266,7 +266,7 @@ static void ManualStopLocalResInst(CmResConfList *conf)
 
     if (CmFileExist(instanceStartFile)) {
         write_runlog(LOG, "instanceStartFile(%s) is exist, can't create again.\n", instanceStartFile);
-        return;
+        return CM_SUCCESS;
     }
     
     char command[MAX_PATH_LEN] = {0};
@@ -278,8 +278,28 @@ static void ManualStopLocalResInst(CmResConfList *conf)
     ret = system(command);
     if (ret != 0) {
         write_runlog(ERROR, "manual stop res(%s) inst(%u) failed, ret=%d.\n", conf->resName, conf->resInstanceId, ret);
-    } else {
-        write_runlog(LOG, "manual stop res(%s) inst(%u) success.\n", conf->resName, conf->resInstanceId);
+        return CM_ERROR;
+    }
+
+    write_runlog(LOG, "manual stop res(%s) inst(%u) success.\n", conf->resName, conf->resInstanceId);
+    return CM_SUCCESS;
+}
+
+static status_t ManuallStopAllLocalResInst()
+{
+    status_t result = CM_SUCCESS;
+    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+        if (ManualStopOneLocalResInst(&g_resConf[i]) != CM_SUCCESS) {
+            result = CM_ERROR;
+        }
+    }
+
+    return result;
+}
+
+static void ManualStopLocalResInst(CmResConfList *conf)
+{
+    if (ManuallStopAllLocalResInst() == CM_SUCCESS) {
         CleanOneInstCheckCount(conf);
     }
 }
@@ -296,25 +316,17 @@ bool IsInstManualStopped(uint32 instId)
     return false;
 }
 
-static bool CanCusInstDoRestart(const CmResConfList *conf)
+static inline void RestartOneResInst(CmResConfList *conf)
 {
     ResIsregStatus stat = IsregOneResInst(conf, conf->resInstanceId);
-    if ((stat == CM_RES_ISREG_REG) || (stat == CM_RES_ISREG_NOT_SUPPORT)) {
-        return true;
+    if ((stat != CM_RES_ISREG_REG) && (stat != CM_RES_ISREG_NOT_SUPPORT)) {
+        if (RegOneResInst(conf, conf->resInstanceId, CM_FALSE) != CM_SUCCESS) {
+            write_runlog(LOG, "cur inst(%u) isreg stat=(%u), and reg failed, restart failed.\n",
+                conf->cmInstanceId, (uint32)stat);
+            return;
+        }
     }
-    if (RegOneResInst(conf, conf->resInstanceId, CM_FALSE) != CM_SUCCESS) {
-        write_runlog(LOG, "cur inst(%u) isreg stat=(%u), and reg failed, can't do restart.\n", conf->cmInstanceId,
-            (uint32)stat);
-        return false;
-    }
-    return true;
-}
-
-static inline status_t RestartOneResInst(CmResConfList *conf)
-{
-    (void)CleanOneResInst(conf);
-    CM_RETURN_IFERR(StartOneResInst(conf));
-    return CM_SUCCESS;
+    (void)StartOneResInst(conf);
 }
 
 static void ProcessOfflineInstance(CmResConfList *conf)
@@ -322,9 +334,7 @@ static void ProcessOfflineInstance(CmResConfList *conf)
     long curTime = GetCurMonotonicTimeSec();
 
     if (conf->checkInfo.restartTimes == -1) {
-        if (CanCusInstDoRestart(conf)) {
-            (void)RestartOneResInst(conf);
-        }
+        RestartOneResInst(conf);
         return;
     }
     if (conf->checkInfo.brokeTime == 0) {
@@ -348,10 +358,7 @@ static void ProcessOfflineInstance(CmResConfList *conf)
             conf->resName, conf->resInstanceId, conf->checkInfo.startTime, conf->checkInfo.restartPeriod);
         return;
     }
-    if (!CanCusInstDoRestart(conf)) {
-        return;
-    }
-    CM_RETVOID_IFERR(RestartOneResInst(conf));
+    RestartOneResInst(conf);
     conf->checkInfo.startCount++;
     conf->checkInfo.startTime = curTime;
     write_runlog(LOG, "res(%s) inst(%u) has been restart (%d) times, restart more than (%d) time will manually stop.\n",
@@ -386,7 +393,7 @@ static void ProcessAbnormalInstance(CmResConfList *conf)
     write_runlog(LOG, "res(%s) inst(%u) has been abnormal (%d)s, >= timeout(%d)s, need restart.\n",
         conf->resName, conf->cmInstanceId, duration, conf->checkInfo.abnormalTimeout);
 
-    CM_RETVOID_IFERR(RestartOneResInst(conf));
+    RestartOneResInst(conf);
     conf->checkInfo.startCount++;
     conf->checkInfo.startTime = curTime;
 

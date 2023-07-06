@@ -24,7 +24,9 @@
 #ifndef CM_DISK_LOCK_H
 #define CM_DISK_LOCK_H
 #include <time.h>
+#include "cm_nvme.h"
 #include "cm_scsi.h"
+
 
 #define DISK_LOCK_HEADER_MAGIC (0x3847EEFFFFEE3847)
 #define DISK_DEFAULT_LOCK_INTERVAL (100)
@@ -106,4 +108,11 @@ status_t CmDiskLockS(dlock_t *lock, const char *scsiDev, int32 fd);
 int32 CmDiskLock(dlock_t *lock, int32 fd);
 status_t CmDiskLockf(dlock_t *lock, int32 fd, int64 lockTime);
 status_t CmGetDlockInfo(dlock_t *lock, int32 fd);
+
+typedef int32 (*CmDiskCaw)(int32 fd, uint64 blockAddr, char *buff, uint32 buffLen);
+typedef struct st_cm_disk_caw_hdl {
+    CmDiskCaw exec;
+    char * desc;
+} cm_disk_caw_hdl_t;
+
 #endif

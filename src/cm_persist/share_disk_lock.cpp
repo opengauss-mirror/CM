@@ -20,12 +20,16 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
 #include "securec.h"
 #include "share_disk_lock.h"
+
+#define CM_DISK_PROTOCOL_SCSI3 0
+#define CM_DISK_PROTOCOL_NVME 1
 
 const int BLOCK_NUMS = 3;
 const uint32 LOCK_BLOCK_NUMS = 2;
@@ -151,10 +155,31 @@ status_t CmDiskLockS(dlock_t *lock, const char *scsiDev, int32 fd)
     return CM_SUCCESS;
 }
 
+static cm_disk_caw_hdl_t gCmDiskCawHandle[] = {
+    { CmScsi3Caw, "Scsi3 caw" },
+    { CmNVMeCaw, "NVMe caw" }
+};
+
+static int32 CmDiskProtocol(int32 fd)
+{
+    int32 nsid;
+    int cmDiskProtocol = CM_DISK_PROTOCOL_SCSI3;
+
+    nsid = ioctl(fd, NVME_IOCTL_ID);
+    if (nsid == -1) {
+        (void)printf(_("Ioctl get nsid error, errno %d.\n"), errno);
+        cmDiskProtocol = CM_DISK_PROTOCOL_SCSI3;
+    } else {
+        cmDiskProtocol = CM_DISK_PROTOCOL_NVME;
+    }
+
+    return cmDiskProtocol;
+}
+
 int32 CmDiskLock(dlock_t *lock, int32 fd)
 {
     uint32 buffLen = LOCK_BLOCK_NUMS * CM_DEF_BLOCK_SIZE;
-
+    int32  cmDiskProtocol = CM_DISK_PROTOCOL_SCSI3;
     if (lock == NULL || fd < 0) {
         return -1;
     }
@@ -162,14 +187,15 @@ int32 CmDiskLock(dlock_t *lock, int32 fd)
     time_t t = time(NULL);
     LOCKW_LOCK_TIME(*lock) = CalcLockTime(t);
     LOCKW_LOCK_CREATE_TIME(*lock) = t;
-    int32 ret = CmScsi3Caw(fd, lock->lockAddr / CM_DEF_BLOCK_SIZE, lock->lockr, buffLen);
+    cmDiskProtocol = CmDiskProtocol(fd);
+    int32 ret = gCmDiskCawHandle[cmDiskProtocol].exec(fd, lock->lockAddr / CM_DEF_BLOCK_SIZE, lock->lockr, buffLen);
     if (ret != (int)CM_SUCCESS) {
         if (ret != CM_SCSI_ERR_MISCOMPARE) {
-            (void)printf(_("Scsi3 caw failed, addr %lu.\n"), lock->lockAddr);
+            (void)printf(_("%s failed, addr %lu.\n"), gCmDiskCawHandle[cmDiskProtocol].desc, lock->lockAddr);
             return -1;
         }
     } else {
-        (void)printf(_("Scsi3 caw succ.\n"));
+        (void)printf(_("%s succ.\n"), gCmDiskCawHandle[cmDiskProtocol].desc);
         return 0;
     }
 
@@ -182,28 +208,30 @@ int32 CmDiskLock(dlock_t *lock, int32 fd)
     // if the owner of the lock is zero, we can lock succ
     LOCKR_INST_ID(*lock) = 0;
     LOCKW_LOCK_CREATE_TIME(*lock) = LOCKR_LOCK_CREATE_TIME(*lock);
-    ret = CmScsi3Caw(fd, lock->lockAddr / CM_DEF_BLOCK_SIZE, lock->lockr, buffLen);
+    ret = gCmDiskCawHandle[cmDiskProtocol].exec(fd, lock->lockAddr / CM_DEF_BLOCK_SIZE, lock->lockr, buffLen);
     if (ret != (int)CM_SUCCESS) {
         if (ret != CM_SCSI_ERR_MISCOMPARE) {
-            (void)printf(_("Scsi3 caw failed after reset, addr %lu.\n"), lock->lockAddr);
+            (void)printf(_("%s failed after reset, addr %lu.\n"), gCmDiskCawHandle[cmDiskProtocol].desc,
+                lock->lockAddr);
             return -1;
         }
     } else {
-        (void)printf(_("Scsi3 caw succ after reset.\n"));
+        (void)printf(_("%s succ after reset.\n"), gCmDiskCawHandle[cmDiskProtocol].desc);
         return 0;
     }
 
     // if the owner of the lock on the disk is the current instance, we can lock succ
     LOCKR_INST_ID(*lock) = LOCKW_INST_ID(*lock);
     LOCKW_LOCK_CREATE_TIME(*lock) = LOCKR_LOCK_CREATE_TIME(*lock);
-    ret = CmScsi3Caw(fd, lock->lockAddr / CM_DEF_BLOCK_SIZE, lock->lockr, buffLen);
+    ret = gCmDiskCawHandle[cmDiskProtocol].exec(fd, lock->lockAddr / CM_DEF_BLOCK_SIZE, lock->lockr, buffLen);
     if (ret != (int)CM_SUCCESS) {
         if (ret == CM_SCSI_ERR_MISCOMPARE) {
             // the lock is hold by another instance
             LOCKW_LOCK_TIME(*lock) = LOCKR_LOCK_TIME(*lock);
             return CM_DLOCK_ERR_LOCK_OCCUPIED;
         } else {
-            (void)printf(_("Scsi3 caw failed when reset instanceId, addr %lu.\n"), lock->lockAddr);
+            (void)printf(_("%s failed when reset instanceId, addr %lu.\n"), gCmDiskCawHandle[cmDiskProtocol].desc,
+                lock->lockAddr);
             LOCKW_LOCK_TIME(*lock) = LOCKR_LOCK_TIME(*lock);
             return -1;
         }

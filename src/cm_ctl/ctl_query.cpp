@@ -46,6 +46,7 @@ static status_t QueryResourceStatus(CM_Conn *pCmsCon);
 static bool hasFindEtcdL = false;
 extern bool g_detailQuery;
 extern bool g_coupleQuery;
+extern bool g_formatQuery;
 extern bool g_balanceQuery;
 extern bool g_startStatusQuery;
 extern bool g_abnormalQuery;
@@ -1896,12 +1897,17 @@ static void print_simple_DN_result(uint32 node_index, cm_to_ctl_instance_status 
                 cm_to_ctl_instance_status_ptr->data_node_member.local_status.buildReason));
     }
 
-    if (g_multi_az_cluster && ((uint32)cm_to_ctl_instance_status_ptr->member_index < (g_dn_replication_num - 1))) {
-        (void)fprintf(g_logFilePtr, " | ");
-    } else if (!g_single_node_cluster && !g_multi_az_cluster &&
-        (cm_to_ctl_instance_status_ptr->member_index == 0 || cm_to_ctl_instance_status_ptr->member_index == 1)) {
-        (void)fprintf(g_logFilePtr, " | ");
-    } else {
+    if (g_formatQuery) {
         (void)fprintf(g_logFilePtr, "\n");
+    } else {
+        if (g_multi_az_cluster && ((uint32)cm_to_ctl_instance_status_ptr->member_index < (g_dn_replication_num - 1))) {
+            (void)fprintf(g_logFilePtr, " | ");
+        } else if (!g_single_node_cluster && !g_multi_az_cluster &&
+                   (cm_to_ctl_instance_status_ptr->member_index == 0 ||
+                   cm_to_ctl_instance_status_ptr->member_index == 1)) {
+            (void)fprintf(g_logFilePtr, " | ");
+        } else {
+            (void)fprintf(g_logFilePtr, "\n");
+        }
     }
 }

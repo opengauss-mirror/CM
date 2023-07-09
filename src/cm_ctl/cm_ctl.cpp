@@ -57,6 +57,8 @@
 
 char* g_bin_name = NULL;
 char* g_bin_path = NULL;
+// Need to change the options here, if options of the commands are added or modified
+static const char* g_allowedOptions = "aAb:B:cCD:dE:fFgil:I:j:k:L:m:M:n:NP:pqrRsSt:T:vwxz:";
 
 extern char sys_log_path[MAXPGPATH];
 extern const char* prefix_name;
@@ -67,6 +69,7 @@ static bool lc_operation = false;
 
 bool got_stop = false;
 bool g_detailQuery = false;
+bool g_formatQuery = false;
 bool g_coupleQuery = false;
 bool backup_process_query = false;
 bool g_balanceQuery = false;
@@ -1034,13 +1037,13 @@ static int CheckCommandQueryLcOperation(void)
     if (ctl_command == CM_QUERY_COMMAND && lc_operation) {
         if (g_detailQuery) {
             write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-C is needed."), errdetail("N/A"),
-                errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
-                erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
+                          errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
+                          erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         } else {
             write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-Cv is needed."),
-                errdetail("N/A"), errmodule(MOD_CMCTL),
-                errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
-                erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
+                          errdetail("N/A"), errmodule(MOD_CMCTL),
+                          errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
+                          erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         }
         return 1;
     }
@@ -1064,6 +1067,22 @@ static int CheckCommandQuery(void)
         write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-v is needed."), errdetail("N/A"),
             errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
             erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
+        return 1;
+    }
+
+    cond = (g_formatQuery && !g_coupleQuery && !g_detailQuery);
+    if (cond) {
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-Cv is needed."), errdetail("N/A"),
+                      errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
+                      erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
+        return 1;
+    }
+
+    cond = (g_formatQuery && !g_coupleQuery && g_detailQuery);
+    if (cond) {
+        write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("-C is needed."), errdetail("N/A"),
+                      errmodule(MOD_CMCTL), errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
+                      erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
         return 1;
     }
 
@@ -1810,6 +1829,9 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
         case 'v':
             g_detailQuery = true;
             break;
+        case 'w':
+            g_formatQuery = true;
+            break;
         case 'c':
             ctlCtx->build.isNeedCmsBuild = true;
             coordinator_dynamic_view = true;
@@ -2370,8 +2392,7 @@ int main(int argc, char** argv)
 
     /* process command-line options */
     while (optind < argc) {
-        while ((c = getopt_long(argc, argv, "aAb:B:cCD:dE:fFgil:I:j:k:L:m:M:n:NP:pqrRsSt:T:vxz:", longOptions,
-            &optionIndex)) != -1) {
+        while ((c = getopt_long(argc, argv, g_allowedOptions, longOptions, &optionIndex)) != -1) {
             /* parse command type */
             ParseCmdArgsCore(c, &set_data_path, &ctlCtx);
         }

@@ -497,13 +497,15 @@ static status_t ComputeListTableItemLen(
     }
     cJSON *item;
     uint32 tmpAttrValue = valueArr->attrValue;
+    uint32 tempIndex;
     cJSON_ArrayForEach(item, objArray) {
         if (!cJSON_IsObject(item)) {
             continue;
         }
+        tempIndex = index;
         attrValue = CM_MAX(valueArr->attrValue, attrValue);
         valueArr->attrValue = tmpAttrValue;
-        ComputeArrItemLen(item, valueArr, &index, printInfo, resCtx);
+        ComputeArrItemLen(item, valueArr, &tempIndex, printInfo, resCtx);
     }
     valueArr->attrValue = CM_MAX(valueArr->attrValue, attrValue);
 

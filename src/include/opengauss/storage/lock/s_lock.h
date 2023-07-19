@@ -290,8 +290,8 @@ extern "C" {
     void AnnotateHappensBefore(const char *f, int l, uintptr_t addr);
     void AnnotateHappensAfter(const char *f, int l, uintptr_t addr);
 }
-#define TsAnnotateHappensBefore(addr)      AnnotateHappensBefore(__FILE__, __LINE__, (uintptr_t)addr)
-#define TsAnnotateHappensAfter(addr)       AnnotateHappensAfter(__FILE__, __LINE__, (uintptr_t)addr)
+#define TsAnnotateHappensBefore(addr)      AnnotateHappensBefore(__FUNCTION__, __LINE__, (uintptr_t)addr)
+#define TsAnnotateHappensAfter(addr)       AnnotateHappensAfter(__FUNCTION__, __LINE__, (uintptr_t)addr)
 #else
 #define TsAnnotateHappensBefore(addr)
 #define TsAnnotateHappensAfter(addr)
@@ -305,8 +305,7 @@ extern "C" {
 
 typedef int slock_t;
 
-static __inline__ int
-tas(volatile slock_t *lock)
+static __inline__ int tas(volatile slock_t *lock)
 {
     int ret = __sync_lock_test_and_set(lock, 1);
     TsAnnotateHappensAfter(lock);
@@ -318,7 +317,7 @@ extern int (*arm_tas_spin)(volatile slock_t *lock);
 #define S_UNLOCK(lock) do { \
     TsAnnotateHappensBefore(lock); \
     __sync_lock_release(lock); \
-} while(0)
+} while (0)
 
 #else /* !HAVE_GCC_INT_ATOMICS */
 
@@ -1041,7 +1040,7 @@ extern int tas_sema(volatile slock_t* lock);
 #define S_LOCK(lock)                            \
     do {                                        \
         if (TAS(lock))                          \
-            s_lock((lock), __FILE__, __LINE__); \
+            s_lock((lock), __FUNCTION__, __LINE__); \
     } while (0)
 #endif /* S_LOCK */
 
@@ -1124,10 +1123,6 @@ typedef struct {
     int line;
 } SpinDelayStatus;
 
-#define init_spin_delay(ptr)               \
-    {                                      \
-        0, 0, 0, (ptr), __FILE__, __LINE__ \
-    }
 void perform_spin_delay(SpinDelayStatus* status);
 void finish_spin_delay(SpinDelayStatus* status);
 

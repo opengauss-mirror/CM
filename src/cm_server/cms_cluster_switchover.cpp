@@ -23,9 +23,9 @@
  */
 #include "cm/cm_elog.h"
 #include "alarm/alarm.h"
-#include "cms_cluster_switchover.h"
 #include "cms_global_params.h"
 #include "cms_process_messages.h"
+#include "cms_cluster_switchover.h"
 
 char switchover_flag_file_path[MAX_PATH_LEN] = {0};
 
@@ -42,7 +42,7 @@ void* Deal_switchover_for_init_cluster(void* arg)
             write_runlog(LOG, "the thread for do switchover will exit, the flag file is not exist.\n");
             break;
         }
-        if (CM_SERVER_PRIMARY != g_HA_status->local_role && cycleTime <= MAX_CYCLE) {
+        if (g_HA_status->local_role != CM_SERVER_PRIMARY && cycleTime <= MAX_CYCLE) {
             cm_sleep(3);
             continue;
         }
@@ -64,7 +64,7 @@ void* Deal_switchover_for_init_cluster(void* arg)
                 }
                 securec_check_intval(rc, (void)rc);
                 rc = system(command);
-                if (rc != -1 && 0 == WEXITSTATUS(rc)) {
+                if (rc != -1 && WEXITSTATUS(rc) == 0) {
                     write_runlog(LOG, "clean switchover flag file success for ip %s.\n", g_node[i].sshChannel[0]);
                 } else {
                     doCleanFile = false;

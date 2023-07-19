@@ -50,29 +50,30 @@ static CM_Result *pqParseInput(CM_Conn *conn)
     char id;
     int msgLength;
     int avail;
-    CM_Result *result = NULL;
 
     if (conn->result == NULL) {
         errno_t rc;
-
         conn->result = (CM_Result*)malloc(sizeof(CM_Result));
-        if (conn->result == NULL)
+        if (conn->result == NULL) {
             return NULL;
+        }
         rc = memset_s(conn->result, sizeof(CM_Result), 0, sizeof(CM_Result));
-        securec_check_c(rc, (char*)conn->result, "\0");
+        securec_check_c(rc, (char*)conn->result, "");
     }
 
-    result = conn->result;
+    CM_Result *result = conn->result;
 
     /*
      * Try to read a message.  First get the type code and length. Return
      * if not enough data.
      */
     conn->inCursor = conn->inStart;
-    if (cmpqGetc(&id, conn))
+    if (cmpqGetc(&id, conn)) {
         return NULL;
-    if (cmpqGetInt(&msgLength, 4, conn))
+    }
+    if (cmpqGetInt(&msgLength, 4, conn)) {
         return NULL;
+    }
 
     /*
      * Try to validate message type/length here.  A length less than 4 is
@@ -117,13 +118,15 @@ static CM_Result *pqParseInput(CM_Conn *conn)
     /* switch on protocol character */
     switch (id) {
         case 'S': /* command complete */
-            if (cmpqParseSuccess(conn, result))
+            if (cmpqParseSuccess(conn, result)) {
                 return NULL;
+            }
             break;
 
         case 'E': /* error return */
-            if (cmpqGetError(conn, result))
+            if (cmpqGetError(conn, result)) {
                 return NULL;
+            }
             result->gr_status = CM_RESULT_ERROR;
             break;
         default:
@@ -156,7 +159,7 @@ static void handleSyncLoss(CM_Conn *conn, char id, int msgLength)
 {
     printfCMPQExpBuffer(
         &conn->errorMessage, "lost synchronization with server: got message type \"%c\", length %d\n", id, msgLength);
-    close(conn->sock);
+    (void)close(conn->sock);
     conn->sock = -1;
     conn->status = CONNECTION_BAD; /* No more connection to backend */
 }
@@ -201,12 +204,12 @@ fail:
 
 CM_Result *cmpqGetResult(CM_Conn *conn)
 {
-    CM_Result *res = NULL;
-
-    if (conn == NULL)
+    if (conn == NULL) {
         return NULL;
+    }
 
     /* Parse any available data, if our state permits. */
+    CM_Result *res;
     while ((res = pqParseInput(conn)) == NULL) {
         int flushResult;
 
@@ -215,7 +218,7 @@ CM_Result *cmpqGetResult(CM_Conn *conn)
          * result of a command the backend hasn't even got yet.
          */
         while ((flushResult = cmpqFlush(conn)) > 0) {
-            if (cmpqWait(false, true, conn)) {
+            if (cmpqWait(0, 1, conn) != 0) {
                 flushResult = -1;
                 break;
             }
@@ -245,14 +248,13 @@ static int cmpqParseSuccess(CM_Conn *conn, CM_Result *result)
 
     result->gr_status = CM_RESULT_OK;
     rc = memcpy_s(&(result->gr_resdata), CM_MSG_MAX_LENGTH, conn->inBuffer + conn->inCursor, result->gr_msglen);
-    securec_check_c(rc, "\0", "\0");
+    securec_check_c(rc, "", "");
     return (result->gr_status);
 }
 
 void cmpqResetResultData(CM_Result *result)
 {
-
-    if (NULL != result) {
+    if (result != NULL) {
         result->gr_msglen = 0;
         result->gr_status = 0;
         result->gr_type = 0;

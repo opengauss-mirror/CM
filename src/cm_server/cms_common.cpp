@@ -25,23 +25,15 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "cms_global_params.h"
-#include "cms_common.h"
 #include "sys/epoll.h"
-#include "cms_conn.h"
 #include "cms_ddb_adapter.h"
-
-#define SHELL_COMMAND_NOT_EXIST 127
-#define COMMAND_NOT_EXIST_FIND_NUM 20
-
-const int CM_LARGE_CLUSTER_NODE_NUM = 32;
-const int CM_CTL_MORE_THREADS = 4;
-const int CM_CTL_LESS_THREADS = 2;
-
+#include "cms_common.h"
+static const int CMS_NETWORK_ISOLATION_TIMES = 20;
+static const int BOOL_STR_MAX_LEN = 10;
 void ExecSystemSsh(uint32 remoteNodeid, const char *cmd, int *result, const char *resultPath)
 {
     int rc;
     char command[MAXPGPATH] = {0};
-    FILE *fd = NULL;
     const uint32 maxBufLen = 10;
     char resultStr[maxBufLen + 1] = {0};
     char mppEnvSeparateFile[MAXPGPATH] = {0};
@@ -82,17 +74,17 @@ void ExecSystemSsh(uint32 remoteNodeid, const char *cmd, int *result, const char
         }
     }
 
-    fd = fopen(resultPath, "r");
+    FILE *fd = fopen(resultPath, "r");
     if (fd == NULL) {
         write_runlog(ERROR, "failed to open the result file: errno=%d.\n", errno);
         *result = -1;
         return;
     }
     /* read result */
-    uint32 bytesread = fread(resultStr, 1, maxBufLen, fd);
+    uint32 bytesread = (uint32)fread(resultStr, 1, maxBufLen, fd);
     if (bytesread > maxBufLen) {
         write_runlog(ERROR, "exec_system_ssh fread failed! file=%s, bytesread=%u.\n", resultPath, bytesread);
-        fclose(fd);
+        (void)fclose(fd);
         *result = -1;
         return;
     }
@@ -102,7 +94,7 @@ void ExecSystemSsh(uint32 remoteNodeid, const char *cmd, int *result, const char
             "execute the ssh command: nodeId=%u, command=\"%s\", commandReturn=%d.\n",
             g_node[remoteNodeid].node, cmd, *result);
     }
-    fclose(fd);
+    (void)fclose(fd);
 }
 
 int StopCheckNode(uint32 nodeIdCheck)
@@ -138,7 +130,7 @@ NotifyCn_t setNotifyCnFlagByNodeId(uint32 nodeId)
     uint32 nodeIndex = 0;
     bool findTheNode = false;
     uint32 notify_index = 0;
-    cm_notify_msg_status* notify_msg = NULL;
+    cm_notify_msg_status *notify_msg = NULL;
 
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE &&
@@ -160,7 +152,7 @@ NotifyCn_t setNotifyCnFlagByNodeId(uint32 nodeId)
             continue;
         }
         for (uint32 j = 0; j < (uint32)g_instance_role_group_ptr[i].count; j++) {
-            if (INSTANCE_ROLE_PRIMARY == g_instance_role_group_ptr[i].instanceMember[j].role) {
+            if (g_instance_role_group_ptr[i].instanceMember[j].role == INSTANCE_ROLE_PRIMARY) {
                 (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
                 cm_instance_group_report_status *dnGroup = &g_instance_group_report_status_ptr[i];
                 bool res = (IsSyncDdbWithArbiMode() && dnGroup->instance_status.ddbSynced != 1);
@@ -178,25 +170,24 @@ NotifyCn_t setNotifyCnFlagByNodeId(uint32 nodeId)
                     }
                 }
                 (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[nodeIndex].lk_lock));
-                write_runlog(LOG,
-                    "pending datanode %u to coordinator %u notify map index %u\n",
+                write_runlog(LOG, "pending datanode %u to coordinator %u notify map index %u\n",
                     g_instance_role_group_ptr[i].instanceMember[j].instanceId,
-                    g_instance_role_group_ptr[nodeIndex].instanceMember[0].instanceId,
-                    notify_index);
+                    g_instance_role_group_ptr[nodeIndex].instanceMember[0].instanceId, notify_index);
                 if (notify_msg->datanode_instance != NULL) {
                     notify_msg->datanode_instance[notify_index] =
-	                    g_instance_role_group_ptr[i].instanceMember[j].instanceId;
+                        g_instance_role_group_ptr[i].instanceMember[j].instanceId;
                 }
                 if (notify_msg->notify_status != NULL) {
                     notify_msg->notify_status[notify_index] = true;
                 }
                 g_instance_group_report_status_ptr[nodeIndex].instance_status.command_member[0].command_status =
-                    INSTANCE_COMMAND_WAIT_EXEC;
+                    (int)INSTANCE_COMMAND_WAIT_EXEC;
                 g_instance_group_report_status_ptr[nodeIndex].instance_status.command_member[0].pengding_command =
-                    MSG_CM_AGENT_NOTIFY_CN;
-                if (g_instance_group_report_status_ptr[nodeIndex].instance_status.command_member[0].notifyCnCount >= 0
-                    && g_instance_group_report_status_ptr[nodeIndex].instance_status.command_member[0].notifyCnCount <
-                        MAX_COUNT_OF_NOTIFY_CN) {
+                    (int)MSG_CM_AGENT_NOTIFY_CN;
+                if (g_instance_group_report_status_ptr[nodeIndex].instance_status.command_member[0].notifyCnCount >=
+                    0 &&
+                    g_instance_group_report_status_ptr[nodeIndex].instance_status.command_member[0].notifyCnCount <
+                    MAX_COUNT_OF_NOTIFY_CN) {
                     g_instance_group_report_status_ptr[nodeIndex].instance_status.command_member[0].notifyCnCount++;
                 } else {
                     g_instance_group_report_status_ptr[nodeIndex].instance_status.command_member[0].notifyCnCount = 0;
@@ -210,7 +201,7 @@ NotifyCn_t setNotifyCnFlagByNodeId(uint32 nodeId)
 
 uint32 findMinCmServerInstanceIdIndex()
 {
-    uint32 i = 0;
+    uint32 i;
     uint32 minIndex = 0;
     for (i = 0; i < g_node_num; i++) {
         if (g_node[i].cmServerLevel == 1) {
@@ -296,10 +287,11 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
 void GetUpgradeVersionFromCmaConfig()
 {
     char cmAgentConfigFile[MAX_PATH_LEN] = {0};
-    int rc = snprintf_s(cmAgentConfigFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, 
-        "%s/cm_agent/cm_agent.conf", g_currentNode->cmDataPath);
+    int rc = snprintf_s(cmAgentConfigFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/cm_agent/cm_agent.conf",
+        g_currentNode->cmDataPath);
     securec_check_intval(rc, (void)rc);
     undocumentedVersion = get_uint32_value_from_config(cmAgentConfigFile, "upgrade_from", 0);
+    write_runlog(LOG, "undocumentedVersion=%u\n", undocumentedVersion);
 }
 
 #ifdef ENABLE_MULTIPLE_NODES
@@ -311,22 +303,13 @@ void GetUpgradeVersionFromCmaConfig()
 void get_paramter_coordinator_heartbeat_timeout()
 {
     coordinator_heartbeat_timeout =
-        get_int_value_from_config(configDir, "coordinator_heartbeat_timeout", cn_delete_default_time);
+        (uint32)get_int_value_from_config(configDir, "coordinator_heartbeat_timeout", (int)cn_delete_default_time);
     if (coordinator_heartbeat_timeout != 0 && coordinator_heartbeat_timeout < instance_heartbeat_timeout) {
         coordinator_heartbeat_timeout = instance_heartbeat_timeout;
     }
 }
 #endif
 
-bool CheckBoolConfigParam(const char* value)
-{
-    if (strcasecmp(value, "on") == 0 || strcasecmp(value, "yes") == 0 || strcasecmp(value, "true") == 0 ||
-        strcasecmp(value, "1") == 0 || strcasecmp(value, "off") == 0 || strcasecmp(value, "no") == 0 ||
-        strcasecmp(value, "false") == 0 || strcasecmp(value, "0") == 0) {
-        return true;
-    }
-    return false;
-}
 
 void GetDdbTypeParam(void)
 {
@@ -350,6 +333,49 @@ void GetDdbTypeParam(void)
     }
     write_runlog(LOG, "ddbType is %d.\n", g_dbType);
 }
+/* Obtain arbitrate params from cm_server.conf in two nodes arch */
+void GetTwoNodesArbitrateParams(void) {
+    get_config_param(configDir, "third_party_gateway_ip", g_paramsOn2Nodes.thirdPartyGatewayIp,
+        sizeof(g_paramsOn2Nodes.thirdPartyGatewayIp));
+    
+    char szEnableFailover[BOOL_STR_MAX_LEN]  = {0};
+    get_config_param(configDir, "cms_enable_failover_on2nodes", szEnableFailover, sizeof(szEnableFailover));
+    if (szEnableFailover[0] == '\0') {
+        write_runlog(WARNING, "parameter \"cms_enable_failover_on2nodes\" not provided, will use defaule value [%d].\n",
+            g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes);
+    } else {
+        if (!CheckBoolConfigParam(szEnableFailover)) {
+            write_runlog(WARNING, "invalid value for parameter \" cms_enable_failover_on2nodes \" in %s, "
+                "will use default value [%d].\n", configDir, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes);
+        } else {
+            g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes = IsBoolCmParamTrue(szEnableFailover) ? true : false;
+        }
+    }
+
+    if (g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes == true && !IsIPAddrValid(g_paramsOn2Nodes.thirdPartyGatewayIp)) {
+        write_runlog(ERROR, "parameter \"cms_enable_failover_on2nodes\" is true, "
+            "but parameter \"third_party_gateway_ip\" is invalid, please check!\n");
+        exit(1);
+    }
+
+    g_paramsOn2Nodes.cmsNetworkIsolationTimeout = (uint32)get_int_value_from_config(configDir,
+        "cms_network_isolation_timeout", CMS_NETWORK_ISOLATION_TIMES);
+    
+    char szCrashRecovery[BOOL_STR_MAX_LEN] = {0};
+    get_config_param(configDir, "cms_enable_db_crash_recovery", szCrashRecovery, sizeof(szCrashRecovery));
+    if (szCrashRecovery[0] == '\0') {
+        write_runlog(WARNING,
+            "parameter \"cms_enable_db_crash_recovery\" not provided, will use defaule value [%d].\n",
+            g_paramsOn2Nodes.cmsEnableDbCrashRecovery);
+    } else {
+        if (!CheckBoolConfigParam(szCrashRecovery)) {
+            write_runlog(FATAL, "invalid value for parameter \" cms_enable_db_crash_recovery \" in %s, "
+                "will use default value [%d].\n", configDir, g_paramsOn2Nodes.cmsEnableDbCrashRecovery);
+        } else {
+            g_paramsOn2Nodes.cmsEnableDbCrashRecovery = IsBoolCmParamTrue(szCrashRecovery) ? true : false;
+        }
+    }
+}
 
 void GetCmsParaFromConfig()
 {
@@ -361,19 +387,13 @@ void GetCmsParaFromConfig()
         securec_check_errno(rcs, (void)rcs);
         write_runlog(FATAL, "invalid value for parameter \" enable_transaction_read_only \" in %s.\n", configDir);
     }
-    get_config_param(configDir, "datastorage_threshold_value_check", g_enableSetReadOnlyThreshold,
-        sizeof(g_enableSetReadOnlyThreshold));
-    if (strtol(g_enableSetReadOnlyThreshold, NULL, 10) == 0) {
-        rcs = strcpy_s(g_enableSetReadOnlyThreshold, sizeof(g_enableSetReadOnlyThreshold), "85");
-        securec_check_errno(rcs, (void)rcs);
-        write_runlog(FATAL, "invalid value for parameter \" datastorage_threshold_value_check \" in %s.\n", configDir);
-    }
 
     get_config_param(configDir, "enable_dcf", g_enableDcf, sizeof(g_enableDcf));
 
     char enableSsl[10] = {0};
     get_config_param(configDir, "enable_ssl", enableSsl, sizeof(enableSsl));
-
+    get_config_param(configDir, "voting_disk_path", g_votingDiskPath, sizeof(g_votingDiskPath));
+    canonicalize_path(g_votingDiskPath);
     if (IsBoolCmParamTrue(enableSsl)) {
         g_sslOption.enable_ssl = CM_TRUE;
     } else {
@@ -384,6 +404,11 @@ void GetCmsParaFromConfig()
 
     GetDdbTypeParam();
     GetDelayArbitTimeFromConf();
+    GetDelayArbitClusterTimeFromConf();
+
+    if (g_cm_server_num == CMS_ONE_PRIMARY_ONE_STANDBY) {
+        GetTwoNodesArbitrateParams();
+    }
 }
 
 void GetDdbArbiCfg(int32 loadWay)
@@ -416,6 +441,19 @@ void GetDelayArbitTimeFromConf()
     }
 }
 
+void GetDelayArbitClusterTimeFromConf()
+{
+    int32 clusterArbiTime = get_int_value_from_config(configDir, "delay_arbitrate_max_cluster_timeout", 300);
+    const int32 maxClusterArbiTime = 1000;
+    const int32 initClusterArbiTime = 300;
+    if (clusterArbiTime < 0 || clusterArbiTime > maxClusterArbiTime) {
+        write_runlog(WARNING, "delay_arbitrate_max_cluster_timeout is %d.\n", clusterArbiTime);
+        g_clusterArbiTime = initClusterArbiTime;
+    } else {
+        g_clusterArbiTime = clusterArbiTime;
+    }
+}
+
 void GetBackupOpenConfig()
 {
     errno_t rc =
@@ -426,19 +464,17 @@ void GetBackupOpenConfig()
     int backupOpenValue = -1;
     char valueKey[MAX_PATH_LEN] = {0};
     char getValue[MAX_PATH_LEN] = {0};
-
     /* update the test query value */
     rc = snprintf_s(valueKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/backup_open", pw->pw_name);
     securec_check_intval(rc, (void)rc);
-
     DDB_RESULT dbResult = SUCCESS_GET_VALUE;
-    status_t st = GetKVFromDDb(valueKey, MAX_PATH_LEN, getValue, MAX_PATH_LEN, &dbResult);
+    status_t st = GetKVAndLogLevel(valueKey, getValue, MAX_PATH_LEN, &dbResult, LOG);
     if (st == CM_SUCCESS) {
         backupOpenValue = (int)strtol(getValue, NULL, 0);
-        write_runlog(LOG, "get(backup_open) success form ddb. key=%s, value=%d.\n", valueKey, backupOpenValue);
+        write_runlog(LOG, "get backup_open success form ddb. key=%s, value=%d.\n", valueKey, backupOpenValue);
     } else {
         backupOpenValue = get_int_value_from_config(configDir, "backup_open", 0);
-        write_runlog(LOG, "get(backup_open) filed from ddb. key=%s, dbResult=%d, backupOpenValue=%d\n",
+        write_runlog(LOG, "get backup_open filed from ddb, use conf file. key=%s, dbResult=%d, backupOpenValue=%d\n",
             valueKey, (int)dbResult, backupOpenValue);
     }
 
@@ -459,6 +495,22 @@ void GetBackupOpenConfig()
     return;
 }
 
+void GetDnArbitrateMode()
+{
+    char dnArbitrateMode[MAX_PATH_LEN] = {0};
+    get_config_param(configDir, "dn_arbitrate_mode", dnArbitrateMode, sizeof(dnArbitrateMode));
+    if (strcmp(dnArbitrateMode, "paxos") == 0) {
+        g_dnArbitrateMode = PAXOS;
+        return;
+    }
+    if (strcmp(dnArbitrateMode, "share_disk") == 0) {
+        g_dnArbitrateMode = SHARE_DISK;
+        return;
+    }
+    g_dnArbitrateMode = QUORUM;
+    return;
+}
+
 /*
  * reload cm_server parameters from cm_server.conf without kill and restart the cm_server process
  * the parameters include:
@@ -474,7 +526,7 @@ void GetBackupOpenConfig()
  * datastorage_threshold_check_interval
  * max_datastorage_threshold_check
  * g_enableSetReadOnly
- * g_enableSetReadOnlyThreshold
+ * g_readOnlyThreshold
  * g_storageReadOnlyCheckCmd
  * not include: thread_count
  */
@@ -484,7 +536,7 @@ void get_parameters_from_configfile()
     char alarmPath[MAX_PATH_LEN] = {0};
     int rcs;
     int rc = GetHomePath(alarmPath, sizeof(alarmPath));
-    if (EOK != rc) {
+    if (rc != EOK) {
         write_runlog(ERROR, "Get GAUSSHOME failed, please check.\n");
         return;
     }
@@ -498,6 +550,7 @@ void get_parameters_from_configfile()
     securec_check_intval(rcs, (void)rcs);
     GetAlarmConfig(g_alarmConfigDir);
     get_log_paramter(configDir);
+    GetStringFromConf(configDir, sys_log_path, sizeof(sys_log_path), "log_dir");
     GetUpgradeVersionFromCmaConfig();
 #ifdef ENABLE_MULTIPLE_NODES
     get_paramter_coordinator_heartbeat_timeout();
@@ -507,29 +560,31 @@ void get_parameters_from_configfile()
         instance_heartbeat_timeout = 6;
         write_runlog(FATAL, "invalid value for parameter \'instance_heartbeat_timeout\' in %s.\n", configDir);
     }
-    instance_keep_heartbeat_timeout = get_int_value_from_config(configDir, "instance_keep_heartbeat_timeout", 40);
+    instance_keep_heartbeat_timeout =
+        (uint32)get_int_value_from_config(configDir, "instance_keep_heartbeat_timeout", 40);
     cmserver_self_vote_timeout = (uint32)get_int_value_from_config(configDir, "cmserver_self_vote_timeout", 8);
     cmserver_ha_connect_timeout = (uint32)get_int_value_from_config(configDir, "cmserver_ha_connect_timeout", 2);
     instance_failover_delay_timeout =
         (uint32)get_int_value_from_config(configDir, "instance_failover_delay_timeout", 0);
     datastorage_threshold_check_interval =
-        get_int_value_from_config(configDir, "datastorage_threshold_check_interval", 10);
+        get_uint32_value_from_config(configDir, "datastorage_threshold_check_interval", 10);
     max_datastorage_threshold_check = get_int_value_from_config(configDir, "max_datastorage_threshold_check", 1800);
     az_switchover_threshold = get_int_value_from_config(configDir, "az_switchover_threshold", 100);
     az_check_and_arbitrate_interval = get_int_value_from_config(configDir, "az_check_and_arbitrate_interval", 2);
     az1_and_az2_connect_check_interval = get_int_value_from_config(configDir, "az_connect_check_interval", 60);
     az1_and_az2_connect_check_delay_time = get_int_value_from_config(configDir, "az_connect_check_delay_time", 150);
     phony_dead_effective_time = get_int_value_from_config(configDir, "phony_dead_effective_time", 5);
+    if (phony_dead_effective_time <= 0) {
+        phony_dead_effective_time = DEFAULT_PHONY_DEAD_EFFECTIVE_TIME;
+    }
     instance_phony_dead_restart_interval =
         get_int_value_from_config(configDir, "instance_phony_dead_restart_interval", 21600);
     enable_az_auto_switchover = get_int_value_from_config(configDir, "enable_az_auto_switchover", 1);
-    if (instance_phony_dead_restart_interval < HALF_HOUR) {
-        instance_phony_dead_restart_interval = HALF_HOUR;
-    }
+
     cmserver_demote_delay_on_etcd_fault =
         get_int_value_from_config(configDir, "cmserver_demote_delay_on_etcd_fault", 8);
 
-    cm_thread_count = (uint32)get_cm_thread_count(configDir);
+    cm_thread_count = get_cm_thread_count(configDir);
     cm_auth_method = get_authentication_type(configDir);
     get_krb_server_keyfile(configDir);
     switch_rto = get_int_value_from_config(configDir, "switch_rto", 600);
@@ -539,22 +594,27 @@ void get_parameters_from_configfile()
 
     g_clusterInstallType = (ClusterInstallType)get_int_value_from_config(configDir, "install_type",
         (int)INSTALL_TYPE_DEFAULT);
-    g_clusterStartingArbitDelay = (uint32)get_int_value_from_config(
+    g_clusterStartingArbitDelay = get_uint32_value_from_config(
         configDir, "cluster_starting_aribt_delay", CLUSTER_STARTING_ARBIT_DELAY);
 
     force_promote = get_int_value_from_config(configDir, "force_promote", 0);
-    g_enableE2ERto = (uint32)get_int_value_from_config(configDir, "enable_e2e_rto", 0);
+    g_enableE2ERto = get_uint32_value_from_config(configDir, "enable_e2e_rto", 0);
     if (g_enableE2ERto == 1) {
         instance_heartbeat_timeout = INSTANCE_HEARTBEAT_TIMEOUT_FOR_E2E_RTO;
     }
     g_cm_agent_kill_instance_time = get_uint32_value_from_config(configDir, "agent_fault_timeout", 60);
     GetCmsParaFromConfig();
-
+    get_config_param(configDir, "share_disk_path", g_shareDiskPath, sizeof(g_shareDiskPath));
+    canonicalize_path(g_shareDiskPath);
     GetDdbArbiCfg(INIT_GET_PARAMTER);
-    g_sslOption.expire_time = (uint32)get_int_value_from_config(configDir, "ssl_cert_expire_alert_threshold",
+    g_readOnlyThreshold = get_uint32_value_from_config(configDir, "datastorage_threshold_value_check", 85);
+    g_sslOption.expire_time = get_uint32_value_from_config(configDir, "ssl_cert_expire_alert_threshold",
         CM_DEFAULT_SSL_EXPIRE_THRESHOLD);
-    g_sslCertExpireCheckInterval = (uint32)get_int_value_from_config(configDir, "ssl_cert_expire_check_interval",
+    g_sslCertExpireCheckInterval = get_uint32_value_from_config(configDir, "ssl_cert_expire_check_interval",
         SECONDS_PER_DAY);
+    g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
+    g_agentNetworkTimeout = get_uint32_value_from_config(configDir, "agent_network_timeout", 6);
+    GetDnArbitrateMode();
 }
 
 void clean_init_cluster_state()
@@ -576,41 +636,16 @@ void clean_init_cluster_state()
 
 void SendSignalToAgentThreads()
 {
-    uint32 ctlThreadNum = (uint32)GetCtlThreadNum();
-    for (unsigned int i = 0; i < (gThreads.count - ctlThreadNum); i++) {
-        if (pthread_kill(gThreads.threads[i].tid, SIGUSR1) != 0) {
-            write_runlog(ERROR, "send SIGUSR1 to thread %lu failed.\n", gThreads.threads[i].tid);
-        } else {
-            write_runlog(LOG, "send SIGUSR1 to thread %lu.\n", gThreads.threads[i].tid);
-        }
+    if (pthread_kill(gIOThreads.threads[0].tid, SIGUSR1) != 0) {
+        write_runlog(ERROR, "send SIGUSR1 to thread %lu failed.\n", gIOThreads.threads[0].tid);
+    } else {
+        write_runlog(LOG, "send SIGUSR1 to thread %lu.\n", gIOThreads.threads[0].tid);
     }
-}
-
-int GetCtlThreadNum()
-{
-    /* Before cm version C20, thread_count range is [2 - 255], 
-    If process cm_ctl thread num set to 4, 
-    But user maybe configed thread_count to 2,
-    Then it will no thead process agent report msg.
-    so if user configed thread_count less than 4, 
-    will only alloc one thread to process cm_ctl msg.
-    */
-    if (g_node_num < CM_LARGE_CLUSTER_NODE_NUM) {
-        return CM_CTL_LESS_THREADS;
-    }
-    
-    if (cm_thread_count <= CM_CTL_MORE_THREADS) {
-        return CM_CTL_LESS_THREADS;
-    }
-
-    return CM_CTL_MORE_THREADS;
 }
 
 void FreeNotifyMsg()
 {
-    uint32 i = 0;
-
-    for (i = 0; i < g_dynamic_header->relationCount; i++) {
+    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE) {
             (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
 
@@ -635,17 +670,14 @@ void FreeNotifyMsg()
 int UpdateDynamicConfig()
 {
     bool dynamicModified = false;
-    int fd = 0;
-    size_t headerAglinmentSize = 0;
-    size_t cmsStateTimelineSize = 0;
     ssize_t returnCode;
     errno_t rc;
     (void)BuildDynamicConfigFile(&dynamicModified);
-    headerAglinmentSize =
+    size_t headerAglinmentSize =
         (sizeof(dynamicConfigHeader) / AGLINMENT_SIZE + ((sizeof(dynamicConfigHeader) % AGLINMENT_SIZE == 0) ? 0 : 1)) *
         AGLINMENT_SIZE;
-    cmsStateTimelineSize = sizeof(dynamic_cms_timeline);
-    fd = open(cm_dynamic_configure_path, O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    size_t cmsStateTimelineSize = sizeof(dynamic_cms_timeline);
+    int fd = open(cm_dynamic_configure_path, O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR);
     if (fd < 0) {
         write_runlog(ERROR, "[reload] OPEN dynamic config file error.\n");
         return -1;
@@ -772,8 +804,13 @@ void GetDoradoOfflineIp(char *ip, uint32 ipLen)
 
     ret = snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/dorado_offline_node", pw->pw_name);
     securec_check_intval(ret, (void)ret);
-
     if (GetKVFromDDb(key, MAX_PATH_LEN, ip, ipLen, &ddbResult) != CM_SUCCESS) {
+        if (ddbResult == CAN_NOT_FIND_THE_KEY) {
+            write_runlog(ERROR, "failed to get value with key(%s), error info:%d.\n", key, (int)ddbResult);
+            errno_t rc = strcpy_s(ip, ipLen, "unknown");
+            securec_check_errno(rc, (void)rc);
+            return;
+        }
         write_runlog(ERROR, "failed to get value with key(%s), error info:%d.\n", key, (int)ddbResult);
         return;
     }
@@ -794,10 +831,40 @@ bool SetOfflineNode()
 
     for (uint32 i = 0; i < g_node_num; i++) {
         if (strcmp(g_doradoIp, g_node[i].sshChannel[0]) == 0) {
-            write_runlog(LOG, "node(%u) is offline, ip is %s.\n", g_node[i].node, g_node[i].sshChannel[0]);
+            write_runlog(DEBUG5, "node(%u) is offline, ip is %s.\n", g_node[i].node, g_node[i].sshChannel[0]);
             return true;
         }
     }
 
     return false;
+}
+
+void CmsSyncStandbyMode()
+{
+    if (!g_needReloadSyncStandbyMode) {
+        return;
+    }
+    char key[MAX_PATH_LEN] = {0};
+    char value[MAX_PATH_LEN] = {0};
+    errno_t rc =
+        snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/sync_standby_mode", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+
+    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVFromDDb(key, MAX_PATH_LEN, value, MAX_PATH_LEN, &ddbResult);
+    if (st != CM_SUCCESS) {
+        g_needReloadSyncStandbyMode = false;
+        int logLevel = (ddbResult == CAN_NOT_FIND_THE_KEY) ? ERROR : LOG;
+        write_runlog(logLevel, "failed to get value with key(%s).\n", key);
+        return;
+    }
+    current_cluster_az_status = (synchronous_standby_mode)strtol(value, NULL, 10);
+    g_needReloadSyncStandbyMode = false;
+    write_runlog(LOG, "setting current cluster az status to %d.\n", (int)current_cluster_az_status);
+    return;
+}
+
+bool EnableShareDisk()
+{
+    return (g_dnArbitrateMode == SHARE_DISK);
 }

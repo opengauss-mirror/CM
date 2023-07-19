@@ -43,16 +43,16 @@ const int MAX_PING_NODE_NUM = 10;
 extern DdbConn g_dbConn;
 
 /* data structure to store input/output of ping-check thread function */
-typedef struct PingCheckThreadParmInfo {
+typedef struct PingCheckThreadParmInfoT {
     /* the node to ping */
     uint32 azNode;
     /* ping thread idnex */
     uint32 threadIdx;
     /* the array of ping result */
     uint32 *pingResultArrayRef;
-}PingCheckThreadParmInfo;
+} PingCheckThreadParmInfo;
 
-typedef struct ConnCheck {
+typedef struct ConnCheckT {
     bool lastConn;
     bool curConn;
     AZRole azRole;
@@ -60,11 +60,11 @@ typedef struct ConnCheck {
     char azName[CM_AZ_NAME];
 } ConnCheck;
 
-typedef enum AzPingCheckRes { CONTINUE_EXECTING = 0, WAIT_NEXT_TIME } AzPingCheckRes;
+typedef enum AzPingCheckResE { CONTINUE_EXECTING = 0, WAIT_NEXT_TIME } AzPingCheckRes;
 
-typedef enum {START_AZ, STOP_AZ} OperateType;
-typedef enum {SET_DDB_AZ, GET_DDB_AZ} DdbOperateType;
-typedef enum {UNKNOWN_AZ_DEPLOYMENT, TWO_AZ_DEPLOYMENT, THREE_AZ_DEPLOYMENT} AZDeploymentType;
+typedef enum OperateTypeE { START_AZ, STOP_AZ } OperateType;
+typedef enum DdbOperateTypeE { SET_DDB_AZ, GET_DDB_AZ } DdbOperateType;
+typedef enum AZDeploymentTypeE { UNKNOWN_AZ_DEPLOYMENT, TWO_AZ_DEPLOYMENT, THREE_AZ_DEPLOYMENT } AZDeploymentType;
 
 extern int GetNodeIndexByAzRole(AZRole azRole);
 extern bool AzPingCheck(bool *preConnStatusAZ, const char *azName1);
@@ -83,7 +83,6 @@ extern void* MultiAzConnectStateCheckMain(void* arg);
 extern void getAZDyanmicStatus(int azCount, int* statusOnline,
     int* statusPrimary, int* statusFail, int* statusDnFail, const char azArray[][CM_AZ_NAME]);
 
-extern void* AZStatusCheckAndArbitrate(void* arg);
 extern void *DnGroupStatusCheckAndArbitrateMain(void *arg);
 bool CompareCurWithExceptSyncList(uint32 groupIndex);
 extern void GetSyncListString(const DatanodeSyncList *syncList, char *syncListString, size_t maxLen);

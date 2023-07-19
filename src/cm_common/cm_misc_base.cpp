@@ -71,7 +71,7 @@ void cm_sleep(unsigned int sec)
     (void)sigprocmask(SIG_SETMASK, &oldSig, NULL);
 }
 
-void cm_usleep(unsigned int usec)
+void CmUsleep(unsigned int usec)
 {
     sigset_t sleepBlockSig;
     sigset_t oldSig;
@@ -98,8 +98,8 @@ void CheckEnvValue(const char* inputEnvValue)
                 write_runlog(ERROR, "invalid token \"%s\" in inputEnvValue: (%s)\n",
                     dangerCharacterList[i], inputEnvValue);
             } else {
-                fprintf(stderr,
-                    "invalid token \"%s\" in inputEnvValue: (%s)\n", dangerCharacterList[i], inputEnvValue);
+                (void)fprintf(stderr,
+                    "FATAL invalid token \"%s\" in inputEnvValue: (%s)\n", dangerCharacterList[i], inputEnvValue);
             }
             exit(1);
         }
@@ -108,7 +108,6 @@ void CheckEnvValue(const char* inputEnvValue)
 
 int cm_getenv(const char *envVar, char *outputEnvValue, uint32 envValueLen, int elevel)
 {
-    char* envValue = NULL;
     elevel = (elevel == -1) ? ERROR : elevel;
 
     if (envVar == NULL) {
@@ -117,7 +116,7 @@ int cm_getenv(const char *envVar, char *outputEnvValue, uint32 envValueLen, int 
     }
 
     (void)syscalllockAcquire(&g_cmEnvLock);
-    envValue = getenv(envVar);
+    char *envValue = getenv(envVar);
     if (envValue == NULL || envValue[0] == '\0') {
         if (strcmp(envVar, "MPPDB_KRB5_FILE_PATH") == 0 ||
             strcmp(envVar, "KRB_HOME") == 0 ||
@@ -153,14 +152,14 @@ int cm_getenv(const char *envVar, char *outputEnvValue, uint32 envValueLen, int 
 void check_input_for_security(const char *input)
 {
     int i;
-    char* dangerToken[] = {"|", ";", "&", "$", "<", ">", "`", "\\", "!", "\n", NULL};
+    const char* dangerToken[] = {"|", ";", "&", "$", "<", ">", "`", "\\", "!", "\n", NULL};
 
     for (i = 0; dangerToken[i] != NULL; i++) {
         if (strstr(input, dangerToken[i]) != NULL) {
             if (logInitFlag) {
-                write_runlog(ERROR, "invalid token \"%s\" in string: %s.\n", dangerToken[i], input);
+                write_runlog(FATAL, "invalid token \"%s\" in string: %s.\n", dangerToken[i], input);
             } else {
-                printf("invalid token \"%s\" in string: %s.\n", dangerToken[i], input);
+                (void)printf("FATAL invalid token \"%s\" in string: %s.\n", dangerToken[i], input);
             }
             exit(1);
         }
@@ -169,8 +168,7 @@ void check_input_for_security(const char *input)
 
 int GetHomePath(char *outputEnvValue, uint32 envValueLen, int32 logLevel)
 {
-    errno_t rc = 0;
-    rc = cm_getenv("CM_HOME", outputEnvValue, envValueLen, logLevel);
+    errno_t rc = cm_getenv("CM_HOME", outputEnvValue, envValueLen, logLevel);
     if (rc == EOK) {
         check_input_for_security(outputEnvValue);
         return 0;
@@ -188,8 +186,18 @@ int GetHomePath(char *outputEnvValue, uint32 envValueLen, int32 logLevel)
 
 bool IsBoolCmParamTrue(const char *param)
 {
-    return (strcmp(param, "on") == 0) || (strcmp(param, "yes") == 0) ||
-           (strcmp(param, "true") == 0) || (strcmp(param, "1") == 0);
+    return (strcasecmp(param, "on") == 0) || (strcasecmp(param, "yes") == 0) || (strcasecmp(param, "true") == 0) ||
+           (strcasecmp(param, "1") == 0);
+}
+
+bool CheckBoolConfigParam(const char* value)
+{
+    if (strcasecmp(value, "on") == 0 || strcasecmp(value, "yes") == 0 || strcasecmp(value, "true") == 0 ||
+        strcasecmp(value, "1") == 0 || strcasecmp(value, "off") == 0 || strcasecmp(value, "no") == 0 ||
+        strcasecmp(value, "false") == 0 || strcasecmp(value, "0") == 0) {
+        return true;
+    }
+    return false;
 }
 
 bool IsSharedStorageMode()
@@ -205,7 +213,18 @@ bool IsSharedStorageMode()
     return true;
 }
 
-status_t TcpSendMsg(int socket, const char *buf, size_t remainSize)
+static bool IsCmTcpTimeout(const struct timespec *beginTime, uint32 timeout)
+{
+    struct timespec currentTime = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &currentTime);
+
+    if ((currentTime.tv_sec - beginTime->tv_sec) >= timeout) {
+        return true;
+    }
+    return false;
+}
+
+status_t TcpSendMsg(int socket, const char *buf, size_t remainSize, uint32 timeout)
 {
     long sentSize;
     long offset = 0;
@@ -215,11 +234,17 @@ status_t TcpSendMsg(int socket, const char *buf, size_t remainSize)
         return CM_ERROR;
     }
 
+    struct timespec sendBegin = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &sendBegin);
+
     while (remainSize > 0) {
         sentSize = send(socket, buf + offset, remainSize, 0);
-        if (sentSize == 0) {
+        if (sentSize <= 0) {
+            if (IsCmTcpTimeout(&sendBegin, timeout)) {
+                write_runlog(ERROR, "[tcp] send msg timeout.\n");
+                return CM_ERROR;
+            }
             if (errno == EAGAIN) {
-                write_runlog(LOG, "[tcp] send msg fail errno=(%d), send again.\n", errno);
                 continue;
             }
             write_runlog(ERROR, "[tcp] can't send msg to agent with errno=%d.\n", errno);
@@ -232,7 +257,7 @@ status_t TcpSendMsg(int socket, const char *buf, size_t remainSize)
     return CM_SUCCESS;
 }
 
-status_t TcpRecvMsg(int socket, char *buf, size_t remainSize)
+status_t TcpRecvMsg(int socket, char *buf, size_t remainSize, uint32 timeout)
 {
     long recvSize;
     long offset = 0;
@@ -242,6 +267,9 @@ status_t TcpRecvMsg(int socket, char *buf, size_t remainSize)
         return CM_ERROR;
     }
 
+    struct timespec recvBegin = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &recvBegin);
+
     while (remainSize > 0) {
         recvSize = recv(socket, buf + offset, remainSize, 0);
         if (recvSize == 0) {
@@ -249,8 +277,11 @@ status_t TcpRecvMsg(int socket, char *buf, size_t remainSize)
             return CM_ERROR;
         }
         if (recvSize < 0) {
+            if (IsCmTcpTimeout(&recvBegin, timeout)) {
+                write_runlog(ERROR, "[tcp] recv msg timeout.\n");
+                return CM_ERROR;
+            }
             if (errno == EINTR || errno == EAGAIN) {
-                write_runlog(LOG, "[tcp] recv msg fail errno=(%d), recv again.\n", errno);
                 continue;
             }
             write_runlog(ERROR, "[tcp] can't receive msg with errno=(%d)\n", errno);
@@ -261,4 +292,20 @@ status_t TcpRecvMsg(int socket, char *buf, size_t remainSize)
     }
 
     return CM_SUCCESS;
+}
+
+long GetCurMonotonicTimeSec()
+{
+    struct timespec curTime = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &curTime);
+    return curTime.tv_sec;
+}
+
+void InitPthreadCondMonotonic(pthread_cond_t *cond)
+{
+    pthread_condattr_t attr;
+    (void)pthread_condattr_init(&attr);
+    (void)pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    (void)pthread_cond_init(cond, &attr);
+    (void)pthread_condattr_destroy(&attr);
 }

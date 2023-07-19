@@ -25,8 +25,8 @@
 #include "cms_global_params.h"
 #include "cms_process_messages.h"
 
-
-void ProcessCtl2CmOneInstanceBarrierQueryMsg(CM_Connection *con, uint32 node, uint32 instanceId, int instanceType)
+void ProcessCtl2CmOneInstanceBarrierQueryMsg(
+    MsgRecvInfo* recvMsgInfo, uint32 node, uint32 instanceId, int instanceType)
 {
     uint32 groupIndex = 0;
     int memberIndex = 0;
@@ -56,10 +56,10 @@ void ProcessCtl2CmOneInstanceBarrierQueryMsg(CM_Connection *con, uint32 node, ui
         securec_check_errno(rc, (void)rc);
     }
 
-    (void)cm_server_send_msg(con, 'S', (char *)(&cm2CtlBarrierContent), sizeof(cm_to_ctl_instance_barrier_info));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&cm2CtlBarrierContent), sizeof(cm_to_ctl_instance_barrier_info));
 }
 
-void ProcessCtlToCmQueryGlobalBarrierMsg(CM_Connection *con)
+void ProcessCtlToCmQueryGlobalBarrierMsg(MsgRecvInfo* recvMsgInfo)
 {
     cm_to_ctl_cluster_global_barrier_info globalBarrierInfo = {0};
     globalBarrierInfo.msg_type = (int)MSG_CM_CTL_GLOBAL_BARRIER_DATA_BEGIN;
@@ -71,47 +71,45 @@ void ProcessCtlToCmQueryGlobalBarrierMsg(CM_Connection *con)
     rc = strncpy_s(globalBarrierInfo.globalRecoveryBarrierId, BARRIERLEN, g_targetBarrier, BARRIERLEN - 1);
     securec_check_errno(rc, (void)rc);
 
-    (void)cm_server_send_msg(con, 'S', (char *)(&globalBarrierInfo), sizeof(cm_to_ctl_cluster_global_barrier_info));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&globalBarrierInfo), sizeof(cm_to_ctl_cluster_global_barrier_info));
 }
 
-void ProcessCtlToCmQueryBarrierMsg(CM_Connection *con)
+void ProcessCtlToCmQueryBarrierMsg(MsgRecvInfo* recvMsgInfo)
 {
-    ProcessCtlToCmQueryGlobalBarrierMsg(con);
+    ProcessCtlToCmQueryGlobalBarrierMsg(recvMsgInfo);
     uint32 i;
     cm_to_ctl_cluster_global_barrier_info globalBarrierInfo;
 
     for (i = 0; i < g_node_num; i++) {
         if (g_node[i].coordinate == 1) {
             ProcessCtl2CmOneInstanceBarrierQueryMsg(
-                con, g_node[i].node, g_node[i].coordinateId, INSTANCE_TYPE_COORDINATE);
+                recvMsgInfo, g_node[i].node, g_node[i].coordinateId, INSTANCE_TYPE_COORDINATE);
         }
 
         for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
             ProcessCtl2CmOneInstanceBarrierQueryMsg(
-                con, g_node[i].node, g_node[i].datanode[j].datanodeId, INSTANCE_TYPE_DATANODE);
+                recvMsgInfo, g_node[i].node, g_node[i].datanode[j].datanodeId, INSTANCE_TYPE_DATANODE);
         }
     }
     globalBarrierInfo.msg_type = (int)MSG_CM_CTL_BARRIER_DATA_END;
-    (void)cm_server_send_msg(con, 'S', (char *)(&globalBarrierInfo), sizeof(cm_to_ctl_cluster_global_barrier_info));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&globalBarrierInfo), sizeof(cm_to_ctl_cluster_global_barrier_info));
 }
 
-void ProcessSharedStorageMsg(CM_Connection *con)
+void ProcessSharedStorageMsg(MsgRecvInfo* recvMsgInfo)
 {
     errno_t rc;
-    CmsSharedStorageInfo sendMsg;
+    CmsSharedStorageInfo sendMsg = {0};
 
     sendMsg.msg_type = (int)MSG_GET_SHARED_STORAGE_INFO_ACK;
 
     if (g_doradoIp[0] == '\0') {
-        rc = strcpy_s(g_doradoIp, CM_IP_LENGTH, "unknown");
+        rc = strcpy_s(sendMsg.doradoIp, CM_IP_LENGTH, "unknown");
         securec_check_errno(rc, (void)rc);
-        (void)cm_server_send_msg(con, 'S', (char *)(&sendMsg), sizeof(sendMsg));
-        return;
+    } else {
+        rc = strcpy_s(sendMsg.doradoIp, CM_IP_LENGTH, g_doradoIp);
+        securec_check_errno(rc, (void)rc);
     }
-
-    rc = strcpy_s(sendMsg.doradoIp, CM_IP_LENGTH, g_doradoIp);
-    securec_check_errno(rc, (void)rc);
-    (void)cm_server_send_msg(con, 'S', (char *)(&sendMsg), sizeof(sendMsg));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&sendMsg), sizeof(sendMsg), DEBUG5);
 
     return;
 }

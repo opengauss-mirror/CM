@@ -207,4 +207,4 @@ extern int ShowThreadName(const char* name);
 typedef void (*uuid_struct_destroy_hook_type)(int which);
 extern THR_LOCAL uuid_struct_destroy_hook_type uuid_struct_destroy_hook;
 
-#endif /*GS_THREAD_H_ */
+#endif /* GS_THREAD_H_ */

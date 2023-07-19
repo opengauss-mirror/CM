@@ -25,10 +25,10 @@
 #include "cms_ddb.h"
 #include "cms_arbitrate_datanode.h"
 #include "cms_write_dynamic_config.h"
-#include "cms_arbitrate_datanode_pms.h"
 #include "cms_arbitrate_datanode_pms_utils.h"
 #include "cms_common.h"
-#include "cms_process_messages.h"
+#include "cms_disk_check.h"
+#include "cms_alarm.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cms_arbitrate_gtm.h"
 #endif
@@ -36,7 +36,7 @@
 void SendUnlockMessage(const DnArbCtx *ctx, uint32 term)
 {
     cm_to_agent_unlock unlockMsgPtr;
-    unlockMsgPtr.msg_type = MSG_CM_AGENT_UNLOCK;
+    unlockMsgPtr.msg_type = (int)MSG_CM_AGENT_UNLOCK;
     if (g_clusterType == V3SingleInstCluster) {
         if (TermIsInvalid(term)) {
             write_runlog(LOG, "Can't send unlock message to instance(%u) because term is invalid.\n", ctx->instId);
@@ -48,74 +48,83 @@ void SendUnlockMessage(const DnArbCtx *ctx, uint32 term)
     }
     unlockMsgPtr.instanceId = ctx->instId;
     write_runlog(LOG, "send unlock message to instance(%u).\n", ctx->instId);
-    (void)cm_server_send_msg(ctx->con, 'S', (char *)(&unlockMsgPtr), sizeof(cm_to_agent_unlock));
+    (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)(&unlockMsgPtr), sizeof(cm_to_agent_unlock));
 }
 
 static void SendNotifyMessage2Cma(const DnArbCtx *ctx, int32 roleType)
 {
     cm_to_agent_notify notifyMsgPtr;
-    notifyMsgPtr.msg_type = MSG_CM_AGENT_NOTIFY;
+    notifyMsgPtr.msg_type = (int)MSG_CM_AGENT_NOTIFY;
     notifyMsgPtr.node = ctx->node;
     notifyMsgPtr.instanceId = ctx->instId;
     notifyMsgPtr.role = roleType;
+    notifyMsgPtr.term = FirstTerm;
     const char *roleStr = (roleType == INSTANCE_ROLE_STANDBY) ? "standby" : "cascade standby";
     WriteKeyEventLog(KEY_EVENT_NOTIFY_STANDBY, ctx->instId, "send notify %s to instance(%u)", roleStr, ctx->instId);
-    (void)cm_server_send_msg(ctx->con, 'S', (char *)(&notifyMsgPtr), sizeof(cm_to_agent_notify));
+    (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)(&notifyMsgPtr), sizeof(cm_to_agent_notify));
 }
 
 static void SendFinishRedoMessage(const DnArbCtx *ctx)
 {
     cm_to_agent_finish_redo finishRedoMsgPtr;
-    finishRedoMsgPtr.msg_type = MSG_CM_AGENT_FINISH_REDO;
+    finishRedoMsgPtr.msg_type = (int)MSG_CM_AGENT_FINISH_REDO;
     finishRedoMsgPtr.node = ctx->node;
     finishRedoMsgPtr.instanceId = ctx->instId;
     finishRedoMsgPtr.is_finish_redo_cmd_sent = ctx->localRep->is_finish_redo_cmd_sent;
     WriteKeyEventLog(KEY_EVENT_FINISH_REDO, ctx->instId, "send finish redo message to instance(%u)", ctx->instId);
-    (void)cm_server_send_msg(ctx->con, 'S', (char*)(&finishRedoMsgPtr), sizeof(cm_to_agent_finish_redo));
+    (void)RespondMsg(ctx->recvMsgInfo, 'S', (char*)(&finishRedoMsgPtr), sizeof(cm_to_agent_finish_redo));
 }
 
-static void SendRestartMsg(const DnArbCtx *ctx, const char *str)
+static void SetDynamicRole(DnArbCtx *ctx, int32 role, const char *str1, const char *str2)
+{
+    write_runlog(LOG, "%s, %s reset dynamic role from %d to %d.\n", str1, str2, ctx->info.dyRole, role);
+    ctx->localRep->local_status.local_role = role;
+    ctx->info.dyRole = role;
+}
+
+static void SendRestartMsg(DnArbCtx *ctx, const char *str)
 {
     cm_to_agent_restart restartMsg;
-    restartMsg.msg_type = MSG_CM_AGENT_RESTART;
+    restartMsg.msg_type = (int)MSG_CM_AGENT_RESTART;
     restartMsg.node = ctx->node;
     restartMsg.instanceId = ctx->instId;
     WriteKeyEventLog(KEY_EVENT_RESTART, ctx->instId, "%s, send restart message to instance(%u)", str, ctx->instId);
-    (void)cm_server_send_msg(ctx->con, 'S', (char *)&restartMsg, sizeof(cm_to_agent_restart));
+    (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)&restartMsg, sizeof(cm_to_agent_restart));
+    SetDynamicRole(ctx, INSTANCE_ROLE_UNKNOWN, str, "[SendRestartMsg]");
 }
 
 static void SendLock1Message(const DnArbCtx *ctx)
 {
     cm_to_agent_lock1 lock1MsgPtr;
-    lock1MsgPtr.msg_type = MSG_CM_AGENT_LOCK_NO_PRIMARY;
+    lock1MsgPtr.msg_type = (int)MSG_CM_AGENT_LOCK_NO_PRIMARY;
     lock1MsgPtr.node = ctx->node;
     lock1MsgPtr.instanceId = ctx->instId;
     write_runlog(LOG, "send lock1 message to instance(%u).\n", ctx->instId);
-    (void)cm_server_send_msg(ctx->con, 'S', (char *)&lock1MsgPtr, sizeof(cm_to_agent_lock1));
+    (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)&lock1MsgPtr, sizeof(cm_to_agent_lock1));
 }
 
 static void SendLock2Messange(const DnArbCtx *ctx, const char *dhost, int dlen, uint32 dport,
     uint32 primaryTerm)
 {
     cm_to_agent_lock2 lock2MsgPtr;
-    lock2MsgPtr.msg_type = MSG_CM_AGENT_LOCK_CHOSEN_PRIMARY;
+    lock2MsgPtr.msg_type = (int)MSG_CM_AGENT_LOCK_CHOSEN_PRIMARY;
     if (g_clusterType == V3SingleInstCluster) {
         lock2MsgPtr.node = primaryTerm;
     } else {
         lock2MsgPtr.node = ctx->node;
     }
     lock2MsgPtr.instanceId = ctx->instId;
-    errno_t rc = snprintf_s(lock2MsgPtr.disconn_host, HOST_LENGTH, dlen, "%s", dhost);
+    errno_t rc = snprintf_s(lock2MsgPtr.disconn_host, (size_t)HOST_LENGTH, dlen, "%s", dhost);
     securec_check_intval(rc, (void)rc);
     lock2MsgPtr.disconn_port = dport;
-    write_runlog(LOG, "send lock2 message to instance(%u), dhost=%s, dport=%u.\n", ctx->instId, dhost, dport);
-    (void)cm_server_send_msg(ctx->con, 'S', (char *)&lock2MsgPtr, sizeof(cm_to_agent_lock2));
+    write_runlog(LOG, "send lock2 message to instance(%u: %u), dhost=%s, dport=%u.\n",
+        ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, ctx->cond.vaildPrimIdx), dhost, dport);
+    (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)&lock2MsgPtr, sizeof(cm_to_agent_lock2));
 }
 
-static void send_failover_message(CM_Connection* con, uint32 node, uint32 instanceId, uint32 group_index,
+static void send_failover_message(MsgRecvInfo* recvMsgInfo, uint32 node, uint32 instanceId, uint32 group_index,
     int member_index, cm_to_agent_failover* failover_msg_ptr)
 {
-    uint32 pass_term = InvalidTerm;
     cm_instance_role_group* role_group = &g_instance_role_group_ptr[group_index];
     int count = role_group->count;
     cm_instance_role_status* roleMember = role_group->instanceMember;
@@ -124,10 +133,11 @@ static void send_failover_message(CM_Connection* con, uint32 node, uint32 instan
 
     ChangeDnPrimaryMemberIndex(group_index, member_index);
 
-    failover_msg_ptr->msg_type = MSG_CM_AGENT_FAILOVER;
+    failover_msg_ptr->msg_type = (int)MSG_CM_AGENT_FAILOVER;
     failover_msg_ptr->node = node;
     failover_msg_ptr->instanceId = instanceId;
-    if ((pass_term = ReadTermFromDdb(group_index)) == InvalidTerm) {
+    uint32 pass_term = ReadTermFromDdb(group_index);
+    if (pass_term == InvalidTerm) {
         write_runlog(ERROR, "line %d: Term on DDB has not been set yet, which should not happen.\n", __LINE__);
         (void)WriteDynamicConfigFile(false);
         return;
@@ -143,8 +153,8 @@ static void send_failover_message(CM_Connection* con, uint32 node, uint32 instan
 
     g_instance_group_report_status_ptr[group_index].instance_status.term = pass_term;
     failover_msg_ptr->term = pass_term;
-    WriteKeyEventLog(KEY_EVENT_FAILOVER, instanceId, "Failover message has sent to instance %u, term %u",
-        instanceId, pass_term);
+    WriteKeyEventLog(KEY_EVENT_FAILOVER, instanceId, "Failover message has sent to instance %u, term %u, "
+        "sendFailoverTimes is %u.", instanceId, pass_term, dnReportStatus[member_index].sendFailoverTimes);
     for (int i = 0; i < count; i++) {
         int node_static_role = roleMember[i].role;
         int node_dynamic_role = dnReportStatus[i].local_status.local_role;
@@ -155,20 +165,20 @@ static void send_failover_message(CM_Connection* con, uint32 node, uint32 instan
         bool node_redo_finished = dnReportStatus[i].local_status.redo_finished;
         int node_build_reason = dnReportStatus[i].local_status.buildReason;
         int node_restarting =
-            g_instance_group_report_status_ptr[group_index].instance_status.arbitrate_status_member[i].restarting;
+            (int)g_instance_group_report_status_ptr[group_index].instance_status.arbitrate_status_member[i].restarting;
         write_runlog(LOG, "line %d: new arbitra node %d"
             ", instanceId %u, static_role %d=%s, local_dynamic_role %d=%s, local_term=%u, local_redo_finished = %d"
             ", local_last_xlog_location=%X/%X, local_db_state %d=%s, local_sync_state=%d, build_reason %d=%s, "
-            "double_restarting=%d, group_term=%u\n",
+            "double_restarting=%d, group_term=%u, sendFailoverTimes=%u\n",
             __LINE__, i, roleMember[i].instanceId, node_static_role, datanode_role_int_to_string(node_static_role),
             node_dynamic_role, datanode_role_int_to_string(node_dynamic_role),
             node_term, node_redo_finished, (uint32)(node_last_xlog_location >> 32),
             (uint32)node_last_xlog_location, node_db_state, datanode_dbstate_int_to_string(node_db_state),
             node_sync_state, node_build_reason, datanode_rebuild_reason_int_to_string(node_build_reason),
-            node_restarting, pass_term);
+            node_restarting, pass_term, dnReportStatus[i].sendFailoverTimes);
     }
 
-    (void)cm_server_send_msg(con, 'S', (char*)failover_msg_ptr, sizeof(cm_to_agent_failover));
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)failover_msg_ptr, sizeof(cm_to_agent_failover));
     dnReportStatus[member_index].arbitrateFlag = true;
     dnReportStatus[member_index].sendFailoverTimes++;
     cm_pending_notify_broadcast_msg(group_index, instanceId);
@@ -221,7 +231,7 @@ static void CleanBuildCommand(uint32 groupIdx, int32 memIdx, int32 dbState, bool
     cm_instance_command_status *cmd = &(instRep->command_member[memIdx]);
     int32 timeOut = cmd->time_out;
     if (dbState == INSTANCE_HA_STATE_NORMAL && (timeOut > thresHold || timeOut < (thresHold - delayTime))) {
-        if (cmd->pengding_command == MSG_CM_AGENT_BUILD) {
+        if (cmd->pengding_command == (int)MSG_CM_AGENT_BUILD) {
             write_runlog(LOG, "CleanCommand: instance(%u) is building.\n", GetInstanceIdInGroup(groupIdx, memIdx));
             CleanCommand(groupIdx, memIdx);
         }
@@ -248,7 +258,7 @@ void CleanBuildCommandInfo(uint32 groupIndex, int memberIndex, int dbState)
     DealDbstateNormalPrimaryDown(groupIndex, INSTANCE_TYPE_DATANODE);
 }
 
-bool CheckBuildCond(int dbState, int groupIndex, int memberIndex, int buildReason, bool dcfMode)
+bool CheckBuildCond(int dbState, uint32 groupIndex, int memberIndex, int buildReason, bool dcfMode)
 {
     bool isNeedBuild = false;
 
@@ -317,14 +327,14 @@ bool CheckBuildCond(int dbState, int groupIndex, int memberIndex, int buildReaso
     return needBuild;
 }
 
-void DatanodeBuildExec(CM_Connection* con, db_state_role role, maintenance_mode mode)
+void DatanodeBuildExec(MsgRecvInfo* recvMsgInfo, const db_state_role &role, maintenance_mode mode)
 {
     int timeOut = 86400;
     cm_to_agent_build build_msg;
     const char *str = "[sendBuild]";
     write_runlog(LOG, "%s, line %d: before send MSG_CM_AGENT_BUILD local_dynamic_role =%d "
         "instanceId=%u timeout_set=%d delay_time =%d \n", str, __LINE__, role.local_dynamic_role,
-        GetInstanceIdInGroup(role.group_index, role.member_index),
+        GetInstanceIdInGroup((uint32)role.group_index, role.member_index),
         g_instance_group_report_status_ptr[role.group_index].instance_status.command_member[role.member_index]
         .arbitrate_delay_set,
         g_instance_group_report_status_ptr[role.group_index].instance_status.command_member[role.member_index]
@@ -335,75 +345,27 @@ void DatanodeBuildExec(CM_Connection* con, db_state_role role, maintenance_mode 
         return;
     }
 
-    build_msg.msg_type = MSG_CM_AGENT_BUILD;
+    build_msg.msg_type = (int)MSG_CM_AGENT_BUILD;
     build_msg.node = role.node;
     build_msg.instanceId = (uint32)role.instance_id;
     build_msg.wait_seconds = BUILD_TIMER_OUT;
     build_msg.full_build = 0;
-    build_msg.term = find_primary_term(role.group_index);
+    build_msg.term = find_primary_term((uint32)role.group_index);
     build_msg.role = role.local_dynamic_role;
-    if (build_msg.term == InvalidTerm && (!backup_open)) {
-        write_runlog(DEBUG1, "%s, line %d: No legal primary for building instance %u", str, __LINE__, role.instance_id);
+    if (build_msg.term == InvalidTerm && backup_open == CLUSTER_PRIMARY) {
+        write_runlog(DEBUG1, "%s, line %d: No legal primary for building instance %d", str, __LINE__, role.instance_id);
     }
     WriteKeyEventLog(KEY_EVENT_BUILD, (uint32)role.instance_id, "send build message to instance(%d)",
         role.instance_id);
-    (void)cm_server_send_msg(con, 'S', (char*)&build_msg, sizeof(cm_to_agent_build));
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)&build_msg, sizeof(cm_to_agent_build));
     g_instance_group_report_status_ptr[role.group_index].instance_status.command_member[role.member_index]
-        .pengding_command = MSG_CM_AGENT_BUILD;
+        .pengding_command = (int)MSG_CM_AGENT_BUILD;
     g_instance_group_report_status_ptr[role.group_index].instance_status.command_member[role.member_index]
         .time_out = timeOut;
 
-    write_runlog(LOG, "%s, DatanodeBuildExec: instance(%u) start building.\n", str, role.instance_id);
+    write_runlog(LOG, "%s, DatanodeBuildExec: instance(%d) start building.\n", str, role.instance_id);
     return;
 }
-
-static void DnWillChangeStaticRole(const DnArbCtx *ctx, const char *str)
-{
-    int32 cmdPur = ctx->localCom->cmdPur;
-    int32 cmdSour = ctx->localCom->cmdSour;
-    write_runlog(LOG, "%s: instd(%u) static role is (%d: %s) cmdPur is (%d: %s), cmdSour is (%d: %s).\n",
-        str, ctx->instId, ctx->localRole->role, datanode_role_int_to_string(ctx->localRole->role),
-        cmdPur, datanode_role_int_to_string(cmdPur), cmdSour, datanode_role_int_to_string(cmdSour));
-    if (ctx->localRole->role != cmdSour) {
-        return;
-    }
-    if (cmdPur == INSTANCE_ROLE_PRIMARY) {
-        ChangeDnPrimaryMemberIndex(ctx->groupIdx, ctx->memIdx);
-        /* to deal switchover fail, but notify cn success */
-        cm_pending_notify_broadcast_msg(ctx->groupIdx, ctx->instId);
-    } else {
-        ChangeDnMemberIndex(str, ctx->groupIdx, ctx->memIdx, cmdPur, cmdSour);
-    }
-}
-
-static void ClearSwitchoverCmd(const DnArbCtx *ctx)
-{
-    cm_instance_command_status *cmd = ctx->localCom;
-    int32 timeOut = cmd->time_out;
-    int32 cmdRealPur = cmd->cmdRealPur;
-    CleanCommand(ctx->groupIdx, ctx->memIdx);
-    if (cmdRealPur != INSTANCE_ROLE_INIT) {
-        SetSwitchoverPendingCmd(ctx->groupIdx, ctx->memIdx, timeOut, "[CleanSwitchoverCmd]", true);
-    }
-}
-
-status_t CheckSwitchOverDone(const DnArbCtx *ctx)
-{
-    int32 cmdPur = ctx->localCom->cmdPur;
-    if (ctx->localRep->local_status.local_role == cmdPur) {
-        cm_instance_command_status *instCmd = ctx->localCom;
-        if ((instCmd->command_status == INSTANCE_COMMAND_WAIT_EXEC_ACK) &&
-            (instCmd->pengding_command == MSG_CM_AGENT_SWITCHOVER)) {
-            if (ctx->localRep->local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
-                DnWillChangeStaticRole(ctx, "[CheckSwitchOverDone]");
-                ClearSwitchoverCmd(ctx);
-                return CM_SUCCESS;
-            }
-        }
-    }
-    return CM_ERROR;
-}
-
 
 static status_t InitDnArbiStatusEx(DnArbCtx *ctx)
 {
@@ -420,9 +382,10 @@ static status_t InitDnArbiStatusEx(DnArbCtx *ctx)
     return CM_SUCCESS;
 }
 
-static status_t InitDnArbCtx(CM_Connection *con, const agent_to_cm_datanode_status_report *agentRep, DnArbCtx *ctx)
+static status_t InitDnArbCtx(
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentRep, DnArbCtx *ctx)
 {
-    ctx->con = con;
+    ctx->recvMsgInfo = recvMsgInfo;
     ctx->node = agentRep->node;
     ctx->instId = agentRep->instanceId;
     int32 ret = find_node_in_dynamic_configure(ctx->node, ctx->instId, &ctx->groupIdx, &ctx->memIdx);
@@ -489,7 +452,8 @@ static void SaveDnStatusFromReport(const agent_to_cm_datanode_status_report *age
         (void * const)&(agentRep->parallel_redo_status), sizeof(RedoStatsData));
     securec_check_errno(rc, (void)rc);
     if (agentRep->local_redo_stats.is_by_query) {
-        ctx->localRep->parallel_redo_status.speed_according_seg = ctx->localRep->local_redo_stats.redo_replayed_speed;
+        ctx->localRep->parallel_redo_status.speed_according_seg =
+            (uint32)ctx->localRep->local_redo_stats.redo_replayed_speed;
     }
     ctx->localRep->dn_restart_counts = agentRep->dn_restart_counts;
     ctx->localRep->dn_restart_counts_in_hour = agentRep->dn_restart_counts_in_hour;
@@ -499,6 +463,11 @@ static void SaveDnStatusFromReport(const agent_to_cm_datanode_status_report *age
             __LINE__, ctx->localRep->phony_dead_interval, ctx->instId);
     }
     ctx->localRep->phony_dead_times = agentRep->phony_dead_times;
+    if (undocumentedVersion == 0) {
+        ctx->localRep->dnVipStatus = agentRep->dnVipStatus;
+    } else {
+        ctx->localRep->dnVipStatus = CM_ERROR;
+    }
     /* cluster streaming standby ignore term */
     if (backup_open == CLUSTER_STREAMING_STANDBY) {
         ctx->localRep->local_status.term = FirstTerm;
@@ -508,24 +477,40 @@ static void SaveDnStatusFromReport(const agent_to_cm_datanode_status_report *age
 static void InitStateRole(db_state_role *role, const DnArbCtx *ctx)
 {
     role->node = ctx->node;
-    role->instance_id = ctx->instId;
+    role->instance_id = (int)ctx->instId;
     role->local_dynamic_role = ctx->localRep->local_status.local_role;
     role->local_db_state = ctx->localRep->local_status.db_state;
-    role->group_index = ctx->groupIdx;
+    role->group_index = (int)ctx->groupIdx;
     role->member_index = ctx->memIdx;
 }
 
-static void DealDnArbitrateInDcf(const DnArbCtx *ctx)
+static void DealDnInSelfArbitrate(const DnArbCtx *ctx)
 {
-    write_runlog(DEBUG1, "dcf mode is on, %u\n", ctx->instId);
+    write_runlog(DEBUG1, "Self-Arbitration mode is on, %u\n", ctx->instId);
     db_state_role role;
     InitStateRole(&role, ctx);
     int32 buildReason = ctx->info.buildReason;
     if (CheckBuildCond(role.local_db_state, ctx->groupIdx, ctx->memIdx, buildReason, true)) {
-        DatanodeBuildExec(ctx->con, role, ctx->maintaMode);
+        DatanodeBuildExec(ctx->recvMsgInfo, role, ctx->maintaMode);
+    }
+    int32 peerIdx = GetMemIdxByInstanceId(ctx->groupIdx, ctx->localCom->peerInstId);
+    (void)CheckSwitchOverDone(ctx, peerIdx);
+    ChangeStaticPrimaryByDynamicPrimary(ctx);
+}
+
+static void DealDnArbitrateInBackup(const DnArbCtx *ctx)
+{
+    if (ctx->localRep->local_status.local_role == INSTANCE_ROLE_PENDING) {
+        SendNotifyMessage2Cma(ctx, INSTANCE_ROLE_STANDBY);
+        write_runlog(LOG, "line %d: notify local datanode to standby.\n", __LINE__);
     }
 
-    (void)CheckSwitchOverDone(ctx);
+    int32 buildReason = ctx->info.buildReason;
+    if (CheckBuildCond(ctx->localRep->local_status.db_state, ctx->groupIdx, ctx->memIdx, buildReason, false)) {
+        db_state_role role;
+        InitStateRole(&role, ctx);
+        DatanodeBuildExec(ctx->recvMsgInfo, role, ctx->maintaMode);
+    }
 }
 
 static void DynamicPrimaryInCoreDump(DnArbCtx *ctx)
@@ -554,14 +539,44 @@ uint32 GetPrimaryDnCount(uint32 groupIdx)
 
 static status_t RestartSmallerTermDynamicPrimary(DnArbCtx *ctx)
 {
-    uint32 maxTerm = GetMaxTerm(ctx->groupIdx);
-    ctx->maxTerm = maxTerm;
+    DnArbitInfo info;
+    InitDnArbitInfo(&info);
+    GetDnArbitInfo(ctx->groupIdx, &info);
+    ctx->maxTerm = info.maxTerm;
+    if (info.switchoverIdx != -1) {
+        if (ctx->repGroup->command_member[info.switchoverIdx].peerInstId == ctx->instId) {
+            write_runlog(DEBUG1, "instId(%u) may be doing switchover, switchoverInstId is %u.\n", ctx->instId,
+                GetInstanceIdInGroup(ctx->groupIdx, info.switchoverIdx));
+            return CM_SUCCESS;
+        }
+    }
     uint32 localTerm = ctx->localRep->local_status.term;
-    if (localTerm < maxTerm && ctx->localRep->local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+    if (localTerm < info.maxTerm && ctx->localRep->local_status.local_role == INSTANCE_ROLE_PRIMARY &&
         ctx->localRep->local_status.db_state == INSTANCE_HA_STATE_NORMAL && localTerm != InvalidTerm) {
-        SendRestartMsg(ctx, "[SmallerTerm]");
-        write_runlog(LOG, "line %d: instance %u local term(%u) is not max term(%u), "
-            "restart to pending.\n", __LINE__, ctx->instId, localTerm, maxTerm);
+         /*
+          * stop instance only when
+          * enable CM cluster auto failover and unable DB cluster auto crash recovery in two node deployment arch
+          */
+        if (ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) &&
+            !g_paramsOn2Nodes.cmsEnableDbCrashRecovery) {
+            write_runlog(ERROR,
+                "line %d: split brain failure in db service, instance %u local term(%u) is not max term(%u). "
+                "Due to auto crash recovery is disabled, will not restart current instance, "
+                "waiting for manual intervention.\n",
+                __LINE__, ctx->instId, localTerm, ctx->maxTerm);
+            ReportClusterDoublePrimaryAlarm(
+                ALM_AT_Event,
+                ALM_AI_DbInstanceDoublePrimary,
+                ctx->instId,
+                SERVICE_TYPE_DB);
+
+            // try to stop fake primary db instance from cms
+            StopFakePrimaryResourceInstance(ctx);
+        } else {
+            SendRestartMsg(ctx, "[SmallerTerm]");
+            write_runlog(LOG, "line %d: instance %u local term(%u) is not max term(%u), "
+                "restart to pending.\n", __LINE__, ctx->instId, localTerm, ctx->maxTerm);
+        }
         return CM_ERROR;
     }
     /* The connection between the CMA and the DN may be abnormal. Need to restart this Primary. */
@@ -605,17 +620,17 @@ static void DnArbitrateInTwoRepAndSingleInst(const DnArbCtx *ctx)
     int32 peerDbState = ctx->dnReport[peerIndex].local_status.db_state;
 
     bool cond = (((localRole == INSTANCE_ROLE_PRIMARY && peerRole == INSTANCE_ROLE_STANDBY) ||
-                     (localRole == INSTANCE_ROLE_STANDBY && peerRole == INSTANCE_ROLE_PRIMARY)) &&
-                    (localDbState == INSTANCE_HA_STATE_NORMAL && peerDbState == INSTANCE_HA_STATE_NORMAL)) ||
-                (cm_arbitration_mode == MINORITY_ARBITRATION);
+        (localRole == INSTANCE_ROLE_STANDBY && peerRole == INSTANCE_ROLE_PRIMARY)) &&
+        (localDbState == INSTANCE_HA_STATE_NORMAL && peerDbState == INSTANCE_HA_STATE_NORMAL)) ||
+        (cm_arbitration_mode == MINORITY_ARBITRATION);
     if (cond) {
         if (ctx->localCom->sync_mode == 0) {
             write_runlog(LOG, "the sync mode of instance %u become to 1.\n", ctx->instId);
         }
         ctx->localCom->sync_mode = 1;
     }
-    cond = (localRole == INSTANCE_ROLE_PRIMARY && peerRole == INSTANCE_ROLE_UNKNOWN
-            && cm_arbitration_mode == MINORITY_ARBITRATION);
+    cond = (localRole == INSTANCE_ROLE_PRIMARY && peerRole == INSTANCE_ROLE_UNKNOWN &&
+        cm_arbitration_mode == MINORITY_ARBITRATION);
     if (cond) {
         if (ctx->repGroup->command_member[peerIndex].sync_mode == 1) {
             write_runlog(LOG, "sync mode of instance %u become to 0\n", GetInstanceIdInGroup(ctx->groupIdx, peerIndex));
@@ -763,80 +778,6 @@ static void CleanFailoverFlag(const DnArbCtx *ctx)
     }
 }
 
-static bool IsCleanSwitchover(const DnArbCtx *ctx)
-{
-    int32 count = GetInstanceCountsInGroup(ctx->groupIdx);
-    for (int32 i = 0; i < count; ++i) {
-        /* switchover instance may restart, clean flag */
-        if (ctx->dnReport[i].local_status.local_role == INSTANCE_ROLE_PENDING) {
-            if (g_instance_role_group_ptr[ctx->groupIdx].instanceMember[i].role == INSTANCE_ROLE_PRIMARY) {
-                write_runlog(LOG, "[CleanSwitchover] instance(%u) static primary is pending.\n",
-                    GetInstanceIdInGroup(ctx->groupIdx, i));
-                return true;
-            }
-
-            if (ctx->repGroup->command_member[i].pengding_command == MSG_CM_AGENT_SWITCHOVER) {
-                write_runlog(LOG, "[CleanSwitchover] instance(%u) is pending, may be restart.\n",
-                    GetInstanceIdInGroup(ctx->groupIdx, i));
-                return true;
-            }
-        }
-
-        if (ctx->repGroup->command_member[i].pengding_command == MSG_CM_AGENT_SWITCHOVER &&
-            !IsArchiveMaxSendTimes(ctx->groupIdx, i)) {
-            write_runlog(LOG, "[CleanSwitchover] instance(%u) send switchover times has archived the most(%d).\n",
-                GetInstanceIdInGroup(ctx->groupIdx, i), GetSendTimes(ctx->groupIdx, i, true));
-            return true;
-        }
-    }
-    return false;
-}
-
-static void CleanSwitchoverCommand(const DnArbCtx *ctx)
-{
-    int32 count = GetInstanceCountsInGroup(ctx->groupIdx);
-    for (int32 i = 0; i < count; ++i) {
-        if (ctx->repGroup->command_member[i].pengding_command != MSG_CM_AGENT_SWITCHOVER) {
-            continue;
-        }
-        write_runlog(LOG, "[CleanSwitchover] clean switchover(%u) command, command send num(%d/%d).\n",
-            GetInstanceIdInGroup(ctx->groupIdx, i), GetSendTimes(ctx->groupIdx, i, false),
-            GetSendTimes(ctx->groupIdx, i, true));
-        CleanCommand(ctx->groupIdx, i);
-    }
-}
-
-static void CleanSwitchoverInfo(const DnArbCtx *ctx)
-{
-    int32 localRole = ctx->localRep->local_status.local_role;
-    int32 cmdPur = ctx->localCom->cmdPur;
-    status_t resStatus = CheckSwitchOverDone(ctx);
-    if (resStatus == CM_SUCCESS) {
-        return;
-    }
-    uint32 localTerm = ctx->info.term;
-    if (ctx->localCom->pengding_command == MSG_CM_AGENT_SWITCHOVER && localRole == cmdPur &&
-        ctx->maxTerm == localTerm && ctx->repGroup->term <= localTerm) {
-        if (ctx->staPrim.count != 0) {
-            int32 staticPriIndex = ctx->staPrim.itStatus[0].memIdx;
-            int32 staticPriRole = ctx->dnReport[staticPriIndex].local_status.local_role;
-            if (staticPriRole != cmdPur && staticPriRole != INSTANCE_ROLE_UNKNOWN) {
-                /* update the static configure state */
-                write_runlog(LOG, "[cleanSwitchover] line %d: instanceId(%u) is doing switchover, "
-                    "do change static primary.\n", __LINE__, ctx->instId);
-                GroupStatusShow("[cleanSwitchover]", ctx->groupIdx, ctx->instId, -1, false);
-                DnWillChangeStaticRole(ctx, "[cleanSwitchover]");
-                ClearSwitchoverCmd(ctx);
-            }
-        }
-    }
-    /* overtime and clean command */
-    bool needCleanSwitchover = IsCleanSwitchover(ctx);
-    if (needCleanSwitchover) {
-        CleanSwitchoverCommand(ctx);
-    }
-}
-
 static int32 GetAzIndex(DnArbCtx *ctx)
 {
     int32 azIndex = 0;
@@ -875,6 +816,10 @@ uint32 GetPrimaryTerm(const DnArbCtx *ctx)
 
 static bool DnArbitrateInAsync(DnArbCtx *ctx)
 {
+    if (g_needReloadSyncStandbyMode) {
+        write_runlog(LOG, "line %d: wait to reload sync standby mode ddb value.\n", __LINE__);
+        return true;
+    }
     int azIndex = GetAzIndex(ctx);
     if (azIndex == -1) {
         return true;
@@ -937,7 +882,7 @@ static void SendBuildMsg(const DnArbCtx *ctx)
         GroupStatusShow(str, ctx->groupIdx, ctx->instId, -1, false);
         db_state_role role;
         InitStateRole(&role, ctx);
-        DatanodeBuildExec(ctx->con, role, ctx->maintaMode);
+        DatanodeBuildExec(ctx->recvMsgInfo, role, ctx->maintaMode);
     }
     return;
 }
@@ -954,7 +899,7 @@ static bool InstanceIsCandicate(const DnArbCtx *ctx, int32 memIdx, bool isDynami
             GetInstanceIdInGroup(ctx->groupIdx, memIdx));
         return false;
     }
-    if (!IsInstanceInCurrentAz(ctx->groupIdx, memIdx, ctx->curAzIndex, az1Index, az2Index)) {
+    if (!IsInstanceInCurrentAz(ctx->groupIdx, (uint32)memIdx, ctx->curAzIndex, az1Index, az2Index)) {
         write_runlog(logLevel, "instd(%u) isn't in current az.\n", GetInstanceIdInGroup(ctx->groupIdx, memIdx));
         return false;
     }
@@ -1064,12 +1009,15 @@ static void GetCandiCateOtherMsg(DnArbCtx *ctx, int32 memIdx)
     if (ctx->dnReport[memIdx].local_status.redo_finished) {
         ctx->cond.redoDone++;
     }
+    if (ctx->dnReport[memIdx].sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES) {
+        ctx->cond.failoverNum++;
+    }
 }
 
 static void GetCandiCateTermLsn(DnArbCtx *ctx, int32 memIdx)
 {
     cm_local_replconninfo *localRepl = &(ctx->dnReport[memIdx].local_status);
-    if (!ctx->cond.hasDynamicPrimary && ctx->dnReport[memIdx].sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES) {
+    if (ctx->dyPrim.count == 0 && ctx->dnReport[memIdx].sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES) {
         return;
     }
 
@@ -1078,7 +1026,7 @@ static void GetCandiCateTermLsn(DnArbCtx *ctx, int32 memIdx)
         ctx->cond.maxLsn = ctx->dnReport[memIdx].local_status.last_flush_lsn;
     }
 
-    if (!ctx->cond.hasDynamicPrimary && localRepl->disconn_mode != PROHIBIT_CONNECTION) {
+    if (ctx->dyPrim.count == 0 && localRepl->disconn_mode != PROHIBIT_CONNECTION) {
         return;
     }
 
@@ -1123,6 +1071,9 @@ static bool CanbeCandicate(const DnArbCtx *ctx, int32 memIdx, const CandicateCon
     } else if (cadiCond->mode == COS4SWITCHOVER) {
         /* switchover condition */
         if (ctx->dnReport[memIdx].local_status.db_state != INSTANCE_HA_STATE_NORMAL) {
+            return false;
+        }
+        if (!IsReadOnlyFinalState(ctx->roleGroup->instanceMember[memIdx].instanceId, false)) {
             return false;
         }
     }
@@ -1247,9 +1198,17 @@ static void PrintCandiMsg(DnArbCtx *ctx, const char *str, const CandicateCond *c
 static void CleanArbiTime(DnArbCtx *ctx)
 {
     ArbiCond *cond = &(ctx->cond);
-    if (!cond->hasDynamicPrimary && (cond->vaildCandiCount < HALF_COUNT(cond->vaildCount + 1) || cond->instMainta)) {
-        ClearDnArbiCond(ctx->groupIdx, CLEAR_SEND_FAILOVER_TIMES);
+    if (backup_open == CLUSTER_PRIMARY) {
+        if (!cond->hasDynamicPrimary && (cond->vaildCandiCount < HALF_COUNT(cond->vaildCount + 1) ||
+            cond->instMainta)) {
+            ClearDnArbiCond(ctx->groupIdx, CLEAR_SEND_FAILOVER_TIMES);
+        }
+    } else {
+        if (cond->failoverNum == cond->vaildCount || cond->instMainta) {
+            ClearDnArbiCond(ctx->groupIdx, CLEAR_SEND_FAILOVER_TIMES);
+        }
     }
+
     if (cond->isPrimaryValid && cond->igPrimaryCount == 0) {
         ctx->repGroup->time = 0;
         ClearDnArbiCond(ctx->groupIdx, CLEAR_ALL);
@@ -1419,9 +1378,8 @@ static bool SyncFinishRedoWithDdb(const DnArbCtx *ctx)
 
 static bool InstanceForceFinishRedo(DnArbCtx *ctx)
 {
-    bool res = false;
     /* force finish redo, the data may be lost, this action is very dangerous. */
-    res = CanSendFinishRedoMsg(ctx);
+    bool res = CanSendFinishRedoMsg(ctx);
     if (res) {
         return true;
     }
@@ -1452,7 +1410,7 @@ static bool InstanceForceFailover(DnArbCtx *ctx)
         if (cond->candiIdx == ctx->memIdx && CanFailoverDn(isMajority) &&
             cond->redoDone > HALF_COUNT(cond->vaildCount)) {
             cm_to_agent_failover failoverMsg;
-            send_failover_message(ctx->con, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
+            send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
             write_runlog(LOG, "[ForceFailover], line %d: Redo done, non force failover message sent to instance %u, "
                 "requested by cm_ctl, arbitrate_time=%u\n", __LINE__, ctx->instId, cond->maxMemArbiTime);
             return true;
@@ -1461,8 +1419,31 @@ static bool InstanceForceFailover(DnArbCtx *ctx)
     return false;
 }
 
+bool IsCurrentNodeDorado(uint32 node)
+{
+    if (!GetIsSharedStorageMode() || strcmp(g_doradoIp, "unknown") == 0 || g_doradoIp[0] == '\0') {
+        return false;
+    }
+
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        if (g_node[i].node != node) {
+            continue;
+        }
+        if (strcmp(g_node[i].sshChannel[0], g_doradoIp) == 0) {
+            return true;
+        }
+        return false;
+    }
+
+    return false;
+}
+
 static void ArbitrateUnkownInstance(const DnArbCtx *ctx, const char *typeName)
 {
+    if (IsCurrentNodeDorado(ctx->node)) {
+        write_runlog(DEBUG5, "node %u is dorado, not need print unknown instance.\n", ctx->node);
+        return;
+    }
     write_runlog(ERROR, "%s,line %d: localrole=[%d=%s: %d=%s] (node:%u  instanceid:%d/%u), termlsn is [%u, %X/%X], "
         "dbState is %d=%s, buildReason: %d=%s, lockmode: %u=%s.\n",
         typeName, __LINE__, ctx->localRole->role, datanode_role_int_to_string(ctx->localRole->role),
@@ -1484,7 +1465,7 @@ static void ArbitratePendingInstance(const DnArbCtx *ctx, const char *typeName)
     }
 }
 
-static bool MoreDyPrimary(const DnArbCtx *ctx, const char *typeName)
+static bool MoreDyPrimary(DnArbCtx *ctx, const char *typeName)
 {
     if (backup_open == CLUSTER_STREAMING_STANDBY) {
         if (ctx->cond.igPrimaryCount >= 1 && ctx->instId != ctx->repGroup->lastFailoverDn) {
@@ -1494,18 +1475,47 @@ static bool MoreDyPrimary(const DnArbCtx *ctx, const char *typeName)
         }
         return false;
     }
-    if (ctx->dyNorPrim.count == 1 || TermIsInvalid(ctx->maxTerm)) {
-        return false;
-    }
 
     /* restart dn instance */
     if (ctx->info.dbRestart) {
         GroupStatusShow(typeName, ctx->groupIdx, ctx->instId, ctx->cond.vaildCount, ctx->cond.finishRedo);
-        SendRestartMsg(ctx, typeName);
-        write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
-            "send restart msg to instance(%u).\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
-        ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+         /*
+          * stop instance only when
+          * enable CM cluster auto failover and unable DB cluster auto crash recovery in two node deployment arch
+          */
+        if (ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) &&
+            !g_paramsOn2Nodes.cmsEnableDbCrashRecovery) {
+            write_runlog(ERROR,
+                "%s, line %d: split brain failure in db service, more dynamic primary and their term(%u) "
+                "are the most(%u). Due to auto crash recovery is disabled, no need send restart msg to instance(%u) "
+                "that had been restarted, waiting for manual intervention.\n",
+                typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
+
+            /* compare local term, local lsn, noidid */
+            if (XLByteWE_W_TERM(ctx->maxTerm, ctx->cond.maxLsn,
+                ctx->dnReport[ctx->memIdx].local_status.term, ctx->dnReport[ctx->memIdx].local_status.last_flush_lsn) ||
+                IsInstanceIdMax(ctx)) {
+                ReportClusterDoublePrimaryAlarm(
+                    ALM_AT_Event,
+                    ALM_AI_DbInstanceDoublePrimary,
+                    ctx->instId,
+                    SERVICE_TYPE_DB);
+
+                /* try to stop fake primary db instance from cms */
+                StopFakePrimaryResourceInstance(ctx);
+            }
+        } else {
+            SendRestartMsg(ctx, typeName);
+            write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
+                "send restart msg to instance(%u) that had been restarted.\n",
+                typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
+            ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+        }
         return true;
+    }
+
+    if (ctx->dyNorPrim.count == 1 || TermIsInvalid(ctx->maxTerm)) {
+        return false;
     }
 
     int32 count = 0;
@@ -1530,10 +1540,37 @@ static bool MoreDyPrimary(const DnArbCtx *ctx, const char *typeName)
     /* restart dn instance */
     if (ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting) {
         GroupStatusShow(typeName, ctx->groupIdx, ctx->instId, ctx->cond.vaildCount, ctx->cond.finishRedo);
-        SendRestartMsg(ctx, typeName);
-        write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
-            "send restart msg to instance(%u).\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
-        ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+         /*
+          * stop instance only when
+          * enable CM cluster auto failover and unable DB cluster auto crash recovery in two node deployment arch
+          */
+        if (ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) &&
+            !g_paramsOn2Nodes.cmsEnableDbCrashRecovery) {
+            write_runlog(ERROR,
+                "%s, line %d: split brain failure in db service, more dynamic primary and their term(%u) "
+                "are the most(%u). Due to auto crash recovery is disabled, no need send restart msg to instance(%u),  "
+                "waiting for manual intervention.\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
+
+            /* compare local term, local lsn, noidid */
+            if (XLByteWE_W_TERM(ctx->maxTerm, ctx->cond.maxLsn,
+                ctx->dnReport[memIdx].local_status.term, ctx->dnReport[memIdx].local_status.last_flush_lsn) ||
+                IsInstanceIdMax(ctx)) {
+                ReportClusterDoublePrimaryAlarm(
+                    ALM_AT_Event,
+                    ALM_AI_DbInstanceDoublePrimary,
+                    ctx->instId,
+                    SERVICE_TYPE_DB);
+
+                /* try to stop fake primary db instance from cms */
+                StopFakePrimaryResourceInstance(ctx);
+            }
+        } else {
+            SendRestartMsg(ctx, typeName);
+            write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
+                "send restart msg to instance(%u).\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
+            ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+        }
+
         return true;
     }
     return false;
@@ -1549,7 +1586,7 @@ static void PrintPrimMsg(DnArbCtx *ctx, const char *typeName, const char *logMsg
     write_runlog(LOG, "%s, instance:[%d: %u], %s, "
         "primary Idx is [static: %d:%d, dynamic: %d:%d, dyNormal: %d:%d, vaildPrim: %d, demoting: %d], "
         "term is [inCond: [local: %u, max: %u], noCond: %u, group: %u], "
-        "local msg is [dbState: %d=%s, send_failover_times: %d].\n",
+        "local msg is [dbState: %d=%s, send_failover_times: %u].\n",
         typeName, ctx->memIdx, ctx->instId, logMsg,
         cond->staticPriIdx, ctx->staPrim.count, cond->dyPrimIdx, ctx->dyPrim.count, cond->dyPrimNormalIdx,
         ctx->dyNorPrim.count, cond->vaildPrimIdx, cond->isPrimDemoting,
@@ -1570,15 +1607,17 @@ static void ChangeStaticPrimary(DnArbCtx *ctx, const char *typeName)
         if (ctx->info.dbState == INSTANCE_HA_STATE_NORMAL && !TermIsInvalid(ctx->info.term)) {
             GroupStatusShow(typeName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
             SendRestartMsg(ctx, typeName);
-            write_runlog(LOG, "%s line %d: dynamic primary is not static primary datanode instance, "
-                "restart to pending.\n", typeName, __LINE__);
+            write_runlog(LOG,
+                "%s line %d: dynamic primary is not static primary datanode instance, "
+                "restart to pending.\n",
+                typeName, __LINE__);
             return;
         }
     }
 
     /* change dn static primary with dynamic primary */
-    if ((ctx->info.term == cond->maxTerm)
-        || (ctx->info.term > ctx->cond.maxTerm && ctx->info.sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES)) {
+    if ((ctx->info.term == cond->maxTerm) ||
+        (ctx->info.term > ctx->cond.maxTerm && ctx->info.sendFailoverTimes >= MAX_SEND_FAILOVER_TIMES)) {
         GroupStatusShow(typeName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
         ChangeDnPrimaryMemberIndex(ctx->groupIdx, ctx->memIdx);
         cm_pending_notify_broadcast_msg(ctx->groupIdx, ctx->instId);
@@ -1602,13 +1641,16 @@ static bool IsInstanceNoCmd(const DnArbCtx *ctx, const char *str)
 
 static void SendSwitchoverMessage(const DnArbCtx *ctx, int32 memIdx, const char *str)
 {
-    if (IsMaintenanceModeDisableOperation(CMS_SWITCHOVER_DN, ctx->maintaMode)) {
+    if (IsMaintenanceModeDisableOperation(CMS_SWITCHOVER_DN, ctx->maintaMode) || backup_open != CLUSTER_PRIMARY) {
         write_runlog(LOG, "%s, %u Maintaining cluster: cm server cannot switchover dn.\n", str, ctx->instId);
         return;
     }
     ctx->repGroup->command_member[memIdx].command_status = INSTANCE_COMMAND_WAIT_EXEC;
-    ctx->repGroup->command_member[memIdx].pengding_command = MSG_CM_AGENT_SWITCHOVER;
+    ctx->repGroup->command_member[memIdx].pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
     ctx->repGroup->command_member[memIdx].time_out = SWITCHOVER_DEFAULT_WAIT;
+    ctx->repGroup->command_member[memIdx].cmdPur = INSTANCE_ROLE_PRIMARY;
+    ctx->repGroup->command_member[memIdx].cmdSour = INSTANCE_ROLE_STANDBY;
+    ctx->repGroup->command_member[memIdx].peerInstId = ctx->instId;
     SetSendTimes(ctx->groupIdx, memIdx, SWITCHOVER_DEFAULT_WAIT);
     GroupStatusShow(str, ctx->groupIdx, ctx->instId, ctx->cond.vaildCount, ctx->cond.finishRedo);
     write_runlog(LOG, "%s, DN(%u) will automatically switchover.\n", str, GetInstanceIdInGroup(ctx->groupIdx, memIdx));
@@ -1618,7 +1660,8 @@ static bool DyPrimaryNeedToSwitchover(DnArbCtx *ctx, const char *str)
 {
     int32 dnRestartCounts = ctx->localRep->dn_restart_counts;
     int32 dnRestartCountsInHour = ctx->localRep->dn_restart_counts_in_hour;
-    if (dnRestartCounts <= DN_RESTART_COUNTS && dnRestartCountsInHour <= DN_RESTART_COUNTS_IN_HOUR) {
+    bool readOnly = IsReadOnlyFinalState(ctx->instId, true);
+    if (dnRestartCounts <= DN_RESTART_COUNTS && dnRestartCountsInHour <= DN_RESTART_COUNTS_IN_HOUR && !readOnly) {
         return false;
     }
     CandicateCond cadiCond = {COS4SWITCHOVER};
@@ -1628,8 +1671,8 @@ static bool DyPrimaryNeedToSwitchover(DnArbCtx *ctx, const char *str)
         write_runlog(LOG, "%s, %u: cannot find candicate to be primary by switchover.\n", str, ctx->instId);
         return false;
     }
-    write_runlog(LOG, "%s: the primary dn(%u) restarts count: %d in 10 min, %d in hour, has delay timeout(%u).\n",
-        str, ctx->instId ,dnRestartCounts, dnRestartCountsInHour, instance_failover_delay_timeout);
+    write_runlog(LOG, "%s: the primary dn(%u) restarts count: %d in 10 min, %d in hour, has delay timeout(%u).\n", str,
+        ctx->instId, dnRestartCounts, dnRestartCountsInHour, instance_failover_delay_timeout);
     SendSwitchoverMessage(ctx, ctx->cond.candiIdx, str);
     return true;
 }
@@ -1691,25 +1734,28 @@ static bool CheckCanSendFailoverMsg(const DnArbCtx *ctx)
     return false;
 }
 
-static void SendFailoverMsg(DnArbCtx *ctx, uint32 arbitInterval, bool isStaticPrimary, const SendMsg_t *sfMsg)
+static void SendFailoverMsg(DnArbCtx *ctx, uint32 arbitInterval, bool isStaPrim, const SendMsg_t *sfMsg)
 {
     ArbiCond *cond = &ctx->cond;
-    if (cond->maxMemArbiTime <= arbitInterval) {
+    if (cond->maxMemArbiTime < arbitInterval) {
         write_runlog(LOG, "%s, Cannot failover (isDegrade=%d) instance %u, because time(%u) is smaller than %u.\n",
-            sfMsg->tyName, cond->isDegrade, ctx->instId, cond->maxMemArbiTime, cond->arbitInterval);
+            sfMsg->tyName, cond->isDegrade, ctx->instId, cond->maxMemArbiTime, arbitInterval);
         return;
     }
-    if (!isStaticPrimary && !CheckCanSendFailoverMsg(ctx)) {
+    if (!isStaPrim && !CheckCanSendFailoverMsg(ctx)) {
         write_runlog(LOG, "%s, Cannot failover (isDegrade=%d) instance %u, because time(%u) is smaller than %u.\n",
             sfMsg->tyName, cond->isDegrade, ctx->instId, cond->maxMemArbiTime, g_delayArbiTime);
         return;
     }
-    write_runlog(LOG, "%s, line %d: instanceId(%u) arbitrate_time=%u, local_arbitrate_time=%u, other_arbit_interval=%u,"
-        " arbit_static_interval=%u, buildCount=%d, onlineCount=%d, arbit_interval=%u, valid_canditate_count=%d, "
-        "valid_count=%d, same az is [%d: %d], g_delayArbiTime is %u.\n",
-        sfMsg->tyName, __LINE__, ctx->instId, cond->maxMemArbiTime, cond->localArbiTime, cond->arbitInterval,
-        cond->arbitStaticInterval, cond->buildCount, cond->onlineCount, arbitInterval,
-        cond->vaildCandiCount, cond->vaildCount, cond->snameAzRedoDoneCount, cond->snameAzDnCount, g_delayArbiTime);
+    write_runlog(LOG, "%s, line %d: instId(%u) isStaPrim=%d, "
+        "arbitime[inst(max: %u, local: %u, wait: %u), cond(sta: %u, noSta: %u, delay: %u)], "
+        "count[build: %d, online: %d, validCanditate: %d, valid: %d], "
+        "same_az[%d: %d].\n",
+        sfMsg->tyName, __LINE__, ctx->instId, isStaPrim,
+        cond->maxMemArbiTime, cond->localArbiTime, arbitInterval,
+        cond->arbitStaticInterval, cond->arbitInterval, g_delayArbiTime,
+        cond->buildCount, cond->onlineCount, cond->vaildCandiCount, cond->vaildCount,
+        cond->snameAzRedoDoneCount, cond->snameAzDnCount);
     if (ctx->cond.vaildCount <= 0) {
         write_runlog(LOG, "%s, line %d instd(%u) has invaildcount(%d).\n",
             sfMsg->tyName, __LINE__, ctx->instId, ctx->cond.vaildCount);
@@ -1718,9 +1764,9 @@ static void SendFailoverMsg(DnArbCtx *ctx, uint32 arbitInterval, bool isStaticPr
     ctx->repGroup->time = 0;
     ClearDnArbiCond(ctx->groupIdx, CLEAR_ARBI_TIME);
     cm_to_agent_failover failoverMsg;
-    if ((!cond->instMainta && !IsSyncListEmpty(ctx->groupIdx, ctx->instId, ctx->maintaMode)) || isStaticPrimary) {
+    if ((!cond->instMainta && !IsSyncListEmpty(ctx->groupIdx, ctx->instId, ctx->maintaMode)) || isStaPrim) {
         GroupStatusShow(sfMsg->tyName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
-        send_failover_message(ctx->con, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
+        send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
         write_runlog(LOG, "%s, line %d: Failover message has sent to instance %u in reduce standy condition(%d), %s.\n",
             sfMsg->tyName, __LINE__, ctx->instId, cond->isDegrade, sfMsg->sendMsg);
     } else {
@@ -1781,9 +1827,9 @@ static status_t SendUnlockToInstance(DnArbCtx *ctx)
             chosenPort = ctx->dnReport[cond->vaildPrimIdx].local_status.local_port;
             if (chosenHost != NULL && strlen(chosenHost) != 0) {
                 uint32 primaryTerm = ctx->dnReport[cond->vaildPrimIdx].local_status.term;
-                SendLock2Messange(ctx, chosenHost, strlen(chosenHost), chosenPort, primaryTerm);
-                write_runlog(LOG, "%s, Lock2 message has sent to instance %u, disconn_host = %s, disconn_port = %u.\n",
-                    str, ctx->instId, chosenHost, chosenPort);
+                SendLock2Messange(ctx, chosenHost, (int)strlen(chosenHost), chosenPort, primaryTerm);
+                write_runlog(LOG, "%s, Lock2 message has sent to instance (%u: %u), disconn(%s:%u).\n",
+                    str, ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, cond->vaildPrimIdx), chosenHost, chosenPort);
             } else {
                 write_runlog(LOG, "%s, %u, Lock2 message error, invalid primary port.\n", str, ctx->instId);
             }
@@ -1832,7 +1878,7 @@ static void SendFailoverInQuarm(DnArbCtx *ctx)
                 return;
             }
             bool isStaticPimary = (cond->staticPriIdx == ctx->memIdx) ? true : false;
-            uint32 dnArbitInterval = isStaticPimary ? cond->arbitStaticInterval : cond->arbitInterval;
+            uint32 dnArbitInterval = isStaticPimary ? cond->arbitStaticInterval : GetDnArbitateDelayTime(ctx);
             SendMsg_t sfMsg = {str, "local promoting"};
             SendFailoverMsg(ctx, dnArbitInterval, ctx->localRole->role == INSTANCE_ROLE_PRIMARY, &sfMsg);
         }
@@ -1858,6 +1904,14 @@ static void SendFailoverInQuarmBackup(DnArbCtx *ctx)
             sfMsg.tyName, __LINE__, ctx->instId, cond->maxMemArbiTime, cond->arbitInterval);
         return;
     }
+    for (int32 i = 0; i < GetInstanceCountsInGroup(ctx->groupIdx); ++i) {
+        if (ctx->repGroup->command_member[i].pengding_command == (int)MSG_CM_AGENT_BUILD &&
+            g_instance_role_group_ptr[ctx->groupIdx].instanceMember[i].role == INSTANCE_ROLE_PRIMARY) {
+            write_runlog(LOG, "Cannot failover instance %u, because instance(%u) is building.\n",
+                ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, i));
+            return;
+        }
+    }
     write_runlog(LOG, "%s, line %d: instanceId(%u) arbitrate_time=%u, local_arbitrate_time=%u, other_arbit_interval=%u,"
         " arbit_static_interval=%u, buildCount=%d, onlineCount=%d, arbit_interval=%u valid_count=%d.\n",
         sfMsg.tyName, __LINE__, ctx->instId, cond->maxMemArbiTime, cond->localArbiTime, cond->arbitInterval,
@@ -1868,7 +1922,7 @@ static void SendFailoverInQuarmBackup(DnArbCtx *ctx)
     cm_to_agent_failover failoverMsg;
     if (!cond->instMainta || ctx->localRole->role == INSTANCE_ROLE_PRIMARY) {
         GroupStatusShow(sfMsg.tyName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
-        send_failover_message(ctx->con, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
+        send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
         ctx->repGroup->lastFailoverDn = ctx->instId;
         write_runlog(LOG, "%s, line %d: Failover message has sent to instance %u, %s.\n",
             sfMsg.tyName, __LINE__, ctx->instId, sfMsg.sendMsg);
@@ -1887,9 +1941,10 @@ bool ChangeStaticPrimaryRoleInStandby(DnArbCtx *ctx, const char *str)
     const uint32 changeStaticRoleInterval = 3;
     if (ctx->info.dbState == INSTANCE_HA_STATE_NORMAL || ctx->info.dbState == INSTANCE_HA_STATE_CATCH_UP) {
         if (ctx->repGroup->time < ((uint32)(ctx->roleGroup->count) * changeStaticRoleInterval)) {
-            write_runlog(LOG, "%s, line %d:do not change static primary, dynamic primary instanceid is %u, time is %u, "
+            write_runlog(LOG,
+                "%s, line %d:do not change static primary, dynamic primary instanceid is %u, time is %u, "
                 "all time is %u.\n",
-                str, __LINE__, GetInstanceIdInGroup(ctx->groupIdx, ctx->cond.dyPrimIdx), ctx->repGroup->time, 
+                str, __LINE__, GetInstanceIdInGroup(ctx->groupIdx, ctx->cond.dyPrimIdx), ctx->repGroup->time,
                 (uint32)(ctx->roleGroup->count) * changeStaticRoleInterval);
             return true;
         }
@@ -1911,17 +1966,27 @@ bool ChangeStaticPrimaryRoleInStandby(DnArbCtx *ctx, const char *str)
 static void ArbitrateStandbyInQuarm(DnArbCtx *ctx, const char *str)
 {
     if (ctx->cond.isPrimaryValid) {
-        write_runlog(DEBUG1, "%s, instanceId %u isPrimaryValid is %d, dyPrimNormalIdx is %d, vaildPrimIdx is %d, "
-            "not need to arbitrate.\n", 
+        write_runlog(DEBUG1,
+            "%s, instanceId %u isPrimaryValid is %d, dyPrimNormalIdx is %d, vaildPrimIdx is %d, "
+            "not need to arbitrate.\n",
             str, ctx->instId, ctx->cond.isPrimaryValid, ctx->cond.dyPrimNormalIdx, ctx->cond.vaildPrimIdx);
         return;
     }
+
+    if (ctx->localRep->dnVipStatus == CM_SUCCESS) {
+        write_runlog(DEBUG1, "%s, instanceId %u dnVipStatus is %s, dyPrimNormalIdx is %d, vaildPrimIdx is %d, "
+            "not need to arbitrate.\n",
+            str, ctx->instId, ctx->localRep->dnVipStatus == CM_SUCCESS ? "good" : "bad",
+            ctx->cond.dyPrimNormalIdx, ctx->cond.vaildPrimIdx);
+        return;
+    }
+    
     if (ChangeStaticPrimaryRoleInStandby(ctx, str)) {
         return;
     }
     if (ctx->cond.dyPrimNormalIdx != INVALID_INDEX) {
-        write_runlog(DEBUG1, "%s, instanceId %u  dyPrimNormalIdx is %d, not need to arbitrate.\n", 
-            str, ctx->instId, ctx->cond.dyPrimNormalIdx);
+        write_runlog(DEBUG1, "%s, instanceId %u  dyPrimNormalIdx is %d, not need to arbitrate.\n", str, ctx->instId,
+            ctx->cond.dyPrimNormalIdx);
         return;
     }
     ArbiCond *cond = &(ctx->cond);
@@ -1980,7 +2045,7 @@ static void DnArbitrateNormal(DnArbCtx *ctx)
     GetInstType instTp = {"[DnArbitrateNormal]", DN_ARBI_NORMAL};
     GetInstanceInfo(ctx, &instTp);
     int32 dyRole = ctx->info.dyRole;
-    switch(dyRole) {
+    switch (dyRole) {
         case INSTANCE_ROLE_PRIMARY:
             ArbitratePrimaryInstance(ctx, "[Primary]");
             break;
@@ -1994,8 +2059,8 @@ static void DnArbitrateNormal(DnArbCtx *ctx)
             ArbitrateUnkownInstance(ctx, "[Unkown]");
             break;
         default:
-            write_runlog(ERROR, "instance(%u) dynamic role is %d, may be error, please check it.\n",
-                ctx->instId, dyRole);
+            write_runlog(ERROR, "instance(%u) dynamic role is %d, may be error, please check it.\n", ctx->instId,
+                dyRole);
             break;
     }
 }
@@ -2033,15 +2098,16 @@ static void CleanArbitInfo(DnArbCtx *ctx)
 static int32 GetDnSwitchoverIndex(const DnArbCtx *ctx)
 {
     for (int32 i = 0; i < ctx->roleGroup->count; ++i) {
-        if (ctx->repGroup->command_member[i].pengding_command == MSG_CM_AGENT_SWITCHOVER) {
+        if (ctx->repGroup->command_member[i].pengding_command == (int)MSG_CM_AGENT_SWITCHOVER) {
             return i;
         }
     }
     return -1;
 }
 
-static void ChangeRole2CasCade(const DnArbCtx *ctx, const char *str)
+static void ChangeRole2CasCade(DnArbCtx *ctx, const char *str)
 {
+    // static role
     if (ctx->localRole->role != INSTANCE_ROLE_CASCADE_STANDBY) {
         ArbitrateUnkownInstance(ctx, str);
         int32 switchIdx = GetDnSwitchoverIndex(ctx);
@@ -2050,9 +2116,9 @@ static void ChangeRole2CasCade(const DnArbCtx *ctx, const char *str)
                 str, __LINE__, ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, switchIdx));
             return;
         }
-        SendNotifyMessage2Cma(ctx, ctx->localRole->role);
         SendRestartMsg(ctx, str);
     } else if (ctx->info.dyRole != INSTANCE_ROLE_CASCADE_STANDBY && IsTermLsnValid(ctx->info.term, ctx->info.lsn)) {
+        // dynamic role
         if (ctx->info.dyRole != INSTANCE_ROLE_PENDING) {
             ArbitrateUnkownInstance(ctx, str);
             int32 switchIdx = GetDnSwitchoverIndex(ctx);
@@ -2069,7 +2135,7 @@ static void ChangeRole2CasCade(const DnArbCtx *ctx, const char *str)
     }
 }
 
-static bool CheckCurNodeIsCascade(const DnArbCtx *ctx)
+static bool CheckCurNodeIsCascade(DnArbCtx *ctx)
 {
     if (ctx->info.dyRole != INSTANCE_ROLE_CASCADE_STANDBY && ctx->localRole->role != INSTANCE_ROLE_CASCADE_STANDBY) {
         return false;
@@ -2124,13 +2190,16 @@ static void AddArbitrateTime(DnArbCtx *ctx)
 
 static void DnArbitrateInner(DnArbCtx *ctx)
 {
-    DealPhonyDeadStatus(ctx->con, INSTANCE_TYPE_DATANODE, ctx->groupIdx, ctx->memIdx, ctx->maintaMode);
+    DealPhonyDeadStatus(ctx->recvMsgInfo, INSTANCE_TYPE_DATANODE, ctx->groupIdx, ctx->memIdx, ctx->maintaMode);
     DealDataNodeDBStateChange(ctx->groupIdx, ctx->memIdx, ctx->dbStatePre);
-    if (IsBoolCmParamTrue(g_enableDcf)) {
-        DealDnArbitrateInDcf(ctx);
+    if (IsBoolCmParamTrue(g_enableDcf) || g_enableSharedStorage) {
+        DealDnInSelfArbitrate(ctx);
         return;
     }
-
+    if (backup_open == CLUSTER_OBS_STANDBY) {
+        DealDnArbitrateInBackup(ctx);
+        return;
+    }
     AddArbitrateTime(ctx);
     status_t resStatus = ArbitrateUnhealDyPrim(ctx);
     if (resStatus != CM_SUCCESS) {
@@ -2171,6 +2240,7 @@ static void InitDnArbCond(DnArbCtx *ctx)
     ctx->cond.candiIdx = INVALID_INDEX;
     ctx->cond.isPrimDemoting = false;
     ctx->cond.redoDone = 0;
+    ctx->cond.failoverNum = 0;
     ctx->cond.standbyMaxTerm = InvalidTerm;
     ctx->cond.standbyMaxLsn = InvalidXLogRecPtr;
     ctx->cond.dyPrimIdx = INVALID_INDEX;
@@ -2178,7 +2248,7 @@ static void InitDnArbCond(DnArbCtx *ctx)
     ctx->cond.maxMemArbiTime = 0;
     ctx->cond.instMainta = IsMaintance(ctx->maintaMode);
     ctx->cond.switchoverIdx = INVALID_INDEX;
-    ctx->cond.arbitInterval = g_clusterStarting ? g_clusterStartingArbitDelay : 6;
+    ctx->cond.arbitInterval = g_clusterStarting ? g_clusterStartingArbitDelay : DATANODE_ARBITE_DELAY;
     ctx->cond.arbitStaticInterval = 5;
     ctx->cond.setOffline = SetOfflineNode();
     ctx->cond.snameAzDnCount = 0;
@@ -2198,17 +2268,17 @@ static void InitDnInfo(DnArbCtx *ctx)
     InitDnArbCond(ctx);
 }
 
-void DatanodeInstanceArbitrate(CM_Connection *con, const agent_to_cm_datanode_status_report *agentRep)
+void DatanodeInstanceArbitrate(MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentRep)
 {
     DnArbCtx ctx = {0};
     status_t resStatus;
     /* Get groupIndex, memberIndex */
-    resStatus = InitDnArbCtx(con, agentRep, &ctx);
+    resStatus = InitDnArbCtx(recvMsgInfo, agentRep, &ctx);
     if (resStatus != CM_SUCCESS) {
         return;
     }
     /* we should reset heartbeat as soon as possiable */
-    if (!CanArbitrate(con, "dn_arbitrate")) {
+    if (!CanArbitrate(recvMsgInfo, "dn_arbitrate")) {
         return;
     }
 
@@ -2218,6 +2288,74 @@ void DatanodeInstanceArbitrate(CM_Connection *con, const agent_to_cm_datanode_st
     ResetHeartbeat(&ctx);
     SaveDnStatusFromReport(agentRep, &ctx);
     InitDnInfo(&ctx);
+
+    /* skip arbitration when the cluster is pausing,
+     * but cm_ctl operation is allowed, it's necessary to clean some falgs.
+     */
+    if (g_isPauseArbitration) {
+        write_runlog(LOG, "The cluster has been paused.\n");
+        CleanArbitInfo(&ctx);
+        (void)pthread_rwlock_unlock(ctx.lock);
+        return;
+    }
+
     DnArbitrateInner(&ctx);
     (void)pthread_rwlock_unlock(ctx.lock);
+}
+
+void StopFakePrimaryResourceInstance(const DnArbCtx *ctx)
+{
+    int ret = -1;
+    uint32 ii = 0;
+    uint32 jj = 0;
+    bool isFound = false;
+    char command[MAX_PATH_LEN] = {0};
+
+    // find fake primary instance's local data path
+    for (ii = 0; ii < g_node_num; ii++) {
+        for (jj = 0; jj < g_node[ii].datanodeCount; jj++) {
+	    if (g_node[ii].datanode[jj].datanodeId == ctx->instId) {
+                isFound = true;
+		break;
+	    }
+        }
+	if (isFound) {
+	    break;
+	}
+    }
+
+    if (ii >= g_node_num) {
+        write_runlog(ERROR, "cannot find dn instance: nodeid=%u.\n", g_node[ii].node);
+        return;
+    }
+
+    // stop fake primary instance
+    ret = snprintf_s(command, sizeof(command), sizeof(command) - 1,
+        SYSTEMQUOTE "cm_ctl stop -n %u -D %s" SYSTEMQUOTE, ctx->node, g_node[ii].datanode[jj].datanodeLocalDataPath);
+    securec_check_intval(ret, (void)ret);
+
+    ret = system(command);
+    if (ret != 0) {
+        write_runlog(ERROR, "failed to stop db instance with command: \"%s\","
+            "nodeId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
+            command, ctx->node, ret, SHELL_RETURN_CODE(ret), errno);
+        return;
+    }
+
+    write_runlog(LOG, "stop db instance successfully, nodeid: %u, instanceid %u.\n", ctx->node, ctx->instId);
+}
+
+// judge whether current instance's id is the max
+bool IsInstanceIdMax(const DnArbCtx *ctx)
+{
+    uint32 maxId = ctx->instId;
+    for (int32 i = 0; i < ctx->dyNorPrim.count; ++i) {
+        if (!InstanceIsCandicate(ctx, ctx->dyNorPrim.itStatus[i].memIdx, true)) {
+            continue;
+        }
+
+        maxId = ctx->dyNorPrim.itStatus[i].instId > maxId ? ctx->dyNorPrim.itStatus[i].instId : maxId;
+    }
+
+    return ((maxId == ctx->instId) ? true : false);
 }

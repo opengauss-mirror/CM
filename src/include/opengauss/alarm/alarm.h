@@ -18,16 +18,16 @@
 
 #include "c.h"
 
-/*GaussDB alarm module.*/
+/* GaussDB alarm module. */
 typedef enum AlarmId {
     ALM_AI_Unknown = 0,
 
-    /*alarm on data instances(alarm checker)*/
+    /* alarm on data instances(alarm checker) */
     ALM_AI_MissingDataInstDataOrRedoDir = 0x404E0001,
     ALM_AI_MissingDataInstWalSegmt = 0x404E0003,
     ALM_AI_TooManyDataInstConn = 0x404F0001,
 
-    /*alarm on monitor instances*/
+    /* alarm on monitor instances */
     ALM_AI_AbnormalGTMInst = 0x404F0002,
     ALM_AI_AbnormalDatanodeInst = 0x404F0004,
 
@@ -48,7 +48,7 @@ typedef enum AlarmId {
     ALM_AI_AbnormalCMAProcess = 0x404F003A,
     ALM_AI_AbnormalETCDProcess = 0x404F003E,
 
-    /*alarm when occur errors*/
+    /* alarm when occur errors */
     ALM_AI_AbnormalDataHAInstListeningSocket = 0x404F0039,
     ALM_AI_AbnormalGTMSocket = 0x404F003D,
     ALM_AI_AbnormalDataInstConnToGTM = 0x404F003C,
@@ -88,7 +88,8 @@ typedef enum AlarmId {
     ALM_AI_PgxcNodeMismatch = 0x404F0061,
     ALM_AI_StreamingDisasterRecoveryCnDisconnected = 0x404F0070,
     ALM_AI_StreamingDisasterRecoveryDnDisconnected = 0x404F0071,
-    ALM_AI_BUTT = 0x7FFFFFFFFFFFFFFF             /*force compiler to decide AlarmId as uint64*/
+    ALM_AI_DbInstanceDoublePrimary = 0x404F007A,
+    ALM_AI_BUTT = 0x7FFFFFFFFFFFFFFF             /* force compiler to decide AlarmId as uint64 */
 } AlarmId;
 
 typedef struct AlarmName {
@@ -111,13 +112,13 @@ typedef struct AlarmAdditionalParam {
     char additionInfo[256];
 } AlarmAdditionalParam;
 
-/*total alarm types of alarm module.*/
+/* total alarm types of alarm module. */
 typedef enum AlarmType { ALM_AT_Fault = 0, ALM_AT_Resume = 2, ALM_AT_OPLog, ALM_AT_Event, ALM_AT_Delete } AlarmType;
 
-/*status of a specific alarm.*/
+/* status of a specific alarm. */
 typedef enum AlarmStat { ALM_AS_Normal, ALM_AS_Reported } AlarmStat;
 
-/*result types of alarm check functions.*/
+/* result types of alarm check functions. */
 typedef enum AlarmCheckResult {
     ALM_ACR_UnKnown = 0,
 
@@ -149,7 +150,7 @@ typedef struct Alarm {
 
 typedef AlarmCheckResult (*CheckerFunc)(Alarm* alarm, AlarmAdditionalParam* additionalParam);
 
-/*common function to check*/
+/* common function to check */
 extern void AlarmEnvInitialize(void);
 
 extern void AlarmItemInitialize(Alarm* alarmItem, AlarmId alarmId, AlarmStat alarmStat, CheckerFunc checkerFunc,
@@ -158,44 +159,46 @@ extern void AlarmItemInitialize(Alarm* alarmItem, AlarmId alarmId, AlarmStat ala
 extern void AlarmCheckerLoop(Alarm* checkList, int checkListSize);
 
 extern void WriteAlarmAdditionalInfo(AlarmAdditionalParam* additionalParam, const char* instanceName,
-    const char* databaseName, const char* dbUserName, Alarm* alarmItem, AlarmType type, ...);
-
-extern void WriteAlarmAdditionalInfoForLC(AlarmAdditionalParam* additionalParam, const char* instanceName,
     const char* databaseName, const char* dbUserName, const char* logicClusterName, Alarm* alarmItem, AlarmType type,
     ...);
 
 extern void AlarmReporter(Alarm* alarmItem, AlarmType type, AlarmAdditionalParam* additionalParam);
 
-/*alarm module only log in two level.*/
+/* alarm module only log in two level. */
 #define ALM_LOG 1
 #define ALM_DEBUG 2
 #define AlarmLogPrefix "[Alarm Module]"
+/*
+ * We really want line-buffered mode for logfile output, but Windows does
+ * not have it, and interprets _IOLBF as _IOFBF (bozos).  So use _IONBF
+ * instead on Windows.
+ */
+#ifdef WIN32
+#define LBF_MODE _IONBF
+#else
+#define LBF_MODE _IOLBF
+#endif
 
 #define CLUSTER_NAME_LEN 64
 
 extern void AlarmLog(int level, const char* fmt, ...) __attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 
-/*below things must be implemented by other modules(gaussdb, gtm, cmserver etc.).*/
+/* below things must be implemented by other modules(gaussdb, gtm, cmserver etc.). */
 
-/*declare the guc variable of alarm module*/
+/* declare the guc variable of alarm module */
 extern char* Alarm_component;
 extern THR_LOCAL int AlarmReportInterval;
 
-/*declare the global variable of alarm module*/
+/* declare the global variable of alarm module */
 extern int g_alarmReportInterval;
 extern int g_alarmReportMaxCount;
 extern char g_alarmComponentPath[MAXPGPATH];
 
-/*alarm module memory alloc method maybe different in different module.*/
+/* alarm module memory alloc method maybe different in different module. */
 extern void* AlarmAlloc(size_t size);
 extern void AlarmFree(void* pointer);
 
-/*callback protype for get logic cluster name.*/
-typedef void (*cb_for_getlc)(char*);
-/*set callback function for get logic cluster name*/
-void SetcbForGetLCName(cb_for_getlc get_lc_name);
-
-/*alarm log implementation.*/
+/* alarm log implementation. */
 extern void AlarmLogImplementation(int level, const char* prefix, const char* logtext);
 
 #endif

@@ -53,17 +53,11 @@
 
 #include "pg_config.h"
 
-#include <signal.h>
 #include <fcntl.h>
-#include <grp.h>
 #include <unistd.h>
-#include <sys/file.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/time.h>
-#include <sys/types.h>
 #include <netdb.h>
-#include <netinet/in.h>
 #ifdef HAVE_NETINET_TCP_H
 #include <netinet/tcp.h>
 #endif
@@ -74,11 +68,8 @@
 #include "cm/cm_c.h"
 #include "cm/ip.h"
 #include "cm/libpq.h"
-#include "cm/libpq-be.h"
 #include "cm/cm_elog.h"
 #include "cs_ssl.h"
-
-#define MAXGTMPATH 256
 
 #ifndef NO_SOCKET
 const int NO_SOCKET = -1;
@@ -114,39 +105,33 @@ static int internal_flush(Port* myport);
 
 int StreamServerPort(int family, char* hostName, unsigned short portNumber, int ListenSocket[], int MaxListen)
 {
-    int fd = 0;
+    int fd;
     int err;
     int maxconn;
     int ret;
     char portNumberStr[32];
     const char* familyDesc = NULL;
     char familyDescBuf[64];
-    char* service = NULL;
     struct addrinfo* addrs = NULL;
-    struct addrinfo* addr = NULL;
     struct addrinfo hint;
     int listen_index = 0;
     int added = 0;
-    errno_t rc = 0;
 
 #if !defined(WIN32) || defined(IPV6_V6ONLY)
     int one = 1;
 #endif
 
     /* Initialize hint structure */
-    rc = memset_s(&hint, sizeof(hint), 0, sizeof(hint));
-    securec_check_errno(rc, );
+    errno_t rc = memset_s(&hint, sizeof(hint), 0, sizeof(hint));
+    securec_check_errno(rc, (void)rc);
 
     hint.ai_family = family;
     hint.ai_flags = AI_PASSIVE;
-    hint.ai_socktype = SOCK_STREAM;
+    hint.ai_socktype = (int)SOCK_STREAM;
 
-    {
-        rc = snprintf_s(portNumberStr, sizeof(portNumberStr), sizeof(portNumberStr) - 1, "%d", portNumber);
-        securec_check_intval(rc, );
-        service = portNumberStr;
-    }
-
+    rc = snprintf_s(portNumberStr, sizeof(portNumberStr), sizeof(portNumberStr) - 1, "%u", portNumber);
+    securec_check_intval(rc, (void)rc);
+    char *service = portNumberStr;
     ret = cmpg_getaddrinfo_all(hostName, service, &hint, &addrs);
     if (ret || (addrs == NULL)) {
         if (hostName != NULL) {
@@ -164,7 +149,7 @@ int StreamServerPort(int family, char* hostName, unsigned short portNumber, int 
         return STATUS_ERROR;
     }
 
-    for (addr = addrs; addr != NULL; addr = addr->ai_next) {
+    for (struct addrinfo *addr = addrs; addr != NULL; addr = addr->ai_next) {
         if (!IS_AF_UNIX(family) && IS_AF_UNIX(addr->ai_family)) {
             /*
              * Only set up a unix domain socket when they really asked for it.
@@ -200,12 +185,12 @@ int StreamServerPort(int family, char* hostName, unsigned short portNumber, int 
                     sizeof(familyDescBuf) - 1,
                     "unrecognized address family %d",
                     addr->ai_family);
-                securec_check_intval(rc, );
+                securec_check_intval(rc, (void)rc);
                 familyDesc = familyDescBuf;
                 break;
         }
 
-        if ((fd = socket(addr->ai_family, SOCK_STREAM, 0)) < 0) {
+        if ((fd = socket(addr->ai_family, (int)SOCK_STREAM, 0)) < 0) {
             write_runlog(LOG, "could not create %s socket: \n", familyDesc);
             continue;
         }
@@ -226,7 +211,7 @@ int StreamServerPort(int family, char* hostName, unsigned short portNumber, int 
         if (!IS_AF_UNIX(addr->ai_family)) {
             if ((setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one))) == -1) {
                 write_runlog(LOG, "setsockopt(SO_REUSEADDR) failed: \n");
-                close(fd);
+                (void)close(fd);
                 continue;
             }
         }
@@ -234,9 +219,9 @@ int StreamServerPort(int family, char* hostName, unsigned short portNumber, int 
 
 #ifdef IPV6_V6ONLY
         if (addr->ai_family == AF_INET6) {
-            if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&one, sizeof(one)) == -1) {
+            if (setsockopt(fd, (int)IPPROTO_IPV6, IPV6_V6ONLY, (char*)&one, sizeof(one)) == -1) {
                 write_runlog(LOG, "setsockopt(IPV6_V6ONLY) failed: \n");
-                close(fd);
+                (void)close(fd);
                 continue;
             }
         }
@@ -256,7 +241,7 @@ int StreamServerPort(int family, char* hostName, unsigned short portNumber, int 
                 familyDesc,
                 (int)portNumber);
 
-            close(fd);
+            (void)close(fd);
             continue;
         }
 
@@ -272,7 +257,7 @@ int StreamServerPort(int family, char* hostName, unsigned short portNumber, int 
         err = listen(fd, maxconn);
         if (err < 0) {
             write_runlog(LOG, "could not listen on %s socket: \n", familyDesc);
-            close(fd);
+            (void)close(fd);
             continue;
         }
         ListenSocket[listen_index] = fd;
@@ -290,30 +275,24 @@ int StreamServerPort(int family, char* hostName, unsigned short portNumber, int 
 
 int SetSocketNoBlock(int isocketId)
 {
-    int iFlag = 0;
-    int ret = 0;
-    uint32 uFlag = 0;
-
-    iFlag = fcntl(isocketId, F_GETFL, 0);
+    int iFlag = fcntl(isocketId, F_GETFL, 0);
     if (iFlag < 0) {
         write_runlog(LOG,
-            "Get socket info is failed(socketId = %d,errno = %d,errinfo = %s).",
+            "Get socket info is failed(socketId = %d,errno = %d).",
             isocketId,
-            errno,
-            strerror(errno));
+            errno);
         return STATUS_ERROR;
     }
 
-    uFlag = (uint32)iFlag;
+    uint32 uFlag = (uint32)iFlag;
     uFlag |= O_NONBLOCK;
 
-    ret = fcntl(isocketId, F_SETFL, uFlag);
+    int ret = fcntl(isocketId, F_SETFL, uFlag);
     if (ret < 0) {
         write_runlog(LOG,
-            "Set socket block is failed(socketId = %d,errno = %d,errinfo = %s).",
+            "Set socket block is failed(socketId = %d,errno = %d).",
             isocketId,
-            errno,
-            strerror(errno));
+            errno);
         return STATUS_ERROR;
     }
 
@@ -377,19 +356,19 @@ int StreamConnection(int server_fd, Port* port)
 
 #ifdef TCP_NODELAY
         on = 1;
-        if (setsockopt(port->sock, IPPROTO_TCP, TCP_NODELAY, (char*)&on, sizeof(on)) < 0) {
+        if (setsockopt(port->sock, (int)IPPROTO_TCP, (int)TCP_NODELAY, (char*)&on, sizeof(on)) < 0) {
             write_runlog(LOG, "setsockopt(TCP_NODELAY) failed\n");
             return STATUS_ERROR;
         }
 #endif
         on = 1;
-        if (setsockopt(port->sock, SOL_SOCKET, SO_KEEPALIVE, (char*)&on, sizeof(on)) < 0) {
+        if (setsockopt(port->sock, (int)SOL_SOCKET, (int)SO_KEEPALIVE, (char*)&on, sizeof(on)) < 0) {
             write_runlog(LOG, "setsockopt(SO_KEEPALIVE) failed\n");
             return STATUS_ERROR;
         }
 
         on = SetSocketNoBlock(port->sock);
-        if (STATUS_OK != on) {
+        if (on != STATUS_OK) {
             write_runlog(LOG, "SetSocketNoBlock failed\n");
             return STATUS_ERROR;
         }
@@ -420,7 +399,7 @@ int StreamConnection(int server_fd, Port* port)
  */
 void StreamClose(int sock)
 {
-    close(sock);
+    (void)close(sock);
 }
 
 static int ProcessSslRecv(Port *myport)
@@ -428,9 +407,11 @@ static int ProcessSslRecv(Port *myport)
     uint32 event = 0;
     int r = 0;
     status_t ret = cm_cs_ssl_recv(&myport->pipe.link.ssl, myport->PqRecvBuffer + myport->PqRecvLength,
-        PQ_BUFFER_SIZE - myport->PqRecvLength, &r, &event);
+        (uint32)(PQ_BUFFER_SIZE - myport->PqRecvLength), &r, &event);
     myport->last_call = CM_LastCall_RECV;
     if (ret != CM_SUCCESS) {
+        write_runlog(ERROR, "could not receive data from client: err=%d, node=[%s: %u], socket=%d\n",
+            errno, myport->node_name, myport->node_id, myport->pipe.link.tcp.sock);
         return -1;
     }
     if (r == 0) {
@@ -457,13 +438,12 @@ static int ProcessSslRecv(Port *myport)
  */
 static int pq_recvbuf(Port* myport)
 {
-    errno_t rc;
     if (myport->PqRecvPointer > 0) {
         if (myport->PqRecvLength > myport->PqRecvPointer) {
             /* still some unread data, left-justify it in the buffer */
-            rc = memmove_s(myport->PqRecvBuffer, myport->PqRecvLength, myport->PqRecvBuffer + myport->PqRecvPointer,
-                myport->PqRecvLength - myport->PqRecvPointer);
-            securec_check_errno(rc, );
+            errno_t rc = memmove_s(myport->PqRecvBuffer, (size_t)myport->PqRecvLength,
+                myport->PqRecvBuffer + myport->PqRecvPointer, (size_t)(myport->PqRecvLength - myport->PqRecvPointer));
+            securec_check_errno(rc, (void)rc);
             myport->PqRecvLength -= myport->PqRecvPointer;
             myport->PqRecvPointer = 0;
         } else {
@@ -473,20 +453,19 @@ static int pq_recvbuf(Port* myport)
 
     /* Can fill buffer from myport->PqRecvLength and upwards */
     for (;;) {
-        int r = 0;
-
         if (myport->pipe.type == CS_TYPE_SSL) {
             return ProcessSslRecv(myport);
         }
-        r = recv(myport->sock, myport->PqRecvBuffer + myport->PqRecvLength, PQ_BUFFER_SIZE - myport->PqRecvLength,
-            MSG_DONTWAIT);
+        int r = (int)recv(myport->sock, myport->PqRecvBuffer + myport->PqRecvLength,
+            (size_t)(PQ_BUFFER_SIZE - myport->PqRecvLength), (int)MSG_DONTWAIT);
 
         myport->last_call = CM_LastCall_RECV;
 
         if (r < 0) {
             myport->last_errno = errno;
-            if (errno == EINTR)
+            if (errno == EINTR) {
                 continue; /* Ok if interrupted */
+            }
 
             /*
              * The  socket's file descriptor is marked O_NONBLOCK and no data is waiting to be received; or MSG_OOB is
@@ -502,7 +481,8 @@ static int pq_recvbuf(Port* myport)
              * cause recursion to here, leading to stack overflow and core
              * dump!  This message must go *only* to the postmaster log.
              */
-            write_runlog(ERROR, "could not receive data from client: err=%d\n", errno);
+            write_runlog(ERROR, "could not receive data from client: err=%d, node=[%s: %u], socket=%d\n",
+                errno, myport->node_name, myport->node_id, myport->sock);
             return TCP_SOCKET_ERROR_EPIPE;
         } else {
             myport->last_errno = 0;
@@ -524,12 +504,12 @@ static int pq_recvbuf(Port* myport)
  * pq_getbyte - get a single byte from connection, or return EOF
  * --------------------------------
  */
-int pq_getbyte(Port* myport)
+int pq_getbyte(Port *myport)
 {
     int ret;
     while (myport->PqRecvPointer >= myport->PqRecvLength) {
         ret = pq_recvbuf(myport);
-        if (0 == ret) {
+        if (ret == 0) {
             continue;
         } else {
             return ret; /* Failed to recv data */
@@ -544,7 +524,7 @@ int pq_getbyte(Port* myport)
  * returns 0 if OK, EOF if trouble
  * --------------------------------
  */
-int pq_getbytes(Port* myport, char* s, size_t len, size_t* recvlen)
+int pq_getbytes(Port* myport, char* s, size_t len, size_t* recvlen, bool isReEntry)
 {
     size_t amount;
     *recvlen = 0;
@@ -554,17 +534,17 @@ int pq_getbytes(Port* myport, char* s, size_t len, size_t* recvlen)
     while (len > 0) {
         while (myport->PqRecvPointer >= myport->PqRecvLength) {
             ret = pq_recvbuf(myport);
-            if (ret != 0 && ret != TCP_SOCKET_ERROR_NO_MESSAGE) {
+            if (ret != 0 && (isReEntry || ret != TCP_SOCKET_ERROR_NO_MESSAGE)) {
                 return ret; /* Failed to recv data */
             }
         }
-        amount = myport->PqRecvLength - myport->PqRecvPointer;
+        amount = (size_t)(myport->PqRecvLength - myport->PqRecvPointer);
         if (amount > len) {
             amount = len;
         }
         rc = memcpy_s(s, len, myport->PqRecvBuffer + myport->PqRecvPointer, amount);
-        securec_check_errno(rc, );
-        myport->PqRecvPointer += amount;
+        securec_check_errno(rc, (void)rc);
+        myport->PqRecvPointer += (int)amount;
         s += amount;
         len -= amount;
         *recvlen += amount;
@@ -590,7 +570,7 @@ static int pq_discardbytes(Port* myport, size_t len)
     while (len > 0) {
         while (myport->PqRecvPointer >= myport->PqRecvLength) {
             ret = pq_recvbuf(myport);
-            if (0 == ret) {
+            if (ret == 0) {
                 /* If nothing in buffer, then recv some */
                 continue;
             } else {
@@ -608,6 +588,47 @@ static int pq_discardbytes(Port* myport, size_t len)
 }
 #endif /* NOT_USED */
 
+/* Read message length word */
+static int GetMessageLenWord(Port *myport, CM_StringInfo s, int maxlen, bool isReEntry)
+{
+    if (s->msglen != 0) {
+        return 0;
+    }
+    size_t recvlen = 0;
+    if (s->msgReadLen < MSG_READ_LEN) {
+        int ret = pq_getbytes(myport, s->msgReadData + s->msgReadLen, (size_t)(MSG_READ_LEN - s->msgReadLen),
+            &recvlen, isReEntry);
+        s->msgReadLen = (int)recvlen;
+        if (ret != 0) {
+            if (ret == EOF) {
+                write_runlog(ERROR, "unexpected EOF within message length word, node=[%s: %u], socket=%d.\n",
+                    myport->node_name, myport->node_id, myport->sock);
+            }
+            return ret;
+        }
+    }
+    int32 len = *(int32*)(s->msgReadData);
+    len = (int32)ntohl((uint32)len);
+    if (len < 4 || (maxlen > 0 && len > maxlen)) {
+        write_runlog(ERROR, "invalid message length, len=%d, msgReadLen=%d.\n", len, s->msgReadLen);
+        return EOF;
+    }
+
+    len -= 4; /* discount length itself */
+    s->msglen = len;
+    if (len > 0) {
+        /*
+            * Allocate space for message.	If we run out of room (ridiculously
+            * large message), we will elog(ERROR), but we want to discard the
+            * message body so as not to lose communication sync.
+            */
+        if (CM_enlargeStringInfo(s, len) != 0) {
+            return EOF;
+        }
+    }
+    return 0;
+}
+
 /* --------------------------------
  *		pq_getmessage	- get a message with length word from connection
  *
@@ -624,54 +645,32 @@ static int pq_discardbytes(Port* myport, size_t len)
  *		returns 0 if OK, EOF if trouble
  * --------------------------------
  */
-int pq_getmessage(Port* myport, CM_StringInfo s, int maxlen)
+int pq_getmessage(Port* myport, CM_StringInfo s, int maxlen, bool isReEntry)
 {
-    int32 len = 0;
     size_t recvlen = 0;
-    int ret = 0;
 
     /* Read message length word */
-    if (0 == s->msglen) {
-        ret = pq_getbytes(myport, (char*)&len, (size_t)4, &recvlen);
-        if (ret != 0) {
-            if (EOF == ret) {
-                write_runlog(ERROR, "unexpected EOF within message length word\n");
-            }
-            return ret;
-        }
-
-        len = ntohl(len);
-
-        if (len < 4 || (maxlen > 0 && len > maxlen)) {
-            write_runlog(ERROR, "invalid message length");
-            return EOF;
-        }
-
-        len -= 4; /* discount length itself */
-        s->msglen = len;
-        if (len > 0) {
-            /*
-             * Allocate space for message.	If we run out of room (ridiculously
-             * large message), we will elog(ERROR), but we want to discard the
-             * message body so as not to lose communication sync.
-             */
-            if (0 != CM_enlargeStringInfo(s, len)) {
-                return EOF;
-            }
-        }
+    int ret = GetMessageLenWord(myport, s, maxlen, isReEntry);
+    if (ret != 0) {
+        return ret;
     }
 
     if (s->msglen > s->len) {
-
         /* And grab the message */
-        ret = pq_getbytes(myport, s->data + s->len, s->msglen - s->len, &(recvlen));
-        if (ret != 0) {
-            write_runlog(ERROR, "incomplete message from client, ret=%d\n", ret);
-            return ret;
-        }
-        s->len = s->len + recvlen;
+        ret = pq_getbytes(myport, s->data + s->len, (size_t)(s->msglen - s->len), &(recvlen), isReEntry);
+        s->len = s->len + (int)recvlen;
         /* Place a trailing null per StringInfo convention */
         s->data[s->len] = '\0';
+        if (ret != 0) {
+            int32 logLevel = (isReEntry && ret == TCP_SOCKET_ERROR_NO_MESSAGE) ? DEBUG1 : ERROR;
+            write_runlog(logLevel, "incomplete message from client, node=[%s: %u], socket=%d, ret=%d\n",
+                myport->node_name, myport->node_id, myport->sock, ret);
+            return ret;
+        }
+    }
+
+    if (s->msglen == 0 && s->qtype == 'X') {
+        return s->qtype;
     }
 
     return 0;
@@ -687,17 +686,18 @@ static int internal_putbytes(Port* myport, const char* s, size_t len)
         /* If buffer is full, then flush it out */
         if (myport->PqSendPointer >= PQ_BUFFER_SIZE) {
             ret = internal_flush(myport);
-            if (0 != ret) {
+            if (ret != 0) {
                 return ret;
             }
         }
-        amount = PQ_BUFFER_SIZE - myport->PqSendPointer;
+        amount = (size_t)(PQ_BUFFER_SIZE - myport->PqSendPointer);
         if (amount > len) {
             amount = len;
         }
-        rc = memcpy_s(myport->PqSendBuffer + myport->PqSendPointer, PQ_BUFFER_SIZE - myport->PqSendPointer, s, amount);
-        securec_check_errno(rc, );
-        myport->PqSendPointer += amount;
+        rc = memcpy_s(myport->PqSendBuffer + myport->PqSendPointer, (size_t)(PQ_BUFFER_SIZE - myport->PqSendPointer),
+            s, amount);
+        securec_check_errno(rc, (void)rc);
+        myport->PqSendPointer += (int)amount;
         s += amount;
         len -= amount;
     }
@@ -732,9 +732,9 @@ static int internal_flush(Port* myport)
         errno = 0;
         if (myport->pipe.type == CS_TYPE_SSL) {
             status_t ret = cm_cs_ssl_send_timed(&myport->pipe.link.ssl, bufptr, uint32(bufend - bufptr),
-                CM_NETWORK_IO_TIMEOUT);
+                CM_NETWORK_SEND_TIMEOUT);
             if (ret != CM_SUCCESS) {
-                printf("cm_cs_ssl_send_timed error , time %ld", time(NULL));
+                (void)printf("cm_cs_ssl_send_timed error , time %ld", time(NULL));
                 return -1;
             }
             myport->PqSendPointer = 0;
@@ -742,7 +742,7 @@ static int internal_flush(Port* myport)
             myport->last_call = CM_LastCall_SEND;
             return 0;
         } else {
-            r = send(myport->sock, bufptr, bufend - bufptr, MSG_DONTWAIT);
+            r = (int)send(myport->sock, bufptr, (size_t)(bufend - bufptr), (int)MSG_DONTWAIT);
         }
 
         myport->last_call = CM_LastCall_SEND;
@@ -752,7 +752,7 @@ static int internal_flush(Port* myport)
                 continue; /* Ok if we were interrupted */
             }
 
-            if (EPIPE == errno) {
+            if (errno == EPIPE) {
                 return TCP_SOCKET_ERROR_EPIPE;
             }
 
@@ -868,7 +868,7 @@ int pq_getkeepalivesidle(Port* port)
     if (port->default_keepalives_idle == 0) {
         ACCEPT_TYPE_ARG3 size = sizeof(port->default_keepalives_idle);
 
-        if (getsockopt(port->sock, IPPROTO_TCP, TCP_KEEPIDLE, (char*)&port->default_keepalives_idle, &size) < 0) {
+        if (getsockopt(port->sock, (int)IPPROTO_TCP, TCP_KEEPIDLE, (char*)&port->default_keepalives_idle, &size) < 0) {
             write_runlog(LOG, "getsockopt(TCP_KEEPIDLE) failed:\n");
             port->default_keepalives_idle = -1; /* don't know */
         }
@@ -905,7 +905,7 @@ int pq_setkeepalivesidle(int idle, Port* port)
         idle = port->default_keepalives_idle;
     }
 
-    if (setsockopt(port->sock, IPPROTO_TCP, TCP_KEEPIDLE, (char*)&idle, sizeof(idle)) < 0) {
+    if (setsockopt(port->sock, (int)IPPROTO_TCP, (int)TCP_KEEPIDLE, (char*)&idle, sizeof(idle)) < 0) {
         write_runlog(LOG, "setsockopt(TCP_KEEPIDLE) failed:\n");
         return STATUS_ERROR;
     }
@@ -935,7 +935,8 @@ int pq_getkeepalivesinterval(Port* port)
     if (port->default_keepalives_interval == 0) {
         ACCEPT_TYPE_ARG3 size = sizeof(port->default_keepalives_interval);
 
-        if (getsockopt(port->sock, IPPROTO_TCP, TCP_KEEPINTVL, (char*)&port->default_keepalives_interval, &size) < 0) {
+        if (getsockopt(port->sock, (int)IPPROTO_TCP, (int)TCP_KEEPINTVL,
+            (char*)&port->default_keepalives_interval, &size) < 0) {
             write_runlog(LOG, "getsockopt(TCP_KEEPINTVL) failed:\n");
             port->default_keepalives_interval = -1; /* don't know */
         }
@@ -972,7 +973,7 @@ int pq_setkeepalivesinterval(int interval, Port* port)
         interval = port->default_keepalives_interval;
     }
 
-    if (setsockopt(port->sock, IPPROTO_TCP, TCP_KEEPINTVL, (char*)&interval, sizeof(interval)) < 0) {
+    if (setsockopt(port->sock, (int)IPPROTO_TCP, (int)TCP_KEEPINTVL, (char*)&interval, sizeof(interval)) < 0) {
         write_runlog(LOG, "setsockopt(TCP_KEEPINTVL) failed: \n");
         return STATUS_ERROR;
     }
@@ -1002,7 +1003,8 @@ int pq_getkeepalivescount(Port* port)
     if (port->default_keepalives_count == 0) {
         ACCEPT_TYPE_ARG3 size = sizeof(port->default_keepalives_count);
 
-        if (getsockopt(port->sock, IPPROTO_TCP, TCP_KEEPCNT, (char*)&port->default_keepalives_count, &size) < 0) {
+        if (getsockopt(port->sock, (int)IPPROTO_TCP, (int)TCP_KEEPCNT,
+            (char*)&port->default_keepalives_count, &size) < 0) {
             write_runlog(LOG, "getsockopt(TCP_KEEPCNT) failed: \n");
             port->default_keepalives_count = -1; /* don't know */
         }
@@ -1040,7 +1042,7 @@ int pq_setkeepalivescount(int count, Port* port)
     }
 
     if (port->sock != NO_SOCKET) {
-        if (setsockopt(port->sock, IPPROTO_TCP, TCP_KEEPCNT, (char*)&count, sizeof(count)) < 0) {
+        if (setsockopt(port->sock, (int)IPPROTO_TCP, (int)TCP_KEEPCNT, (char*)&count, sizeof(count)) < 0) {
             write_runlog(LOG, "setsockopt(TCP_KEEPCNT) failed: \n");
             return STATUS_ERROR;
         }

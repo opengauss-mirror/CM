@@ -43,9 +43,9 @@ void SendSignalToAgentThreads();
 extern int GetCtlThreadNum();
 int UpdateDynamicConfig();
 void UpdateAzNodeInfo();
-bool CheckBoolConfigParam(const char* value);
 void GetDdbTypeParam(void);
 void GetDdbArbiCfg(int32 loadWay);
+void GetTwoNodesArbitrateParams(void);
 status_t GetMaintainPath(char *maintainFile, uint32 fileLen);
 status_t GetDdbKVFilePath(char *kvFile, uint32 fileLen);
 bool IsUpgradeCluster(void);
@@ -54,4 +54,10 @@ void GetDoradoOfflineIp(char *ip, uint32 ipLen);
 bool SetOfflineNode(void);
 void GetDelayArbitTimeFromConf();
 void GetBackupOpenConfig();
+void GetDelayArbitClusterTimeFromConf();
+void GetDnArbitrateMode();
+void CmsSyncStandbyMode();
+
+bool EnableShareDisk();
+
 #endif

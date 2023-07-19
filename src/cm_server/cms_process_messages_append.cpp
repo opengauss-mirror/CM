@@ -29,7 +29,7 @@
 #include "cms_ddb_adapter.h"
 #include "cms_threads.h"
 
-typedef struct NodeInstanceCnt {
+typedef struct {
     uint32 nodeNum;
     uint32 dnRepNum;
     uint32 cnNum;
@@ -53,7 +53,7 @@ void StoreGlobalValue(NodeInstanceCnt *globalValue)
     return;
 }
 
-void RestoreGlobalValue(NodeInstanceCnt lastGlobalValue)
+void RestoreGlobalValue(const NodeInstanceCnt lastGlobalValue)
 {
     g_node_num = lastGlobalValue.nodeNum;
     g_dn_replication_num = lastGlobalValue.dnRepNum;
@@ -66,7 +66,7 @@ void RestoreGlobalValue(NodeInstanceCnt lastGlobalValue)
     return;
 }
 
-int CheckInstanceCnt(NodeInstanceCnt lastGlobalValue)
+int CheckInstanceCnt(const NodeInstanceCnt lastGlobalValue)
 {
     if (g_etcd_num != lastGlobalValue.etcdNum || g_cm_server_num != lastGlobalValue.cmsNum ||
         g_gtm_num != lastGlobalValue.gtmNum) {
@@ -89,7 +89,7 @@ static void FreeAndInitNotifyMsg()
 }
 
 
-int UpdateBasicInfo(NodeInstanceCnt lastGlobalValue)
+int UpdateBasicInfo(const NodeInstanceCnt lastGlobalValue)
 {
     if (CheckInstanceCnt(lastGlobalValue) != 0) {
         write_runlog(ERROR, "[reload] unexpected instance type increase, only support add cn/dn instance.\n");
@@ -113,15 +113,9 @@ int UpdateBasicInfo(NodeInstanceCnt lastGlobalValue)
     return 0;
 }
 
-/**
- * @brief 
- * 
- * @param  con              My Param doc
- */
-void ProcessCtlToCmReloadMsg(CM_Connection* con)
+void ProcessCtlToCmReloadMsg(MsgRecvInfo* recvMsgInfo)
 {
     int err = 0;
-    int status = 0;
     uint32 i = 0;
     NodeInstanceCnt lastGlobalValue;
     CMToCtlReloadAck reloadAckMsg;
@@ -150,7 +144,7 @@ void ProcessCtlToCmReloadMsg(CM_Connection* con)
 
     write_runlog(LOG, "[reload] begin to reload config file.\n");
     reloadAckMsg.msgType = MSG_CM_CTL_RELOAD_ACK;
-    status = read_config_file(g_cmStaticConfigurePath, &err, true);
+    int status = read_config_file(g_cmStaticConfigurePath, &err, true);
     if (status != 0) {
         switch (status) {
             case OPEN_FILE_ERROR: {
@@ -165,7 +159,7 @@ void ProcessCtlToCmReloadMsg(CM_Connection* con)
                 break;
         }
         reloadAckMsg.reloadOk = false;
-        (void)cm_server_send_msg(con, 'S', (char*)(&reloadAckMsg), sizeof(CMToCtlReloadAck));
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&reloadAckMsg), sizeof(CMToCtlReloadAck));
         g_inReload = false;
         return;
     }
@@ -175,7 +169,7 @@ void ProcessCtlToCmReloadMsg(CM_Connection* con)
         RestoreGlobalValue(lastGlobalValue);
         FreeAndInitNotifyMsg();
         reloadAckMsg.reloadOk = false;
-        (void)cm_server_send_msg(con, 'S', (char*)(&reloadAckMsg), sizeof(CMToCtlReloadAck));
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&reloadAckMsg), sizeof(CMToCtlReloadAck));
         g_inReload = false;
         return;
     }
@@ -184,21 +178,18 @@ void ProcessCtlToCmReloadMsg(CM_Connection* con)
 
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
     if (g_isEnableUpdateSyncList == CANNOT_START_SYNCLIST_THREADS) {
-        bool ret = CreateDnGroupStatusCheckAndArbitrateThread();
-        if (!ret) {
-            write_runlog(LOG, "[reload] cannot start synclist threads.\n");
-        }
+        CreateDnGroupStatusCheckAndArbitrateThread();
     }
 #endif
 
     write_runlog(LOG, "[reload] reload config file success.\n");
     reloadAckMsg.reloadOk = true;
-    (void)cm_server_send_msg(con, 'S', (char*)(&reloadAckMsg), sizeof(CMToCtlReloadAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)(&reloadAckMsg), sizeof(CMToCtlReloadAck));
     g_inReload = false;
     return;
 }
 
-void ProcessCtlToCmExecDccCmdMsg(CM_Connection *con, ExecDdbCmdMsg *msg)
+void ProcessCtlToCmExecDccCmdMsg(MsgRecvInfo* recvMsgInfo, ExecDdbCmdMsg *msg)
 {
     msg->cmdLine[DCC_CMD_MAX_LEN - 1] = '\0';
     errno_t rc;
@@ -215,7 +206,7 @@ void ProcessCtlToCmExecDccCmdMsg(CM_Connection *con, ExecDdbCmdMsg *msg)
             DCC_CMD_MAX_OUTPUT_LEN) == CM_SUCCESS);
     }
 
-    (void)cm_server_send_msg(con, 'S', reinterpret_cast<char*>(&ackMsg), sizeof(ExecDdbCmdAckMsg));
+    (void)RespondMsg(recvMsgInfo, 'S', reinterpret_cast<char*>(&ackMsg), sizeof(ExecDdbCmdAckMsg));
 
     return;
 }

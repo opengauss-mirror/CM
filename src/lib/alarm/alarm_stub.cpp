@@ -36,15 +36,9 @@ void AlarmReporter(Alarm *alarmItem, AlarmType type, AlarmAdditionalParam *addit
     return;
 }
 
-void WriteAlarmAdditionalInfoForLC(AlarmAdditionalParam *additionalParam, const char *instanceName,
+void WriteAlarmAdditionalInfo(AlarmAdditionalParam *additionalParam, const char *instanceName,
     const char *databaseName, const char *dbUserName, const char *logicClusterName, Alarm *alarmItem, AlarmType type,
     ...)
-{
-    return;
-}
-
-void WriteAlarmAdditionalInfo(AlarmAdditionalParam *additionalParam, const char *instanceName, const char *databaseName,
-    const char *dbUserName, Alarm *alarmItem, AlarmType type, ...)
 {
     return;
 }

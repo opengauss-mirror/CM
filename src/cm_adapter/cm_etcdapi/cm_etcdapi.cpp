@@ -27,8 +27,6 @@
 #include <unistd.h>
 #include "libclientv3.h"
 #include "cm/cm_c.h"
-#include "etcdapi.h"
-#include "securec.h"
 #include "cm_etcdapi.h"
 
 #define ETCD_SERVER_SEPARATOR "\n\r\t ,;"
@@ -129,18 +127,16 @@ errno_t EtcdOpenInit(EtcdServerSocket* serverList, GoSlice* serverListInGo, cons
  * fails, -1 is returned.
  * If you don't need encryption communication, the tls_path or it's children can set be null.
  */
-int etcd_open(EtcdSession* session, EtcdServerSocket* serverList, EtcdTlsAuthPath* tlsPath, int timeout)
+int etcd_open(EtcdSession* session, EtcdServerSocket* serverList, const EtcdTlsAuthPath* tlsPath, int timeout)
 {
     /* The max timeout is 60s and the min timeout is 1s */
     const int maxTimeout = 60000;
     const int minTimeout = 1000;
     int serverCount = 0;
-    errno_t rc = 0;
-    EtcdServerSocket* srv = NULL;
     /* Defines and initialize the variables required by the golang interface */
     GoSlice serverListInGo = {0};
     EtcdTlsAuth tlsPathInGo = {0};
-    rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
+    errno_t rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
     securec_check_c(rc, "", "");
 
     /* Check whether the data is NULL */
@@ -164,7 +160,7 @@ int etcd_open(EtcdSession* session, EtcdServerSocket* serverList, EtcdTlsAuthPat
     }
 
     /* Convert C variable to go variable */
-    for (srv = serverList; srv->host; srv++) {
+    for (EtcdServerSocket* srv = serverList; srv->host; srv++) {
         serverCount++;
     }
     if (serverCount == 0) {
@@ -172,7 +168,7 @@ int etcd_open(EtcdSession* session, EtcdServerSocket* serverList, EtcdTlsAuthPat
         securec_check_c(rc, "", "");
         return -1;
     }
-    serverListInGo.data = (char *)malloc(serverCount * sizeof(EtcdServer));
+    serverListInGo.data = (char *)malloc((size_t)serverCount * sizeof(EtcdServer));
     if (serverListInGo.data == NULL) {
         rc = strncpy_s(g_err, ERR_LEN, "Failed to apply for the memory of server_list_in_go.data\n", ERR_LEN - 1);
         securec_check_c(rc, "", "");
@@ -226,8 +222,7 @@ void EtcdSetInit(SetEtcdOption *option, EtcdSetOption *setOption)
  */
 int etcd_set(EtcdSession session, char* key, char* value, SetEtcdOption* option)
 {
-    errno_t rc = 0;
-    rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
+    errno_t rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
     securec_check_c(rc, "", "");
 
     if (key == NULL) {
@@ -242,14 +237,13 @@ int etcd_set(EtcdSession session, char* key, char* value, SetEtcdOption* option)
     }
 
     /* Variable initialization and  convert C variable to go variable */
-    char* errInGo = NULL;
     EtcdSetOption setOption;
     rc = memset_s(&setOption, sizeof(EtcdSetOption), 0, sizeof(EtcdSetOption));
     securec_check_c(rc, "", "");
 
     EtcdSetInit(option, &setOption);
 
-    errInGo = EtcdPut(session, key, value, &setOption);
+    char* errInGo = EtcdPut(session, key, value, &setOption);
     if (errInGo != NULL) {
         rc = strncpy_s(g_err, ERR_LEN, errInGo, ERR_LEN - 1);
         securec_check_c(rc, "", "");
@@ -277,7 +271,6 @@ int GetFirstFieldLen(const char *text, const char *separator)
 int InitServerList(const char *serverPtr, EtcdServerSocket **serverList)
 {
     errno_t rc;
-    int size = 0;
     int serverLen;
     size_t numServers = 0;
 
@@ -299,7 +292,7 @@ int InitServerList(const char *serverPtr, EtcdServerSocket **serverList)
         return -1;
     }
 
-    size = (numServers + 1) * sizeof(EtcdServerSocket);
+    size_t size = (numServers + 1) * sizeof(EtcdServerSocket);
     *serverList = (EtcdServerSocket*)malloc(size);
     if (*serverList == NULL) {
         rc = strncpy_s(g_err, ERR_LEN, "Failed to apply for the memory of server_list\n", ERR_LEN - 1);
@@ -331,10 +324,9 @@ void FreeServerList(EtcdServerSocket *serverList)
  * Enter a string containing multiple sockets, parse server list, and then invoke etcd_open
  * to obtain the corresponding session index.
  */
-int etcd_open_str(EtcdSession* session, char* serverNames, EtcdTlsAuthPath* tlsPath, int timeOut)
+int etcd_open_str(EtcdSession* session, char* serverNames, const EtcdTlsAuthPath* tlsPath, int timeOut)
 {
     errno_t rc;
-    char* serverPtr = NULL;
     int serverLen;
     int hostLen;
     int openAnswer;
@@ -361,7 +353,7 @@ int etcd_open_str(EtcdSession* session, char* serverNames, EtcdTlsAuthPath* tlsP
         return -1;
     }
 
-    serverPtr = serverNames;
+    char *serverPtr = serverNames;
     while (*serverPtr) {
         serverLen = GetFirstFieldLen(serverPtr, ETCD_SERVER_SEPARATOR);
         if (!serverLen) {
@@ -370,9 +362,9 @@ int etcd_open_str(EtcdSession* session, char* serverNames, EtcdTlsAuthPath* tlsP
         }
         hostLen = GetFirstFieldLen(serverPtr, ":");
         if ((serverLen - hostLen) > 1) {
-            serverList[serverIndex].host = strndup(serverPtr, hostLen);
+            serverList[serverIndex].host = strndup(serverPtr, (size_t)hostLen);
             serverList[serverIndex].port = (unsigned short)strtoul(serverPtr + hostLen + 1, NULL, DECIMAL_BASE);
-            if (serverList[serverIndex].port <= 0 || serverList[serverIndex].port > MAX_PORT_NUMBER) {
+            if (serverList[serverIndex].port == 0) {
                 goto ERR_OUT;
             }
         } else {
@@ -396,7 +388,7 @@ ERR_OUT:
 }
 
 /* Convert the operation information in the C language to the operation information of the cgo */
-void EtcdGetInit(GetEtcdOption* option, EtcdGetOption* getOption)
+void EtcdGetInit(const GetEtcdOption* option, EtcdGetOption* getOption)
 {
     if (option == NULL) {
         return;
@@ -414,10 +406,9 @@ void EtcdGetInit(GetEtcdOption* option, EtcdGetOption* getOption)
  * value is transferred in the form of an input parameter. The callers must guarantee the buffer size of
  * the value is larger than the data size + 1;
  */
-int etcd_get(EtcdSession session, char* key, char* value, int maxSize, GetEtcdOption* option)
+int etcd_get(EtcdSession session, char* key, char* value, int maxSize, const GetEtcdOption* option)
 {
-    errno_t rc = 0;
-    rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
+    errno_t rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
     securec_check_c(rc, "", "");
 
     if (key == NULL) {
@@ -431,7 +422,7 @@ int etcd_get(EtcdSession session, char* key, char* value, int maxSize, GetEtcdOp
         return -1;
     }
 
-    rc = memset_s(value, maxSize, 0, maxSize);
+    rc = memset_s(value, (size_t)maxSize, 0, (size_t)maxSize);
     securec_check_c(rc, "", "");
 
     /* Variable initialization and  convert C variable to go variable */
@@ -449,8 +440,7 @@ int etcd_get(EtcdSession session, char* key, char* value, int maxSize, GetEtcdOp
         return -1;
     }
 
-    int len = strlen(valueInGo);
-    rc = strncpy_s(value, maxSize, valueInGo, len);
+    rc = strncpy_s(value, (size_t)maxSize, valueInGo, strlen(valueInGo));
     securec_check_c(rc, "", "");
     value[maxSize - 1] = '\0';
     free(valueInGo);
@@ -464,10 +454,9 @@ int etcd_get(EtcdSession session, char* key, char* value, int maxSize, GetEtcdOp
  * value is transferred in the form of an input parameter. The callers must guarantee the buffer size of
  * the value is larger than the data size + 1;
  */
-int EtcdGetAllValues(EtcdSession session, char* key, char *keyValue, GetEtcdOption* option, int valueSize)
+int EtcdGetAllValues(EtcdSession session, char* key, char *keyValue, const GetEtcdOption* option, int valueSize)
 {
-    errno_t rc = 0;
-    rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
+    errno_t rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
     securec_check_c(rc, "", "");
 
     if (key == NULL) {
@@ -494,7 +483,7 @@ int EtcdGetAllValues(EtcdSession session, char* key, char *keyValue, GetEtcdOpti
         free(errInGo);
         return -1;
     }
-    rc = strncpy_s(keyValue, valueSize, keyValueInGo, valueSize - 1);
+    rc = strncpy_s(keyValue, (size_t)valueSize, keyValueInGo, (size_t)valueSize - 1);
     securec_check_c(rc, "", "");
     free(keyValueInGo);
     return 0;
@@ -520,8 +509,7 @@ void EtcdDeleteInit(DeleteEtcdOption* option, EtcdDeleteOption* deleteOption)
  */
 int etcd_delete(EtcdSession session, char* key, DeleteEtcdOption* option)
 {
-    errno_t rc = 0;
-    rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
+    errno_t rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
     securec_check_c(rc, "", "");
 
     if (key == NULL) {
@@ -550,8 +538,7 @@ int etcd_delete(EtcdSession session, char* key, DeleteEtcdOption* option)
  */
 int etcd_cluster_health(EtcdSession session, char* memberName, char* healthState, int stateSize)
 {
-    errno_t rc = 0;
-    rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
+    errno_t rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
     securec_check_c(rc, "", "");
 
     if (healthState == NULL || stateSize <= 0) {
@@ -559,7 +546,7 @@ int etcd_cluster_health(EtcdSession session, char* memberName, char* healthState
         securec_check_c(rc, "", "");
         return -1;
     }
-    rc = memset_s(healthState, stateSize, 0, stateSize);
+    rc = memset_s(healthState, (size_t)stateSize, 0, (size_t)stateSize);
     securec_check_c(rc, "", "");
 
     /* Variable initialization and  convert C variable to go variable */
@@ -574,8 +561,7 @@ int etcd_cluster_health(EtcdSession session, char* memberName, char* healthState
         return -1;
     }
 
-    int len = strlen(healthMemberInGo);
-    rc = strncpy_s(healthState, stateSize, healthMemberInGo, len);
+    rc = strncpy_s(healthState, (size_t)stateSize, healthMemberInGo, strlen(healthMemberInGo));
     securec_check_c(rc, "", "");
     healthState[stateSize - 1] = '\0';
     free(healthMemberInGo);
@@ -590,8 +576,7 @@ int etcd_cluster_health(EtcdSession session, char* memberName, char* healthState
  */
 int etcd_cluster_state(EtcdSession session, char* memberName, bool* isLeader)
 {
-    errno_t rc = 0;
-    rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
+    errno_t rc = memset_s(g_err, sizeof(g_err), 0, sizeof(g_err));
     securec_check_c(rc, "", "");
 
     if (memberName == NULL) {

@@ -37,13 +37,13 @@ const int32 INIT_GET_PARAMTER = 1;
 const int32 RELOAD_PARAMTER = 2;
 
 #define DDB_MIN_VALUE_LEN (128)
-typedef enum DDB_RESULT {
+typedef enum DDB_RESULT_E {
     FAILED_GET_VALUE = -1,
     SUCCESS_GET_VALUE = 0,
     CAN_NOT_FIND_THE_KEY = 1,
 } DDB_RESULT;
 
-typedef struct DdbOption {
+typedef struct DdbOptionT {
     DDB_RESULT ddbResult;
     int32 logLevel;
 } DdbOption;
@@ -85,5 +85,7 @@ void RestDdbConn(DdbConn *ddbConn, status_t st, const DDB_RESULT *ddbResult);
 status_t DoDdbExecCmd(const char *cmd, char *output, int *outputLen, char *errMsg, uint32 maxBufLen);
 status_t DoDdbSetBlocked(unsigned int setBlock, unsigned int waitTimeoutMs);
 void LoadDdbParamterFromConfig(void);
+status_t SetDdbWorkMode(unsigned int workMode, unsigned int voteNum);
+status_t DemoteDdbRole2Standby();
 
 #endif

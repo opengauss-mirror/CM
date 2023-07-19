@@ -26,9 +26,9 @@
 #include "cm/cm_elog.h"
 #include "cm_ddb_adapter.h"
 #include "cma_main.h"
-#include "cma_alarm.h"
 #include "cma_global_params.h"
 #include "cma_common.h"
+#include "cma_alarm.h"
 
 Alarm* g_startupAlarmList = NULL;
 int g_startupAlarmListSize = 0;
@@ -51,7 +51,6 @@ static THR_LOCAL Alarm* StorageScalingAlarmList = NULL;
 /* init alarm info  for coordinate, datanode, gtm, cmserver */
 void StartupAlarmItemInitialize(const staticNodeConfig* currentNode)
 {
-    int alarmIndex = 0;
     g_startupAlarmListSize =
         (int)(currentNode->datanodeCount + currentNode->gtm + currentNode->coordinate + currentNode->cmServerLevel);
 
@@ -65,7 +64,7 @@ void StartupAlarmItemInitialize(const staticNodeConfig* currentNode)
         exit(1);
     }
 
-    alarmIndex = g_startupAlarmListSize - 1;
+    int alarmIndex = g_startupAlarmListSize - 1;
     if (currentNode->gtm == 1) {
         /* ALM_AI_AbnormalGTMProcess */
         AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalGTMProcess, ALM_AS_Normal, NULL);
@@ -126,7 +125,7 @@ void AbnormalAlarmItemInitialize(const staticNodeConfig* currentNode)
 void DatanodeAbnormalAlarmItemInitialize(const staticNodeConfig* currentNode)
 {
     int alarmIndex;
-    g_datanodeAbnormalAlarmListSize = (uint32)currentNode->datanodeCount;
+    g_datanodeAbnormalAlarmListSize = (int)currentNode->datanodeCount;
     if (g_datanodeAbnormalAlarmListSize == 0) {
         return;
     }
@@ -150,7 +149,6 @@ void DatanodeAbnormalAlarmItemInitialize(const staticNodeConfig* currentNode)
 /* init alarm info  for datanode, coordinate, gtm */
 void AbnormalCmaConnAlarmItemInitialize(const staticNodeConfig* currentNode)
 {
-    int alarmIndex = 0;
     g_abnormalCmaConnAlarmListSize = (int)(currentNode->datanodeCount + currentNode->gtm + currentNode->coordinate);
 
     if (g_abnormalCmaConnAlarmListSize <= 0) {
@@ -163,7 +161,7 @@ void AbnormalCmaConnAlarmItemInitialize(const staticNodeConfig* currentNode)
         exit(1);
     }
 
-    alarmIndex = g_abnormalCmaConnAlarmListSize - 1;
+    int alarmIndex = g_abnormalCmaConnAlarmListSize - 1;
 
     for (unsigned int i = 0; i < currentNode->gtm; i++) {
         /* ALM_AI_AbnormalGTMProcess */
@@ -191,8 +189,8 @@ void report_build_fail_alarm(AlarmType alarmType, const char *instanceName, int 
     }
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message */
-    WriteAlarmAdditionalInfo(
-        &tempAdditionalParam, instanceName, "", "", &(g_abnormalBuildAlarmList[alarmIndex]), alarmType, instanceName);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "", &(g_abnormalBuildAlarmList[alarmIndex]),
+        alarmType, instanceName);
     /* report the alarm */
     AlarmReporter(&(g_abnormalBuildAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
 }
@@ -206,6 +204,7 @@ void report_dn_disk_alarm(AlarmType alarmType, const char *instanceName, int ala
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(&tempAdditionalParam,
         instanceName,
+        "",
         "",
         "",
         &(g_abnormalDataInstDiskAlarmList[alarmIndex]),
@@ -242,7 +241,7 @@ void report_ddb_fail_alarm(AlarmType alarmType, const char *instanceName, int al
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(
-        &tempAdditionalParam, instanceName, "", "", alarm, alarmType, instanceName);
+        &tempAdditionalParam, instanceName, "", "", "", alarm, alarmType, instanceName);
     /* report the alarm */
     AlarmReporter(alarm, alarmType, &tempAdditionalParam);
 }
@@ -275,12 +274,12 @@ void StorageScalingAlarmItemInitialize(void)
     AlarmItemInitialize(&(StorageScalingAlarmList[1]), ALM_AI_StorageDilatationAlarmMajor, ALM_AS_Normal, NULL);
 }
 
-void ReportStorageScalingAlarm(AlarmType alarmType, const char* instanceName, int alarmIndex)
+void ReportStorageScalingAlarm(AlarmType alarmType, const char* instanceName, int alarmIndex, const char *info)
 {
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message. */
     WriteAlarmAdditionalInfo(
-        &tempAdditionalParam, instanceName, "", "", &(StorageScalingAlarmList[alarmIndex]), alarmType, instanceName);
+        &tempAdditionalParam, instanceName, "", "", "", &(StorageScalingAlarmList[alarmIndex]), alarmType, info);
     /* report the alarm. */
     AlarmReporter(&(StorageScalingAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
 }
@@ -290,7 +289,7 @@ void ReportPgxcNodeMismatchAlarm(AlarmType alarmType, const char* instanceName)
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(
-        &tempAdditionalParam, instanceName, "", "", g_pgxcNodeMismatchAlarm, alarmType, instanceName);
+        &tempAdditionalParam, instanceName, "", "", "", g_pgxcNodeMismatchAlarm, alarmType, instanceName);
     /* report the alarm */
     AlarmReporter(g_pgxcNodeMismatchAlarm, alarmType, &tempAdditionalParam);
 }
@@ -311,7 +310,7 @@ void ReportStreamingDRAlarm(AlarmType alarmType, const char *instanceName, int a
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(
-        &tempAdditionalParam, instanceName, "", "", &(g_streamingDRAlarmList[alarmIndex]), alarmType, info);
+        &tempAdditionalParam, instanceName, "", "", "", &(g_streamingDRAlarmList[alarmIndex]), alarmType, info);
     /* report the alarm */
     AlarmReporter(&(g_streamingDRAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
 }

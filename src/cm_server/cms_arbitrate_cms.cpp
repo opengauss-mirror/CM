@@ -27,9 +27,8 @@
 #include "cms_ddb.h"
 #include "cms_conn.h"
 #include "cms_global_params.h"
-#include "cms_arbitrate_cms.h"
-#include "cms_process_messages.h"
 #include "cms_common.h"
+#include "cms_arbitrate_cms.h"
 
 static void CMServerRecord()
 {
@@ -48,7 +47,7 @@ static void CMServerRecord()
 static void coordinator_notify_msg_reset(void)
 {
     WITHOUT_CN_CLUSTER("reset cn notify msg");
-    uint32 i = 0;
+    uint32 i;
     uint32 j = 0;
     uint32 k = 0;
     errno_t rc = EOK;
@@ -77,26 +76,26 @@ static void coordinator_notify_msg_reset(void)
 
         if (last_notify_msg->notify_status != NULL) {
             rc = memset_s(last_notify_msg->notify_status, sizeof(bool) * g_datanode_instance_count,
-                false, sizeof(bool) * g_datanode_instance_count);
+                0, sizeof(bool) * g_datanode_instance_count);
             securec_check_errno(rc, (void)rc);
         }
 
         if (last_notify_msg->have_notified != NULL) {
             rc = memset_s(last_notify_msg->have_notified, g_dynamic_header->relationCount,
-                false, sizeof(bool) * g_dynamic_header->relationCount);
+                0, sizeof(bool) * g_dynamic_header->relationCount);
             securec_check_errno(rc, (void)rc);
         }
 
         if (last_notify_msg->have_dropped != NULL) {
             rc = memset_s(last_notify_msg->have_dropped, g_dynamic_header->relationCount,
-                false, sizeof(bool) * g_dynamic_header->relationCount);
+                0, sizeof(bool) * g_dynamic_header->relationCount);
             securec_check_errno(rc, (void)rc);
         }
         (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
     }
 
     if (last_notify_msg == NULL) {
-        write_runlog(ERROR, "coordinator_notify_msg_reset:no coordinator configed in cluster.\n");
+        write_runlog(FATAL, "coordinator_notify_msg_reset:no coordinator configed in cluster.\n");
         FreeNotifyMsg();
         exit(1);
     }
@@ -128,29 +127,6 @@ static void coordinator_notify_msg_reset(void)
     }
 }
 
-static uint32 GetCmsConnCmaCount(void)
-{
-    (void)pthread_rwlock_wrlock(&gConns.lock);
-    uint32 count = gConns.count;
-    (void)pthread_rwlock_unlock(&gConns.lock);
-    return count;
-}
-
-static void IncrementTermIfCmRestart()
-{
-    if (!IsNeedSyncDdb()) {
-        return;
-    }
-    int incrementTermSesult = 0;
-    (void)pthread_rwlock_wrlock(&term_update_rwlock);
-    incrementTermSesult = IncrementTermToDdb();
-    (void)pthread_rwlock_unlock(&term_update_rwlock);
-    if (incrementTermSesult != 0) {
-        write_runlog(ERROR, "Incrtement term to ddb failed, %d:node(%u) cm_server role is %s, will to primary.\n",
-            __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role));
-    }
-}
-
 static void clean_cn_heart_beat(int cmServerCurrentRole, int cm_server_last_role)
 {
     if ((cmServerCurrentRole != CM_SERVER_PRIMARY) && (cm_server_last_role == CM_SERVER_PRIMARY)) {
@@ -167,26 +143,6 @@ static void clean_cn_heart_beat(int cmServerCurrentRole, int cm_server_last_role
                 g_instance_role_group_ptr[i].instanceMember[0].instanceId);
         }
     }
-}
-
-static void CmsSyncStandbyMode()
-{
-    char key[MAX_PATH_LEN] = {0};
-    char value[MAX_PATH_LEN] = {0};
-    errno_t rc =
-        snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/sync_standby_mode", pw->pw_name);
-    securec_check_intval(rc, (void)rc);
-
-    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
-    status_t st = GetKVFromDDb(key, MAX_PATH_LEN, value, MAX_PATH_LEN, &ddbResult);
-    if (st != CM_SUCCESS) {
-        int logLevel = (ddbResult == CAN_NOT_FIND_THE_KEY) ? ERROR : LOG;
-        write_runlog(logLevel, "failed to get value with key(%s).\n", key);
-        return;
-    }
-    current_cluster_az_status = (synchronous_standby_mode)strtol(value, NULL, 10);
-    write_runlog(LOG, "setting to %d.\n", current_cluster_az_status);
-    return;
 }
 
 static void CleanSwitchoverCommand()
@@ -229,12 +185,10 @@ static void check_server_role_changed(int cm_server_role)
 
         if ((cm_server_current_role == CM_SERVER_PRIMARY) && (cm_server_last_role != CM_SERVER_PRIMARY)) {
             need_to_reload = true;
-            g_syncDnFinishRedoFlagFromDdb = true; 
-            g_syncDNReadOnlyStatusFromDdb = true;
+            g_syncDnFinishRedoFlagFromDdb = true;
             g_kerberos_check_cms_primary_standby = true;
-            
-            write_runlog(LOG, "current node is %u, change it's role to primary.\n",
-                g_currentNode->node);
+
+            write_runlog(LOG, "current node is %u, change it's role to primary.\n", g_currentNode->node);
         }
 
         clean_cn_heart_beat(cm_server_current_role, cm_server_last_role);
@@ -246,40 +200,41 @@ static void check_server_role_changed(int cm_server_role)
             report_server_switch_alarm(ALM_AT_Event, instanceName);
         }
     }
-    
+
     /* We need to actively do variable reload if we are promoted from standby to primary */
     if (need_to_reload) {
-        write_runlog(LOG, "cm_server_current_role is %d. cm_server_last_role is %d.\n",
-            cm_server_current_role, cm_server_last_role);
+        write_runlog(LOG, "cm_server_current_role is %d. cm_server_last_role is %d.\n", cm_server_current_role,
+            cm_server_last_role);
         write_runlog(LOG, "Promoted to PRIMARY. Do variable reset and reload.\n");
         CleanSwitchoverCommand();
         arbitration_majority_reelection_timeout = majority_reelection_timeout_init;
-        write_runlog(LOG, "Setting arbitration_majority_reelection_timeout to %d.\n", majority_reelection_timeout_init);
+        write_runlog(LOG, "Setting arbitration_majority_reelection_timeout to %u.\n", majority_reelection_timeout_init);
 #ifdef ENABLE_MULTIPLE_NODES
         if (cm_server_start_mode == MINORITY_START || g_node_num >= bigClusterNodeCount) {
-            g_cnDeleteDelayTimeForClusterStarting = coordinator_deletion_timeout_init;
-            write_runlog(LOG, "Setting cn delete delay time to %d, cm_server_start_mode is %d, and g_node_num "
-                "is %u.\n", coordinator_deletion_timeout_init, cm_server_start_mode, g_node_num);
+            g_cnDeleteDelayTimeForClusterStarting = (uint32)coordinator_deletion_timeout_init;
+            write_runlog(LOG,
+                "Setting cn delete delay time to %d, cm_server_start_mode is %d, and g_node_num "
+                "is %u.\n",
+                coordinator_deletion_timeout_init, (int)cm_server_start_mode, g_node_num);
         } else {
-            write_runlog(LOG, "not need to set cn delete delay time, cm_server_start_mode is %d, and "
-                "g_node_num is %u\n", cm_server_start_mode, g_node_num);
+            write_runlog(LOG,
+                "not need to set cn delete delay time, cm_server_start_mode is %d, and "
+                "g_node_num is %u\n",
+                (int)cm_server_start_mode, g_node_num);
         }
 #endif
-        /* get the ddb key-value of the synchronize-standby-mode */
-        CmsSyncStandbyMode();
     }
 }
 
 uint32 GetTermForMinorityStart(void)
 {
-    FILE* force_start_file = NULL;
     uint32 term = InvalidTerm;
 
     write_runlog(LOG,
         "Minority AZ Force Starting. Try to read term value from \"%s\"\n",
         cm_force_start_file_path);
-
-    if ((force_start_file = fopen(cm_force_start_file_path, "r")) == NULL) {
+    FILE *force_start_file = fopen(cm_force_start_file_path, "r");
+    if (force_start_file == NULL) {
         return InvalidTerm;
     }
 
@@ -287,7 +242,7 @@ uint32 GetTermForMinorityStart(void)
         write_runlog(ERROR,
             "Minority AZ Force Starting. invalid data in term file: \"%s\"\n",
             cm_force_start_file_path);
-        fclose(force_start_file);
+        (void)fclose(force_start_file);
         return InvalidTerm;
     }
 
@@ -295,7 +250,7 @@ uint32 GetTermForMinorityStart(void)
         "Minority AZ Force Starting. Succeed read term value from \"%s\" with term value:%u\n",
         cm_force_start_file_path, term);
 
-    fclose(force_start_file);
+    (void)fclose(force_start_file);
     return term;
 }
 
@@ -351,7 +306,7 @@ cm_start_mode get_cm_start_mode(const char* path)
 
         if (fscanf_s(infile, "%u", &start_mode) != 1) {
             write_runlog(ERROR, "invalid data in az_start_mode file: \"%s\"\n", path);
-            fclose(infile);
+            (void)fclose(infile);
 
             /* in case of error we set majority as default return mode */
             g_minorityAzName = NULL;
@@ -364,7 +319,7 @@ cm_start_mode get_cm_start_mode(const char* path)
             g_minorityAzName = NULL;
         }
 
-        fclose(infile);
+        (void)fclose(infile);
         /* set cm_arbitration_mode by its start mode */
         switch (start_mode) {
             case MAJORITY_START:            /* in case of regular start */
@@ -418,7 +373,7 @@ static PromoteMode GetCmsPromoteMode()
     }
 
     int logLevel = (curPMode != g_cmsPromoteMode) ? LOG : DEBUG1;
-    write_runlog(logLevel, "Cms promote mode[%d] change to %d.\n", g_cmsPromoteMode, curPMode);
+    write_runlog(logLevel, "Cms promote mode[%d] change to %d.\n", (int)g_cmsPromoteMode, (int)curPMode);
     g_cmsPromoteMode = curPMode;
 
     return g_cmsPromoteMode;
@@ -429,19 +384,27 @@ static void CmsChange2Primary(int32 *cmsDemoteDelayOnConnLess)
     if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
         return;
     }
-    IncrementTermIfCmRestart();
+    if (IsNeedSyncDdb()) {
+        (void)pthread_rwlock_wrlock(&term_update_rwlock);
+        g_needIncTermToDdbAgain = true;
+        (void)pthread_rwlock_unlock(&term_update_rwlock);
+        g_needReloadSyncStandbyMode = true;
+    }
+
     write_runlog(LOG, "node(%u) cms role is %s, change to primary by ddb, and g_ddbRole is %d.\n",
-        g_currentNode->node, server_role_to_string(g_HA_status->local_role), g_ddbRole);
+        g_currentNode->node, server_role_to_string(g_HA_status->local_role), (int)g_ddbRole);
     g_HA_status->local_role = CM_SERVER_PRIMARY;
     *cmsDemoteDelayOnConnLess = cmserver_demote_delay_on_conn_less;
     ClearSyncWithDdbFlag();
-    NotifyDdb(DDB_ROLE_LEADER);
+    if (g_dbType != DB_SHAREDISK) {
+        NotifyDdb(DDB_ROLE_LEADER);
+    }
 }
 
 static void PromoteCmsDirect(int32 *cmsDemoteDelayOnConnLess)
 {
     write_runlog(DEBUG5, "local role is %s\n", server_role_to_string(g_HA_status->local_role));
-    if (g_HA_status->local_role != CM_SERVER_PRIMARY) {
+    if ((g_HA_status->local_role != CM_SERVER_PRIMARY) || (g_ddbRole != DDB_ROLE_LEADER)) {
         write_runlog(LOG, "%d: node(%u) cm_server role is %s, direct to primary\n", __LINE__,
             g_currentNode->node, server_role_to_string(g_HA_status->local_role));
         CmsChange2Primary(cmsDemoteDelayOnConnLess);
@@ -458,21 +421,33 @@ static void CmsChange2Standby()
         coordinator_notify_msg_reset();
     }
     write_runlog(LOG, "node(%u) cms role is %s, cms change to standby by ddb, and g_ddbRole is %d.\n",
-        g_currentNode->node, server_role_to_string(g_HA_status->local_role), g_ddbRole);
+        g_currentNode->node, server_role_to_string(g_HA_status->local_role), (int)g_ddbRole);
     g_HA_status->local_role = CM_SERVER_STANDBY;
     CMServerRecord();
     NotifyDdb(DDB_ROLE_FOLLOWER);
 }
 
+static uint32 g_resumeDelay = 0;
+static uint32 g_reportDelay = 0;
+
 static void CmsResumeDdbAlarm()
 {
-    /* report the alarm */
-    report_ddb_fail_alarm(ALM_AT_Resume, "", 0);
+    const uint32 delayTimeout = 20;
+    g_resumeDelay++;
+    g_reportDelay = 0;
+    if (g_resumeDelay >= delayTimeout) {
+        report_ddb_fail_alarm(ALM_AT_Resume, "", 0);
+    }
 }
 
 static void CmsReportDdbAlarm()
 {
-    report_ddb_fail_alarm(ALM_AT_Fault, "", 0);
+    const uint32 delayTimeout = 3;
+    g_reportDelay++;
+    g_resumeDelay = 0;
+    if (g_reportDelay >= delayTimeout) {
+        report_ddb_fail_alarm(ALM_AT_Fault, "", 0);
+    }
 }
 
 static status_t CmsRoleChangeWithDdb(int32 *cmsDemoteDelayOnConnLess)
@@ -499,14 +474,6 @@ static status_t CmsRoleChangeWithDdb(int32 *cmsDemoteDelayOnConnLess)
     return CM_SUCCESS;
 }
 
-static bool CheckAgentConnIsCurrent()
-{
-    (void)pthread_rwlock_wrlock(&gConns.lock);
-    bool res = (gConns.connections[g_currentNode->node] == NULL);
-    (void)pthread_rwlock_unlock(&gConns.lock);
-    return res;
-}
-
 static void CheckCmsPrimaryAgentConn(int32 *cmsDemoteDelayOnConnLess)
 {
     if (g_HA_status->local_role != CM_SERVER_PRIMARY) {
@@ -515,7 +482,7 @@ static void CheckCmsPrimaryAgentConn(int32 *cmsDemoteDelayOnConnLess)
     static int32 logLevel = LOG;
     /* only two cms node, no need check agent conn */
     const uint32 onePrimaryOneStandby = 2;
-    if (g_dbType == DB_DCC && g_cm_server_num <= onePrimaryOneStandby) {
+    if ((g_dbType == DB_DCC || g_dbType == DB_SHAREDISK) && g_cm_server_num <= onePrimaryOneStandby) {
         write_runlog(DEBUG1, "cur cluster only has two cms(%u) and dbtype is %d, not need to check agent conn.\n",
             g_cm_server_num, g_dbType);
         return;
@@ -524,7 +491,7 @@ static void CheckCmsPrimaryAgentConn(int32 *cmsDemoteDelayOnConnLess)
     write_runlog(DEBUG1, "cmserver accept agent connection count = %u\n", count);
     /* in addition to the current node, there must be another agent connection */
     if (count <= 1) {
-        if (count == 1 && CheckAgentConnIsCurrent()) {
+        if (count == 1 && CheckAgentConnIsCurrent(g_currentNode->node)) {
             *cmsDemoteDelayOnConnLess = cmserver_demote_delay_on_conn_less;
             write_runlog(logLevel, "current agent conn is not current node(%u), count is 1.\n", g_currentNode->node);
             logLevel = DEBUG1;
@@ -558,8 +525,8 @@ static bool CheckCmsInMonrityStart()
     }
     write_runlog(DEBUG5, "local role is %s.\n", server_role_to_string(g_HA_status->local_role));
     if (g_HA_status->local_role != CM_SERVER_PRIMARY) {
-        write_runlog(LOG, "%d: node(%u) cm_server role is %s, to primary\n", __LINE__, 
-            g_currentNode->node, server_role_to_string(g_HA_status->local_role));
+        write_runlog(LOG, "%d: node(%u) cm_server role is %s, to primary\n", __LINE__, g_currentNode->node,
+            server_role_to_string(g_HA_status->local_role));
         g_HA_status->local_role = CM_SERVER_PRIMARY;
         ClearSyncWithDdbFlag();
     }
@@ -588,8 +555,8 @@ static void CheckCmsNeed2Standby()
             return;
         }
     }
-    write_runlog(LOG,"%d: ddb is unhealth, node(%u) cm_server role is %s, to standby, is unhealth.\n",
-        __LINE__, g_currentNode->node, server_role_to_string(g_HA_status->local_role));
+    write_runlog(LOG, "%d: ddb is unhealth, node(%u) cm_server role is %s, to standby, is unhealth.\n", __LINE__,
+        g_currentNode->node, server_role_to_string(g_HA_status->local_role));
     CmsChange2Standby();
 }
 
@@ -598,7 +565,6 @@ static void PromotePrimaryInSingleNode()
     if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
         return;
     }
-
     write_runlog(LOG, "cm_server will change to primary from %d.\n", g_HA_status->local_role);
     g_HA_status->local_role = CM_SERVER_PRIMARY;
     ClearSyncWithDdbFlag();
@@ -613,6 +579,13 @@ static void ArbitratePromote(int32 *cmsDemoteDelayOnConnLess)
         return;
     }
     SetDdbMinority(false);
+
+    if (g_dbType == DB_DCC &&
+        ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) &&
+        g_ddbWorkMode == DDB_WORK_MODE_NONE) {
+        return;
+    }
+
     status_t st = CmsRoleChangeWithDdb(cmsDemoteDelayOnConnLess);
     if (st == CM_SUCCESS) {
         CheckCmsPrimaryAgentConn(cmsDemoteDelayOnConnLess);
@@ -636,10 +609,10 @@ void *CM_ThreadHAMain(void *argp)
     int32 cmsDemoteDelayOnConnLess = cmserver_demote_delay_on_conn_less;
     for (;;) {
         /* close the connection in case of memory leak. */
-        gettimeofday(&checkBeginFunction, NULL);
-        if (got_stop) {
+        (void)gettimeofday(&checkBeginFunction, NULL);
+        if (got_stop == 1) {
             write_runlog(LOG, "close connection to peer cmserver.\n");
-            ha_connection_closed = true;
+            ha_connection_closed = 1;
             cm_sleep(g_ddbArbicfg.haStatusInterval);
             continue;
         }

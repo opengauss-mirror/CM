@@ -3,10 +3,8 @@
 
 #include <sys/un.h>
 
-#define CM_TCP_TIMEOUT 5
 #define AGENT_INVALID_SOCKET (-1)
 #define MAX_EVENTS 512
-#define MAX_PATH_LENGTH 100
 #define MAX_CONNECTIONS 10
 #define EPOLL_WAIT_TIMEOUT 5000
 #define DOMAIN_SOCKET_PERMISSION 0600

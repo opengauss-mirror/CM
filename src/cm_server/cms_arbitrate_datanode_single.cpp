@@ -27,12 +27,6 @@
 #include "cms_write_dynamic_config.h"
 #include "cms_common.h"
 
-/**
- * @brief 
- * 
- * @param  group_index      My Param doc
- * @return uint32 
- */
 uint32 find_primary_term(uint32 group_index)
 {
     uint32 primary_term = InvalidTerm;
@@ -51,14 +45,9 @@ uint32 find_primary_term(uint32 group_index)
     }
     return primary_term;
 }
-/**
- * @brief 
- * 
- * @param  con              My Param doc
- * @param  agent_to_cm_datanode_status_ptrMy Param doc
- */
+
 void datanode_instance_arbitrate_single(
-    CM_Connection* con, agent_to_cm_datanode_status_report* agent_to_cm_datanode_status_ptr)
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report* agent_to_cm_datanode_status_ptr)
 {
     uint32 group_index = 0;
     int member_index = 0;
@@ -90,8 +79,7 @@ void datanode_instance_arbitrate_single(
 
     if (g_HA_status->local_role == CM_SERVER_STANDBY) {
         write_runlog(LOG, "cm_server is in standby state\n");
-        EventDel(con->epHandle, con);
-        RemoveCMAgentConnection(con);
+        AsyncProcMsg(recvMsgInfo, PM_REMOVE_CONN, NULL, 0);
         goto process_finish;
     }
 
@@ -101,7 +89,7 @@ void datanode_instance_arbitrate_single(
         XLogRecPtr standby_replay_location =
             agent_to_cm_datanode_status_ptr->parallel_redo_status.last_replayed_read_ptr;
 
-        XLogRecPtr standby_last_replayed_read_Ptr = 
+        XLogRecPtr standby_last_replayed_read_Ptr =
             g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index]
                 .local_redo_stats.standby_last_replayed_read_Ptr;
 
@@ -151,7 +139,7 @@ void datanode_instance_arbitrate_single(
     if (agent_to_cm_datanode_status_ptr->local_redo_stats.is_by_query) {
         g_instance_group_report_status_ptr[group_index]
             .instance_status.data_node_member[member_index]
-            .parallel_redo_status.speed_according_seg = g_instance_group_report_status_ptr[group_index]
+            .parallel_redo_status.speed_according_seg = (uint32)g_instance_group_report_status_ptr[group_index]
                                                             .instance_status.data_node_member[member_index]
                                                             .local_redo_stats.redo_replayed_speed;
     }
@@ -169,10 +157,11 @@ void datanode_instance_arbitrate_single(
         .instance_status.data_node_member[member_index].sender_status[0].sync_state;
     build_reason = g_instance_group_report_status_ptr[group_index]
         .instance_status.data_node_member[member_index].local_status.buildReason;
-    double_restarting = g_instance_group_report_status_ptr[group_index]
+    double_restarting = (int)g_instance_group_report_status_ptr[group_index]
         .instance_status.arbitrate_status_member[member_index].restarting;
 
-    if (local_dynamic_role != INSTANCE_ROLE_PRIMARY || local_db_state != INSTANCE_HA_STATE_NORMAL) {
+    if ((local_dynamic_role != INSTANCE_ROLE_PRIMARY && local_dynamic_role != INSTANCE_ROLE_NORMAL) ||
+        local_db_state != INSTANCE_HA_STATE_NORMAL) {
         write_runlog(LOG,
             "node %u "
             ", instanceId %u, local_static_role %d=%s, local_dynamic_role %d=%s, "
@@ -205,11 +194,11 @@ void datanode_instance_arbitrate_single(
                 .instance_status.arbitrate_status_member[member_index].restarting) {
             g_HA_status->status = CM_STATUS_NEED_REPAIR;
             if (local_dynamic_role == INSTANCE_ROLE_PRIMARY || local_dynamic_role == INSTANCE_ROLE_STANDBY) {
-                restart_msg.msg_type = MSG_CM_AGENT_RESTART;
+                restart_msg.msg_type = (int)MSG_CM_AGENT_RESTART;
                 restart_msg.node = node;
                 restart_msg.instanceId = instanceId;
                 WriteKeyEventLog(KEY_EVENT_RESTART, instanceId, "send restart message to instance(%u)", instanceId);
-                (void)cm_server_send_msg(con, 'S', (char*)&restart_msg, sizeof(cm_to_agent_restart));
+                (void)RespondMsg(recvMsgInfo, 'S', (char*)&restart_msg, sizeof(cm_to_agent_restart));
                 goto process_finish;
             }
 
@@ -227,11 +216,11 @@ void datanode_instance_arbitrate_single(
 
         if (local_dynamic_role == INSTANCE_ROLE_STANDBY) {
             g_HA_status->status = CM_STATUS_NEED_REPAIR;
-            restart_msg.msg_type = MSG_CM_AGENT_RESTART;
+            restart_msg.msg_type = (int)MSG_CM_AGENT_RESTART;
             restart_msg.node = node;
             restart_msg.instanceId = instanceId;
             WriteKeyEventLog(KEY_EVENT_RESTART, instanceId, "send restart message to instance(%u)", instanceId);
-            (void)cm_server_send_msg(con, 'S', (char*)&restart_msg, sizeof(cm_to_agent_restart));
+            (void)RespondMsg(recvMsgInfo, 'S', (char*)&restart_msg, sizeof(cm_to_agent_restart));
             g_instance_group_report_status_ptr[group_index]
                 .instance_status.arbitrate_status_member[member_index].restarting = true;
             write_runlog(LOG, "standby datanode instance, restart to pending.\n");
@@ -241,12 +230,13 @@ void datanode_instance_arbitrate_single(
 
         if (local_dynamic_role == INSTANCE_ROLE_PENDING) {
             g_HA_status->status = CM_STATUS_NEED_REPAIR;
-            notify_msg.msg_type = MSG_CM_AGENT_NOTIFY;
+            notify_msg.msg_type = (int)MSG_CM_AGENT_NOTIFY;
             notify_msg.node = node;
             notify_msg.instanceId = instanceId;
+            notify_msg.term = FirstTerm;
             notify_msg.role = INSTANCE_ROLE_PRIMARY;
             WriteKeyEventLog(KEY_EVENT_NOTIFY, instanceId, "send notify message to instance(%u)", instanceId);
-            (void)cm_server_send_msg(con, 'S', (char*)&notify_msg, sizeof(cm_to_agent_notify));
+            (void)RespondMsg(recvMsgInfo, 'S', (char*)&notify_msg, sizeof(cm_to_agent_notify));
             write_runlog(LOG, "notify datanode to primary.\n");
             goto process_finish;
         }

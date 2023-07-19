@@ -35,9 +35,9 @@ extern int StreamConnection(int server_fd, Port* port);
 extern void StreamClose(int sock);
 
 extern void pq_comm_reset(void);
-extern int pq_getbytes(Port* myport, char* s, size_t len, size_t* recvlen);
+extern int pq_getbytes(Port* myport, char* s, size_t len, size_t* recvlen, bool isReEntry);
 
-extern int pq_getmessage(Port* myport, CM_StringInfo s, int maxlen);
+extern int pq_getmessage(Port* myport, CM_StringInfo s, int maxlen, bool isReEntry);
 extern int pq_getbyte(Port* myport);
 
 extern int pq_flush(Port* myport);

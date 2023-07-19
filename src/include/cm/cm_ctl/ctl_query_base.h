@@ -27,7 +27,7 @@
 #include "cm/cm_defs.h"
 
 #define ELASTICGROUP "elastic_group"
-#define DELAY_THRESHOLD (8*1024*1014)
+#define DELAY_THRESHOLD (8 * 1024 * 1014)
 #define MAX_IP_LEN (15)
 #define INSTANCE_ID_LEN (4)
 #define INSTANCE_DYNAMIC_ROLE_LEN (7)
@@ -54,7 +54,7 @@
 #define CYCLE_RETURN (2)
 
 
-int ProcessDataBeginMsg(const char *receiveMsg, int clusterState, bool *recDataEnd);
+int ProcessDataBeginMsg(const char *receiveMsg, bool *recDataEnd);
 void DoProcessNodeEndMsg(const char *receiveMsg);
 status_t SetCmQueryContent(ctl_to_cm_query *cmQueryContent);
 

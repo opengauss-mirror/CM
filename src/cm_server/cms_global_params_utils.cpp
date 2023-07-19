@@ -28,7 +28,6 @@
 #include "cms_process_messages.h"
 #include "cms_alarm.h"
 #include "cms_write_dynamic_config.h"
-#include "cms_conn.h"
 #include "cms_arbitrate_datanode_pms_utils.h"
 #include "cms_az.h"
 
@@ -161,20 +160,20 @@ uint32 GetClusterUpgradeMode()
     char inplaceUpgradeFlag[MAX_PATH_LEN] = {0};
     char upgradeFlag[MAX_PATH_LEN] = {0};
     char agentConfigDir[MAX_PATH_LEN] = {0};
-    errno_t rc = snprintf_s(agentConfigDir, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-        "%s/cm_agent/cm_agent.conf", g_currentNode->cmDataPath);	
+    errno_t rc = snprintf_s(agentConfigDir, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/cm_agent/cm_agent.conf",
+        g_currentNode->cmDataPath);
     securec_check_intval(rc, (void)rc);
     check_input_for_security(agentConfigDir);
     canonicalize_path(agentConfigDir);
 
     uint32 upgradeMode = 0;
 
-    FILE *fd = fopen(agentConfigDir, "r"); 
+    FILE *fd = fopen(agentConfigDir, "r");
     if (fd == NULL) {
         write_runlog(LOG, "Cannot open the cm agent config file %s.\n", agentConfigDir);
         return upgradeMode;
     }
-    fclose(fd);
+    (void)fclose(fd);
 
     rcs = cmserver_getenv("PGHOST", pgHostPath, sizeof(pgHostPath), ERROR);
     if (rcs == EOK) {
@@ -222,13 +221,13 @@ bool ExistClusterMaintenance(bool *isInFailover)
             return false;
         }
         if (fgets(maintenanceInfo, MAX_PATH_LEN, fp) == NULL) {
-            fclose(fp);
+            (void)fclose(fp);
             return false;
         }
         if (strstr(maintenanceInfo, "failover") != NULL) {
             *isInFailover = true;
         }
-        fclose(fp);
+        (void)fclose(fp);
         write_runlog(LOG, "Streaming standby cluster is in %s.\n", *isInFailover ? "failover" : "switchover");
         return true;
     }
@@ -349,8 +348,8 @@ bool CurAzIsNeedToStop(const char *azName)
 
 void InitClientCrt(const char *appPath)
 {
-    errno_t rcs = 0;
-    rcs = snprintf_s(g_tlsPath.caFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/share/sslcert/etcd/etcdca.crt", appPath);
+    errno_t rcs =
+        snprintf_s(g_tlsPath.caFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/share/sslcert/etcd/etcdca.crt", appPath);
     securec_check_intval(rcs, (void)rcs);
     rcs = snprintf_s(g_tlsPath.crtFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/share/sslcert/etcd/client.crt", appPath);
     securec_check_intval(rcs, (void)rcs);
@@ -358,24 +357,24 @@ void InitClientCrt(const char *appPath)
     securec_check_intval(rcs, (void)rcs);
 }
 
-bool CanArbitrate(CM_Connection *con, const char *arbitrateType)
+bool CanArbitrate(MsgRecvInfo* recvMsgInfo, const char *arbitrateType)
 {
     const uint32 stopPrintInterval = 5;
 
     if (g_HA_status->local_role == CM_SERVER_STANDBY) {
         write_runlog(LOG, "%s: cm_server is in standby state, skip arbitrate\n", arbitrateType);
-        EventDel(con->epHandle, con);
-        RemoveCMAgentConnection(con);
+        AsyncProcMsg(recvMsgInfo, PM_REMOVE_CONN, NULL, 0);
         return false;
     }
 
-    if (unlikely(ctl_stop_cluster_server_halt_arbitration_timeout > 0)) {
+    if (ctl_stop_cluster_server_halt_arbitration_timeout > 0) {
         /* Meaning cm_ctl is running a full cluster stop and we should not do any arbitration */
-        if (ctl_stop_cluster_server_halt_arbitration_timeout % stopPrintInterval == 0)
+        if (ctl_stop_cluster_server_halt_arbitration_timeout % stopPrintInterval == 0) {
             write_runlog(LOG,
                 "cm_ctl is running a full cluster stop. %s are halted. "
                 "Waiting for another %u seconds.\n",
                 arbitrateType, ctl_stop_cluster_server_halt_arbitration_timeout);
+        }
         return false;
     }
 
@@ -461,11 +460,26 @@ void PrintSyncListMsg(uint32 groupIdx, int32 memIdx, const char *str)
         str, instId, curStr, expectStr, voteAzStr);
 }
 
+bool CheckGroupAndMemIndex(uint32 groupIdx, int32 memIdx, const char *str)
+{
+    if (groupIdx >= g_dynamic_header->relationCount) {
+        write_runlog(ERROR, "%s:%d, groupIdx is [%u: %u].\n", str, __LINE__, groupIdx, g_dynamic_header->relationCount);
+        return false;
+    }
+    if (memIdx < 0 || memIdx >= g_instance_role_group_ptr[groupIdx].count) {
+        write_runlog(ERROR, "%s:%d, memidx is [%d: %d].\n", str, __LINE__, memIdx,
+            g_instance_role_group_ptr[groupIdx].count);
+        return false;
+    }
+    return true;
+}
+
 EnCheckSynclist CheckInstInSyncList(uint32 groupIdx, int32 memIdx, const char *str)
 {
     // if memidx is error, this group not be consider
-    if (memIdx < 0) {
-        write_runlog(ERROR, "%s:%d, memIdx is %d, cannot checkInstInSyncList.\n", str, __LINE__, memIdx);
+    if (!CheckGroupAndMemIndex(groupIdx, memIdx, str)) {
+        write_runlog(ERROR, "%s:%d, groupIdx is %u, memIdx is %d, cannot checkInstInSyncList.\n", str, __LINE__,
+            groupIdx, memIdx);
         return SYNCLIST_IS_FINISTH;
     }
     // if not dn, not need check whether sync is finished
@@ -478,7 +492,8 @@ EnCheckSynclist CheckInstInSyncList(uint32 groupIdx, int32 memIdx, const char *s
         PrintSyncListMsg(groupIdx, memIdx, str);
         return SYNCLIST_IS_NOT_SAME;
     }
-    if (!IsInstanceIdInSyncList(instId, &(groupRep->exceptSyncList))) {
+    if (groupRep->data_node_member[memIdx].local_status.local_role != INSTANCE_ROLE_CASCADE_STANDBY &&
+        !IsInstanceIdInSyncList(instId, &(groupRep->exceptSyncList))) {
         PrintSyncListMsg(groupIdx, memIdx, str);
         return INST_IS_NOT_IN_SYNCLIST;
     }
@@ -498,10 +513,96 @@ bool CheckAllDnShardSynclist(const char *str)
     return true;
 }
 
+uint32 GetPeerInstIdWhenDnIsStandby(uint32 groupIdx, int32 memIdx)
+{
+    cm_instance_datanode_report_status *dnRep =
+        g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
+    cm_instance_role_status *role = g_instance_role_group_ptr[groupIdx].instanceMember;
+    uint32 dyPriInstId = 0;
+    int32 staPrimIdx = -1;
+    int32 dyPrimIdx = -1;
+    for (int32 i = 0; i < g_instance_role_group_ptr[groupIdx].count; ++i) {
+        if (i == memIdx) {
+            continue;
+        }
+        cm_local_replconninfo *dnStatus = &(dnRep[i].local_status);
+        /* static primary */
+        if (role[i].role == INSTANCE_ROLE_PRIMARY) {
+            if (dnStatus->local_role == INSTANCE_ROLE_PRIMARY && dnStatus->db_state == INSTANCE_HA_STATE_NORMAL) {
+                return role[i].instanceId;
+            }
+            staPrimIdx = i;
+        }
+        /* dynamic primary */
+        if (dnStatus->local_role == INSTANCE_ROLE_PRIMARY) {
+            if (dnStatus->db_state == INSTANCE_HA_STATE_NORMAL) {
+                dyPriInstId = role[i].instanceId;
+            }
+            dyPrimIdx = i;
+        }
+    }
+    if (dyPriInstId != 0) {
+        return dyPriInstId;
+    }
+    if (dyPrimIdx != -1) {
+        return role[dyPrimIdx].instanceId;
+    }
+    if (staPrimIdx != -1) {
+        return role[staPrimIdx].instanceId;
+    }
+    int32 peerIndex = (memIdx + 1) % g_instance_role_group_ptr[groupIdx].count;
+    return role[peerIndex].instanceId;
+}
+
 uint32 GetPeerInstId(uint32 groupIdx, int32 memIdx)
 {
-    if (memIdx < 0 || memIdx > CM_PRIMARY_STANDBY_MAX_NUM) {
+    if (!CheckGroupAndMemIndex(groupIdx, memIdx, "[GetPeerInstId]")) {
         return 0;
     }
+    cm_instance_datanode_report_status *dnRep =
+        g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
+    if (dnRep[memIdx].local_status.local_role == INSTANCE_ROLE_STANDBY) {
+        return GetPeerInstIdWhenDnIsStandby(groupIdx, memIdx);
+    }
     return g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member[memIdx].dnLp.peerInst;
+}
+
+static maintenance_mode GetClusterMaintenanceMode()
+{
+    maintenance_mode mode = MAINTENANCE_MODE_NONE;
+    for (uint32 groupIndex = 0; groupIndex < g_dynamic_header->relationCount; ++groupIndex) {
+        mode = getMaintenanceMode(groupIndex);
+        if (mode != MAINTENANCE_MODE_NONE) {
+            return mode;
+        }
+    }
+    return MAINTENANCE_MODE_NONE;
+}
+
+status_t CmsCanArbitrate(CmsArbitrateStatus *cmsSt, const char *str)
+{
+    cmsSt->upgradeMode = GetClusterMaintenanceMode();
+    cmsSt->isDdbHealth = IsDdbHealth(DDB_PRE_CONN);
+    cmsSt->cmsRole = g_HA_status->local_role;
+    bool isResult =
+        (cmsSt->cmsRole != CM_SERVER_PRIMARY) || !(cmsSt->isDdbHealth) || (cmsSt->upgradeMode != MAINTENANCE_MODE_NONE);
+    if (isResult) {
+        int32 logLevel = (g_HA_status->local_role != CM_SERVER_PRIMARY) ? DEBUG1 : LOG;
+        write_runlog(logLevel, "%s cannot arbitrate reduce or increase, in the condition that ddb is health is %d "
+            "or upgradeMode is %u.\n", str, cmsSt->isDdbHealth, (uint32)cmsSt->upgradeMode);
+        return CM_ERROR;
+    }
+    return CM_SUCCESS;
+}
+
+status_t GetNodeIdxByNodeId(uint32 nodeId, uint32 *nodeIdx, const char *str)
+{
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        if (nodeId == g_node[i].node) {
+            *nodeIdx = i;
+            return CM_SUCCESS;
+        }
+    }
+    write_runlog(ERROR, "%s cannot find the nodeId(%u).\n", str, nodeId);
+    return CM_ERROR;
 }

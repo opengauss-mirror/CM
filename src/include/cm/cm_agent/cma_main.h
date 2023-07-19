@@ -24,7 +24,7 @@
 #ifndef CMA_MAIN_H
 #define CMA_MAIN_H
 
-#include <queue>
+
 #include "common/config/cm_config.h"
 #include "alarm/alarm.h"
 #include "cm/cm_msg.h"
@@ -46,9 +46,9 @@
 #define INSTANCE_MAINTANCE "instance_maintance"
 #define SYSTEM_CALL_LOG "system_call"
 #define MAX_LOGFILE_TIMESTAMP "99991231235959"
+#define CM_CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
 
 #define CONN_FAIL_TIMES 3
-#define MAX_PATH_LEN 1024
 /* time style length */
 #define MAX_TIME_LEN 20
 #define NO_RES_CHANGED (-1)
@@ -58,20 +58,8 @@ const uint32 g_check_dn_sql5_interval = 10;
 
 typedef long pgpid_t;
 
-typedef struct AgentMsgPkgSt {
-    char *msgPtr;
-    uint32 msgLen;
-    uint32 conId;
-} AgentMsgPkg;
-
-typedef struct MsgQueueSt {
-    std::queue<AgentMsgPkg> msg;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-} MsgQueue;
-
 /* These global variables are used to compressed traces */
-typedef struct LogFile {
+typedef struct {
     char fileName[MAX_PATH_LEN];
     char basePath[MAX_PATH_LEN];
     char pattern[MAX_PATH_LEN];
@@ -80,21 +68,44 @@ typedef struct LogFile {
 } LogFile;
 
 /* Log pattern for compress */
-typedef struct LogPattern {
-    char patternName[MAX_PATH_LEN];
+typedef struct LogPatternSt {
+    const char *patternName;
 } LogPattern;
 
 /* get local max lsn */
-typedef struct LocalMaxLsnMng {
+typedef struct {
     bool checked;
     XLogRecPtr max_lsn;
 } LocalMaxLsnMng;
 
 /* get dn database info */
-typedef struct DNDatabaseInfo {
+typedef struct {
     char dbname[NAMEDATALEN];
     uint32 oid;
 } DNDatabaseInfo;
+
+using EventTriggerType = enum EventTriggerTypeEn {
+    EVENT_UNKNOWN = -1,
+    EVENT_START = 0,
+    EVENT_STOP,
+    EVENT_FAILOVER,
+    EVENT_SWITCHOVER,
+    EVENT_COUNT
+};
+
+typedef struct TriggerTypeStringMap {
+    EventTriggerType type;
+    char *typeStr;
+} TriggerTypeStringMap;
+
+const TriggerTypeStringMap triggerTypeStringMap[EVENT_COUNT] = {
+    {EVENT_START, "on_start"},
+    {EVENT_STOP, "on_stop"},
+    {EVENT_FAILOVER, "on_failover"},
+    {EVENT_SWITCHOVER, "on_switchover"}
+};
+
+extern void GetEventTrigger();
 
 /*
  *        Cut time from trace name.
@@ -170,11 +181,11 @@ typedef enum { UNKNOWN_HA_STATE, NORMAL_HA_STATE, NEED_REPAIR, BUILD } HAStatus;
 
 typedef enum { NA, SYSTEM_MARK_INCONSISTENT, TIMELINE_INCONSISTENT, LOG_NOT_EXIST } BuildReason;
 
-typedef enum { SMART_MODE, FAST_MODE, IMMEDIATE_MODE, RESUME_MODE } ShutdownMode;
+typedef enum { SMART_MODE, FAST_MODE, IMMEDIATE_MODE, RESUME_MODE, SHUTDOWN_CEIL_MODE } ShutdownMode;
 
 typedef enum { INSTANCE_START, INSTANCE_STOP } OperateType;
 
-typedef struct InstanceStatusReport {
+typedef struct {
     uint32 node;
 
     char DataPath[CM_PATH_LENGTH];
@@ -188,7 +199,7 @@ typedef struct InstanceStatusReport {
 
 typedef enum { NORMAL, UNKNOWN } CoordinateStatus;
 
-typedef struct NodeStatusReport {
+typedef struct {
     uint32 node;
     char nodeName[CM_NODE_NAME];
     uint32 isCn;
@@ -199,17 +210,17 @@ typedef struct NodeStatusReport {
     InstanceStatusReport datanodes[CM_MAX_DATANODE_PER_NODE];
 } NodeStatusReport;
 
-typedef struct datanode_failover {
+typedef struct {
     bool datanodes[CM_MAX_DATANODE_PER_NODE];
     bool coordinator;
 } datanode_failover;
 
-typedef struct gtm_failover {
+typedef struct {
     bool gtmnodes;
     bool coordinator;
 } gtm_failover;
 
-typedef struct coordinator_status {
+typedef struct {
     int cn_status;
     bool delayed_repair;
 } coordinator_status;
@@ -234,12 +245,12 @@ extern gtm_failover* g_gtmsFailover;
 extern pthread_rwlock_t g_datanodesFailoverLock;
 extern pthread_rwlock_t g_gtmsFailoverLock;
 extern int g_gtmMode;
-
-CmResStatList &GetResStatusListApi();
+extern char *g_eventTriggers[EVENT_COUNT];
+extern void ExecuteEventTrigger(const EventTriggerType triggerType);
 
 extern int node_match_find(const char *node_type, const char *node_port, const char *node_host, const char *node_port1,
     const char *node_host1, int *node_index, int *instance_index, int *inode_type);
-extern int check_one_instance_status(const char *processName, const char *cmd_line, int *isPhonyDead);
+extern int check_one_instance_status(const char *processName, const char *cmdLine, int *isPhonyDead);
 extern void report_conn_fail_alarm(AlarmType alarmType, InstanceTypes instance_type, uint32 instanceId);
 extern int get_connection_to_coordinator();
 #ifdef __aarch64__

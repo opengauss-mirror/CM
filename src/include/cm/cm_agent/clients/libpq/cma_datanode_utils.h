@@ -28,6 +28,7 @@
 #include "cma_libpq_api.h"
 #include "cma_main.h"
 
+
 #ifdef ENABLE_MULTIPLE_NODES
 int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDatabaseCount);
 int GetDBTableFromSQL(int index, uint32 databaseId, uint32 tableId, uint32 tableIdSize, DNDatabaseInfo *dnDatabaseInfo,
@@ -40,25 +41,26 @@ extern cltPqConn_t *g_dnConn[CM_MAX_DATANODE_PER_NODE];
 extern THR_LOCAL cltPqConn_t *g_Conn;
 
 extern void check_parallel_redo_status_by_file(
-    agent_to_cm_datanode_status_report *report_msg, uint32 ii, const char *redo_state_path);
+    agent_to_cm_datanode_status_report *reportMsg, const char *redoStatePath);
 extern int check_datanode_status_by_SQL0(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
 extern int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
 extern int check_datanode_status_by_SQL2(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
 extern int check_datanode_status_by_SQL3(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
-extern int check_datanode_status_by_SQL4(agent_to_cm_datanode_status_report *report_msg, DnLocalPeer *lpInfo, uint32 ii);
-extern void check_datanode_status_by_SQL5(
-    agent_to_cm_datanode_status_report *report_msg, uint32 ii, const char *data_path);
+extern int check_datanode_status_by_SQL4(
+    agent_to_cm_datanode_status_report *report_msg, DnLocalPeer *lpInfo, uint32 ii);
+extern void check_datanode_status_by_SQL5(uint32 instanceId, uint32 ii, const char *data_path);
 extern int check_datanode_status_by_SQL6(
     agent_to_cm_datanode_status_report *report_msg, uint32 ii, const char *data_path);
-extern int CheckDatanodeStatusBySqL10(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
+extern int CheckDatanodeStatusBySqL10(agent_to_cm_datanode_status_report *reportMsg, uint32 ii);
 
 extern int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltPqConn_t **curDnConn);
-extern int CheckMostAvailableSync(uint32 ii);
+extern int CheckMostAvailableSync(uint32 index);
+void CheckTransactionReadOnly(cltPqConn_t* Conn, uint32 index, int instanceType);
 extern int cmagent_execute_query(cltPqConn_t *db_connection, const char *run_command);
 extern int cmagent_execute_query_and_check_result(cltPqConn_t *db_connection, const char *run_command);
 
 extern int cmagent_to_coordinator_connect(const char *pid_path);
-uint32 find_cn_active_info_index(agent_to_cm_coordinate_status_report_old *report_msg, uint32 coordinatorId);
+uint32 find_cn_active_info_index(const agent_to_cm_coordinate_status_report_old *report_msg, uint32 coordinatorId);
 extern int is_cn_connect_ok(uint32 coordinatorId);
 extern int datanode_rebuild_reason_enum_to_int(HaRebuildReason reason);
 extern cltPqConn_t *get_connection(const char *pid_path, bool isCoordinater = false, int connectTimeOut = 5,
@@ -70,5 +72,8 @@ extern int StandbyClusterSetTargetBarrierID(cltPqConn_t* &conn);
 extern int StandbyClusterGetBarrierInfo(cltPqConn_t* &conn, AgentToCmBarrierStatusReport *barrierInfo);
 extern int StandbyClusterCheckCnWaiting(cltPqConn_t* &conn);
 void ShowPgThreadWaitStatus(cltPqConn_t* Conn, uint32 index, int instanceType);
+void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir);
+void ExecuteCascadeStandbyDnBuildCommand(const char *dataDir);
+void CleanStandbyClusterCnAlarm();
 
 #endif

@@ -40,8 +40,10 @@
 
 #define DDB_DEFAULT_TIMEOUT (2000)
 #define DDB_MAX_CONNECTIONS (1024)
+// reserverd 8K space from disk head before writing data
+#define DDB_DISK_ORIGINAL_OFFSET (8 * 1024)
 
-typedef enum DDB_TYPE { DB_ETCD = 0, DB_DCC, DB_SHAREDISK, DB_UNKOWN } DDB_TYPE;
+typedef enum DDB_TYPE_EN { DB_ETCD = 0, DB_DCC, DB_SHAREDISK, DB_UNKOWN } DDB_TYPE;
 
 typedef struct DdbTypeString_t {
     const char *dbString;
@@ -59,7 +61,7 @@ typedef enum DDB_ROLE {
     DDB_ROLE_CEIL,
 } DDB_ROLE;
 
-typedef enum { PROCESS_IN_RUNNING = 0, PROCESS_IN_IDLE } PROCESS_STATE;
+typedef enum { PROCESS_IN_INIT = 0, PROCESS_IN_RUNNING, PROCESS_IN_IDLE } PROCESS_STATE;
 
 typedef enum { DDB_PRE_CONN = 0, DDB_HEAL_COUNT } DDB_CHECK_MOD;
 
@@ -69,7 +71,7 @@ typedef enum DDB_STATE {
     DDB_STATE_DOWN,
 } DDB_STATE;
 
-typedef struct NodeInfo {
+typedef struct NodeInfoSt {
     char *nodeName;
     uint32 len;
 } NodeInfo;
@@ -80,14 +82,14 @@ typedef struct NodeIdInfo_t {
     uint32 instd;
 } NodeIdInfo;
 
-typedef struct ServerSocket {
+typedef struct ServerSocketSt {
     char *host;
     uint32 port;
     NodeIdInfo nodeIdInfo;
     NodeInfo nodeInfo;
 } ServerSocket;
 
-typedef struct TlsAuthPath {
+typedef struct TlsAuthPathSt {
     char caFile[DDB_MAX_PATH_LEN];
     char crtFile[DDB_MAX_PATH_LEN];
     char keyFile[DDB_MAX_PATH_LEN];
@@ -99,7 +101,7 @@ typedef struct SslConfig_t {
     TlsAuthPath sslPath;
 } SslConfig;
 
-typedef struct InstInfo {
+typedef struct InstInfoSt {
     bool isVoteAz;
     uint32 instd;
     uint32 nodeId;
@@ -107,13 +109,7 @@ typedef struct InstInfo {
     uint32 instIdx;
 } InstInfo;
 
-typedef struct DdbPreAgentCon {
-    pthread_rwlock_t *lock;
-    uint32 connCount;
-    char conFlag[DDB_MAX_CONNECTIONS];
-} DdbPreAgentCon;
-
-typedef struct DdbArbiCfg {
+typedef struct DdbArbiCfgSt {
     uint32 haStatusInterval;
     uint32 arbiDelayBaseTimeOut;
     uint32 arbiDelayIncrementalTimeOut;
@@ -121,19 +117,24 @@ typedef struct DdbArbiCfg {
     pthread_rwlock_t lock;
 } DdbArbiCfg;
 
-typedef struct DdbArbiCon {
+typedef uint32 (*funcGetPreConnCount)(void);
+typedef void (*funcResetPreConn)(void);
+
+typedef struct DdbArbiConSt {
     char *userName;
 
     InstInfo *instInfo;
     uint32 instNum;
 
     DdbArbiCfg *arbiCfg;
-    DdbPreAgentCon *agentCon;
 
     InstInfo curInfo;
+
+    funcGetPreConnCount getPreConnCount;
+    funcResetPreConn resetPreConn;
 } DdbArbiCon;
 
-typedef struct DrvApiInfo {
+typedef struct DrvApiInfoSt {
     uint32 nodeId;
     ModuleId modId;
 
@@ -145,28 +146,36 @@ typedef struct DrvApiInfo {
     union {
         struct {
             TlsAuthPath *tlsPath;
+            int64 waitTime; // the time is used to wait to change expectations
         } client_t;
         struct {
             char *dataPath;
             char logPath[DDB_MAX_PATH_LEN];
+            int64 waitTime; // the time is used to wait to change expectations
             ServerSocket curServer;
             SslConfig sslcfg;
         } server_t;
+        struct {
+            char devPath[DDB_MAX_PATH_LEN];
+            int64 instanceId;
+            int64 waitTime;
+            uint32 offset;
+        } sdConfig;
     };
     DdbArbiCon *cmsArbiCon;
 } DrvApiInfo;
 
-typedef struct DdbInitConfig {
+typedef struct DdbInitConfigSt {
     DDB_TYPE type;
     DrvApiInfo drvApiInfo;
 } DdbInitConfig;
 
-typedef struct DrvText {
+typedef struct DrvTextSt {
     char *data;
     uint32 len;
 } DrvText;
 
-typedef struct DrvGetOption {
+typedef struct DrvGetOptionSt {
     bool quorum;
 } DrvGetOption;
 
@@ -174,43 +183,44 @@ typedef struct DrvSaveOptionSt {
     char *kvFile;
 } DrvSaveOption;
 
-typedef struct DrvSetOption {
+typedef struct DrvSetOptionSt {
     char *preValue;
     uint32 len;
     bool maintainCanSet;
+    bool isSetBinary;
 } DrvSetOption;
 
-typedef struct DrvDelOption {
+typedef struct DrvDelOptionSt {
     char *prevValue;
     uint32 len;
 } DrvDelOption;
 
-typedef struct DrvHealState {
+typedef struct DrvHealStateSt {
     char *state;
     uint32 stateSize;
 } DrvHealState;
 
-typedef struct DrvKeyValue {
+typedef struct DrvKeyValueSt {
     char key[DDB_KEY_LEN];
     char value[DDB_VALUE_LEN];
 } DrvKeyValue;
 
-typedef struct DdbNodeState {
+typedef struct DdbNodeStateSt {
     DDB_STATE health;
     DDB_ROLE role;
 } DdbNodeState;
 
 struct Alarm;
 
-typedef void *DrvCon_t;
+#define DrvCon_t void*
 typedef status_t (*DrvApiLoad)(const DrvApiInfo *apiInfo);
-typedef status_t (*DrvAllocConn)(DrvCon_t *session, DrvApiInfo *apiInfo);
+typedef status_t (*DrvAllocConn)(DrvCon_t *session, const DrvApiInfo *apiInfo);
 typedef status_t (*DrvFreeConn)(DrvCon_t *session);
-typedef status_t (*DrvGetValue)(const DrvCon_t session, DrvText *key, DrvText *value, DrvGetOption *option);
+typedef status_t (*DrvGetValue)(const DrvCon_t session, DrvText *key, DrvText *value, const DrvGetOption *option);
 typedef status_t (*DrvGetAllKV)(
-    const DrvCon_t session, DrvText *key, DrvKeyValue *keyValue, uint32 length, DrvGetOption *option);
+    const DrvCon_t session, DrvText *key, DrvKeyValue *keyValue, uint32 length, const DrvGetOption *option);
 typedef status_t (*DrvSet)(const DrvCon_t session, DrvText *key, DrvText *value, DrvSetOption *option);
-typedef status_t (*DrvDelete)(const DrvCon_t session, DrvText *key, DrvDelOption *option);
+typedef status_t (*DrvDelete)(const DrvCon_t session, DrvText *key);
 typedef status_t (*DrvSaveAllKV)(const DrvCon_t session, const DrvText *key, DrvSaveOption *option);
 typedef status_t (*DrvNodeState)(DrvCon_t session, char *memberName, DdbNodeState *nodeState);
 typedef const char *(*DrvLastError)(void);
@@ -226,8 +236,11 @@ typedef status_t (*DrvDdbRestConn)(DrvCon_t sess, int32 timeOut);
 typedef status_t (*DrvDdbExecCmd)(DrvCon_t session, char *cmdLine, char *value, int *valueLen, uint32 maxBufLen);
 typedef status_t (*DrvDdbSetBlocked)(unsigned int setBlock, unsigned int waitTimeoutMs);
 typedef status_t (*DrvSetParam)(const char *key, const char *value);
+typedef status_t (*DrvStop)(bool *ddbStop);
+typedef status_t (*DrvSetWorkMode)(DrvCon_t session, unsigned int workMode, unsigned int voteNum);
+typedef status_t (*DrvDemoteDdbRole)(DrvCon_t session);
 
-typedef struct DdbDriver {
+typedef struct DdbDriverSt {
     pthread_rwlock_t lock;
     bool initialized; // whether ddb has been inited
     DDB_TYPE type;
@@ -255,10 +268,15 @@ typedef struct DdbDriver {
     DrvDdbRestConn restConn; // rest ddb conn
     DrvDdbExecCmd execCmd; // exec ddb cmd
     DrvDdbSetBlocked setBlocked;  // set ddb block
-    DrvSetParam setParam; // set ddb param
+    DrvSetParam setParam;         // set ddb param
+    DrvStop stop;
+    DrvSetWorkMode setWorkMode; // set ddb work mode
+    DrvDemoteDdbRole demoteDdbRole;
+
+    bool ddbStopped;
 } DdbDriver;
 
-typedef struct DdbConn {
+typedef struct DdbConnSt {
     DdbDriver *drv;
     DrvCon_t session;
     int32 timeOut;
@@ -271,12 +289,12 @@ typedef struct DdbConn {
 const char *GetDdbToString(DDB_TYPE dbType);
 const DDB_TYPE GetStringToDdb(const char *str);
 DdbDriver *InitDdbDrv(const DdbInitConfig *config);
-status_t InitDdbConn(DdbConn *ddbConn, DdbInitConfig *config);
-status_t DdbGetValue(DdbConn *ddbConn, DrvText *key, DrvText *value, DrvGetOption *option);
-status_t DdbGetAllKV(DdbConn *ddbConn, DrvText *key, DrvKeyValue *keyValue, uint32 length, DrvGetOption *option);
+status_t InitDdbConn(DdbConn *ddbConn, const DdbInitConfig *config);
+status_t DdbGetValue(DdbConn *ddbConn, DrvText *key, DrvText *value, const DrvGetOption *option);
+status_t DdbGetAllKV(DdbConn *ddbConn, DrvText *key, DrvKeyValue *keyValue, uint32 length, const DrvGetOption *option);
 status_t DdbSaveAllKV(DdbConn *ddbConn, DrvText *key, DrvSaveOption *option);
 status_t DdbSetValue(DdbConn *ddbConn, DrvText *key, DrvText *value, DrvSetOption *option);
-status_t DdbDelKey(DdbConn *ddbConn, DrvText *key, DrvDelOption *option);
+status_t DdbDelKey(DdbConn *ddbConn, DrvText *key);
 status_t DdbInstanceState(DdbConn *ddbConn, char *memberName, DdbNodeState *drvState);
 status_t DdbFreeConn(DdbConn *ddbConn);
 const char *DdbGetLastError(const DdbConn *ddbConn);
@@ -297,5 +315,8 @@ status_t DdbRestConn(DdbConn *ddbConn);
 status_t DdbExecCmd(DdbConn *ddbConn, char *cmdLine, char *output, int *outputLen, uint32 maxBufLen);
 status_t DdbSetBlocked(const DdbConn *ddbConn, unsigned int setBlock, unsigned waitTimeoutMs);
 status_t DDbSetParam(const DdbConn *ddbConn, const char *key, const char *value);
+status_t DdbStop(DdbConn *ddbConn);
+status_t DdbSetWorkMode(DdbConn *ddbConn, unsigned int workMode, unsigned int voteNum);
+status_t DdbDemoteRole2Standby(DdbConn *ddbConn);
 
 #endif

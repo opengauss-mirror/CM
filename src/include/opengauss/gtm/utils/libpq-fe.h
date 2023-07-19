@@ -17,17 +17,17 @@
 #ifndef GTM_LIBPQ_FE_H
 #define GTM_LIBPQ_FE_H
 
+#include <stdio.h>
+#include "gtm/gtm_ext.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <stdio.h>
 
 /*
  * postgres_ext.h defines the backend's externally visible types,
  * such as Oid.
  */
-#include "gtm/gtm_ext.h"
 
 /*
  * Option flags for PQcopyResult

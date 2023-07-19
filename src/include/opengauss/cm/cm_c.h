@@ -85,8 +85,7 @@ typedef enum CM_PortLastCall {
 #define TCP_SOCKET_ERROR_NO_MESSAGE (-3)
 #define TCP_SOCKET_ERROR_NO_BUFFER (-4)
 #define TCP_SOCKET_ERROR_INVALID_IP (-5)
-#define CM_SSL 100
-
+#define SECONDS_PER_DAY 86400U
 
 /* Define max size of user in start up packet */
 #define SP_USER 32

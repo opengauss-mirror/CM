@@ -24,6 +24,7 @@
 #ifndef CM_CGROUP_H
 #define CM_CGROUP_H
 #ifdef ENABLE_MULTIPLE_NODES
+#include <sys/types.h>
 /* get the cm cgroup relpath and initialize cgroup.
  * Please note,caller should free the return value.
  */

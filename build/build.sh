@@ -22,11 +22,13 @@ export PRIVATEGAUSS="ON"
 export ALARM="ON"
 
 export DCC="${PROJECT_ROOT_PATH}/../DCC"
+export CBB="${PROJECT_ROOT_PATH}/../CBB"
 export PKG_NAME_PRE="Package_ddes_cm"
 
 export SYMBOLS_NAME_PRE="Symbols_ddes_cm"
 export PKG_PREFIX_NAME=""
 export VERSION="DEFAULT"
+export USE_LSE="OFF"
 
 function help() {
     echo "$0 [-m {release|debug|memcheck|cov}] [-3rd \${THIRD_BINARY_PATH}] [-o \${OUTPUT_PATH}] [--pkg] [--single]
@@ -34,7 +36,6 @@ function help() {
 }
 
 function build_dcc() {
-    export PLAT_FORM_STR=$(sh ${SCRIPT_PATH}/get_PlatForm_str.sh)
     local dcc_build_mode="Release"
     if [ $(echo $VERSION_MODE | grep -E "debug" | wc -l) -gt 0 ]; then
         dcc_build_mode="Debug"
@@ -53,37 +54,47 @@ function build_dcc() {
     cp -rf ${DCC}/../DCF/output/lib/libdcf.so ${DCC}/output/lib
 }
 
-function clean_dcc_dependency() {
-    echo "clean dcc libs[${PROJECT_ROOT_PATH}/common_lib/dcc/]"
-    mkdir -p ${PROJECT_ROOT_PATH}/common_lib/dcc/lib
-    mkdir -p ${PROJECT_ROOT_PATH}/common_lib/dcc/include
-    rm -rf ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/*
-    rm -rf $PROJECT_ROOT_PATH/common_lib/dcc/include/*
+function clean_com_dependency() {
+    local com_lib_name=$1
+    echo "clean ${com_lib_name} libs[${PROJECT_ROOT_PATH}/common_lib/${com_lib_name}/]"
+    mkdir -p ${PROJECT_ROOT_PATH}/common_lib/${com_lib_name}/lib
+    mkdir -p ${PROJECT_ROOT_PATH}/common_lib/${com_lib_name}/include
+    rm -rf ${PROJECT_ROOT_PATH}/common_lib/${com_lib_name}/lib/*
+    rm -rf $PROJECT_ROOT_PATH/common_lib/${com_lib_name}/include/*
 }
 
 function update_dcc_dependency() {
     if [ -d "${DCC}" ]; then
         echo "dcc[${DCC}] found, start compile dcc!!!"
         build_dcc
-        clean_dcc_dependency
+        clean_com_dependency "dcc"
         cp -rf ${DCC}/src/interface/dcc_interface.h ${PROJECT_ROOT_PATH}/common_lib/dcc/include/
         cp -rf ${DCC}/output/lib/libdcc.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
         cp -rf ${DCC}/output/lib/libdcf.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
         cp -rf ${DCC}/output/lib/libgstor.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
+        clean_com_dependency "cbb"
+        local cbb_home="${THIRD_BIN_PATH}/kernel/component/cbb"
+        cp -rf ${cbb_home}/include/* ${PROJECT_ROOT_PATH}/common_lib/cbb/include/
+        cp -rf ${CBB}/output/lib/libcbb.a ${PROJECT_ROOT_PATH}/common_lib/cbb/lib/
+        cp -rf ${CBB}/output/lib/libcbb.so ${PROJECT_ROOT_PATH}/common_lib/cbb/lib/
         return
     fi
 
     if [ "x${THIRD_BIN_PATH}" != "x" ]; then
-        local dccHome="${THIRD_BIN_PATH}/kernel/component/dcc"
+        local dcc_home="${THIRD_BIN_PATH}/kernel/component/dcc"
+        local cbb_home="${THIRD_BIN_PATH}/kernel/component/cbb"
 
-        if [ -d "${dccHome}" ]; then
-            echo "We well get dcc lib from 3rd[${dccHome}]."
-            clean_dcc_dependency
-            cp -rf ${dccHome}/include/* ${PROJECT_ROOT_PATH}/common_lib/dcc/include/
-            cp -rf ${dccHome}/lib/*.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
+        if [ -d "${dcc_home}" ]; then
+            echo "We well get dcc lib from 3rd[${dcc_home}]."
+            clean_com_dependency "dcc"
+            cp -rf ${dcc_home}/include/* ${PROJECT_ROOT_PATH}/common_lib/dcc/include/
+            cp -rf ${dcc_home}/lib/*.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
+            clean_com_dependency "cbb"
+            cp -rf ${cbb_home}/include/* ${PROJECT_ROOT_PATH}/common_lib/cbb/include/
+            cp -rf ${cbb_home}/lib/* ${PROJECT_ROOT_PATH}/common_lib/cbb/lib/
             return
         else
-            echo "***************** no dcc lib found in 3rd[${dccHome}]!!! *******************"
+            echo "***************** no dcc lib found in 3rd[${dcc_home}]!!! *******************"
         fi
     fi
 
@@ -97,12 +108,19 @@ function gcc_env() {
         export CXX=$(which g++)
         return
     fi
-    export GCCFOLDER=${THIRD}/buildtools/gcc${GCC}/
-    echo "gcc set to 3rd path:[${GCCFOLDER}]!"
-    export CC=$GCCFOLDER/gcc/bin/gcc
-    export CXX=$GCCFOLDER/gcc/bin/g++
-    export LD_LIBRARY_PATH=${GCCFOLDER}/gcc/lib64:${GCCFOLDER}/isl/lib:${GCCFOLDER}/mpc/lib/:${GCCFOLDER}/mpfr/lib/:${GCCFOLDER}/gmp/lib/:$LD_LIBRARY_PATH
-    export PATH=${GCCFOLDER}/gcc/bin:$PATH
+    if [ X"${sys_tools}" = X"ON" ]; then
+        export GCC_INSTALL_HOME=$(gcc -v 2>&1 | grep prefix | awk -F'prefix=' '{print $2}' |awk -F' ' '{print $1}')
+    else
+        export GCC_INSTALL_HOME="${THIRD}/buildtools/gcc${GCC}/gcc"
+        export PATH=${GCC_INSTALL_HOME}/bin:${PATH}
+    fi
+    if [ ! -d "${GCC_INSTALL_HOME}" ]; then
+        echo "No gcc path"
+        exit 1
+    fi
+    export CC=$GCC_INSTALL_HOME/bin/gcc
+    export CXX=$GCC_INSTALL_HOME/bin/g++
+    export LD_LIBRARY_PATH=${GCC_INSTALL_HOME}/lib64:${LD_LIBRARY_PATH}
 }
 
 function compile_open_source() {
@@ -151,26 +169,39 @@ function pkg() {
 
     cd ${OUT_PATH}
     cp ${PROJECT_ROOT_PATH}/tool . -R
-    tar -czf "${bin_tar}" bin lib share tool
+    tar --owner=root --group=root -czf "${bin_tar}" bin lib share tool
     if [ -d symbols ]; then
-        tar -czf "${sym_tar}" symbols
+        tar --owner=root --group=root -czf "${sym_tar}" symbols
     fi
 }
 
 function seperate_symbols() {
+    local sep_path=${PROJECT_ROOT_PATH}/build
     local exclude_bin_objs="etcd etcdctl"
     local exclude_lib_objs="libgcc_s.so libstdc++.so"
+
+    local strip_mode=""
+    if [ "x${COMPONENT}" == "xV3" ]; then
+        strip_mode="--strip-all"
+    else
+        strip_mode="--strip-debug"
+    fi
+
     cd ${OUT_PATH}
     mkdir -p ${OUT_PATH}/symbols
-
-    sh ${SCRIPT_PATH}/seperate_symbol.sh "bin" "${OUT_PATH}/symbols" "${exclude_bin_objs}"
-    sh ${SCRIPT_PATH}/seperate_symbol.sh "lib" "${OUT_PATH}/symbols" "${exclude_lib_objs}"
+    sh ${sep_path}/seperate_symbol.sh "bin" "${OUT_PATH}/symbols" "${exclude_bin_objs}" "${strip_mode}"
+    sh ${sep_path}/seperate_symbol.sh "lib" "${OUT_PATH}/symbols" "${exclude_lib_objs}" "${strip_mode}"
     if [ "x${COMPONENT}" == "xV3" ]; then
-        sh ${SCRIPT_PATH}/seperate_symbol.sh "cm_tools/psutil" "${OUT_PATH}/symbols" ""
+        sh ${sep_path}/seperate_symbol.sh "cm_tools/psutil" "${OUT_PATH}/symbols" "" "${strip_mode}"
     fi
 }
 
 function after_build() {
+    if [ "${KRB}" == "OFF" ]; then
+        echo "Change cms's enable_ssl value to 'ON' for KRB is not enable"
+        sed -i "s/enable_ssl.*/enable_ssl = on/g" ${OUT_PATH}/share/config/cm_server.conf.sample
+    fi
+
     if [ "${VERSION_MODE}" == "release" ]; then
         seperate_symbols
     fi
@@ -217,7 +248,7 @@ function build_cm() {
     fi
 
     PKG_NAME="${PKG_NAME_PRE}_${VERSION_MODE}.tar.gz"
-    cmake_def="-DCMAKE_INSTALL_PREFIX="${OUT_PATH}" -DENABLE_PRIVATEGAUSS=${PRIVATEGAUSS} -DCMAKE_BUILD_TYPE=${build_type} ${cmake_def} -DENABLE_MULTIPLE_NODES=${MULTIPLE_NODES} -DENABLE_ETCD=${ETCD} -DENABLE_HOTPATCH=${HOTPATCH} -DENABLE_LIBPQ=${LIBPQ} -DENABLE_KRB=${KRB} -DENABLE_ALARM=${ALARM}"
+    cmake_def="-DCMAKE_INSTALL_PREFIX="${OUT_PATH}" -DENABLE_PRIVATEGAUSS=${PRIVATEGAUSS} -DCMAKE_BUILD_TYPE=${build_type} ${cmake_def} -DENABLE_MULTIPLE_NODES=${MULTIPLE_NODES} -DENABLE_ETCD=${ETCD} -DENABLE_HOTPATCH=${HOTPATCH} -DENABLE_LIBPQ=${LIBPQ} -DENABLE_KRB=${KRB} -DENABLE_ALARM=${ALARM} -DUSE_LSE=${USE_LSE}"
 
     echo "********************************************************************"
     echo "start build CM with <${VERSION_MODE}>
@@ -233,6 +264,9 @@ function build_cm() {
     cmake_def=[${cmake_def}]
     tmp_build_dir=[${TMP_BUILD_DIR}]
     pkg_name=[${PKG_NAME}]
+    version=[${VERSION}]
+    lse=[${USE_LSE}]
+    DCC=[${DCC}]
     output to [${OUT_PATH}]."
     echo "********************************************************************"
 
@@ -317,6 +351,15 @@ function main() {
                 VERSION=$2
                 shift 2
                 ;;
+            -dcc)
+                if [ "$2"X = X ]; then
+                    echo "no given DCC path values"
+                    exit 1
+                fi
+                DCC="$2"
+                CBB=${DCC}/../CBB
+                shift 2
+                ;;
             --pkg)
                 PKG="yes"
                 shift
@@ -327,6 +370,10 @@ function main() {
                 ;;
             --nohotpatch)
                 HOTPATCH="OFF"
+                shift
+                ;;
+            --with_lse)
+                USE_LSE="ON"
                 shift
                 ;;
             --single)

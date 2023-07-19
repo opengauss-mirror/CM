@@ -24,13 +24,9 @@
 
 #ifndef _CM_ETCD_API_H_
 #define _CM_ETCD_API_H_
-#include <iostream>
-#include <regex.h>
-#include <thread>
-#include <unistd.h>
-#include "cm/etcdapi.h"
-#define CM_ETCD_KEY_VALUE_LENGTH (6144)
 
-int EtcdGetAllValues(EtcdSession session, char* key, char *keyValue, GetEtcdOption* option, int valueSize);
+#include "etcdapi.h"
+
+int EtcdGetAllValues(EtcdSession session, char* key, char *keyValue, const GetEtcdOption* option, int valueSize);
 
 #endif

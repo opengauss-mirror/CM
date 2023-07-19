@@ -26,17 +26,25 @@
 #ifndef CMS_ARBITRATE_DATANODE_PMS_UTILS_H
 #define CMS_ARBITRATE_DATANODE_PMS_UTILS_H
 
-typedef enum ClearAribType {
+typedef enum ClearAribTypeE {
     CLEAR_ALL = 0,
     CLEAR_ARBI_TIME,
     CLEAR_SEND_FAILOVER_TIMES
 } ClearAribType;
 
-typedef struct DnBuildStatus {
+typedef struct DnBuildStatusT {
     int32 buildCount;
     int32 standbyCount;
     int32 inSyncList;
 } DnBuildStatus;
+
+typedef struct DnArbitInfo_t {
+    int32 staRoleIndex;
+    int32 switchoverIdx;
+    uint32 maxTerm;
+} DnArbitInfo;
+
+const uint32 DATANODE_ARBITE_DELAY = 6;
 
 extern bool CheckPotentialTermRollback();
 extern void GroupStatusShow(const char *str, const uint32 groupIndex, const uint32 instanceId,
@@ -54,7 +62,7 @@ cm_instance_datanode_report_status *GetLocalReportStatus(uint32 groupIndex, int3
 cm_instance_role_status *GetRoleStatus(uint32 groupIndex, int32 memberIndex);
 cm_instance_datanode_report_status *GetDnReportStatus(uint32 groupIndex);
 uint32 GetInstanceTerm(uint32 groupIndex, int memberIndex);
-uint32 GetMaxTerm(uint32 groupIdx);
+void GetDnArbitInfo(uint32 groupIdx, DnArbitInfo *info);
 bool IsFinishReduceSyncList(uint32 groupIdx, int32 memIdx, const char *str);
 void GetCandiInfoBackup(DnArbCtx *ctx, int32 memIdx);
 bool CanbeCandicateBackup(const DnArbCtx *ctx, int32 memIdx, const CandicateCond *cadiCond);
@@ -64,4 +72,10 @@ void GetSyncListStr(const cm_instance_report_status *repGroup, DnInstInfo *instI
 void GetDnIntanceInfo(const DnArbCtx *ctx, DnInstInfo *instInfo);
 void GetInstanceInfoStr(const StatusInstances *insInfo, char *logStr, size_t maxLen);
 void PrintCurAndPeerDnInfo(const DnArbCtx *ctx, const char *str);
+uint32 GetDnArbitateDelayTime(const DnArbCtx *ctx);
+int32 GetMemIdxByInstanceId(uint32 groupIdx, uint32 instId);
+void InitDnArbitInfo(DnArbitInfo *info);
+void CleanSwitchoverInfo(const DnArbCtx *ctx);
+status_t CheckSwitchOverDone(const DnArbCtx *ctx, int32 peerIdx);
+void ChangeStaticPrimaryByDynamicPrimary(const DnArbCtx *ctx);
 #endif

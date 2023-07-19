@@ -21,18 +21,21 @@
  *
  * -------------------------------------------------------------------------
  */
+#include "cs_ssl.h"
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include "openssl/ssl.h"
 #include "openssl/err.h"
 #include "openssl/x509v3.h"
-#include "cs_ssl.h"
 #include "cm_spinlock.h"
 #include "cm_error.h"
 #include "securec.h"
 #include "cm_cipher.h"
-#include "cm_misc.h"
-#include "utils/syscall_lock.h"
+#include "cm_elog.h"
+#include "cm_misc_base.h"
+#include "cm_text.h"
+#include "cm_debug.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,21 +63,21 @@ static status_t CmRealpathFile(const char *filename, char *realfile, uint32 real
 #define SSL_SOCK(sock)   ((SSL*)(sock))
 
 static spinlock_t g_ssl_init_lock = 0;
-static volatile bool g_ssl_initialized = 0;
+static volatile bool g_ssl_initialized = false;
 static spinlock_t g_get_pem_passwd_lock = 0;
 
-const char *g_ssl_default_cipher_list = "ECDHE-ECDSA-AES256-GCM-SHA384:"
+static const char * const g_sslDefaultCipherList = "ECDHE-ECDSA-AES256-GCM-SHA384:"
                                         "ECDHE-ECDSA-AES128-GCM-SHA256:"
                                         "ECDHE-RSA-AES256-GCM-SHA384:"
                                         "ECDHE-RSA-AES128-GCM-SHA256";
 
-const char *g_ssl_tls13_default_cipher_list = "TLS_AES_256_GCM_SHA384:"
+static const char * const g_sslTls13DefaultCipherList = "TLS_AES_256_GCM_SHA384:"
                                               "TLS_CHACHA20_POLY1305_SHA256:"
                                               "TLS_AES_128_GCM_SHA256:"
                                               "TLS_AES_128_CCM_8_SHA256:"
                                               "TLS_AES_128_CCM_SHA256";
 
-const char *g_ssl_cipher_names[] = {
+const char *g_sslCipherNames[] = {
     // GCM
     "ECDHE-ECDSA-AES256-GCM-SHA384",
     "ECDHE-ECDSA-AES128-GCM-SHA256",
@@ -83,7 +86,7 @@ const char *g_ssl_cipher_names[] = {
     NULL
 };
 
-const char *g_ssl_tls13_cipher_names[] = {
+const char *g_sslTls13CipherNames[] = {
     // TLS1.3
     "TLS_AES_256_GCM_SHA384",
     "TLS_CHACHA20_POLY1305_SHA256",
@@ -134,146 +137,31 @@ static const char *g_ssl_error_string[] = {
 
 #define cs_close_socket   close
 
-bool cm_file_exist(const char *file_path)
-{
-    int32 ret;
-#ifdef WIN32
-    struct _stat stat_buf;
-#else
-    struct stat stat_buf;
-#endif
-
-#ifdef WIN32
-    ret = _stat(file_path, &stat_buf);
-#else
-    ret = stat(file_path, &stat_buf);
-#endif
-    if (ret != 0) {
-        return CM_FALSE;
-    }
-
-#ifdef WIN32
-    if (_S_IFREG == (stat_buf.st_mode & _S_IFREG)) {
-#else
-    /* S_ISREG: judge whether it's a regular file or not by the flag */
-    if (S_ISREG(stat_buf.st_mode)) {
-#endif
-        return CM_TRUE;
-    }
-
-    return CM_FALSE;
-}
-
-void cm_close_file(int32 file)
-{
-    int32 ret;
-
-    if (file == -1) {
-        return;
-    }
-
-    ret = close(file);
-    if (ret != 0) {
-        write_runlog(ERROR, "failed to close file with handle %d, error code %d.\n", file, errno);
-    }
-}
-
-// file name could not include black space before string on windows, auto-remove it
-status_t cm_open_file(const char *file_name, uint32 mode, int32 *file)
-{
-    uint32 perm = ((mode & O_CREAT) != 0) ? S_IRUSR | S_IWUSR : 0;
-
-    if (strlen(file_name) > GS_MAX_FILE_NAME_LEN) {
-        write_runlog(ERROR, "invalid file name %s, error code %d.\n", file_name, errno);
-        return CM_ERROR;
-    }
-    char realFile[MAX_PATH_LEN] = {0};
-    status_t st = CmRealpathFile(file_name, realFile, MAX_PATH_LEN);
-    if (st != CM_SUCCESS) {
-        write_runlog(ERROR, "file_name(%s) cannot realpath_file(%s).\n", file_name, realFile);
-        return CM_ERROR;
-    }
-    *file = open(realFile, (int)mode, perm);
-
-    if ((*file) == -1) {
-        if ((mode & O_CREAT) != 0) {
-            write_runlog(ERROR, "fail to create file  %s, error code %d.\n", file_name, errno);
-        } else {
-            write_runlog(ERROR, "fail to open file  %s, error code %d.\n", file_name, errno);
-        }
-        return CM_ERROR;
-    }
-
-    return CM_SUCCESS;
-}
-
-status_t cm_read_file(int32 file, void *buf, int32 size, int32 *read_size)
-{
-    int32 total_size = 0;
-    int32 curr_size = 0;
-
-    do {
-        curr_size = read(file, (char *)buf + total_size, size);
-        if (curr_size == -1) {
-            write_runlog(ERROR, "fail to read file %d, error code %d.\n", file, errno);
-            return CM_ERROR;
-        }
-        size -= curr_size;
-        total_size += curr_size;
-    } while (size > 0 && curr_size > 0);
-
-    if (read_size != NULL) {
-        *read_size = total_size;
-    }
-
-    return CM_SUCCESS;
-}
-
 bool ReadContentFromFile(const char* filename, void* content, size_t csize)
 {
-    FILE* pfRead = NULL;
-    size_t cnt = 0;
-    /*open and read file*/
-    if ((pfRead = fopen(filename, "rb")) == NULL) {
-        (void)fprintf(stderr, _("could not open file \"%s\": %s\n"), filename, gs_strerror(errno));
+    /* open and read file */
+    FILE *pfRead = fopen(filename, "rb");
+    if (pfRead == NULL) {
+        write_runlog(ERROR, "could not open file \"%s\": %s\n", filename, gs_strerror(errno));
         return false;
     }
-    cnt = fread(content, csize, 1, pfRead);
+    size_t cnt = fread(content, csize, 1, pfRead);
     if (cnt == 0) {
-        fclose(pfRead);
-        (void)fprintf(stderr, _("could not read file \"%s\": %s\n"), filename, gs_strerror(errno));
+        (void)fclose(pfRead);
+        write_runlog(ERROR, "could not read file \"%s\": %s\n", filename, gs_strerror(errno));
         return false;
     }
     if (fclose(pfRead)) {
-        (void)fprintf(stderr, _("could not close file \"%s\": %s\n"), filename, gs_strerror(errno));
+        write_runlog(ERROR, "could not close file \"%s\": %s\n", filename, gs_strerror(errno));
         return false;
     }
 
     return true;
 }
 
-time_t cm_current_time()
+time_t CmCurrentTime()
 {
     return time(NULL);
-}
-
-status_t cm_text2str(const text_t *text, char *buf, uint32 buf_size)
-{
-    if (buf == NULL) {
-        return CM_ERROR;
-    }
-    uint32 copy_size;
-    CM_ASSERT(buf_size > 1);
-    copy_size = (text->len >= buf_size) ? buf_size - 1 : text->len;
-    if (copy_size > 0) {
-        int res = memcpy_sp(buf, buf_size, text->str, copy_size);
-        if (res != 0) {
-            return CM_ERROR;
-        }
-    }
-
-    buf[copy_size] = '\0';
-    return CM_SUCCESS;
 }
 
 static const char *cm_cs_ssl_init_err_string(ssl_init_error_t err)
@@ -282,19 +170,6 @@ static const char *cm_cs_ssl_init_err_string(ssl_init_error_t err)
         return g_ssl_error_string[err];
     }
     return g_ssl_error_string[0];
-}
-
-static inline bool cm_text_str_equal_ins(const text_t *text, const char *str)
-{
-    uint32 i;
-
-    for (i = 0; i < text->len; i++) {
-        if (UPPER(text->str[i]) != UPPER(str[i]) || str[i] == '\0') {
-            return CM_FALSE;
-        }
-    }
-
-    return (str[text->len] == '\0');
 }
 
 /*
@@ -715,17 +590,13 @@ static unsigned char g_dh3072_g[] = {
 /* function to generate DH key pair */
 static DH *get_dh3072(void)
 {
-    DH *dh;
-    BIGNUM *p = NULL;
-    BIGNUM *g = NULL;
-
-    dh = DH_new();
+    DH *dh = DH_new();
     if (dh == NULL) {
         return NULL;
     }
 
-    p = BN_bin2bn(g_dh3072_p, sizeof(g_dh3072_p), NULL);
-    g = BN_bin2bn(g_dh3072_g, sizeof(g_dh3072_g), NULL);
+    BIGNUM *p = BN_bin2bn(g_dh3072_p, sizeof(g_dh3072_p), NULL);
+    BIGNUM *g = BN_bin2bn(g_dh3072_g, sizeof(g_dh3072_g), NULL);
     if ((p == NULL) || (g == NULL) || !DH_set0_pqg(dh, p, NULL, g)) {
         DH_free(dh);
         BN_free(p);
@@ -808,7 +679,7 @@ static status_t cm_cs_ssl_init()
         return CM_ERROR;
     }
 
-    g_ssl_initialized = CM_TRUE;
+    g_ssl_initialized = true;
     cm_spin_unlock(&g_ssl_init_lock);
     return CM_SUCCESS;
 }
@@ -849,33 +720,32 @@ static void cm_cs_ssl_set_sys_error(int32 ssl_err)
         default:
             error = ECONNRESET;
             break;
-
     }
 
     /* Set error status to equivalent of the SSL error */
     if (error != 0) {
-        cm_set_sock_error(error);
+        CmSetSockError(error);
     }
 }
 
-static status_t cm_cs_ssl_match_cipher(text_t left, char *cipher, uint32_t *offset, bool *support, bool is_tls13)
+static status_t cm_cs_ssl_match_cipher(const text_t *left, char *cipher, uint32_t *offset, bool *support, bool is_tls13)
 {
     uint32 i, count;
     errno_t errcode;
     const char** cipher_list;
     if (is_tls13) {
-        count = ELEMENT_COUNT(g_ssl_tls13_cipher_names) - 1;
-        cipher_list = g_ssl_tls13_cipher_names;
+        count = ELEMENT_COUNT(g_sslTls13CipherNames) - 1;
+        cipher_list = g_sslTls13CipherNames;
     } else {
-        count = ELEMENT_COUNT(g_ssl_cipher_names) - 1;
-        cipher_list = g_ssl_cipher_names;
+        count = ELEMENT_COUNT(g_sslCipherNames) - 1;
+        cipher_list = g_sslCipherNames;
     }
 
     for (i = 0; i < count; i++) {
-        if (!cm_text_str_equal_ins(&left, cipher_list[i])) {
+        if (!CmTextStrEqualIns(left, cipher_list[i])) {
             continue;
         }
-        *support = CM_TRUE;
+        *support = true;
         if (*offset > 0) {
             errcode = strncpy_s(cipher + *offset, CM_MAX_SSL_CIPHER_LEN - *offset, ":", strlen(":"));
             if (errcode != EOK) {
@@ -884,94 +754,48 @@ static status_t cm_cs_ssl_match_cipher(text_t left, char *cipher, uint32_t *offs
             }
             *offset += 1;
         }
-        errcode = strncpy_s(cipher + *offset, CM_MAX_SSL_CIPHER_LEN - *offset, left.str, left.len);
+        errcode = strncpy_s(cipher + *offset, CM_MAX_SSL_CIPHER_LEN - *offset, left->str, left->len);
         if (errcode != EOK) {
             write_runlog(ERROR, "[cm_cs_ssl_match_cipher] system call error");
             return CM_ERROR;
         }
-        *offset += left.len;
-        break;        
+        *offset += left->len;
+        break;
     }
 
     return CM_SUCCESS;
 }
 
-static void cm_split_text(const text_t *text, char split_char, char enclose_char, text_t *left, text_t *right)
-{
-    uint32 i;
-    bool is_enclosed = CM_FALSE;
-
-    left->str = text->str;
-
-    for (i = 0; i < text->len; i++) {
-        if (enclose_char != 0 && text->str[i] == enclose_char) {
-            is_enclosed = !is_enclosed;
-            continue;
-        }
-
-        if (is_enclosed) {
-            continue;
-        }
-
-        if (text->str[i] == split_char) {
-            left->len = i;
-            right->str = text->str + i + 1;
-            right->len = text->len - (i + 1);
-            return;
-        }
-    }
-    /* if the split_char is not found */
-    left->len = text->len;
-    right->len = 0;
-    right->str = NULL;
-}
-
-static  bool cm_fetch_text(text_t *text, char split_char, char enclose_char, text_t *sub)
-{
-    text_t remain;
-    if (text->len == 0) {
-        CM_TEXT_CLEAR(sub);
-        return CM_FALSE;
-    }
-
-    cm_split_text(text, split_char, enclose_char, sub, &remain);
-
-    text->len = remain.len;
-    text->str = remain.str;
-    return CM_TRUE;
-}
-
 static status_t cm_cs_ssl_distinguish_cipher(const char *cipher, char *tls12_cipher, uint32_t *tls12_offset,
-                                          char *tls13_cipher, uint32_t *tls13_offset)
+    char *tls13_cipher, uint32_t *tls13_offset)
 {
-    bool support = CM_FALSE;
+    bool support = false;
     text_t text, left, right;
 
-    cm_str2text((char *)cipher, &text);
-    cm_split_text(&text, ':', '\0', &left, &right);
+    CmStr2Text((char *)cipher, &text);
+    CmSplitText(&text, ':', '\0', &left, &right);
     text = right;
 
     while (left.len > 0) {
-        support = CM_FALSE;
+        support = false;
         // match TLS1.2-cipher
-        if (cm_cs_ssl_match_cipher(left, tls12_cipher, tls12_offset, &support, CM_FALSE) != CM_SUCCESS) {
+        if (cm_cs_ssl_match_cipher(&left, tls12_cipher, tls12_offset, &support, false) != CM_SUCCESS) {
             return CM_ERROR;
         }
 
         if (!support) {
             // match TLS1.3-cipher
-            if (cm_cs_ssl_match_cipher(left, tls13_cipher, tls13_offset, &support, CM_TRUE)
-                != CM_SUCCESS) {
+            if (cm_cs_ssl_match_cipher(&left, tls13_cipher, tls13_offset, &support, true) != CM_SUCCESS) {
                 return CM_ERROR;
             }
         }
 
         /* cipher not supported or invalid */
-        if (support != CM_TRUE) {
+        if (!support) {
             return CM_ERROR;
         }
 
-        cm_split_text(&text, ':', '\0', &left, &right);
+        CmSplitText(&text, ':', '\0', &left, &right);
         text = right;
     }
 
@@ -988,141 +812,48 @@ static status_t cm_cs_ssl_set_cipher(SSL_CTX *ctx, const ssl_config_t *config, b
     const char *tls13_cipher_str = NULL;
 
     if (!CM_IS_EMPTY_STR(config->cipher)) {
-        if (cm_cs_ssl_distinguish_cipher(config->cipher, tls12_cipher, &tls12_len, tls13_cipher, &tls13_len)
-            != CM_SUCCESS) {
+        if (cm_cs_ssl_distinguish_cipher(config->cipher, tls12_cipher, &tls12_len, tls13_cipher, &tls13_len) !=
+            CM_SUCCESS) {
             return CM_ERROR;
         }
 
         if (tls12_len > 0) {
             tls12_cipher_str = tls12_cipher;
         } else {
-            tls12_cipher_str = g_ssl_default_cipher_list;
+            tls12_cipher_str = g_sslDefaultCipherList;
         }
 
         if (tls13_len > 0) {
-            *is_using_tls13 = CM_TRUE;
+            *is_using_tls13 = true;
             tls13_cipher_str = tls13_cipher;
         } else {
-            tls13_cipher_str = g_ssl_tls13_default_cipher_list;
+            tls13_cipher_str = g_sslTls13DefaultCipherList;
         }
     } else {
         /* load default cipher list if SSL_CIPHER is not specified */
-        tls12_cipher_str = g_ssl_default_cipher_list;
-        tls13_cipher_str = g_ssl_tls13_default_cipher_list;
-        *is_using_tls13 = CM_TRUE;
+        tls12_cipher_str = g_sslDefaultCipherList;
+        tls13_cipher_str = g_sslTls13DefaultCipherList;
+        *is_using_tls13 = true;
     }
 
-    if (tls12_cipher_str != NULL && 1 != SSL_CTX_set_cipher_list(ctx, tls12_cipher_str)) {
+    if (tls12_cipher_str != NULL && SSL_CTX_set_cipher_list(ctx, tls12_cipher_str) != 1) {
         return CM_ERROR;
     }
 
-    if (tls13_cipher_str != NULL && 1 != SSL_CTX_set_ciphersuites(ctx, tls13_cipher_str)) {
+    if (tls13_cipher_str != NULL && SSL_CTX_set_ciphersuites(ctx, tls13_cipher_str) != 1) {
         return CM_ERROR;
     }
 
     return CM_SUCCESS;
 }
 
-static void cm_rtrim_text(text_t *text)
-{
-    int32 index;
-
-    if (text->str == NULL) {
-        text->len = 0;
-        return;
-    } else if (text->len == 0) {
-        return;
-    }
-
-    index = (int32)text->len - 1;
-    while (index >= 0) {
-        if ((unsigned char)text->str[index] > (unsigned char)' ') {
-            text->len = (uint32)(index + 1);
-            return;
-        }
-
-        --index;
-    }
-}
-
-static bool cm_is_bracket_text(const text_t *text)
-{
-    bool in_string = CM_FALSE;
-    uint32 depth;
-    const int minLen = 2;
-
-    if (text->len < minLen) {
-        return CM_FALSE;
-    }
-
-    bool flag = CM_TEXT_BEGIN(text) != '(' || CM_TEXT_END(text) != ')';
-    if (flag) {
-        return CM_FALSE;
-    }
-
-    depth = 1;
-    for (uint32 i = 1; i < text->len; i++) {
-        if (text->str[i] == '\'') {
-            in_string = !in_string;
-            continue;
-        }
-
-        if (in_string) {
-            continue;
-        } else if (text->str[i] == '(') {
-            depth++;
-        } else if (text->str[i] == ')') {
-            depth--;
-            if (depth == 0) {
-                return (i == text->len - 1);
-            }
-        }
-    }
-
-    return CM_FALSE;
-}
-
-static void cm_ltrim_text(text_t *text)
-{
-    if (text->str == NULL) {
-        text->len = 0;
-        return;
-    } else if (text->len == 0) {
-        return;
-    }
-
-    while (text->len > 0) {
-        if ((unsigned char)*text->str > ' ') {
-            break;
-        }
-        text->str++;
-        text->len--;
-    }
-}
-
-static inline void cm_trim_text(text_t *text)
-{
-    cm_ltrim_text(text);
-    cm_rtrim_text(text);
-}
-
-static inline void cm_remove_brackets(text_t *text)
-{
-    const int lenReduce = 2;
-    while (cm_is_bracket_text(text)) {
-        text->str++;
-        text->len -= lenReduce;
-        cm_trim_text(text);
-    }
-}
-
 static inline void cm_cs_ssl_fetch_file_name(text_t *files, text_t *name)
 {
-    if (!cm_fetch_text(files, ',', '\0', name)) {
+    if (!CmFetchText(files, ',', '\0', name)) {
         return;
     }
 
-    cm_trim_text(name);
+    CmTrimText(name);
     if (name->str[0] == '\'') {
         name->str++;
         if (name->len >= 2) {
@@ -1131,7 +862,7 @@ static inline void cm_cs_ssl_fetch_file_name(text_t *files, text_t *name)
             name->len = 0;
         }
 
-        cm_trim_text(name);
+        CmTrimText(name);
     }
 }
 
@@ -1143,16 +874,16 @@ static status_t cm_cs_ssl_set_ca_chain(SSL_CTX *ctx, ssl_config_t *config, bool 
     if (config->ca_file == NULL) {
         return CM_SUCCESS;
     }
-    cm_str2text((char *)config->ca_file, &file_list);
-    cm_remove_brackets(&file_list);
+    CmStr2Text((char *)config->ca_file, &file_list);
+    CmRemoveBrackets(&file_list);
 
     cm_cs_ssl_fetch_file_name(&file_list, &file_name);
     while (file_name.len > 0) {
-        CM_RETURN_IFERR(cm_text2str(&file_name, filepath, sizeof(filepath)));
+        CM_RETURN_IFERR(CmText2Str(&file_name, filepath, sizeof(filepath)));
 
         if (cm_ssl_verify_file_stat(filepath) != CM_SUCCESS) {
             if (!is_client) {
-                write_runlog(ERROR, "exit\n");
+                write_runlog(FATAL, "exit\n");
                 cm_exit(-1);
             }
             return CM_ERROR;
@@ -1163,7 +894,7 @@ static status_t cm_cs_ssl_set_ca_chain(SSL_CTX *ctx, ssl_config_t *config, bool 
             return CM_ERROR;
         }
         cm_cs_ssl_fetch_file_name(&file_list, &file_name);
-    }   
+    }
 
     return CM_SUCCESS;
 }
@@ -1171,22 +902,19 @@ static status_t cm_cs_ssl_set_ca_chain(SSL_CTX *ctx, ssl_config_t *config, bool 
 static status_t cm_cs_load_crl_file(SSL_CTX *ctx, const char *file)
 {
     long ret;
-    BIO *in = NULL;
-    X509_CRL *crl = NULL;
-    X509_STORE *st = NULL;
 
-    in = BIO_new(BIO_s_file());
+    BIO *in = BIO_new(BIO_s_file());
     if (in == NULL || BIO_read_filename(in, file) <= 0) {
         return CM_ERROR;
     }
 
-    crl = PEM_read_bio_X509_CRL(in, NULL, NULL, NULL);
+    X509_CRL *crl = PEM_read_bio_X509_CRL(in, NULL, NULL, NULL);
     if (crl == NULL) {
         (void)BIO_free(in);
         return CM_ERROR;
     }
 
-    st = SSL_CTX_get_cert_store(ctx);
+    X509_STORE *st = SSL_CTX_get_cert_store(ctx);
     if (!X509_STORE_add_crl(st, crl)) {
         X509_CRL_free(crl);
         (void)BIO_free(in);
@@ -1206,12 +934,12 @@ static status_t cm_cs_ssl_set_crl_file(SSL_CTX *ctx, ssl_config_t *config)
     char filepath[CM_FILE_NAME_BUFFER_SIZE];
 
     if (config->crl_file != NULL) {
-        cm_str2text((char *)config->crl_file, &file_list);
-        cm_remove_brackets(&file_list);
+        CmStr2Text((char *)config->crl_file, &file_list);
+        CmRemoveBrackets(&file_list);
 
         cm_cs_ssl_fetch_file_name(&file_list, &file_name);
         while (file_name.len > 0) {
-            CM_RETURN_IFERR(cm_text2str(&file_name, filepath, sizeof(filepath)));
+            CM_RETURN_IFERR(CmText2Str(&file_name, filepath, sizeof(filepath)));
             if (cm_cs_load_crl_file(ctx, filepath) != CM_SUCCESS) {
                 return CM_ERROR;
             }
@@ -1252,7 +980,7 @@ static status_t cm_cs_ssl_set_crl_file(SSL_CTX *ctx, ssl_config_t *config)
 static bool cm_cs_ssl_should_retry(ssl_link_t *link, int32 ret, uint32 *wait_event, int32 *ssl_err_holder)
 {
     int32 ssl_err;
-    bool retry = CM_TRUE;
+    bool retry = true;
     SSL *ssl = SSL_SOCK(link->ssl_sock);
 
     /* Retrieve the result for the SSL I/O operation */
@@ -1260,14 +988,18 @@ static bool cm_cs_ssl_should_retry(ssl_link_t *link, int32 ret, uint32 *wait_eve
 
     switch (ssl_err) {
         case SSL_ERROR_WANT_READ:
-            *wait_event = CS_WAIT_FOR_READ;
+            if (wait_event != NULL) {
+                *wait_event = CS_WAIT_FOR_READ;
+            }
             break;
         case SSL_ERROR_WANT_WRITE:
-            *wait_event = CS_WAIT_FOR_WRITE;
+            if (wait_event != NULL) {
+                *wait_event = CS_WAIT_FOR_WRITE;
+            }
             break;
         default:
             write_runlog(DEBUG1, "SSL read/write failed. SSL error: %d\n", ssl_err);
-            retry = CM_FALSE;
+            retry = false;
             break;
     }
 
@@ -1283,7 +1015,7 @@ static status_t cm_cs_ssl_wait_on_error(ssl_link_t *link, int32 ret, int32 timeo
     int32 ssl_err;
     long v_result;
     uint32 cs_event;
-    bool is_ready = CM_FALSE;
+    bool is_ready = false;
     char err_buf[CM_BUFLEN_256] = {0};
     const char *err_msg = NULL;
     SSL *ssl = SSL_SOCK(link->ssl_sock);
@@ -1308,7 +1040,7 @@ static status_t cm_cs_ssl_wait_on_error(ssl_link_t *link, int32 ret, int32 timeo
                 err_msg = cm_cs_ssl_last_err_string(err_buf, sizeof(err_buf));
                 write_runlog(ERROR, "SSL connect failed: SSL error %d, %s\n", ssl_err, err_msg);
             }
-            (void)ERR_clear_error();
+            ERR_clear_error();
             cm_cs_ssl_set_sys_error(ssl_err);
             return CM_ERROR;
     }
@@ -1325,9 +1057,9 @@ static status_t cm_cs_ssl_resolve_file_name(const char *filename, char *buf, uin
         *res_buf = filename;
         return CM_SUCCESS;
     }
-    cm_str2text((char *)filename, &text);
+    CmStr2Text((char *)filename, &text);
     CM_REMOVE_ENCLOSED_CHAR(&text);
-    CM_RETURN_IFERR(cm_text2str(&text, buf, buf_len));
+    CM_RETURN_IFERR(CmText2Str(&text, buf, buf_len));
     *res_buf = buf;
     return CM_SUCCESS;
 }
@@ -1396,7 +1128,7 @@ static status_t cm_cs_ssl_set_tmp_dh(SSL_CTX *ctx)
 static SSL_CTX *cm_ssl_create_context(ssl_config_t *config, bool is_client)
 {
     int purpose;
-    bool is_using_tls13 = CM_FALSE;
+    bool is_using_tls13 = false;
 
     /* Init SSL library */
     if (cm_cs_ssl_init() != CM_SUCCESS) {
@@ -1409,12 +1141,9 @@ static SSL_CTX *cm_ssl_create_context(ssl_config_t *config, bool is_client)
     CM_SSL_EMPTY_STR_TO_NULL(config->key_file);
     CM_SSL_EMPTY_STR_TO_NULL(config->crl_file);
 
-    SSL_CTX *ctx = NULL;
-    const SSL_METHOD *method = NULL;
-
     /* Negotiate highest available SSL/TLS version */
-    method = is_client ? TLS_client_method() : TLS_server_method();
-    ctx = SSL_CTX_new(method);
+    const SSL_METHOD *method = is_client ? TLS_client_method() : TLS_server_method();
+    SSL_CTX *ctx = SSL_CTX_new(method);
     if (ctx == NULL) {
         CM_THROW_ERROR(ERR_SSL_INIT_FAILED, cm_cs_ssl_init_err_string(SSL_INITERR_MEMFAIL));
         return NULL;
@@ -1498,9 +1227,8 @@ static int32 cm_cs_ssl_verify_cb(int32 ok, X509_STORE_CTX *ctx)
 int32 cm_ssl_get_expire_day(const ASN1_TIME *ctm, time_t *curr_time)
 {
     int day, sec;
-    ASN1_TIME *asn1_cmp_time = NULL;
 
-    asn1_cmp_time = X509_time_adj(NULL, 0, curr_time);
+    ASN1_TIME *asn1_cmp_time = X509_time_adj(NULL, 0, curr_time);
     if (asn1_cmp_time == NULL) {
         return -1;
     }
@@ -1514,18 +1242,17 @@ int32 cm_ssl_get_expire_day(const ASN1_TIME *ctm, time_t *curr_time)
 
 void cm_ssl_check_cert_expire(X509 *cert, int32 alert_day, cert_type_t type)
 {
-    const ASN1_TIME *not_after = NULL;
     int32 expire_day;
     const char* cert_type = (type == CERT_TYPE_SERVER_CERT) ? "server certificate" : "ca";
     if (cert == NULL) {
         return;
     }
 
-    not_after = X509_get0_notAfter(cert);
+    const ASN1_TIME *not_after = X509_get0_notAfter(cert);
     if (X509_cmp_current_time(not_after) <= 0) {
         write_runlog(ERROR, "[cm_ssl_check_cert_expire] The %s is expired\n", cert_type);
     } else {
-        time_t curr_time = cm_current_time();
+        time_t curr_time = CmCurrentTime();
         expire_day = cm_ssl_get_expire_day(not_after, &curr_time);
         write_runlog(DEBUG5, "[cm_ssl_check_cert_expire] The %s expire day is %d\n", cert_type, expire_day);
         if (expire_day >= 0 && alert_day >= expire_day) {
@@ -1537,27 +1264,24 @@ void cm_ssl_check_cert_expire(X509 *cert, int32 alert_day, cert_type_t type)
 void cm_ssl_ca_cert_expire(const ssl_ctx_t *ssl_context, int32 alert_day)
 {
     SSL_CTX *ctx = SSL_CTX_PTR(ssl_context);
-    X509 *cert = NULL;
-    X509_STORE *cert_store = NULL;
-    X509_OBJECT *obj = NULL;
 
     if (ssl_context == NULL) {
         return;
     }
 
-    cert = SSL_CTX_get0_certificate(ctx);
+    X509 *cert = SSL_CTX_get0_certificate(ctx);
     if (cert != NULL) {
         cm_ssl_check_cert_expire(cert, alert_day, CERT_TYPE_SERVER_CERT);
     }
 
-    cert_store = SSL_CTX_get_cert_store(ctx);
+    X509_STORE *cert_store = SSL_CTX_get_cert_store(ctx);
     if (cert_store == NULL) {
         return;
     }
 
     STACK_OF(X509_OBJECT)* objects = X509_STORE_get0_objects(cert_store);
     for (int i = 0; i < sk_X509_OBJECT_num(objects); i++) {
-        obj = sk_X509_OBJECT_value(objects, i);
+        X509_OBJECT *obj = sk_X509_OBJECT_value(objects, i);
         /* only check for CA certificate, no need for CRL */
         if (X509_OBJECT_get_type(obj) == X509_LU_X509) {
             cert = X509_OBJECT_get0_X509(obj);
@@ -1570,7 +1294,6 @@ void cm_ssl_ca_cert_expire(const ssl_ctx_t *ssl_context, int32 alert_day)
 
 ssl_ctx_t *cm_ssl_create_acceptor_fd(ssl_config_t *config)
 {
-    SSL_CTX *ssl_fd = NULL;
     int32 verify = SSL_VERIFY_PEER;
 
     /* Cannot verify peer if the server don't have the CA */
@@ -1580,7 +1303,7 @@ ssl_ctx_t *cm_ssl_create_acceptor_fd(ssl_config_t *config)
         verify |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
     }
 
-    ssl_fd = cm_ssl_create_context(config, CM_FALSE);
+    SSL_CTX *ssl_fd = cm_ssl_create_context(config, false);
     if (ssl_fd == NULL) {
         return NULL;
     }
@@ -1602,7 +1325,6 @@ ssl_ctx_t *cm_ssl_create_acceptor_fd(ssl_config_t *config)
 
 ssl_ctx_t *cm_ssl_create_connector_fd(ssl_config_t *config)
 {
-    SSL_CTX *ssl_fd = NULL;
     int32 verify = SSL_VERIFY_PEER;
     /*
       Turn off verification of servers certificate if both
@@ -1612,7 +1334,7 @@ ssl_ctx_t *cm_ssl_create_connector_fd(ssl_config_t *config)
         verify = SSL_VERIFY_NONE;
     }
 
-    ssl_fd = cm_ssl_create_context(config, CM_TRUE);
+    SSL_CTX *ssl_fd = cm_ssl_create_context(config, true);
     if (ssl_fd == NULL) {
         return NULL;
     }
@@ -1626,6 +1348,10 @@ ssl_ctx_t *cm_ssl_create_connector_fd(ssl_config_t *config)
 
 void cm_ssl_free_context(ssl_ctx_t *sslCtx)
 {
+    if (sslCtx == NULL) {
+        cm_cs_ssl_deinit();
+        return;
+    }
     SSL_CTX_free(SSL_CTX_PTR(sslCtx));
     cm_cs_ssl_deinit();
 }
@@ -1647,10 +1373,7 @@ static SSL *cm_cs_ssl_create_socket(SSL_CTX *ctx, socket_t sock)
 
 static char *cm_get_common_name(X509_NAME *cert_name, char *buf, uint32 len)
 {
-    char *name = NULL;
     int32 cn_loc;
-    ASN1_STRING *cn_asn1 = NULL;
-    X509_NAME_ENTRY *cn_entry = NULL;
     errno_t errcode;
 
     // find cn location in the subject
@@ -1660,23 +1383,23 @@ static char *cm_get_common_name(X509_NAME *cert_name, char *buf, uint32 len)
         return "NONE";
     }
     // get cn entry for given location
-    cn_entry = X509_NAME_get_entry(cert_name, cn_loc);
+    X509_NAME_ENTRY *cn_entry = X509_NAME_get_entry(cert_name, cn_loc);
     if (cn_entry == NULL) {
         write_runlog(DEBUG1, "[MEC]failed to get CN entry using CN location");
         return "NONE";
     }
     // get CN from common name entry
-    cn_asn1 = X509_NAME_ENTRY_get_data(cn_entry);
+    ASN1_STRING *cn_asn1 = X509_NAME_ENTRY_get_data(cn_entry);
     if (cn_asn1 == NULL) {
         write_runlog(DEBUG1, "[MEC]failed to get CN from CN entry");
         return "NONE";
     }
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
-    name = (char *)ASN1_STRING_data(cn_asn1);
-#else  
-    name = (char *)ASN1_STRING_get0_data(cn_asn1);
-#endif 
+    char *name = (char *)ASN1_STRING_data(cn_asn1);
+#else
+    char *name = (char *)ASN1_STRING_get0_data(cn_asn1);
+#endif
     if (name == NULL) {
         write_runlog(DEBUG1, "[MEC]failed to get ASN1 data");
         return "NONE";
@@ -1697,19 +1420,16 @@ static char *cm_get_common_name(X509_NAME *cert_name, char *buf, uint32 len)
 static void cm_cs_ssl_show_certs(SSL *ssl)
 {
     char buf[CM_BUFLEN_512] = {0};
-    const SSL_CIPHER *cipher = NULL;
-    X509 *cert = NULL;
-    X509_NAME *cert_name = NULL;
 
     write_runlog(DEBUG5, "[MEC]SSL connection succeeded");
 
-    cipher = SSL_get_current_cipher(ssl);
+    const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
     write_runlog(DEBUG5, "[MEC]Using cipher: %s", (cipher == NULL) ? "NONE" : SSL_CIPHER_get_name(cipher));
 
     write_runlog(DEBUG5, "[MEC]Peer certificate:");
-    cert = SSL_get_peer_certificate(ssl);
+    X509 *cert = SSL_get_peer_certificate(ssl);
     if (cert != NULL) {
-        cert_name = X509_get_subject_name(cert);
+        X509_NAME *cert_name = X509_get_subject_name(cert);
         if (cert_name != NULL) {
             write_runlog(DEBUG5, "\tSubject: %s", cm_get_common_name(cert_name, buf, sizeof(buf)));
         }
@@ -1728,33 +1448,37 @@ status_t cm_cs_ssl_accept_socket(ssl_link_t *link, socket_t sock, uint32 timeout
 {
     int32 ret;
     uint32 tv = 0;
-    SSL_CTX *ctx = NULL;
-    SSL *ssl = NULL;
-    status_t status = CM_SUCCESS;
+    status_t status;
+    SSL *ssl;
 
-    ctx = SSL_CTX_PTR(link->ssl_ctx);
+    SSL_CTX *ctx = SSL_CTX_PTR(link->ssl_ctx);
     if (ctx == NULL) {
         return CM_ERROR;
     }
 
-    ssl = cm_cs_ssl_create_socket(ctx, sock);
-    if (ssl == NULL) {
-        return CM_ERROR;
+    if (link->ssl_sock == NULL) {
+        ssl = cm_cs_ssl_create_socket(ctx, sock);
+        if (ssl == NULL) {
+            return CM_ERROR;
+        }
+        link->ssl_sock = (ssl_sock_t *)ssl;
+    } else {
+        ssl = (SSL *)link->ssl_sock;
     }
-    link->tcp.sock = sock;
-    link->ssl_sock = (ssl_sock_t *)ssl;
 
+    link->tcp.sock = sock;
+    
     do {
         ret = SSL_accept(ssl);
         if (ret == 1) {
             status = CM_SUCCESS;
             break;
         }
-        status = cm_cs_ssl_wait_on_error(link, ret, CM_NETWORK_IO_TIMEOUT);
+        status = cm_cs_ssl_wait_on_error(link, ret, (int32)CM_NETWORK_IO_TIMEOUT);
         if (status == CM_ERROR) {
             break;
         } else if (status == CM_TIMEDOUT) {
-            tv += CM_NETWORK_IO_TIMEOUT;
+            tv += (uint32)CM_NETWORK_IO_TIMEOUT;
         }
     } while (tv < timeout && !SSL_is_init_finished(ssl));
 
@@ -1764,28 +1488,24 @@ status_t cm_cs_ssl_accept_socket(ssl_link_t *link, socket_t sock, uint32 timeout
     }
 
     if (status == CM_TIMEDOUT) {
-        write_runlog(ERROR, "[MEC]ssl accept timeout(%u ms)", CM_SSL_IO_TIMEOUT);
+        write_runlog(DEBUG1, "ssl accept timeout(%u ms)\n", timeout);
     }
 
-    SSL_free(ssl);
-    link->ssl_sock = NULL;
-    return CM_ERROR;
+    return status;
 }
 
 status_t cm_ssl_connect_socket(ssl_link_t *link, socket_t sock, int32 timeout)
 {
     int32 ret;
     int32 tv = 0;
-    SSL_CTX *ctx = NULL;
-    SSL *ssl = NULL;
     status_t status = CM_SUCCESS;
 
-    ctx = SSL_CTX_PTR(link->ssl_ctx);
+    SSL_CTX *ctx = SSL_CTX_PTR(link->ssl_ctx);
     if (ctx == NULL) {
         return CM_ERROR;
     }
 
-    ssl = cm_cs_ssl_create_socket(ctx, sock);
+    SSL *ssl = cm_cs_ssl_create_socket(ctx, sock);
     if (ssl == NULL) {
         return CM_ERROR;
     }
@@ -1794,11 +1514,11 @@ status_t cm_ssl_connect_socket(ssl_link_t *link, socket_t sock, int32 timeout)
 
     do {
         ret = SSL_connect(ssl);
-        status = cm_cs_ssl_wait_on_error(link, ret, CM_NETWORK_IO_TIMEOUT);
+        status = cm_cs_ssl_wait_on_error(link, ret, (int32)CM_NETWORK_IO_TIMEOUT);
         if (status == CM_ERROR) {
             break;
         } else if (status == CM_TIMEDOUT) {
-            tv += CM_NETWORK_IO_TIMEOUT;
+            tv += (int32)CM_NETWORK_IO_TIMEOUT;
         }
     } while (tv < timeout && !SSL_is_init_finished(ssl));
 
@@ -1814,7 +1534,6 @@ status_t cm_ssl_connect_socket(ssl_link_t *link, socket_t sock, int32 timeout)
 status_t cm_cs_ssl_send(ssl_link_t *link, const char *buf, uint32 size, int32 *send_size)
 {
     int32 ret, err;
-    uint32 wait_event;
     SSL *ssl = SSL_SOCK(link->ssl_sock);
 
     if (size == 0) {
@@ -1823,17 +1542,17 @@ status_t cm_cs_ssl_send(ssl_link_t *link, const char *buf, uint32 size, int32 *s
     }
 
     /* clear the error queue before the SSL I/O operation */
-    cm_set_sock_error(0);
+    CmSetSockError(0);
     ERR_clear_error();
 
-    ret = SSL_write(ssl, buf, size);
+    ret = SSL_write(ssl, buf, (int)size);
     if (ret > 0) {
         (*send_size) = ret;
         return CM_SUCCESS;
     }
 
-    if (!cm_cs_ssl_should_retry(link, ret, &wait_event, &err)) {
-        if (cm_get_sock_error() == EWOULDBLOCK) {
+    if (!cm_cs_ssl_should_retry(link, ret, NULL, &err)) {
+        if (CmGetSockError() == EWOULDBLOCK) {
             (*send_size) = 0;
             return CM_SUCCESS;
         }
@@ -1850,7 +1569,7 @@ status_t cm_cs_ssl_send_timed(ssl_link_t *link, const char *buf, uint32 size, ui
     uint32 offset = 0;
     int32 writen_size = 0;
     uint32 wait_interval = 0;
-    bool ready = CM_FALSE;
+    bool ready = false;
 
     if (link->ssl_sock == NULL) {
         CM_THROW_ERROR(ERR_PEER_CLOSED, "ssl");
@@ -1869,7 +1588,7 @@ status_t cm_cs_ssl_send_timed(ssl_link_t *link, const char *buf, uint32 size, ui
     }
 
     while (remain_size > 0) {
-        if (cm_cs_ssl_wait(link, CS_WAIT_FOR_WRITE, CM_POLL_WAIT, &ready) != CM_SUCCESS) {
+        if (cm_cs_ssl_wait(link, CS_WAIT_FOR_WRITE, (int32)CM_POLL_WAIT, &ready) != CM_SUCCESS) {
             return CM_ERROR;
         }
 
@@ -1888,8 +1607,8 @@ status_t cm_cs_ssl_send_timed(ssl_link_t *link, const char *buf, uint32 size, ui
         }
 
         if (writen_size > 0) {
-            remain_size -= writen_size;
-            offset += writen_size;
+            remain_size -= (uint32)writen_size;
+            offset += (uint32)writen_size;
         }
     }
 
@@ -1908,7 +1627,7 @@ status_t cm_cs_ssl_recv(ssl_link_t *link, char *buf, uint32 size, int32 *recv_si
 
     for (;;) {
         /* clear the error queue before the SSL I/O operation */
-        cm_set_sock_error(0);
+        CmSetSockError(0);
         ERR_clear_error();
 
         ret = SSL_read(ssl, (void *)buf, (int32)size);
@@ -1917,7 +1636,7 @@ status_t cm_cs_ssl_recv(ssl_link_t *link, char *buf, uint32 size, int32 *recv_si
         }
 
         if (!cm_cs_ssl_should_retry(link, ret, wait_event, &err)) {
-            err = cm_get_sock_error();
+            err = CmGetSockError();
             if (err == EINTR || err == EAGAIN) {
                 continue;
             }
@@ -1942,10 +1661,10 @@ status_t cm_cs_ssl_recv_remain(ssl_link_t *link, char *buf, uint32 offset, uint3
 {
     int32 recv_size;
     uint32 wait_interval = 0;
-    bool ready = CM_FALSE;
+    bool ready = false;
 
     while (remain_size > 0) {
-        CM_RETURN_IFERR(cm_cs_ssl_wait(link, wait_event, CM_POLL_WAIT, &ready));
+        CM_RETURN_IFERR(cm_cs_ssl_wait(link, wait_event, (int32)CM_POLL_WAIT, &ready));
 
         if (!ready) {
             wait_interval += CM_POLL_WAIT;
@@ -1958,8 +1677,8 @@ status_t cm_cs_ssl_recv_remain(ssl_link_t *link, char *buf, uint32 offset, uint3
         }
 
         CM_RETURN_IFERR(cm_cs_ssl_recv(link, buf + offset, remain_size, &recv_size, &wait_event));
-        remain_size -= recv_size;
-        offset += recv_size;
+        remain_size -= (uint32)recv_size;
+        offset += (uint32)recv_size;
     }
 
     return CM_SUCCESS;
@@ -2030,7 +1749,7 @@ int32 cm_cs_tcp_poll(struct pollfd *fds, uint32 nfds, int32 timeout)
 {
 #ifndef WIN32
     int32 ret = poll(fds, nfds, timeout);
-    if (ret < 0 && EINTR == errno) {
+    if (ret < 0 && errno == EINTR) {
         return 0;
     }
     return ret;
@@ -2071,14 +1790,15 @@ int32 cm_cs_tcp_poll(struct pollfd *fds, uint32 nfds, int32 timeout)
 
 status_t cm_cs_ssl_accept(ssl_ctx_t *fd, cs_pipe_t *pipe)
 {
-    ssl_link_t *link = NULL;
-    link = &pipe->link.ssl;
+    status_t status;
+    ssl_link_t *link = &pipe->link.ssl;
     link->ssl_ctx = fd;
-    if (cm_cs_ssl_accept_socket(link, pipe->link.tcp.sock, CM_SSL_IO_TIMEOUT) != CM_SUCCESS) {
-        return CM_ERROR;
+    status = cm_cs_ssl_accept_socket(link, pipe->link.tcp.sock, CM_SSL_ACCEPT_TIMEOUT);
+    if (status != CM_SUCCESS) {
+        return status;
     }
     pipe->type = CS_TYPE_SSL;
-    return CM_SUCCESS;
+    return status;
 }
 
 status_t cm_cs_tcp_wait(tcp_link_t *link, uint32 wait_for, int32 timeout, bool *ready)
@@ -2088,7 +1808,7 @@ status_t cm_cs_tcp_wait(tcp_link_t *link, uint32 wait_for, int32 timeout, bool *
     int32 tv;
 
     if (ready != NULL) {
-        *ready = CM_FALSE;
+        *ready = false;
     }
 
     if (link->closed) {
@@ -2125,28 +1845,28 @@ status_t cm_cs_tcp_wait(tcp_link_t *link, uint32 wait_for, int32 timeout, bool *
 
 status_t cm_cs_ssl_connect(ssl_ctx_t *fd, cs_pipe_t *pipe)
 {
-    ssl_link_t *link = NULL;
-    link = &pipe->link.ssl;
+    ssl_link_t *link = &pipe->link.ssl;
     link->ssl_ctx = fd;
-    if (cm_ssl_connect_socket(link, pipe->link.tcp.sock, CM_SSL_IO_TIMEOUT) != CM_SUCCESS) {
+    if (cm_ssl_connect_socket(link, pipe->link.tcp.sock, (int32)CM_SSL_IO_TIMEOUT) != CM_SUCCESS) {
         return CM_ERROR;
     }
     pipe->type = CS_TYPE_SSL;
     return CM_SUCCESS;
 }
 
-
 void ReconstructCipherContent(cipher_t *cipher_content, const RandkeyFile *randkey, const CipherkeyFile *cipherKey)
 {
-    int rc = 0;
-    rc = memcpy_s(cipher_content->cipher_text, CM_PASSWORD_BUFFER_SIZE, cipherKey->cipherkey, CIPHER_LEN);
-    securec_check_errno(rc, (void)rc);
-    cipher_content->cipher_len = CIPHER_LEN;
-
-    rc = memcpy_s(cipher_content->IV, (RANDOM_LEN + 1), cipherKey->vector_salt, RANDOM_LEN);
+    int rc = memcpy_s(cipher_content->cipher_text, CM_PASSWORD_BUFFER_SIZE, cipherKey->cipherkey, CIPHER_LEN);
     securec_check_errno(rc, (void)rc);
 
-    rc = memcpy_s(cipher_content->salt, (RANDOM_LEN + 1), cipherKey->key_salt, RANDOM_LEN);
+    /* pulCLen in CRYPT_encrypt is a fixed value 16 */
+    const uint32 pulCLen = 16;
+    cipher_content->cipher_len = pulCLen;
+
+    rc = memcpy_s(cipher_content->IV, (RANDOM_LEN + 1), cipherKey->vectorSalt, RANDOM_LEN);
+    securec_check_errno(rc, (void)rc);
+
+    rc = memcpy_s(cipher_content->salt, (RANDOM_LEN + 1), cipherKey->keySalt, RANDOM_LEN);
     securec_check_errno(rc, (void)rc);
 
     rc = memcpy_s(cipher_content->rand, (RANDOM_LEN + 1), randkey->randkey, RANDOM_LEN);
@@ -2213,21 +1933,16 @@ status_t cm_verify_ssl_key_pwd(char *plain, uint32 size, CipherMode mode)
     }
 
     RandkeyFile randKey;
-    ReadContentFromFile(randKeyFilePath, &randKey, sizeof(RandkeyFile));
+    (void)ReadContentFromFile(randKeyFilePath, &randKey, sizeof(RandkeyFile));
 
     CipherkeyFile cipherKey;
-    ReadContentFromFile(cipherKeyFilePath, &cipherKey, sizeof(CipherkeyFile));
+    (void)ReadContentFromFile(cipherKeyFilePath, &cipherKey, sizeof(CipherkeyFile));
 
     ReconstructCipherContent(&cipher, &randKey, &cipherKey);
 
-    if (cipher.cipher_len > 0) {
-        if (cm_decrypt_pwd(&cipher, (unsigned char *)plain, &size) != CM_SUCCESS) {
-            rcs = memset_s(&cipher, sizeof(cipher), 0, sizeof(cipher));
-            securec_check_errno(rcs, (void)rcs);
-            return CM_ERROR;
-        }
-    } else {
-        write_runlog(ERROR, "cipher_len is %u, can't decrypt pwd.\n", cipher.cipher_len);
+    if (CmDecryptPwd(&cipher, (unsigned char *)plain, &size) != CM_SUCCESS) {
+        rcs = memset_s(&cipher, sizeof(cipher), 0, sizeof(cipher));
+        securec_check_errno(rcs, (void)rcs);
         return CM_ERROR;
     }
 
@@ -2272,8 +1987,11 @@ static void CsSslDisconnect(ssl_link_t *link, int32 type, int32 *socket)
 
     if (link->tcp.closed) {
         CM_ASSERT(link->tcp.sock == CS_INVALID_SOCKET);
-        return;
+    }else {
+        /* Close tcp socket */
+        CsTcpDisconnect(&(link->tcp), type, socket);
     }
+
     SSL *ssl = SSL_SOCK(link->ssl_sock);
     if (ssl == NULL) {
         return;
@@ -2283,9 +2001,6 @@ static void CsSslDisconnect(ssl_link_t *link, int32 type, int32 *socket)
     if (SSL_shutdown(ssl) != 1) {
         write_runlog(ERROR, "type is %d: shutdown SSL failed.\n", type);
     }
-
-    /* Close tcp socket */
-    CsTcpDisconnect(&(link->tcp), type, socket);
 
     SSL_free(ssl);
     link->ssl_sock = NULL;
@@ -2302,14 +2017,12 @@ void CsDisconnect(cs_pipe_t *pipe, int32 type, int32 *socket)
     if (pipe->type == CS_TYPE_TCP) {
         CsTcpDisconnect(&(pipe->link.tcp), type, socket);
     }
-    if (pipe->type == CS_TYPE_SSL) {
-        CsSslDisconnect(&(pipe->link.ssl), type, socket);
-    }
+
+    CsSslDisconnect(&(pipe->link.ssl), type, socket);
+
     write_runlog(DEBUG5, "type is %d: end to disconnect pipe.\n", type);
 }
 
 #ifdef __cplusplus
 }
 #endif
-
-

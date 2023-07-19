@@ -72,33 +72,33 @@ extern THR_LOCAL const char* thread_name;
 #define MAKE_SQLSTATE(ch1, ch2, ch3, ch4, ch5) \
     (PGSIXBIT(ch1) + (PGSIXBIT(ch2) << 6) + (PGSIXBIT(ch3) << 12) + (PGSIXBIT(ch4) << 18) + (PGSIXBIT(ch5) << 24))
 
-#define check_errno(errno, express, file, line)                                                               \
+#define check_errno(errno, express, function, line)                                                               \
     {                                                                                                         \
         if (EOK != errno) {                                                                                   \
             express;                                                                                          \
-            write_runlog(ERROR, "%s : %d failed on calling security function, err:%d.\n", file, line, errno); \
+            write_runlog(FATAL, "%s : %d failed on calling security function, err:%d.\n", function, line, errno); \
             exit(1);                                                                                          \
         }                                                                                                     \
     }
 
-#define securec_check_errno(errno, express) check_errno(errno, express, __FILE__, __LINE__)
+#define securec_check_errno(errno, express) check_errno(errno, express, __FUNCTION__, __LINE__)
 
 /* Only used in sprintf_s or scanf_s cluster function */
-#define check_intval(errno, express, file, line)                                                            \
+#define check_intval(errno, express, function, line)                                                            \
     {                                                                                                       \
         if (errno == -1) {                                                                                  \
             express;                                                                                        \
-            write_runlog(ERROR, "check_intval %s : %d failed on calling security function.\n", file, line); \
+            write_runlog(FATAL, "check_intval %s : %d failed on calling security function.\n", function, line); \
             exit(1);                                                                                        \
         }                                                                                                   \
     }
 
-#define securec_check_intval(errno, express) check_intval(errno, express, __FILE__, __LINE__)
+#define securec_check_intval(errno, express) check_intval(errno, express, __FUNCTION__, __LINE__)
 
 #define check_sscanf_s_result(rc, expect_rc)                                                                \
     {                                                                                                       \
         if (rc != expect_rc) {                                                                              \
-            write_runlog(ERROR, "get value by sscanf_s return error:%d, %s:%d \n", rc, __FILE__, __LINE__); \
+            write_runlog(ERROR, "get value by sscanf_s return error:%d, %s:%d \n", rc, __FUNCTION__, __LINE__); \
         }                                                                                                   \
     }
 
@@ -112,7 +112,7 @@ extern THR_LOCAL const char* thread_name;
 #define ZENGINE_BIN_NAME "zengine"
 #define GTM_BIN_NAME "gs_gtm"
 #define CM_SERVER_BIN_NAME "cm_server"
-#define CM_AGENT_NAME "cm_agent"
+#define CM_AGENT_BIN_NAME "cm_agent"
 #define FENCED_MASTER_BIN_NAME "gaussdb"
 #define KERBEROS_BIN_NAME "krb5kdc"
 
@@ -154,7 +154,7 @@ void switchLogFile(void);
 void get_log_paramter(const char* confDir);
 int get_cm_thread_count(const char* config_file);
 void get_build_mode(const char* config_file);
-/*trim blank characters on both ends*/
+/* trim blank characters on both ends */
 char* trim(char* src);
 int is_comment_line(const char* str);
 int is_digit_string(char* str);
@@ -185,6 +185,7 @@ extern const char* prefix_name;
 /* inplace upgrade stuffs */
 extern volatile uint32 undocumentedVersion;
 #define INPLACE_UPGRADE_PRECOMMIT_VERSION 1
+#define DORADO_UPGRADE_VERSION (92574)
 
 template<typename... T>
 void write_runlog2(int elevel, T... args)
@@ -209,7 +210,7 @@ void write_runlog2(int elevel, T... args)
             securec_check_errno(rcs, (void)rcs);
         } else {
             rcs = snprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, errmsg_tmp);
-            securec_check_intval(rcs, );
+            securec_check_intval(rcs, (void)rcs);
         }
     }
 
@@ -220,7 +221,7 @@ void write_runlog2(int elevel, T... args)
             securec_check_errno(rcs, (void)rcs);
         } else {
             rcs = snprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, errdetail_tmp);
-            securec_check_intval(rcs, );
+            securec_check_intval(rcs, (void)rcs);
         }
     }
 
@@ -231,7 +232,7 @@ void write_runlog2(int elevel, T... args)
             securec_check_errno(rcs, (void)rcs);
         } else {
             rcs = snprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, errcause_tmp);
-            securec_check_intval(rcs, );
+            securec_check_intval(rcs, (void)rcs);
         }
     }
     if (erraction_tmp[0]) {
@@ -241,7 +242,7 @@ void write_runlog2(int elevel, T... args)
             securec_check_errno(rcs, (void)rcs);
         } else {
             rcs = snprintf_s(errbuf, sizeof(errbuf), sizeof(errbuf) - 1, erraction_tmp);
-            securec_check_intval(rcs, );
+            securec_check_intval(rcs, (void)rcs);
         }
     }
     if (errbuf[0]) {

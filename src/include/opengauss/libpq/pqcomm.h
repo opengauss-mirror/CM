@@ -82,7 +82,7 @@ extern const char* check_client_env(const char* input_env_value);
             }                                                                                           \
         }                                                                                               \
         rc = snprintf_s(path, sizeof(path), sizeof(path) - 1, "%s/.s.PGSQL.%d", unixSocketDir, (port)); \
-        securec_check_ss_c(rc, "\0", "\0");                                                             \
+        securec_check_ss_c(rc, "", "");                                                             \
     } while (0)
 
 #define UNIXSOCK_FENCED_MASTER_PATH(path, sockdir)                                                             \
@@ -103,7 +103,7 @@ extern const char* check_client_env(const char* input_env_value);
             }                                                                                                  \
         }                                                                                                      \
         rc = snprintf_s(path, sizeof(path), sizeof(path) - 1, "%s/.s.fencedMaster_unixdomain", unixSocketDir); \
-        securec_check_ss_c(rc, "\0", "\0");                                                                    \
+        securec_check_ss_c(rc, "", "");                                                                    \
     } while (0)
 
 /*

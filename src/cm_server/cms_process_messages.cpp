@@ -23,39 +23,29 @@
  */
 #include <vector>
 #include "cms_global_params.h"
-#include "cms_conn.h"
 #include "cms_arbitrate_datanode.h"
-#include "cms_process_messages.h"
 #include "cms_ddb.h"
 #include "cms_az.h"
 #include "cms_common.h"
 #include "cms_arbitrate_datanode_pms.h"
+#include "cms_rhb.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cms_cn.h"
 #include "cms_arbitrate_gtm.h"
 #endif
+#include "cms_arbitrate_cluster.h"
+#include "cms_process_messages.h"
 
 const int DOUBLE_REPLICATION = 2;
 
-#define PROCESS_MSG_BY_TYPE(struct_name, strunct_ptr, function_name)                                     \
-    do {                                                                                                 \
-        (strunct_ptr) = reinterpret_cast<struct_name *>(                                                 \
-            reinterpret_cast<void *>(const_cast<char *>(CmGetmsgbytes(inBuffer, sizeof(struct_name))))); \
-        if ((strunct_ptr) != NULL) {                                                                     \
-            function_name(con, (strunct_ptr));                                                           \
-        } else {                                                                                         \
-            write_runlog(ERROR, "CmGetmsgbytes failed, msg_type=%d.\n", msgType);           \
-        }                                                                                                \
-    } while (0)
-
-#define PROCESS_MSG_BY_TYPE_WITHOUT_CONN(struct_name, strunct_ptr, function_name)              \
-    do {                                                                                       \
-        (strunct_ptr) = (struct_name *)CmGetmsgbytes(inBuffer, sizeof(struct_name));           \
-        if ((strunct_ptr) != NULL) {                                                           \
-            function_name((strunct_ptr));                                                      \
-        } else {                                                                               \
-            write_runlog(ERROR, "CmGetmsgbytes failed, msg_type=%d.\n", msgType); \
-        }                                                                                      \
+#define PROCESS_MSG_BY_TYPE_WITHOUT_CONN(struct_name, strunct_ptr, function_name)    \
+    do {                                                                             \
+        (strunct_ptr) = (struct_name *)CmGetmsgbytes((CM_StringInfo)&recvMsgInfo->msg, sizeof(struct_name)); \
+        if ((strunct_ptr) != NULL) {                                                 \
+            (function_name)((strunct_ptr));                                          \
+        } else {                                                                     \
+            write_runlog(ERROR, "CmGetmsgbytes failed, msg_type=%d.\n", msgType);    \
+        }                                                                            \
     } while (0)
 
 typedef struct _init_node_ {
@@ -95,7 +85,7 @@ static bool judgeHAStatus(const int* normalStandbyDn, const int* dnNum, int azIn
                 write_runlog(WARNING,
                     "cluster is unavailable, synchronous_standby_mode is %d, normalStandbyDn in az1 is: %d, "
                     "one of member in this group is dn_%u.\n.",
-                    current_cluster_az_status,
+                    (int32)current_cluster_az_status,
                     normalStandbyDn[AZ1_INDEX],
                     g_instance_role_group_ptr[groupIndex].instanceMember[0].instanceId);
                 haNeedRepair = true;
@@ -107,7 +97,7 @@ static bool judgeHAStatus(const int* normalStandbyDn, const int* dnNum, int azIn
                 write_runlog(WARNING,
                     "cluster is unavailable, synchronous_standby_mode is %d, normalStandbyDn in az2 is: %d, "
                     "one of member in this group is dn_%u.\n.",
-                    current_cluster_az_status,
+                    (int32)current_cluster_az_status,
                     normalStandbyDn[AZ2_INDEX],
                     g_instance_role_group_ptr[groupIndex].instanceMember[0].instanceId);
                 haNeedRepair = true;
@@ -120,7 +110,7 @@ static bool judgeHAStatus(const int* normalStandbyDn, const int* dnNum, int azIn
                 write_runlog(WARNING,
                     "cluster is unavailable, synchronous_standby_mode is %d, normalStandbyDn in az1 is: %d, "
                     "normalStandbyDn in az2 is: %d, one of member in this group is dn_%u.\n.",
-                    current_cluster_az_status,
+                    (int32)current_cluster_az_status,
                     normalStandbyDn[AZ1_INDEX],
                     normalStandbyDn[AZ2_INDEX],
                     g_instance_role_group_ptr[groupIndex].instanceMember[0].instanceId);
@@ -137,7 +127,7 @@ static bool judgeHAStatus(const int* normalStandbyDn, const int* dnNum, int azIn
 int findAzIndex(const char azArray[][CM_AZ_NAME], const char* azName)
 {
     for (int j = 0; j < AZ_MEMBER_MAX_COUNT; j++) {
-        if (0 == strcmp(azName, *(azArray + j))) {
+        if (strcmp(azName, *(azArray + j)) == 0) {
             return j;
         }
     }
@@ -154,7 +144,7 @@ void getAZDyanmicStatus(int azCount, int* statusOnline, int* statusPrimary, int*
         for (int32 j = 0; j < count; j++) {
             int azIndex = findAzIndex(azArray, g_instance_role_group_ptr[i].instanceMember[j].azName);
             if (azIndex < 0 || azIndex >= azCount) {
-                write_runlog(ERROR,
+                write_runlog(FATAL,
                     "a unexpected az name %s when find azindex.\n",
                     g_instance_role_group_ptr[i].instanceMember[j].azName);
                 FreeNotifyMsg();
@@ -191,14 +181,14 @@ void getAZDyanmicStatus(int azCount, int* statusOnline, int* statusPrimary, int*
     }
 }
 
-void CheckCoordinateStatus(uint32 *cn_count, uint32 *abnormal_cn_count, uint32 i)
+void CheckCoordinateStatus(uint32 *abnormal_cn_count, uint32 i)
 {
     if (g_instance_role_group_ptr[i].instanceMember[0].role == INSTANCE_ROLE_DELETED ||
         g_instance_role_group_ptr[i].instanceMember[0].role == INSTANCE_ROLE_DELETING ||
         g_instance_group_report_status_ptr[i].instance_status.coordinatemember.status.status != INSTANCE_ROLE_NORMAL ||
         (g_instance_group_report_status_ptr[i].instance_status.coordinatemember.status.status == INSTANCE_ROLE_NORMAL &&
-            g_instance_group_report_status_ptr[i].instance_status.coordinatemember.status.db_state ==
-                INSTANCE_HA_STATE_STARTING)) {
+        g_instance_group_report_status_ptr[i].instance_status.coordinatemember.status.db_state ==
+        INSTANCE_HA_STATE_STARTING)) {
         (*abnormal_cn_count)++;
     }
 
@@ -212,13 +202,13 @@ status_t CheckGtmStatusOnSingleNode(uint32 i)
         return CM_SUCCESS;
     }
     write_runlog(LOG,
-        "CheckClusterStatus: gtm[%d][0]: local_role=%d \n", i,
+        "CheckClusterStatus: gtm[%u][0]: local_role=%d \n", i,
         g_instance_group_report_status_ptr[i].instance_status.gtm_member[0].local_status.local_role);
     g_HA_status->status = CM_STATUS_NEED_REPAIR;
     return CM_ERROR;
 }
 
-void CheckGtmStatusCond1(bool *cond1, bool *cond2, bool *cond3, bool *cond4, int i)
+void CheckGtmStatusCond1(bool *cond1, bool *cond2, bool *cond3, bool *cond4, uint32 i)
 {
     *cond1 = ((g_instance_group_report_status_ptr[i].instance_status.gtm_member[0].local_status.local_role ==
                   INSTANCE_ROLE_PRIMARY) &&
@@ -271,8 +261,8 @@ int CheckGtmSingleAzStatus(uint32 i)
         write_runlog(LOG, "Line:%d, gtm primary is most available\n", __LINE__);
     } else {
         write_runlog(LOG,
-            "CheckClusterStatus: gtm[%d][0]: local_role=%d, connect_status=%d, sync_mode=%d;   "
-            "gtm[%d][1]: local_role=%d, connect_status=%d, sync_mode=%d, etcd_num=%d\n",
+            "CheckClusterStatus: gtm[%u][0]: local_role=%d, connect_status=%d, sync_mode=%d;   "
+            "gtm[%u][1]: local_role=%d, connect_status=%d, sync_mode=%d, etcd_num=%u\n",
             i,
             g_instance_group_report_status_ptr[i].instance_status.gtm_member[0].local_status.local_role,
             g_instance_group_report_status_ptr[i].instance_status.gtm_member[0].local_status.connect_status,
@@ -289,7 +279,7 @@ int CheckGtmSingleAzStatus(uint32 i)
     return 0;
 }
 
-void CheckGtmMultiAzStatus(uint32 i)
+int CheckGtmMultiAzStatus(uint32 i)
 {
     bool findPrimary = false;
     bool findDown = false;
@@ -300,27 +290,27 @@ void CheckGtmMultiAzStatus(uint32 i)
             INSTANCE_ROLE_PRIMARY) {
             findPrimary = true;
         } else if (g_instance_group_report_status_ptr[i].instance_status.gtm_member[gtmId].local_status.local_role !=
-                       INSTANCE_ROLE_PRIMARY &&
+                    INSTANCE_ROLE_PRIMARY &&
                    g_instance_group_report_status_ptr[i].instance_status.gtm_member[gtmId].local_status.local_role !=
-                       INSTANCE_ROLE_STANDBY &&
+                    INSTANCE_ROLE_STANDBY &&
                    g_instance_group_report_status_ptr[i].instance_status.gtm_member[gtmId].local_status.local_role !=
-                       INSTANCE_ROLE_PENDING) {
+                    INSTANCE_ROLE_PENDING) {
             findDown = true;
         } else if (g_instance_group_report_status_ptr[i].instance_status.gtm_member[gtmId].local_status.local_role ==
                    INSTANCE_ROLE_PENDING) {
             findPending = true;
         }
     }
-    if (findPrimary == false) {
+    if (!findPrimary) {
         write_runlog(LOG, "there is no gtm primary.\n");
         g_HA_status->status = CM_STATUS_NEED_REPAIR;
-        return;
-    } else if ((findDown == true && findPrimary == true) || (findPending == true && findPrimary == true)) {
+        return -1;
+    } else if ((findDown && findPrimary) || (findPending && findPrimary)) {
         g_HA_status->status = CM_STATUS_DEGRADE;
     } else {
     }
 
-    return;
+    return 0;
 }
 
 int  CheckGtmStatus(uint32 i)
@@ -333,15 +323,10 @@ int  CheckGtmStatus(uint32 i)
     }
 
     if (g_instance_role_group_ptr[i].count >= 2) {
-        if (backup_open == CLUSTER_PRIMARY) {
-            if (g_multi_az_cluster) {
-                CheckGtmMultiAzStatus(i);
-            } else {
-                ret = CheckGtmSingleAzStatus(i);
-                if(ret != 0){
-                    return ret;
-                }
-            }
+        if (g_multi_az_cluster) {
+            ret = CheckGtmMultiAzStatus(i);
+        } else {
+            ret = CheckGtmSingleAzStatus(i);
         }
     }
     return ret;
@@ -349,15 +334,15 @@ int  CheckGtmStatus(uint32 i)
 
 status_t CheckSingleDataNodeStatus(uint32 i)
 {
-    if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.local_role ==
-            INSTANCE_ROLE_PRIMARY &&
+    if ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.local_role ==
+        INSTANCE_ROLE_PRIMARY ||
+        g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.local_role ==
+        INSTANCE_ROLE_NORMAL) &&
         g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.db_state ==
-            INSTANCE_HA_STATE_NORMAL) {
+        INSTANCE_HA_STATE_NORMAL) {
         return CM_SUCCESS;
     }
-    write_runlog(LOG,
-        "CheckClusterStatus: DN[%d][0]: local_role=%d, db_state=%d\n",
-        i,
+    write_runlog(LOG, "CheckClusterStatus: DN[%u][0]: local_role=%d, db_state=%d\n", i,
         g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.local_role,
         g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.db_state);
 
@@ -427,6 +412,20 @@ static bool InitCascadeStandbyMsg(
     return true;
 }
 
+static bool SatisfyNormalConditions(int dbState, int buildReason)
+{
+    if (dbState == INSTANCE_HA_STATE_NORMAL || dbState == INSTANCE_HA_STATE_CATCH_UP) {
+        return true;
+    }
+    if (backup_open == CLUSTER_OBS_STANDBY && g_clusterInstallType == INSTALL_TYPE_SHARE_STORAGE &&
+        dbState == INSTANCE_HA_STATE_NEED_REPAIR &&
+        (buildReason == INSTANCE_HA_DATANODE_BUILD_REASON_DISCONNECT ||
+        buildReason == INSTANCE_HA_DATANODE_BUILD_REASON_CONNECTING)) {
+        return true;
+    }
+    return false;
+}
+
 status_t InitMultiAzDataNodeStatus(uint32 i, int *minorityAz, InitNodeMsg *nodeMsg)
 {
     int groupDnNum = g_instance_role_group_ptr[i].count;
@@ -438,6 +437,7 @@ status_t InitMultiAzDataNodeStatus(uint32 i, int *minorityAz, InitNodeMsg *nodeM
     for (int j = 0; j < groupDnNum; j++) {
         int localRole = instRep->data_node_member[j].local_status.local_role;
         int status = instRep->data_node_member[j].local_status.db_state;
+        int buildReason = instRep->data_node_member[j].local_status.buildReason;
         bool statusNormal = (status == INSTANCE_HA_STATE_NORMAL || status == INSTANCE_HA_STATE_CATCH_UP);
         int azIndex = 0;
         dnRole = &(g_instance_role_group_ptr[i].instanceMember[j]);
@@ -460,7 +460,7 @@ status_t InitMultiAzDataNodeStatus(uint32 i, int *minorityAz, InitNodeMsg *nodeM
         }
         if (localRole == INSTANCE_ROLE_PRIMARY) {
             InitMultiAzDataNodePrimaryStatus(i, j, nodeMsg);
-        } else if (localRole == INSTANCE_ROLE_STANDBY && statusNormal) {
+        } else if (localRole == INSTANCE_ROLE_STANDBY && SatisfyNormalConditions(status, buildReason)) {
             nodeMsg->normalStandbyDn[azIndex]++;
             if (IsInstanceIdInSyncList(dnRole->instanceId, &(instRep->currentSyncList))) {
                 ++nodeMsg->normStdbInCurSL;
@@ -471,6 +471,18 @@ status_t InitMultiAzDataNodeStatus(uint32 i, int *minorityAz, InitNodeMsg *nodeM
         }
     }
     return CM_SUCCESS;
+}
+
+int ProcessDataNodeStatusObsStandby(int normalStandbyDnSum, int groupDnNum)
+{
+    if ((normalStandbyDnSum < groupDnNum && normalStandbyDnSum > groupDnNum / 2) ||
+        (g_dn_replication_num == DOUBLE_REPLICATION && normalStandbyDnSum == 1)) {
+        g_HA_status->status = CM_STATUS_DEGRADE;
+    } else if (normalStandbyDnSum <= groupDnNum / 2) {
+        g_HA_status->status = CM_STATUS_NEED_REPAIR;
+        return -1;
+    }
+    return 0;
 }
 
 int ProcessDataNodeStatusStreamingStandby(int normalStandbyDnSum, int groupDnNum, const InitNodeMsg *nodeMsg)
@@ -511,7 +523,7 @@ int ProcessHaStatusWhenCmsMinority(
     return 1;
 }
 
-status_t ProcessHaStatusWhenException(int normalStandbyDnSum, int groupDnNum, int minorityAz, int normalPrimaryDn)
+status_t ProcessHaStatusWhenException(int normalStandbyDnSum, int groupDnNum, int normalPrimaryDn)
 {
     if (normalPrimaryDn != 1 || normalStandbyDnSum >= groupDnNum || normalStandbyDnSum < 0 ||
         (normalStandbyDnSum == 0 && g_dn_replication_num > 2)) {
@@ -527,7 +539,6 @@ status_t ProcessHaStatusWhenException(int normalStandbyDnSum, int groupDnNum, in
 
 int ProcessHaStatusWhenNoBackup(int normalStandbyDnSum, int groupDnNum, int minorityAz, const InitNodeMsg *nodeMsg)
 {
-    int ret = CM_SUCCESS;
     int normalPrimaryDn = nodeMsg->normalPrimaryDn;
     if ((cm_arbitration_mode == MINORITY_ARBITRATION || cm_server_start_mode == MINORITY_START) && minorityAz != -1) {
         return ProcessHaStatusWhenCmsMinority(normalStandbyDnSum, nodeMsg->dnNum, minorityAz, normalPrimaryDn);
@@ -540,9 +551,9 @@ int ProcessHaStatusWhenNoBackup(int normalStandbyDnSum, int groupDnNum, int mino
             return 0;
         }
     }
-    ret = ProcessHaStatusWhenException(normalStandbyDnSum, groupDnNum, minorityAz, normalPrimaryDn);
+    status_t ret = ProcessHaStatusWhenException(normalStandbyDnSum, groupDnNum, normalPrimaryDn);
     if (ret != CM_SUCCESS) {
-        return ret;
+        return (int)ret;
     }
 
     if (normalPrimaryDn == 1 && normalStandbyDnSum > 0 && normalStandbyDnSum < (groupDnNum - 1) && !g_only_dn_cluster) {
@@ -558,7 +569,7 @@ int ProcessHaStatusWhenNoBackup(int normalStandbyDnSum, int groupDnNum, int mino
     return 0;
 }
 
-static void PrintClusterStatus(uint32 groupIdx, int32 groupDnNum, const InitNodeMsg *nodeMsg)
+static void PrintClusterStatus(uint32 groupIdx, int32 groupDnNum, int normalStandbyDnSum, const InitNodeMsg *nodeMsg)
 {
     if (nodeMsg->curStatus == 0 && log_min_messages > LOG) {
         return;
@@ -570,11 +581,11 @@ static void PrintClusterStatus(uint32 groupIdx, int32 groupDnNum, const InitNode
     char voteAzList[MAX_PATH_LEN] = {0};
     GetSyncListString(&(report->currentSyncList), syncList, MAX_PATH_LEN);
     GetDnStatusString(&(report->voteAzInstance), voteAzList, MAX_PATH_LEN);
-    write_runlog(LOG, "%s: instanceId(%u) count: %d, groupDnNum: %d, "
+    write_runlog(LOG, "%s: instanceId(%u) count: %d, groupDnNum: %d, normalStandbyDnSum: %d ,"
         "dn status:[primary: [%s], standby:[%s], cascade:[(%s): (%s)]], "
         "syncList: [cur: [%s], norPrim: [%d], norSdb: [%d]], "
         "voteAZ: [prim: (%u), list: [%s]], cluster_state=%d, current_cluster_az_status is %d.\n",
-        nodeMsg->methodStr, instId, count, groupDnNum,
+        nodeMsg->methodStr, instId, count, groupDnNum, normalStandbyDnSum,
         nodeMsg->primaryStr, nodeMsg->standbyStr, nodeMsg->casNorStr, nodeMsg->casStr,
         syncList, nodeMsg->norPrimInCurSL, nodeMsg->normStdbInCurSL,
         nodeMsg->primInVA, voteAzList, nodeMsg->curStatus, (int)current_cluster_az_status);
@@ -595,7 +606,9 @@ static void SetNodeMsgCurState(InitNodeMsg *nodeMsg, int32 status)
 static int ProcessHaStatus2AzStartSyncThr(int count, int groupDnNum, InitNodeMsg *nodeMsg)
 {
     SetNodeMsgMethodStr(nodeMsg, "[ProcessHaStatus2AzStartSyncThr]");
-    if ((nodeMsg->norPrimInCurSL + nodeMsg->normalVoteAzPrimary) != 1 || nodeMsg->normStdbInCurSL < count / 2) {
+    // note that, number of normal standby in sync list should >= groupDnNum/2, and groupDnNum should >= 3
+    if ((nodeMsg->norPrimInCurSL + nodeMsg->normalVoteAzPrimary) != 1 ||
+        (g_cm_server_num > CMS_ONE_PRIMARY_ONE_STANDBY && nodeMsg->normStdbInCurSL < count / 2)) {
         SetNodeMsgCurState(nodeMsg, CM_STATUS_NEED_REPAIR);
         return -1;
     }
@@ -609,7 +622,7 @@ static int ProcessHaStatus2AzStartSyncThr(int count, int groupDnNum, InitNodeMsg
     return 1;
 }
 
-int JudgeAz3DeployMent(const int *statusDnFail, int i, InitNodeMsg *nodeMsg)
+int JudgeAz3DeployMent(const int *statusDnFail, uint32 i, InitNodeMsg *nodeMsg)
 {
     SetNodeMsgMethodStr(nodeMsg, "[JudgeAz3DeployMent]");
     const int one_hundred = 100;
@@ -672,7 +685,7 @@ static int32 CheckStatusInCascade(int32 normalStandbyDnSum, int32 groupDnNum, In
 }
 
 int ProcessHaStatus2Az(
-    const int *statusDnFail, int i, int normalStandbyDnSum, int groupDnNum, InitNodeMsg *nodeMsg)
+    const int *statusDnFail, uint32 i, int normalStandbyDnSum, int groupDnNum, InitNodeMsg *nodeMsg)
 {
     if (g_dn_replication_num <= DOUBLE_REPLICATION) {
         return 0;
@@ -680,6 +693,11 @@ int ProcessHaStatus2Az(
     int32 ret = CheckStatusInCascade(normalStandbyDnSum, groupDnNum, nodeMsg);
     if (ret != 0) {
         return ret;
+    }
+    /* if it is doing modify synclist, cluster can be degrade at most */
+    if (!CompareCurWithExceptSyncList(i)) {
+        SetNodeMsgMethodStr(nodeMsg, "[ProcessHaStatus2Az, CompareCurWithExceptSyncList]");
+        SetNodeMsgCurState(nodeMsg, CM_STATUS_DEGRADE);
     }
     /* If AZ3 does not deploy DN, when DN fault occurs, cluster may switchover to AZ1 or AZ2,
     we need judge the Ha status specially */
@@ -709,15 +727,12 @@ int CheckMultiAzDataNodeStatus(uint32 i, const int *statusDnFail)
 {
     int groupDnNum = g_instance_role_group_ptr[i].count;
     int minorityAz = -1;
-    int  ret = 0;
-    errno_t rc = 0;
 
     InitNodeMsg nodeMsg;
-    rc = memset_s(&nodeMsg, sizeof(InitNodeMsg), 0, sizeof(InitNodeMsg));
+    errno_t rc = memset_s(&nodeMsg, sizeof(InitNodeMsg), 0, sizeof(InitNodeMsg));
     securec_check_errno(rc, (void)rc);
 
-    ret = InitMultiAzDataNodeStatus(i, &minorityAz, &nodeMsg);
-    if (ret != CM_SUCCESS) {
+    if (InitMultiAzDataNodeStatus(i, &minorityAz, &nodeMsg) != CM_SUCCESS) {
         return -1;
     }
     /* step2: simple situation judgment */
@@ -726,8 +741,15 @@ int CheckMultiAzDataNodeStatus(uint32 i, const int *statusDnFail)
     /* The offline node is considered as a normal standby node when determining the cluster status */
     if (SetOfflineNode()) {
         normalStandbyDnSum++;
+        nodeMsg.normStdbInCurSL++;
     }
-    if (backup_open == CLUSTER_STREAMING_STANDBY) {
+    int ret;
+    if (backup_open == CLUSTER_OBS_STANDBY) {
+        ret = ProcessDataNodeStatusObsStandby(normalStandbyDnSum, groupDnNum);
+        if (ret != 0) {
+            return ret;
+        }
+    } else if (backup_open == CLUSTER_STREAMING_STANDBY) {
         ret = ProcessDataNodeStatusStreamingStandby(normalStandbyDnSum, groupDnNum, &nodeMsg);
         if (ret != 0) {
             return ret;
@@ -738,7 +760,7 @@ int CheckMultiAzDataNodeStatus(uint32 i, const int *statusDnFail)
             return ret;
         }
         ret = ProcessHaStatus2Az(statusDnFail, i, normalStandbyDnSum, groupDnNum, &nodeMsg);
-        PrintClusterStatus(i, groupDnNum, &nodeMsg);
+        PrintClusterStatus(i, groupDnNum, normalStandbyDnSum, &nodeMsg);
         if (ret != 0) {
             return ret;
         }
@@ -747,7 +769,7 @@ int CheckMultiAzDataNodeStatus(uint32 i, const int *statusDnFail)
     return 0;
 }
 
-void CheckDnRoleCond1(bool *cond1, bool *cond2, bool *cond3, int i)
+void CheckDnRoleCond1(bool *cond1, bool *cond2, bool *cond3, uint32 i)
 {
     *cond1 = ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[0].local_status.local_role ==
                   INSTANCE_ROLE_PRIMARY) &&
@@ -782,7 +804,7 @@ void CheckDnRoleCond1(bool *cond1, bool *cond2, bool *cond3, int i)
     return;
 }
 
-void CheckDnRoleCond2(bool *cond4, bool *cond5, bool *cond6, int i)
+void CheckDnRoleCond2(bool *cond4, bool *cond5, bool *cond6, uint32 i)
 {
     *cond4 = ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[1].local_status.local_role ==
                   INSTANCE_ROLE_PRIMARY) &&
@@ -813,10 +835,55 @@ void CheckDnRoleCond2(bool *cond4, bool *cond5, bool *cond6, int i)
     return;
 }
 
-int  CheckDataNodeStatus(uint32 i, const int *statusDnFail)
+int CheckShareDiskDataNodeStatus(uint32 groupIndex)
+{
+    int32 normalPriCnt = 0;
+    int32 priCnt = 0;
+    int32 dnFaultCnt = 0;
+    int32 unknownCnt = 0;
+    cm_instance_datanode_report_status *dnReport =
+        g_instance_group_report_status_ptr[groupIndex].instance_status.data_node_member;
+    for (int32 i = 0; i < g_instance_role_group_ptr->count; ++i) {
+        if (dnReport[i].local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+            ++priCnt;
+            if (dnReport[i].local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
+                ++normalPriCnt;
+            }
+        }
+        if (dnReport[i].local_status.db_state != INSTANCE_HA_STATE_NORMAL) {
+            ++dnFaultCnt;
+        }
+        if (dnReport[i].local_status.local_role == INSTANCE_HA_STATE_UNKONWN) {
+            ++unknownCnt;
+        }
+    }
+    if (normalPriCnt != 1) {
+        g_HA_status->status = CM_STATUS_NEED_REPAIR;
+        write_runlog(LOG,
+            "cluster status is unavail, instanceId(%u), normalPriCnt=%d, priCnt=%d, dnFaultCnt=%d, unknownCnt=%d.\n",
+            GetInstanceIdInGroup(groupIndex, 0), normalPriCnt, priCnt, dnFaultCnt, unknownCnt);
+        return -1;
+    }
+    if (dnFaultCnt != 0 || unknownCnt != 0) {
+        g_HA_status->status = CM_STATUS_DEGRADE;
+        write_runlog(LOG,
+            "cluster status is degrade, instanceId(%u), normalPriCnt=%d, priCnt=%d, dnFaultCnt=%d, unknownCnt=%d.\n",
+            GetInstanceIdInGroup(groupIndex, 0), normalPriCnt, priCnt, dnFaultCnt, unknownCnt);
+        return 1;
+    }
+
+    return 0;
+}
+
+int CheckDataNodeStatus(uint32 i, const int *statusDnFail)
 {
     int ret = 0;
     bool cond1, cond2, cond3, cond4, cond5, cond6;
+
+    if (EnableShareDisk()) {
+        return CheckShareDiskDataNodeStatus(i);
+    }
+
     if (g_single_node_cluster) {
         if (CheckSingleDataNodeStatus(i) != CM_SUCCESS) {
             return -1;
@@ -867,8 +934,8 @@ void CheckClusterStatus()
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE) {
             cn_count++;
-            CheckCoordinateStatus(&cn_count, &abnormal_cn_count, i);
-        } else if (!g_gtm_free_mode &&  (backup_open == CLUSTER_PRIMARY) &&
+            CheckCoordinateStatus(&abnormal_cn_count, i);
+        } else if (!g_gtm_free_mode &&
             g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_GTM) {
             ret = CheckGtmStatus(i);
             if (ret == -1) {
@@ -906,10 +973,6 @@ void CheckClusterStatus()
     }
 }
 
-/**
- * @brief Set the cluster status object
- * 
- */
 void set_cluster_status(void)
 {
     uint32 i;
@@ -925,8 +988,8 @@ void set_cluster_status(void)
      */
     for (i = 0; i < g_dynamic_header->relationCount; i++) {
         if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE) {
-            if (GROUP_MODE_PENDING ==
-                g_instance_group_report_status_ptr[i].instance_status.coordinatemember.group_mode) {
+            if (g_instance_group_report_status_ptr[i].instance_status.coordinatemember.group_mode ==
+                GROUP_MODE_PENDING) {
                 g_HA_status->is_all_group_mode_pending = true;
                 return;
             }
@@ -955,7 +1018,7 @@ int get_logicClusterId_by_dynamic_dataNodeId(uint32 dataNodeId)
             }
         }
     }
-    if (g_logic_cluster_count > 0 && -1 == logicClusterId) {
+    if (g_logic_cluster_count > 0 && logicClusterId == -1) {
         logicClusterId = LOGIC_CLUSTER_NUMBER - 1;
         g_elastic_exist_node = true;
     }
@@ -963,14 +1026,15 @@ int get_logicClusterId_by_dynamic_dataNodeId(uint32 dataNodeId)
     return logicClusterId;
 }
 
-int isNodeBalanced(uint32* switchedInstance)
+int isNodeBalanced(uint32 *switchedInstance)
 {
     int instanceType = 0;
     int switchedCount = 0;
     int logicClusterId = -1;
 
-    for (uint32 i = 0; i < LOGIC_CLUSTER_NUMBER; i++)
+    for (uint32 i = 0; i < LOGIC_CLUSTER_NUMBER; i++) {
         g_logicClusterStaticConfig[i].isLogicClusterBalanced = 0;
+    }
 
     for (uint32 i = 0; i < g_dynamic_header->relationCount && switchedCount < MAX_INSTANCES_LEN; i++) {
         (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
@@ -978,34 +1042,32 @@ int isNodeBalanced(uint32* switchedInstance)
             instanceType = g_instance_role_group_ptr[i].instanceMember[j].instanceType;
             switch (instanceType) {
                 case INSTANCE_TYPE_GTM:
-                    if ((g_instance_group_report_status_ptr[i].instance_status.gtm_member[j]
-                            .local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+                    if ((g_instance_group_report_status_ptr[i].instance_status.gtm_member[j].local_status.local_role ==
+                        INSTANCE_ROLE_PRIMARY &&
                         g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_STANDBY) ||
-                        (g_instance_group_report_status_ptr[i].instance_status.gtm_member[j]
-                            .local_status.local_role != INSTANCE_ROLE_PRIMARY &&
-                            g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_PRIMARY)) {
-                        if (switchedInstance != NULL)
+                        (g_instance_group_report_status_ptr[i].instance_status.gtm_member[j].local_status.local_role !=
+                        INSTANCE_ROLE_PRIMARY &&
+                        g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_PRIMARY)) {
+                        if (switchedInstance != NULL) {
                             switchedInstance[switchedCount] = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
-
+                        }
                         switchedCount++;
                     }
 
                     break;
-                case INSTANCE_TYPE_DATANODE:
+                case INSTANCE_TYPE_DATANODE: {
+                    const cm_local_replconninfo *dnStat =
+                        &g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status;
                     logicClusterId = get_logicClusterId_by_dynamic_dataNodeId(
                         g_instance_role_group_ptr[i].instanceMember[0].instanceId);
-                    if (g_single_node_cluster &&
-                        g_instance_group_report_status_ptr[i].instance_status.data_node_member[j]
-                            .local_status.local_role == INSTANCE_ROLE_NORMAL &&
+                    if (g_single_node_cluster && dnStat->local_role == INSTANCE_ROLE_NORMAL &&
                         g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_PRIMARY) {
                         break;
                     }
 
-                    if ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[j]
-                            .local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+                    if ((dnStat->local_role == INSTANCE_ROLE_PRIMARY &&
                         g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_STANDBY) ||
-                        (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j]
-                            .local_status.local_role != INSTANCE_ROLE_PRIMARY &&
+                        (dnStat->local_role != INSTANCE_ROLE_PRIMARY &&
                         g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_PRIMARY)) {
                         if (switchedInstance != NULL) {
                             switchedInstance[switchedCount] = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
@@ -1018,6 +1080,7 @@ int isNodeBalanced(uint32* switchedInstance)
                     }
 
                     break;
+                }
                 default:
                     break;
             }
@@ -1028,31 +1091,26 @@ int isNodeBalanced(uint32* switchedInstance)
     return switchedCount;
 }
 
-/**
+/* *
  * @brief check if cm_ctl switchover -A/-z done
- *        Switchover full/AZ DONE return true if:
- *          1. no MSG_CM_AGENT_SWITCHOVER pending command
- *          2. standby instance have been promoted to Primary
+ * Switchover full/AZ DONE return true if:
+ * 1. no MSG_CM_AGENT_SWITCHOVER pending command
+ * 2. standby instance have been promoted to Primary
  *
  * @return int
  */
 int switchoverFullDone(void)
 {
-    uint32 i = 0;
     uint32 group_index = 0;
     int ret = 0;
     int member_index = 0;
     int instanceType = 0;
 
-    for (i = 0; i < (uint32)switchOverInstances.size(); i++) {
-        ret = find_node_in_dynamic_configure(switchOverInstances[i].node,
-            switchOverInstances[i].instanceId,
-            &group_index,
-            &member_index);
+    for (uint32 i = 0; i < (uint32)switchOverInstances.size(); i++) {
+        ret = find_node_in_dynamic_configure(switchOverInstances[i].node, switchOverInstances[i].instanceId,
+            &group_index, &member_index);
         if (ret != 0) {
-            write_runlog(LOG,
-                "can't find the instance(node =%u  instanceid =%u)\n",
-                switchOverInstances[i].node,
+            write_runlog(LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchOverInstances[i].node,
                 switchOverInstances[i].instanceId);
             return SWITCHOVER_FAIL;
         }
@@ -1066,10 +1124,8 @@ int switchoverFullDone(void)
                     g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[member_index]
                         .local_status.local_role != INSTANCE_ROLE_PRIMARY) {
                     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
-                    write_runlog(LOG,
-                        "the instance(node = %u  instanceid = %u) switchover fail\n",
-                        switchOverInstances[i].node,
-                        switchOverInstances[i].instanceId);
+                    write_runlog(LOG, "the instance(node = %u  instanceid = %u) switchover fail\n",
+                        switchOverInstances[i].node, switchOverInstances[i].instanceId);
                     return SWITCHOVER_FAIL;
                 }
                 if ((g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
@@ -1079,16 +1135,13 @@ int switchoverFullDone(void)
                     (g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[member_index]
                         .local_status.connect_status == CON_OK))) {
                     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
-                    write_runlog(LOG,
-                        "the instance(node = %u  instanceid = %u) is executing switchover.\n",
-                        switchOverInstances[i].node,
-                        switchOverInstances[i].instanceId);
+                    write_runlog(LOG, "the instance(node = %u  instanceid = %u) is executing switchover.\n",
+                        switchOverInstances[i].node, switchOverInstances[i].instanceId);
                     return SWITCHOVER_EXECING;
                 } else {
                     write_runlog(LOG,
                         "the instance(node = %u  instanceid = %u) switchover success, pending command :%d, role:%d.\n",
-                        switchOverInstances[i].node,
-                        switchOverInstances[i].instanceId,
+                        switchOverInstances[i].node, switchOverInstances[i].instanceId,
                         g_instance_group_report_status_ptr[group_index]
                             .instance_status.command_member[member_index]
                             .pengding_command,
@@ -1099,27 +1152,24 @@ int switchoverFullDone(void)
                 break;
             case INSTANCE_TYPE_DATANODE:
                 if (g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
-                        .pengding_command != MSG_CM_AGENT_SWITCHOVER &&
+                        .pengding_command != (int32)MSG_CM_AGENT_SWITCHOVER &&
                     g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index]
                         .local_status.local_role != INSTANCE_ROLE_PRIMARY) {
                     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
-                    write_runlog(LOG,
-                        "the instance(node = %u  instanceid = %u) switchover fail\n",
-                        switchOverInstances[i].node,
-                        switchOverInstances[i].instanceId);
+                    write_runlog(LOG, "the instance(node = %u  instanceid = %u) switchover fail\n",
+                        switchOverInstances[i].node, switchOverInstances[i].instanceId);
                     return SWITCHOVER_FAIL;
                 }
                 if (g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
-                        .pengding_command == MSG_CM_AGENT_SWITCHOVER) {
+                    .pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER) {
                     for (int ii = 0; ii < g_instance_role_group_ptr[group_index].count; ii++) {
                         if (g_instance_role_group_ptr[group_index].instanceMember[ii].role == INSTANCE_ROLE_PRIMARY &&
                             g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[ii]
-                                .local_status.db_state != INSTANCE_HA_STATE_NORMAL) {
+                            .local_status.db_state != INSTANCE_HA_STATE_NORMAL) {
                             (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
                             write_runlog(LOG,
                                 "the instance(node = %u  instanceid = %u), static primary dbstate is not normal\n",
-                                switchOverInstances[i].node,
-                                switchOverInstances[i].instanceId);
+                                switchOverInstances[i].node, switchOverInstances[i].instanceId);
                             return SWITCHOVER_EXECING;
                         }
                     }
@@ -1129,10 +1179,8 @@ int switchoverFullDone(void)
                     (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index]
                         .local_status.local_role != INSTANCE_ROLE_PRIMARY)) {
                     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
-                    write_runlog(LOG,
-                        "the instance(node = %u  instanceid = %u) is executing switchover.\n",
-                        switchOverInstances[i].node,
-                        switchOverInstances[i].instanceId);
+                    write_runlog(LOG, "the instance(node = %u  instanceid = %u) is executing switchover.\n",
+                        switchOverInstances[i].node, switchOverInstances[i].instanceId);
                     return SWITCHOVER_EXECING;
                 } else {
                     write_runlog(LOG,
@@ -1156,7 +1204,7 @@ int switchoverFullDone(void)
     return SWITCHOVER_SUCCESS;
 }
 
-/**
+/* *
  * @brief
  *
  * @param  time_out         My Param doc
@@ -1172,14 +1220,14 @@ void SwitchOverSetting(int time_out, int instanceType, uint32 ptrIndex, int memb
     cm_instance_command_status *cmd =
         &(g_instance_group_report_status_ptr[ptrIndex].instance_status.command_member[memberIndex]);
     cmd->command_status = INSTANCE_COMMAND_WAIT_EXEC;
-    cmd->pengding_command = MSG_CM_AGENT_SWITCHOVER;
+    cmd->pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
     cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
     cmd->cmdSour = INSTANCE_ROLE_STANDBY;
     cmd->time_out = time_out;
     cmd->peerInstId = GetPeerInstId(ptrIndex, memberIndex);
     SetSendTimes(ptrIndex, memberIndex, time_out);
     write_runlog(LOG,
-        "az switchover instanceid %d\n",
+        "az switchover instanceid %u\n",
         g_instance_role_group_ptr[ptrIndex].instanceMember[memberIndex].instanceId);
 
     /* clear peer comand status */
@@ -1196,121 +1244,86 @@ void SwitchOverSetting(int time_out, int instanceType, uint32 ptrIndex, int memb
     switchOverInstances.push_back(instance);
 }
 
-/**
- * @brief
- *
- * @return true
- * @return false
- */
-bool process_auto_switchover_full_check()
+static void MsgRelationDatanode(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    int switchover_done = switchoverFullDone();
-    /* delete the data  and clear the flag */
-    if (switchover_done == SWITCHOVER_SUCCESS) {
-        write_runlog(LOG, "auto Switchover has been completed.\n");
-        switchOverInstances.clear();
-        (void)pthread_rwlock_wrlock(&(switchover_az_rwlock));
-        switchoverAZInProgress = false;
-        (void)pthread_rwlock_unlock(&(switchover_az_rwlock));
-        return false;
-    } else {
-        write_runlog(LOG, "auto Switchover is not completed, status is %d.\n", switchover_done);
-    }
-    return true;
-}
-
-static void MsgRelationDatanode(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
-{
-    ctl_to_cm_datanode_relation_info *ctlToCmDatanodeRelationInfoPtr = NULL;
+    ctl_to_cm_datanode_relation_info *ctlToCmDatanodeRelationInfoPtr;
     PROCESS_MSG_BY_TYPE(
         ctl_to_cm_datanode_relation_info, ctlToCmDatanodeRelationInfoPtr, process_ctl_to_cm_get_datanode_relation_msg);
 }
 
-static void MsgSwitchover(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchover(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_switchover *ctlToCmSwithoverPtr = NULL;
+    ctl_to_cm_switchover *ctlToCmSwithoverPtr;
     PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverMsg);
 }
 
-static void MsgSwitchoverFast(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchoverFast(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_switchover *ctlToCmSwithoverPtr = NULL;
+    ctl_to_cm_switchover *ctlToCmSwithoverPtr;
     msgProc->doSwitchover = true;
     PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverMsg);
 }
 
-static void MsgSwitchoverAll(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchoverAll(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_switchover *ctlToCmSwithoverPtr = NULL;
+    ctl_to_cm_switchover *ctlToCmSwithoverPtr;
     PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverAllMsg);
 }
 
-static void MsgSwitchoverFull(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchoverFull(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_switchover *ctlToCmSwithoverPtr = NULL;
+    ctl_to_cm_switchover *ctlToCmSwithoverPtr;
     PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, process_ctl_to_cm_switchover_full_msg);
 }
 
-static void MsgSwitchoverFullCheck(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchoverFullCheck(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmSwitchoverFullCheckMsg(con);
+    ProcessCtlToCmSwitchoverFullCheckMsg(recvMsgInfo);
 }
 
-static void MsgSwitchoverFullTimeout(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchoverFullTimeout(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmSwitchoverFullTimeoutMsg(con);
+    ProcessCtlToCmSwitchoverFullTimeoutMsg(recvMsgInfo);
 }
 
-static void MsgSwitchoverAz(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchoverAz(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_switchover *ctlToCmSwithoverPtr = NULL;
+    ctl_to_cm_switchover *ctlToCmSwithoverPtr;
     PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverAzMsg);
 }
 
-static void MsgSwitchoverAzTimeout(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchoverAzTimeout(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    process_ctl_to_cm_switchover_az_timeout_msg(con);
+    process_ctl_to_cm_switchover_az_timeout_msg(recvMsgInfo);
 }
 
-static void MsgSwitchoverAzCheck(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchoverAzCheck(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmSwitchoverAzCheckMsg(con);
+    ProcessCtlToCmSwitchoverAzCheckMsg(recvMsgInfo);
 }
 
-static void MsgBalanceCheck(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgBalanceCheck(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    process_ctl_to_cm_balance_check_msg(con);
+    process_ctl_to_cm_balance_check_msg(recvMsgInfo);
 }
 
-static void MsgBalanceResult(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgBalanceResult(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmBalanceResultMsg(con);
+    ProcessCtlToCmBalanceResultMsg(recvMsgInfo);
 }
 
-static void MsgSetMode(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSetMode(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    process_ctl_to_cm_setmode(con);
+    process_ctl_to_cm_setmode(recvMsgInfo);
 }
 
-static void MsgBuild(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgBuild(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_build* ctlToCmBuildPtr = NULL;
+    ctl_to_cm_build* ctlToCmBuildPtr;
     PROCESS_MSG_BY_TYPE(ctl_to_cm_build, ctlToCmBuildPtr, ProcessCtlToCmBuildMsg);
 }
 
-static void MsgSync(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSync(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     return;
 }
@@ -1329,10 +1342,10 @@ static void ProcessCtlToCmNotifyMsg(const ctl_to_cm_notify* ctlToCmNotifyPtr)
     return;
 }
 
-static void MsgNotify(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgNotify(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     const ctl_to_cm_notify *ctlToCmNotifyPtr =
-        (const ctl_to_cm_notify *)CmGetmsgbytes(inBuffer, sizeof(ctl_to_cm_notify));
+        (const ctl_to_cm_notify *)CmGetmsgbytes((CM_StringInfo)&recvMsgInfo->msg, sizeof(ctl_to_cm_notify));
     if (ctlToCmNotifyPtr != NULL) {
         ProcessCtlToCmNotifyMsg(ctlToCmNotifyPtr);
     } else {
@@ -1340,201 +1353,274 @@ static void MsgNotify(CM_Connection *con, CM_StringInfo inBuffer, int msgType, C
     }
 }
 
-static void MsgQuery(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgQuery(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_query *ctlToCmQueryPtr = NULL;
+    ctl_to_cm_query *ctlToCmQueryPtr;
     PROCESS_MSG_BY_TYPE(ctl_to_cm_query, ctlToCmQueryPtr, ProcessCtlToCmQueryMsg);
 }
 
-static void MsgCtlResourceStatus(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgCtlResourceStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    CmsToCtlGroupResStatus *queryStatusPtr = NULL;
+    CmsToCtlGroupResStatus *queryStatusPtr;
     PROCESS_MSG_BY_TYPE(CmsToCtlGroupResStatus, queryStatusPtr, ProcessResInstanceStatusMsg);
 }
 
-static void MsgQueryCmserver(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgQueryCmserver(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmQueryCmserverMsg(con);
+    ProcessCtlToCmQueryCmserverMsg(recvMsgInfo);
 }
 
-static void MsgSet(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSet(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ctl_to_cm_set *ctl_to_cm_set_ptr = NULL;
+    ctl_to_cm_set *ctl_to_cm_set_ptr;
     PROCESS_MSG_BY_TYPE(ctl_to_cm_set, ctl_to_cm_set_ptr, ProcessCtlToCmSetMsg);
 }
 
-static void MsgGet(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgGet(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmGetMsg(con);
+    ProcessCtlToCmGetMsg(recvMsgInfo);
 }
 
-static void MsgDataInstanceReport(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgDataInstanceReport(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    SetAgentDataReportMsg(con, inBuffer);
+    SetAgentDataReportMsg(recvMsgInfo, (CM_StringInfo)&recvMsgInfo->msg);
 }
 
-static void MsgFencedUdf(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgFencedUdf(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    agent_to_cm_fenced_UDF_status_report *agentToCmFencedUdfStatusPtr = NULL;
+    agent_to_cm_fenced_UDF_status_report *agentToCmFencedUdfStatusPtr;
     PROCESS_MSG_BY_TYPE_WITHOUT_CONN(agent_to_cm_fenced_UDF_status_report, agentToCmFencedUdfStatusPtr,
         process_agent_to_cm_fenced_UDF_status_report_msg);
 }
 
-static void MsgHeatbeat(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgHeatbeat(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    agent_to_cm_heartbeat *agentToCmHeartbeatPtr = NULL;
+    agent_to_cm_heartbeat *agentToCmHeartbeatPtr;
     PROCESS_MSG_BY_TYPE(agent_to_cm_heartbeat, agentToCmHeartbeatPtr, process_agent_to_cm_heartbeat_msg);
 }
 
-static void MsgGsGucAck(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgGsGucAck(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    agent_to_cm_gs_guc_feedback *cmToCmGsGucPtr = NULL;
+    agent_to_cm_gs_guc_feedback *cmToCmGsGucPtr;
     PROCESS_MSG_BY_TYPE_WITHOUT_CONN(agent_to_cm_gs_guc_feedback, cmToCmGsGucPtr, process_gs_guc_feedback_msg);
 }
 
-static void MsgEtcdCurrentTime(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgEtcdCurrentTime(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    agent_to_cm_current_time_report *agentToCmCurrentTimePtr = NULL;
+    agent_to_cm_current_time_report *agentToCmCurrentTimePtr;
     PROCESS_MSG_BY_TYPE_WITHOUT_CONN(
         agent_to_cm_current_time_report, agentToCmCurrentTimePtr, process_agent_to_cm_current_time_msg);
 }
 
-static void MsgQueryInstanceStatus(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgQueryInstanceStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    cm_query_instance_status *cmQueryInstanceStatusPtr = NULL;
+    cm_query_instance_status *cmQueryInstanceStatusPtr;
     PROCESS_MSG_BY_TYPE(cm_query_instance_status, cmQueryInstanceStatusPtr, process_to_query_instance_status_msg);
 }
 
-static void MsgHotpatch(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgHotpatch(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    cm_hotpatch_msg *cmHotpatchMsgPtr = NULL;
+    cm_hotpatch_msg *cmHotpatchMsgPtr;
     PROCESS_MSG_BY_TYPE(cm_hotpatch_msg, cmHotpatchMsgPtr, ProcessHotpatchMessage);
 }
 
-static void MsgStopArbitration(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgStopArbitration(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ProcessStopArbitrationMessage();
 }
 
-static void MsgQueryKerberos(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgQueryKerberos(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmQueryKerberosStatusMsg(con);
+    ProcessCtlToCmQueryKerberosStatusMsg(recvMsgInfo);
 }
 
-static void MsgKerberosStatus(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgKerberosStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    agent_to_cm_kerberos_status_report *agentToCmKerberosStatusPtr = NULL;
-    PROCESS_MSG_BY_TYPE(
+    agent_to_cm_kerberos_status_report *agentToCmKerberosStatusPtr;
+    PROCESS_MSG_BY_TYPE_WITHOUT_CONN(
         agent_to_cm_kerberos_status_report, agentToCmKerberosStatusPtr, process_agent_to_cm_kerberos_status_report_msg);
 }
 
-static void MsgAgentResourceStatus(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgAgentResourceStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ReportResStatus *cmaToCmsResStatusPtr = NULL;
+    ReportResStatus *cmaToCmsResStatusPtr;
     PROCESS_MSG_BY_TYPE_WITHOUT_CONN(ReportResStatus, cmaToCmsResStatusPtr, ProcessAgent2CmResStatReportMsg);
 }
 
-static void MsgFinishRedo(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgFinishRedo(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    process_finish_redo_message(con);
+    process_finish_redo_message(recvMsgInfo);
 }
 
-static void MsgFinishRedoCheck(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgFinishRedoCheck(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    process_finish_redo_check_message(con);
+    process_finish_redo_check_message(recvMsgInfo);
 }
 
-static void MsgDiskUsageStatus(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgDiskUsageStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    AgentToCMS_DiskUsageStatusReport *agentToCmDiskUsagePtr = NULL;
-    PROCESS_MSG_BY_TYPE(AgentToCMS_DiskUsageStatusReport, agentToCmDiskUsagePtr, process_agent_to_cm_disk_usage_msg);
+    AgentToCmDiskUsageStatusReport *agentToCmDiskUsagePtr;
+    PROCESS_MSG_BY_TYPE_WITHOUT_CONN(
+        AgentToCmDiskUsageStatusReport, agentToCmDiskUsagePtr, process_agent_to_cm_disk_usage_msg);
 }
 
-static void MsgDatanodeInstanceBarrier(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgDatanodeInstanceBarrier(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessDnBarrierinfo(con, inBuffer);
+    ProcessDnBarrierinfo(recvMsgInfo, (CM_StringInfo)&recvMsgInfo->msg);
 }
 
-static void MsgGlobalBarrierQuery(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgGlobalBarrierQuery(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmQueryBarrierMsg(con);
+    ProcessCtlToCmQueryBarrierMsg(recvMsgInfo);
 }
 
-static void MsgDnSyncList(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgDnSyncList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
-    AgentToCmserverDnSyncList *syncListMsg = NULL;
-    PROCESS_MSG_BY_TYPE(AgentToCmserverDnSyncList, syncListMsg, ProcessGetDnSyncListMsg);
+    AgentToCmserverDnSyncList *syncListMsg;
+    PROCESS_MSG_BY_TYPE_WITHOUT_CONN(AgentToCmserverDnSyncList, syncListMsg, ProcessGetDnSyncListMsg);
 #endif
 }
 
-static void MsgDnLocalPeer(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgDnLocalPeer(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    AgentCmDnLocalPeer *dnLocalPeer = NULL;
+    AgentCmDnLocalPeer *dnLocalPeer;
     PROCESS_MSG_BY_TYPE(AgentCmDnLocalPeer, dnLocalPeer, ProcessDnLocalPeerMsg);
 }
 
-static void MsgReload(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgReload(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessCtlToCmReloadMsg(con);
+    ProcessCtlToCmReloadMsg(recvMsgInfo);
 }
 
-static void MsgDdbCmd(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgDdbCmd(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ExecDdbCmdMsg *execDccCmdMsg = NULL;
+    ExecDdbCmdMsg *execDccCmdMsg;
     PROCESS_MSG_BY_TYPE(ExecDdbCmdMsg, execDccCmdMsg, ProcessCtlToCmExecDccCmdMsg);
 }
 
-static void MsgSwitchCmd(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSwitchCmd(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    CtlToCmsSwitch *switchMsg = NULL;
+    CtlToCmsSwitch *switchMsg;
     PROCESS_MSG_BY_TYPE(CtlToCmsSwitch, switchMsg, ProcessCtlToCmsSwitchMsg);
 }
 
-static void MsgRequestResStatusList(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgRequestResStatusList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessRequestResStatusListMsg(con);
+    ProcessRequestResStatusListMsg(recvMsgInfo);
 }
 
-static void MsgGetSharedStorageInfo(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgGetSharedStorageInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    ProcessSharedStorageMsg(con);
+    ProcessSharedStorageMsg(recvMsgInfo);
 }
 
-static void MsgDdbOper(CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgDdbOper(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    CltSendDdbOper *cltSendOper = NULL;
+    CltSendDdbOper *cltSendOper;
     PROCESS_MSG_BY_TYPE(CltSendDdbOper, cltSendOper, ProcessCltSendOper);
 }
 
-static void MsgSslConnRequest(
-    CM_Connection *con, CM_StringInfo inBuffer, int msgType, CmdMsgProc *msgProc)
+static void MsgSslConnRequest(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
-    AgentToCmConnectRequest *connMsgReq = NULL;
+    AgentToCmConnectRequest *connMsgReq;
     PROCESS_MSG_BY_TYPE(AgentToCmConnectRequest, connMsgReq, ProcessSslConnRequest);
+}
+
+static void MsgCmResLock(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    CmaToCmsResLock *lockMsg = NULL;
+    PROCESS_MSG_BY_TYPE(CmaToCmsResLock, lockMsg, ProcessCmResLock);
+}
+
+static void MsgCmQueryOneResInst(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    QueryOneResInstStat *queryMsg = NULL;
+    PROCESS_MSG_BY_TYPE(QueryOneResInstStat, queryMsg, ProcessQueryOneResInst);
+}
+
+void ProcessCmRhbMsg(MsgRecvInfo *recvMsgInfo, const CmRhbMsg *rhbMsg)
+{
+    write_runlog(DEBUG1, "[ProcessCmRhbMsg] receive rhb msg from nodeid: %u\n", rhbMsg->nodeId);
+    RefreshNodeRhbInfo(rhbMsg->nodeId, rhbMsg->hbs, rhbMsg->hwl);
+}
+
+static void MsgCmRhb(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    CmRhbMsg *hbMsg = NULL;
+    PROCESS_MSG_BY_TYPE(CmRhbMsg, hbMsg, ProcessCmRhbMsg);
+}
+
+void ProcessRhbStatReq(MsgRecvInfo *recvMsgInfo, const CmShowStatReq *req)
+{
+    write_runlog(DEBUG1, "[ProcessRhbStatReq] receive rhb query msg\n");
+    CmRhbStatAck ack = {0};
+    ack.msg_type = (int)MSG_CTL_CM_RHB_STATUS_ACK;
+    GetRhbStat(ack.hbs, &ack.hwl);
+    ack.baseTime = time(NULL);
+    ack.timeout = g_agentNetworkTimeout;
+
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ack), sizeof(CmRhbStatAck));
+}
+
+void ProcessNodeDiskStatReq(MsgRecvInfo *recvMsgInfo, const CmShowStatReq *req)
+{
+    write_runlog(DEBUG1, "[ProcessNodeDiskStatReq] receive node disk query msg\n");
+    CmNodeDiskStatAck ack = {0};
+    ack.msg_type = (int)MSG_CTL_CM_NODE_DISK_STATUS_ACK;
+    GetNodeDiskStat(ack.nodeDiskStats, &ack.hwl);
+    ack.baseTime = time(NULL);
+    ack.timeout = g_diskTimeout;
+
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ack), sizeof(CmNodeDiskStatAck));
+}
+
+void ProcessFloatIpReq(MsgRecvInfo *recvMsgInfo, const CmShowStatReq *req)
+{
+    write_runlog(DEBUG1, "[ProcessFloatIpReq] receive float ip query msg.\n");
+    char sendMsg[DDB_MAX_KEY_VALUE_LEN] = {0};
+    size_t msgLen = sizeof(CmFloatIpStatAck);
+    GetFloatIpSet((CmFloatIpStatAck*)sendMsg, DDB_MAX_KEY_VALUE_LEN, &msgLen);
+    (void)RespondMsg(recvMsgInfo, 'S', sendMsg, msgLen);
+}
+
+static void MsgShowStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    CmShowStatReq *req = NULL;
+    switch (msgType) {
+        case MSG_CTL_CM_RHB_STATUS_REQ:
+            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessRhbStatReq);
+            break;
+        case MSG_CTL_CM_NODE_DISK_STATUS_REQ:
+            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessNodeDiskStatReq);
+            break;
+        case MSG_CTL_CM_FLOAT_IP_REQ:
+            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessFloatIpReq);
+            break;
+        default:
+            write_runlog(ERROR, "[MsgShowStatus] unknown request(%d)\n", msgType);
+            break;
+    }
+}
+
+static void MsgGetFloatIpInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    if (!IsNeedCheckFloatIp() || (backup_open != CLUSTER_PRIMARY)) {
+        return;
+    }
+    CmaDnFloatIpInfo *floatIpInfo;
+    PROCESS_MSG_BY_TYPE(CmaDnFloatIpInfo, floatIpInfo, ProcessDnFloatIpMsg);
+}
+
+static void MsgResIsreg(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    CmaToCmsIsregMsg *isregMsg;
+    PROCESS_MSG_BY_TYPE(CmaToCmsIsregMsg, isregMsg, ProcessResIsregMsg);
 }
 
 static void InitCmCtlCmdProc()
 {
-    // 31
+    // 32
     g_cmdProc[MSG_CTL_CM_GET_DATANODE_RELATION] = MsgRelationDatanode;
     g_cmdProc[MSG_CTL_CM_SWITCHOVER] = MsgSwitchover;
     g_cmdProc[MSG_CTL_CM_SWITCHOVER_FAST] = MsgSwitchoverFast;
@@ -1566,11 +1652,15 @@ static void InitCmCtlCmdProc()
     g_cmdProc[MSG_CTL_CM_RELOAD] = MsgReload;
     g_cmdProc[MSG_EXEC_DDB_COMMAND] = MsgDdbCmd;
     g_cmdProc[MSG_CTL_CMS_SWITCH] = MsgSwitchCmd;
+    g_cmdProc[MSG_CTL_CM_QUERY_RES_INST] = MsgCmQueryOneResInst;
+    g_cmdProc[MSG_CTL_CM_RHB_STATUS_REQ] = MsgShowStatus;
+    g_cmdProc[MSG_CTL_CM_NODE_DISK_STATUS_REQ] = MsgShowStatus;
+    g_cmdProc[MSG_CTL_CM_FLOAT_IP_REQ] = MsgShowStatus;
 }
 
 static void InitCmAgentCmdProc()
 {
-    // 14
+    // 19
     g_cmdProc[MSG_AGENT_CM_DATA_INSTANCE_REPORT_STATUS] = MsgDataInstanceReport;
     g_cmdProc[MSG_AGENT_CM_FENCED_UDF_INSTANCE_STATUS] = MsgFencedUdf;
     g_cmdProc[MSG_AGENT_CM_HEARTBEAT] = MsgHeatbeat;
@@ -1585,6 +1675,10 @@ static void InitCmAgentCmdProc()
     g_cmdProc[MSG_AGENT_CM_REQUEST_RES_STATUS_LIST] = MsgRequestResStatusList;
     g_cmdProc[MSG_AGENT_CM_DATANODE_LOCAL_PEER] = MsgDnLocalPeer;
     g_cmdProc[MSG_GET_SHARED_STORAGE_INFO] = MsgGetSharedStorageInfo;
+    g_cmdProc[MSG_CM_RES_LOCK] = MsgCmResLock;
+    g_cmdProc[MSG_CM_RHB] = MsgCmRhb;
+    g_cmdProc[MSG_AGENT_CM_FLOAT_IP] = MsgGetFloatIpInfo;
+    g_cmdProc[MSG_AGENT_CM_ISREG_REPORT] = MsgResIsreg;
 }
 
 static void InitCmClientCmdProc()
@@ -1615,10 +1709,12 @@ void DefaultProcessMsg(int msgType)
     write_runlog(LOG, "receive the command type is %d is unknown \n", msgType);
 }
 
-void cm_server_process_msg(CM_Connection *con, CM_StringInfo inBuffer)
+void cm_server_process_msg(MsgRecvInfo* recvMsgInfo)
 {
-    cm_msg_type *msgTypePtr = (cm_msg_type *)CmGetmsgtype(inBuffer, sizeof(cm_msg_type));
+    CM_StringInfo  inBuffer = (CM_StringInfo)&recvMsgInfo->msg;
+    const cm_msg_type *msgTypePtr = (const cm_msg_type *)CmGetmsgtype(inBuffer, sizeof(cm_msg_type));
     if (msgTypePtr == NULL) {
+        write_runlog(ERROR, "get msg type failed,cms msg is Invalid. \n");
         return;
     }
     int msgType = msgTypePtr->msg_type;
@@ -1627,34 +1723,17 @@ void cm_server_process_msg(CM_Connection *con, CM_StringInfo inBuffer)
         return;
     }
 
-    if (!con->port->is_postmaster && g_HA_status->local_role != CM_SERVER_PRIMARY &&
-        con->port->remote_type != CM_SERVER) {
-        write_runlog(LOG,
-            "local cmserver role(%d) is not primary, the msg is %s.\n",
-            g_HA_status->local_role,
-            cluster_msg_int_to_string(msgType));
-        EventDel(con->epHandle, con);
-        RemoveCMAgentConnection(con);
-        return;
-    }
-
-    if (msgType != MSG_CM_SSL_CONN_REQUEST && g_sslOption.enable_ssl == CM_TRUE &&
-        con->port->pipe.type != CS_TYPE_SSL) {
-        write_runlog(ERROR, "It will disconnect the connection for msg type %d is invalid,the msg is %s.\n",
-            con->port->pipe.type, cluster_msg_int_to_string(msgType));
-        EventDel(con->epHandle, con);
-        RemoveCMAgentConnection(con);
-        return;
-    }
-    write_runlog(DEBUG5, "receive command type %d = %s \n", msgType,
+    write_runlog(DEBUG5, "receive command type %d:%s \n", msgType,
         cluster_msg_int_to_string(msgType));
+
+    recvMsgInfo->msgProcFlag = g_msgProcFlag[msgType];
 
     CltCmdProc cmdProc = g_cmdProc[msgType];
     CmdMsgProc msgProc = {false, false};
     if (cmdProc != NULL) {
-        cmdProc(con, inBuffer, msgType, &msgProc);
+        cmdProc(recvMsgInfo, msgType, &msgProc);
     } else {
         DefaultProcessMsg(msgType);
     }
-    FlushCmToAgentMsg(con, msgType, &msgProc);
+    FlushCmToAgentMsg(recvMsgInfo, msgType);
 }

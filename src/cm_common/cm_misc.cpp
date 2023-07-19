@@ -37,19 +37,20 @@
 #include "openssl/x509.h"
 #include "openssl/hmac.h"
 #include "openssl/rand.h"
+#include "cjson/cJSON.h"
 
 #include "cm/cm_elog.h"
 #include "cm/cm_c.h"
 #include "cm/stringinfo.h"
-#include "cjson/cJSON.h"
 #include "cm/cm_msg.h"
 #include "common/config/cm_config.h"
-#include "cm/cm_misc.h"
 #include "cm/cm_cipher.h"
+#include "cm/cm_misc.h"
+#include <arpa/inet.h>
 /*
  * ssh connect does not exit automatically when the network is fault,
  * this will cause cm_ctl hang for several hours,
- * so we should add the following timeout options for ssh. 
+ * so we should add the following timeout options for ssh.
  */
 #define SSH_CONNECT_TIMEOUT "5"
 #define SSH_CONNECT_ATTEMPTS "3"
@@ -59,18 +60,44 @@
     " -t 60 -O ConnectTimeout=" SSH_CONNECT_TIMEOUT " -O ConnectionAttempts=" SSH_CONNECT_ATTEMPTS \
     " -O ServerAliveInterval=" SSH_SERVER_ALIVE_INTERVAL " -O ServerAliveCountMax=" SSH_SERVER_ALIVE_COUNT_MAX " "
 
-CmClusterWorkMode g_cluster_work_mode = CM_CLUSTER_UNKNOWN;
-
-vector<CmResStatList> g_resStatus;
-vector<CmResConfList> g_resConf;
 conn_option_t g_sslOption;
-uint32 maxResNameLen = strlen("res_name");
-
-#define RES_INSTANCE_ID_MIN 20000
-#define RES_INSTANCE_ID_MAX 20999
 
 #define SSL_CONNECT_TIMEOUT (5000)
 #define SSL_SOCKET_TIMEOUT (5000)
+
+/* two nodes arch usage */
+ArbitrateParamsOn2Nodes g_paramsOn2Nodes = {"", false, false, 20};
+static const int VAILD_IP_ADDR = 1;
+
+bool CmFileExist(const char *file_path)
+{
+    int32 ret;
+#ifdef WIN32
+    struct _stat stat_buf;
+#else
+    struct stat stat_buf;
+#endif
+
+#ifdef WIN32
+    ret = _stat(file_path, &stat_buf);
+#else
+    ret = stat(file_path, &stat_buf);
+#endif
+    if (ret != 0) {
+        return false;
+    }
+
+#ifdef WIN32
+    if (_S_IFREG == (stat_buf.st_mode & _S_IFREG)) {
+#else
+    /* S_ISREG: judge whether it's a regular file or not by the flag */
+    if (S_ISREG(stat_buf.st_mode)) {
+#endif
+        return true;
+    }
+
+    return false;
+}
 
 void GetRealFile(char *realFile, uint32 fileLen, const char *path)
 {
@@ -80,18 +107,20 @@ void GetRealFile(char *realFile, uint32 fileLen, const char *path)
     canonicalize_path(realFile);
 }
 
-static void* CmMalloc(size_t size)
+void *CmMalloc(size_t size)
 {
-    void* result = NULL;
     if (size == 0) {
-        write_runlog(ERROR, "[CmMalloc] malloc 0.\n");
+        write_runlog(FATAL, "[CmMalloc] malloc 0.\n");
         exit(1);
     }
-    result = (void*)malloc(size);
+    void *result = malloc(size);
     if (result == NULL) {
-        write_runlog(ERROR, "[CmMalloc] malloc failed, out of memory.\n");
+        write_runlog(FATAL, "[CmMalloc] malloc failed, out of memory.\n");
         exit(1);
     }
+    errno_t rc = memset_s(result, size, 0, size);
+    securec_check_errno(rc, (void)rc);
+
     return result;
 }
 
@@ -110,16 +139,16 @@ char** CmReadfile(const char* path)
         return NULL;
     }
     if (fstat(fd, &statbuf) < 0) {
-        close(fd);
+        (void)close(fd);
         return NULL;
     }
     if (statbuf.st_size == 0) {
-        close(fd);
+        (void)close(fd);
         return NULL;
     }
     char* buffer = (char*)CmMalloc(statbuf.st_size + 1);
     ssize_t len = read(fd, buffer, uint32(statbuf.st_size + 1));
-    close(fd);
+    (void)close(fd);
     if (len != statbuf.st_size) {
         FREE_AND_RESET(buffer);
         return NULL;
@@ -153,11 +182,10 @@ char** CmReadfile(const char* path)
 
 void freefile(char** lines)
 {
-    char** line = NULL;
     if (lines == NULL) {
         return;
     }
-    line = lines;
+    char **line = lines;
     while (*line != NULL) {
         FREE_AND_RESET(*line);
         line++;
@@ -314,7 +342,6 @@ server_role_string server_role_string_map[] = {{CM_SERVER_UNKNOWN, "UNKNOWN"},
     {CM_SERVER_INIT, "Init"},
     {CM_SERVER_DOWN, "Down"}};
 
-
 server_role_string etcd_role_string_map[] = {{CM_ETCD_UNKNOWN, "UNKNOWN"},
     {CM_ETCD_FOLLOWER, "StateFollower"},
     {CM_ETCD_LEADER, "StateLeader"},
@@ -384,7 +411,7 @@ instance_datanode_lockmode_string g_datanode_lockmode_map_string[] = {{"polling_
     {"prohibit_connection", PROHIBIT_CONNECTION},
     {NULL, UNDEFINED_LOCKMODE}};
 
-int datanode_lockmode_string_to_int(const char* lockmode)
+uint32 datanode_lockmode_string_to_int(const char* lockmode)
 {
     int i;
     if (lockmode == NULL || strlen(lockmode) == 0) {
@@ -429,13 +456,13 @@ instacne_datanode_role_string datanode_role_map_string[] = {
 int datanode_role_string_to_int(const char* role)
 {
     int i;
-    if (NULL == role) {
+    if (role == NULL) {
         write_runlog(ERROR, "datanode_role_string_to_int failed, input string role is: NULL\n");
         return INSTANCE_ROLE_UNKNOWN;
     }
     for (i = 0; datanode_role_map_string[i].role_string != NULL; i++) {
         if (strcmp(datanode_role_map_string[i].role_string, role) == 0) {
-            return datanode_role_map_string[i].role_val;
+            return (int)datanode_role_map_string[i].role_val;
         }
     }
     write_runlog(ERROR, "datanode_role_string_to_int failed, input string role is: (%s)\n", role);
@@ -490,7 +517,7 @@ instacne_datanode_dbstate_string datanode_dbstate_map_string[] = {{"Unknown", IN
 int datanode_dbstate_string_to_int(const char* dbstate)
 {
     int i;
-    if (NULL == dbstate) {
+    if (dbstate == NULL) {
         write_runlog(ERROR, "datanode_dbstate_string_to_int failed, input string dbstate is: NULL\n");
         return INSTANCE_HA_STATE_UNKONWN;
     }
@@ -527,7 +554,7 @@ instacne_datanode_wal_send_state_string datanode_wal_send_state_map_string[] = {
 int datanode_wal_send_state_string_to_int(const char* dbstate)
 {
     int i;
-    if (NULL == dbstate) {
+    if (dbstate == NULL) {
         write_runlog(ERROR, "datanode_wal_send_state_string_to_int failed, input string dbstate is: NULL\n");
         return INSTANCE_WALSNDSTATE_UNKNOWN;
     }
@@ -561,7 +588,7 @@ instacne_datanode_sync_state_string datanode_wal_sync_state_map_string[] = {{"As
 int datanode_wal_sync_state_string_to_int(const char* dbstate)
 {
     int i;
-    if (NULL == dbstate) {
+    if (dbstate == NULL) {
         write_runlog(ERROR, "datanode_wal_sync_state_string_to_int failed, input string dbstate is: NULL\n");
         return INSTANCE_DATA_REPLICATION_UNKONWN;
     }
@@ -742,6 +769,7 @@ cluster_msg_string cluster_msg_map_string[] = {
     {"MSG_CTL_CM_GLOBAL_BARRIER_QUERY_NEW", MSG_CTL_CM_GLOBAL_BARRIER_QUERY_NEW},
     {"MSG_CM_CTL_GLOBAL_BARRIER_DATA_BEGIN_NEW", MSG_CM_CTL_GLOBAL_BARRIER_DATA_BEGIN_NEW},
     {"MSG_AGENT_CM_RESOURCE_STATUS", MSG_AGENT_CM_RESOURCE_STATUS},
+    {"MSG_CTL_CM_RESOURCE_STATUS", (int32)MSG_CTL_CM_RESOURCE_STATUS},
     {"MSG_CM_AGENT_RES_STATUS_LIST", MSG_CM_AGENT_RES_STATUS_LIST},
     {"MSG_CM_AGENT_RES_STATUS_CHANGED", MSG_CM_AGENT_RES_STATUS_CHANGED},
     {"MSG_CM_AGENT_SET_INSTANCE_DATA_STATUS", MSG_CM_AGENT_SET_INSTANCE_DATA_STATUS},
@@ -759,7 +787,7 @@ cluster_msg_string cluster_msg_map_string[] = {
     {"MSG_AGENT_CLIENT_HEARTBEAT_ACK", MSG_AGENT_CLIENT_HEARTBEAT_ACK},
     {"MSG_AGENT_CLIENT_RES_STATUS_LIST", MSG_AGENT_CLIENT_RES_STATUS_LIST},
     {"MSG_AGENT_CLIENT_RES_STATUS_CHANGE", MSG_AGENT_CLIENT_RES_STATUS_CHANGE},
-    {"MSG_AGENT_CLIENT_SET_RES_DATA_STATUS", MSG_AGENT_CLIENT_SET_RES_DATA_STATUS},
+    {"MSG_AGENT_CLIENT_NOTIFY_CONN_CLOSE", MSG_AGENT_CLIENT_NOTIFY_CONN_CLOSE},
     {"MSG_AGENT_CLIENT_REPORT_RES_DATA", MSG_AGENT_CLIENT_REPORT_RES_DATA},
     {"MSG_EXEC_DDB_COMMAND", MSG_EXEC_DDB_COMMAND},
     {"EXEC_DDB_COMMAND_ACK", EXEC_DDB_COMMAND_ACK},
@@ -767,20 +795,36 @@ cluster_msg_string cluster_msg_map_string[] = {
     {"MSG_CM_CLIENT_DDB_OPER_ACK", MSG_CM_CLIENT_DDB_OPER_ACK},
     {"MSG_CM_SSL_CONN_REQUEST", MSG_CM_SSL_CONN_REQUEST},
     {"MSG_CM_SSL_CONN_ACK", MSG_CM_SSL_CONN_ACK},
-    {"MSG_CTL_CMS_SWITCH", MSG_CTL_CMS_SWITCH},
-    {"MSG_CMS_CTL_SWITCH_ACK", MSG_CMS_CTL_SWITCH_ACK},
-    {"MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER", MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER},
-    {"MSG_CM_AGENT_COORDINATE_INSTANCE_BARRIER", MSG_CM_AGENT_COORDINATE_INSTANCE_BARRIER},
+    {"MSG_CTL_CMS_SWITCH", (int32)MSG_CTL_CMS_SWITCH},
+    {"MSG_CMS_CTL_SWITCH_ACK", (int32)MSG_CMS_CTL_SWITCH_ACK},
+    {"MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER", (int32)MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER},
+    {"MSG_CM_AGENT_COORDINATE_INSTANCE_BARRIER", (int32)MSG_CM_AGENT_COORDINATE_INSTANCE_BARRIER},
     {"MSG_AGENT_CM_DATANODE_LOCAL_PEER", (int32)MSG_AGENT_CM_DATANODE_LOCAL_PEER},
     {"MSG_GET_SHARED_STORAGE_INFO", (int32)MSG_GET_SHARED_STORAGE_INFO},
     {"MSG_GET_SHARED_STORAGE_INFO_ACK", (int32)MSG_GET_SHARED_STORAGE_INFO_ACK},
+    {"MSG_AGENT_CLIENT_INIT_ACK", (int32)MSG_AGENT_CLIENT_INIT_ACK},
+    {"MSG_CM_RES_LOCK", (int32)MSG_CM_RES_LOCK},
+    {"MSG_CM_RES_LOCK_ACK", (int32)MSG_CM_RES_LOCK_ACK},
+    {"MSG_CM_RES_REG", (int32)MSG_CM_RES_REG},
+    {"MSG_CM_RES_REG_ACK", (int32)MSG_CM_RES_REG_ACK},
+    {"MSG_CTL_CM_QUERY_RES_INST", (int32)MSG_CTL_CM_QUERY_RES_INST},
+    {"MSG_CM_CTL_QUERY_RES_INST_ACK", (int32)MSG_CM_CTL_QUERY_RES_INST_ACK},
+    {"MSG_CM_RHB", (int32)MSG_CM_RHB},
+    {"MSG_CTL_CM_RHB_STATUS_REQ", (int32)MSG_CTL_CM_RHB_STATUS_REQ},
+    {"MSG_CTL_CM_RHB_STATUS_ACK", (int32)MSG_CTL_CM_RHB_STATUS_ACK},
+    {"MSG_CTL_CM_NODE_DISK_STATUS_REQ", (int32)MSG_CTL_CM_NODE_DISK_STATUS_REQ},
+    {"MSG_CTL_CM_NODE_DISK_STATUS_ACK", (int32)MSG_CTL_CM_NODE_DISK_STATUS_ACK},
+    {"MSG_AGENT_CM_FLOAT_IP", (int32)MSG_AGENT_CM_FLOAT_IP},
+    {"MSG_CTL_CM_FLOAT_IP_REQ", (int32)MSG_CTL_CM_FLOAT_IP_REQ},
+    {"MSG_CM_AGENT_FLOAT_IP_ACK", (int32)MSG_CM_AGENT_FLOAT_IP_ACK},
+    {"MSG_AGENT_CM_ISREG_REPORT", (int32)MSG_AGENT_CM_ISREG_REPORT},
+    {"MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED", (int32)MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED},
     {NULL, MSG_TYPE_BUTT},
 };
 
 const char* cluster_msg_int_to_string(int cluster_msg)
 {
-    int i = 0;
-    for (i = 0; cluster_msg_map_string[i].cluster_msg_str != NULL; i++) {
+    for (int i = 0; cluster_msg_map_string[i].cluster_msg_str != NULL; ++i) {
         if (cluster_msg_map_string[i].cluster_msg_val == cluster_msg) {
             return cluster_msg_map_string[i].cluster_msg_str;
         }
@@ -801,8 +845,7 @@ instance_not_exist_reason_string instance_not_exist_reason[] = {
 
 const char* instance_not_exist_reason_to_string(int reason)
 {
-    int i = 0;
-    for (i = 0; instance_not_exist_reason[i].level_string != NULL; i++) {
+    for (int i = 0; instance_not_exist_reason[i].level_string != NULL; i++) {
         if (instance_not_exist_reason[i].level_val == reason) {
             return instance_not_exist_reason[i].level_string;
         }
@@ -828,7 +871,7 @@ void cm_pthread_rw_lock(pthread_rwlock_t* rwlock)
 {
     int ret = pthread_rwlock_wrlock(rwlock);
     if (ret != 0) {
-        write_runlog(ERROR, "pthread_rwlock_wrlock failed.\n");
+        write_runlog(FATAL, "pthread_rwlock_wrlock failed.\n");
         exit(1);
     }
 }
@@ -837,32 +880,28 @@ void cm_pthread_rw_unlock(pthread_rwlock_t* rwlock)
 {
     int ret = pthread_rwlock_unlock(rwlock);
     if (ret != 0) {
-        write_runlog(ERROR, "pthread_rwlock_unlock failed.\n");
+        write_runlog(FATAL, "pthread_rwlock_unlock failed.\n");
         exit(1);
     }
 }
 
 /**
  * @brief Creates a lock file for a process with a specified PID.
- * 
+ *
  * @note When the parameter "pid" is set to -1, the specified process is the current process.
  * @param  filename         The name of the g_lockfile to create.
  * @param  data_path        The data path of the instance.
  * @param  pid              The pid of the process.
  * @return 0 Create successfully, -1 Create failure.
  */
-int create_lock_file(
-        const char* filename,
-        const char* data_path,
-        const pid_t pid)
+int create_lock_file(const char* filename, const char* data_path, const pid_t pid)
 {
     int         fd;
     char        buffer[MAXPGPATH + 100] = { 0 };
     const pid_t my_pid = (pid >= 0) ? pid : getpid();
     int         try_times = 0;
 
-    do
-    {
+    do {
         /* The maximum number of attempts is 3. */
         if (try_times++ > 3) {
             write_runlog(ERROR, "could not create lock file: filename=\"%s\", error_no=%d.\n", filename, errno);
@@ -883,7 +922,7 @@ int create_lock_file(
         }
 
         /* If the file is opened successfully, the system attempts to read the file content. */
-        int len = read(fd, buffer, sizeof(buffer) - 1);
+        int len = (int)read(fd, buffer, sizeof(buffer) - 1);
         (void)close(fd);
         if (len < 0 || len >= (MAXPGPATH + 100)) {
             write_runlog(ERROR, "could not read lock file: filename=\"%s\", error_no=%d.\n", filename, errno);
@@ -924,15 +963,15 @@ int create_lock_file(
     } while (true);
 
     int rc = snprintf_s(buffer, sizeof(buffer), sizeof(buffer) - 1, "%d\n%s\n%d\n", (int)(my_pid), data_path, 0);
-    securec_check_intval(rc, );
+    securec_check_intval(rc, (void)rc);
 
     /* Writes PID information. */
     errno = 0;
     if (write(fd, buffer, strlen(buffer)) != (int)(strlen(buffer))) {
         write_runlog(ERROR, "could not write lock file: filename=\"%s\", error_no=%d.\n", filename, errno);
 
-        close(fd);
-        unlink(filename);
+        (void)close(fd);
+        (void)unlink(filename);
         return EEXIST;
     }
 
@@ -940,7 +979,7 @@ int create_lock_file(
     if (close(fd)) {
         write_runlog(FATAL, "could not write lock file: filename=\"%s\", error_no=%d.\n", filename, errno);
 
-        unlink(filename);
+        (void)unlink(filename);
         return -1;
     }
 
@@ -949,7 +988,7 @@ int create_lock_file(
 
 /**
  * @brief Delete pid file.
- * 
+ *
  * @param  filename         The pid file to be deleted.
  */
 void delete_lock_file(const char* filename)
@@ -975,253 +1014,6 @@ const char* kerberos_status_to_string(int role)
     } else {
         return kerberos_role_string_map[role].role_string;
     }
-}
-
-static status_t GetValueIntFromCJson(uint32 *infoValue, const cJSON *instance, const char *infoKey)
-{
-    cJSON *objValue = cJSON_GetObjectItem(instance, infoKey);
-    if (!cJSON_IsNumber(objValue)) {
-        write_runlog(ERROR, "(%s) object is not number.\n", infoKey);
-        return CM_ERROR;
-    }
-    if (objValue->valueint < 0) {
-        write_runlog(ERROR, "get invalid objValue(%d) from cJson, by key(%s).\n", objValue->valueint, infoKey);
-        return CM_ERROR;
-    }
-    if (infoValue != NULL) {
-        *infoValue = (uint32)objValue->valueint;
-    }
-    return CM_SUCCESS;
-}
-
-static status_t GetValueStrFromCJson(char *valueStr, uint32 valueLen, const cJSON *object, const char *infoKey)
-{
-    cJSON *objValue = cJSON_GetObjectItem(object, infoKey);
-    if (!cJSON_IsString(objValue)) {
-        write_runlog(ERROR, "(%s) object is not string.\n", infoKey);
-        return CM_ERROR;
-    }
-    if (objValue->valuestring == NULL || objValue->valuestring[0] == '\0') {
-        write_runlog(ERROR, "(%s) object is null.\n", infoKey);
-        return CM_ERROR;
-    }
-    if (valueStr != NULL) {
-        if (strlen(objValue->valuestring) >= valueLen) {
-            write_runlog(ERROR, "(%s):str(%s) is longer than max(%u).\n", infoKey, objValue->valuestring, valueLen);
-            return CM_ERROR;
-        }
-        errno_t rc = strcpy_s(valueStr, valueLen, objValue->valuestring);
-        securec_check_errno(rc, (void)rc);
-        check_input_for_security(valueStr);
-    }
-
-    return CM_SUCCESS;
-}
-
-static status_t GetOneInstConf(CmResStatInfo *instInfo, const cJSON *instJson, uint32 *curInstId)
-{
-    CM_RETURN_IFERR(GetValueIntFromCJson(&instInfo->nodeId, instJson, "node_id"));
-    CM_RETURN_IFERR(GetValueIntFromCJson(&instInfo->resInstanceId, instJson, "res_instance_id"));
-    instInfo->cmInstanceId = *curInstId;
-    if (instInfo->cmInstanceId > RES_INSTANCE_ID_MAX) {
-        write_runlog(ERROR, "res instances id (%u) is invalid, range: 20000~30000.\n", instInfo->cmInstanceId);
-        return CM_ERROR;
-    }
-    (*curInstId)++;
-    instInfo->isWorkMember = 1;
-    instInfo->status = (uint32)CM_RES_STAT_UNKNOWN;
-    return CM_SUCCESS;
-}
-
-static status_t GetAllIntsConf(OneResStatList *newRes, const cJSON *object, uint32 *curInstId)
-{
-    cJSON *instArray = cJSON_GetObjectItem(object, "instances");
-    if (!cJSON_IsArray(instArray)) {
-        write_runlog(ERROR, "instances is not array.\n");
-        return CM_ERROR;
-    }
-    newRes->instanceCount = 0;
-    cJSON *instConf;
-    cJSON_ArrayForEach(instConf, instArray) {
-        CM_RETURN_IFERR(GetOneInstConf(&newRes->resStat[newRes->instanceCount], instConf, curInstId));
-        ++newRes->instanceCount;
-    }
-
-    return CM_SUCCESS;
-}
-
-static status_t VerifyCheckInfo(const ResStatusCheckInfo *checkInfo)
-{
-    static const uint32 maxRestartDelay = 1800;
-    static const uint32 maxRestartPeriod = 3600;
-    static const uint32 maxRestartTimes = 9999;
-    if (checkInfo->restartDelay > maxRestartDelay) {
-        write_runlog(ERROR, "restart_delay(%u) is invalid, range [0, 1800].\n", checkInfo->restartDelay);
-        return CM_ERROR;
-    }
-    if (checkInfo->restartPeriod > maxRestartPeriod) {
-        write_runlog(ERROR, "restart_period(%u) is invalid, range [0, 3600].\n", checkInfo->restartPeriod);
-        return CM_ERROR;
-    }
-    if (checkInfo->restartTimes > maxRestartTimes) {
-        write_runlog(ERROR, "restart_times(%u) is invalid, range [0, 9999].\n", checkInfo->restartTimes);
-        return CM_ERROR;
-    }
-    return CM_SUCCESS;
-}
-
-static void FillTheResConf(CmResConfList *newInfo, const OneResStatList *resConf)
-{
-    errno_t rc = strcpy_s(newInfo->resName, CM_MAX_RES_NAME, resConf->resName);
-    securec_check_errno(rc, (void)rc);
-    newInfo->checkInfo.checkTime = 0;
-    newInfo->checkInfo.startTime = 0;
-    newInfo->checkInfo.startCount = 0;
-    for (uint32 i = 0; i < resConf->instanceCount; ++i) {
-        if (resConf->resStat[i].nodeId != g_currentNode->node) {
-            continue;
-        }
-        newInfo->nodeId = resConf->resStat[i].nodeId;
-        newInfo->cmInstanceId = resConf->resStat[i].cmInstanceId;
-        newInfo->resInstanceId = resConf->resStat[i].resInstanceId;
-        newInfo->isWorkMember = 1;
-        g_resConf.push_back(*newInfo);
-    }
-}
-
-static status_t GetOneResConf(OneResStatList *resConf, const cJSON *resJson, uint32 *curInstId, bool isAgent)
-{
-    CM_RETURN_IFERR(GetValueStrFromCJson(resConf->resName, CM_MAX_RES_NAME, resJson, "name"));
-    CM_RETURN_IFERR(GetAllIntsConf(resConf, resJson, curInstId));
-    if (isAgent) {
-        CmResConfList newInfo;
-        CM_RETURN_IFERR(GetValueStrFromCJson(newInfo.script, MAX_PATH_LEN, resJson, "script"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(&newInfo.checkInfo.checkInterval, resJson, "check_interval"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(&newInfo.checkInfo.timeOut, resJson, "time_out"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(&newInfo.checkInfo.restartDelay, resJson, "restart_delay"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(&newInfo.checkInfo.restartPeriod, resJson, "restart_period"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(&newInfo.checkInfo.restartTimes, resJson, "restart_times"));
-        CM_RETURN_IFERR(VerifyCheckInfo(&newInfo.checkInfo));
-        FillTheResConf(&newInfo, resConf);
-    } else {
-        CM_RETURN_IFERR(GetValueStrFromCJson(NULL, 0, resJson, "script"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(NULL, resJson, "check_interval"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(NULL, resJson, "time_out"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(NULL, resJson, "restart_delay"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(NULL, resJson, "restart_period"));
-        CM_RETURN_IFERR(GetValueIntFromCJson(NULL, resJson, "restart_times"));
-    }
-
-    return CM_SUCCESS;
-}
-
-static status_t CheckResConf(const OneResStatList *resConf)
-{
-    for (uint32 i = 1; i < resConf->instanceCount; ++i) {
-        for (uint32 j = 0; j < i; ++j) {
-            if (resConf->resStat[i].resInstanceId == resConf->resStat[j].resInstanceId) {
-                write_runlog(ERROR, "res_instance_id duplicate, should check cm_resource.json.\n");
-                return CM_ERROR;
-            }
-        }
-    }
-    return CM_SUCCESS;
-}
-
-static inline status_t GetResArrayFromJson(cJSON **resArray, const cJSON *root)
-{
-    *resArray = cJSON_GetObjectItem(root, "resources");
-    if (!cJSON_IsArray(*resArray)) {
-        write_runlog(ERROR, "resources conf info is not array.\n");
-        return CM_ERROR;
-    }
-    return CM_SUCCESS;
-}
-
-static inline void ParseFail(cJSON *root, const char *confDir)
-{
-    write_runlog(ERROR, "parse json \"%s\" failed.\n", confDir);
-    cJSON_Delete(root);
-}
-
-status_t GetAllResConf(const char *confData, const char *confDir, bool isAgent)
-{
-    cJSON *root = cJSON_Parse(confData);
-    if (!cJSON_IsObject(root)) {
-        write_runlog(ERROR, "parse json file \"%s\" failed, format incorrect.\n", confDir);
-        return CM_ERROR;
-    }
-
-    cJSON *resArray = NULL;
-    CM_RETURN_IFERR_EX(GetResArrayFromJson(&resArray, root), ParseFail(root, confDir));
-
-    cJSON *resItem;
-    uint32 curInstId = RES_INSTANCE_ID_MIN + 1;
-    cJSON_ArrayForEach(resItem, resArray) {
-        CmResStatList newRes;
-        errno_t rc = memset_s(&newRes, sizeof(CmResStatList), 0, sizeof(CmResStatList));
-        securec_check_errno(rc, (void)rc);
-        (void)pthread_rwlock_init(&newRes.rwlock, NULL);
-        CM_RETURN_IFERR_EX(GetOneResConf(&newRes.status, resItem, &curInstId, isAgent), ParseFail(root, confDir));
-        CM_RETURN_IFERR_EX(CheckResConf(&newRes.status), ParseFail(root, confDir));
-        maxResNameLen = maxResNameLen < strlen(newRes.status.resName) ?
-            strlen(newRes.status.resName) : maxResNameLen;
-        g_resStatus.push_back(newRes);
-    }
-
-    cJSON_Delete(root);
-    write_runlog(DEBUG1, "parse \"%s\" success.\n", confDir);
-
-    return CM_SUCCESS;
-}
-
-// By default, g_resStatus is obtained, can determine whether to obtain g_resConf.
-status_t ReadResourceDefConfig(bool isAgent)
-{
-    char confFile[MAX_PATH_LEN] = {0};
-    int ret = snprintf_s(
-        confFile, sizeof(confFile), sizeof(confFile) - 1, "%s/cm_agent/cm_resource.json", g_currentNode->cmDataPath);
-    securec_check_intval(ret, (void)ret);
-    check_input_for_security(confFile);
-    canonicalize_path(confFile);
-
-    FILE *fd = fopen(confFile, "r");
-    if (fd == NULL) {
-        if (errno == ENOENT) {
-            write_runlog(DEBUG1, "resource conf file \"%s\", not exist.\n", confFile);
-            return CM_SUCCESS;
-        }
-        write_runlog(ERROR, "resource conf open fail, can check \"%s\".\n", confFile);
-        return CM_ERROR;
-    }
-
-    char confData[MAX_RESOURCE_LENGTH] = {0};
-    if (fread(confData, 1, MAX_RESOURCE_LENGTH, fd) == 0) {
-        write_runlog(ERROR, "can't read resource conf, can check \"%s\".\n", confFile);
-        (void)fclose(fd);
-        return CM_ERROR;
-    }
-    (void)fclose(fd);
-
-    g_resStatus.clear();
-    g_resConf.clear();
-    CM_RETURN_IFERR(GetAllResConf(confData, confFile, isAgent));
-
-    return CM_SUCCESS;
-}
-
-status_t GetGlobalResStatusIndex(const char *resName, uint32 &index)
-{
-    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
-        (void)pthread_rwlock_rdlock(&(g_resStatus[i].rwlock));
-        if (strcmp(g_resStatus[i].status.resName, resName) == 0) {
-            (void)pthread_rwlock_unlock(&(g_resStatus[i].rwlock));
-            index = i;
-            return CM_SUCCESS;
-        }
-        (void)pthread_rwlock_unlock(&(g_resStatus[i].rwlock));
-    }
-    return CM_ERROR;
 }
 
 int InitSslOption()
@@ -1265,7 +1057,7 @@ int InitSslOption()
     return 0;
 }
 
-static void FreeSslOpton()
+void FreeSslOpton()
 {
     ssl_config_t *sslPara = &(g_sslOption.ssl_para);
     FREE_AND_RESET(sslPara->ca_file);
@@ -1305,18 +1097,20 @@ int CmSSlConfigInit(bool is_client)
     rcs = snprintf_s(g_sslOption.ssl_para.crl_file, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s.crl", certFilePath, type);
     securec_check_intval(rcs, (void)rcs);
 
+    if (!CmFileExist((const char*)g_sslOption.ssl_para.crl_file)) {
+        free(g_sslOption.ssl_para.crl_file);
+        g_sslOption.ssl_para.crl_file = NULL;
+    }
+
     g_sslOption.connect_timeout = SSL_CONNECT_TIMEOUT;
     g_sslOption.socket_timeout = SSL_SOCKET_TIMEOUT;
     g_sslOption.enable_ssl = CM_FALSE;
     g_sslOption.verify_peer = 0;
-
     return 0;
 }
 
 const char* CmGetmsgtype(const CM_StringInfo msg, int datalen)
 {
-    const char *result = NULL;
-
     if (datalen < 0 || datalen > (msg->len - msg->cursor)) {
         write_runlog(ERROR,
             "CmGetmsgtype: insufficient data left in message, datalen=%d, msg->len=%d, msg->cursor=%d.\n",
@@ -1325,15 +1119,12 @@ const char* CmGetmsgtype(const CM_StringInfo msg, int datalen)
             msg->cursor);
         return NULL;
     }
-
-    result = &msg->data[msg->cursor];
+    const char *result = &msg->data[msg->cursor];
     return result;
 }
 
 const char* CmGetmsgbytes(CM_StringInfo msg, int datalen)
 {
-    const char *result = NULL;
-    errno_t rc = 0;
     const int printMsgLen = 101;
     char dataLog[printMsgLen] = {0};
     if (datalen < 0 || datalen > (msg->len - msg->cursor)) {
@@ -1348,21 +1139,20 @@ const char* CmGetmsgbytes(CM_StringInfo msg, int datalen)
             msg->qtype,
             msg->msglen);
         if (msg->len < printMsgLen) {
-            rc = memcpy_s(dataLog, printMsgLen, msg->data, msg->len);
+            errno_t rc = memcpy_s(dataLog, printMsgLen, msg->data, msg->len);
             securec_check_errno(rc, (void)rc);
             write_runlog(ERROR, "CmGetmsgbytes: msg->data=%s.\n", dataLog);
         }
         return NULL;
     }
 
-    result = &msg->data[msg->cursor];
+    const char *result = &msg->data[msg->cursor];
     msg->cursor += datalen;
     return result;
 }
 
 const char *CmGetmsgbytesPtr(const CM_Result *msg, int datalen)
 {
-    const char *result = NULL;
     if (datalen < 0 || datalen > msg->gr_msglen) {
         write_runlog(ERROR,
             "CmGetmsgbytes: insufficient data left in message, "
@@ -1371,9 +1161,7 @@ const char *CmGetmsgbytesPtr(const CM_Result *msg, int datalen)
             msg->gr_msglen);
         return NULL;
     }
-
-    result = (const char*)&(msg->gr_resdata);
-    return result;
+    return (const char*)&(msg->gr_resdata);
 }
 
 static int GetBuffInput(const char *str, long *result)
@@ -1438,4 +1226,128 @@ bool CmAtoBool(const char *str)
         return false;
     }
     return true;
+}
+
+bool IsNodeOfflineFromEtcd(uint32 nodeIndex, int instanceType)
+{
+    char command[CM_MAX_COMMAND_LEN] = {0};
+    char clientUrl[MAX_PATH_LEN];
+    char key[MAX_PATH_LEN];
+    char execPath[MAX_PATH_LEN] = {0};
+    int logLevel = instanceType == CM_AGENT ? LOG : DEBUG1;
+    int ret = cm_getenv("GAUSSHOME", execPath, sizeof(execPath), ERROR);
+    if (ret != 0) {
+        write_runlog(logLevel, "[%s] Get GAUSSHOME failed, please check.\n", __FUNCTION__);
+        return false;
+    }
+
+    struct passwd* pw = getpwuid(getuid());
+    errno_t rc = snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/dorado_offline_node", pw->pw_name);
+    securec_check_intval(rc, (void)rc);
+    for (uint32 ii = 0; ii < g_node_num; ii++) {
+        if (g_node[ii].etcd) {
+            rc = snprintf_s(clientUrl, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+                "https://%s:%u", g_node[ii].etcdClientListenIPs[0], g_node[ii].etcdClientListenPort);
+            securec_check_intval(rc, (void)rc);
+            break;
+        }
+    }
+
+    rc = snprintf_s(command, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
+        "export ETCDCTL_API=3;"
+        " etcdctl --cacert %s/share/sslcert/etcd/etcdca.crt"
+        " --cert %s/share/sslcert/etcd/client.crt"
+        " --key %s/share/sslcert/etcd/client.key"
+        " --command-timeout 60s --endpoints %s get --print-value-only %s",
+        execPath, execPath, execPath, clientUrl, key);
+    securec_check_intval(rc, (void)rc);
+
+    FILE* fp = popen(command, "r");
+    if (fp == NULL) {
+        write_runlog(logLevel, "[%s] Execute failed, command: %s\n", __FUNCTION__, command);
+        return false;
+    }
+
+    char buf[CM_IP_LENGTH] = {0};
+    if (fgets(buf, CM_IP_LENGTH, fp) == NULL) {
+        (void)pclose(fp);
+        write_runlog(logLevel, "[%s] fgets result null\n", __FUNCTION__);
+        return false;
+    }
+    if (strstr(buf, g_node[nodeIndex].sshChannel[0]) == NULL) {
+        write_runlog(logLevel, "Get ignore node(%s) from etcd successfully.\n", g_node[nodeIndex].sshChannel[0]);
+        (void)pclose(fp);
+        return false;
+    }
+
+    (void)pclose(fp);
+    return true;
+}
+
+void listen_ip_merge(uint32 ipCnt, const char (*ipListen)[CM_IP_LENGTH], char *retIpMerge, uint32 ipMergeLength)
+{
+    errno_t rc;
+    char ipTmp[MAX_PATH_LEN] = {0};
+    for (uint32 i = 0; i < ipCnt; ++i) {
+        if (i == 0) {
+            rc = strcpy_s(retIpMerge, ipMergeLength, ipListen[i]);
+            securec_check_errno(rc, (void)rc);
+            continue;
+        }
+        rc = snprintf_s(ipTmp, MAX_PATH_LEN, MAX_PATH_LEN - 1, ",%s", ipListen[i]);
+        securec_check_intval(rc, (void)rc);
+        rc = strcat_s(retIpMerge, ipMergeLength, ipTmp);
+        securec_check_errno(rc, (void)rc);
+    }
+    if (strlen(retIpMerge) == 0) {
+        write_runlog(ERROR, "ip count is invalid ip_count =%u\n", ipCnt);
+    }
+}
+
+bool IsNodeIdValid(int nodeId)
+{
+    if (nodeId <= 0) {
+        return false;
+    }
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        if (g_node[i].node == (uint32)nodeId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+status_t IsReachableIP(char *ip)
+{
+    if (ip == nullptr) {
+        return CM_ERROR;
+    }
+    char cmd[MAXPGPATH] = {0};
+    int rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "timeout 2 ping -c 2 %s > /dev/null 2>&1", ip);
+    securec_check_intval(rc, (void)rc);
+    rc = system(cmd);
+    return rc == 0 ? CM_SUCCESS : CM_ERROR;
+}
+
+bool IsIPAddrValid(const char *ipAddr)
+{
+    if (ipAddr == nullptr) {
+        return false;
+    }
+
+    unsigned char ipAddrBuf[sizeof(struct in6_addr)];
+    // return value of function 'inet_pton' is 1 only when valid ip addr
+    if (inet_pton(AF_INET, ipAddr, &ipAddrBuf) == VAILD_IP_ADDR ||
+        inet_pton(AF_INET6, ipAddr, &ipAddrBuf) == VAILD_IP_ADDR) {
+        return true;
+    }
+    return false;
+}
+
+bool IsNeedCheckFloatIp()
+{
+    if (g_clusterType == SingleInstCluster) {
+        return true;
+    }
+    return false;
 }

@@ -24,9 +24,7 @@
 #include "cma_libpq_api.h"
 #include "cm/cm_elog.h"
 #include "libpq/libpq-int.h"
-#include "libpq/libpq-fe.h"
 #include "cma_dl_load.h"
-#include "cm_defs.h"
 
 #define LIBPQ_LIBNAME "libpq.so"
 
@@ -112,6 +110,7 @@ static status_t LoadLibpq()
             LIBPQ_LIBNAME,
             errno,
             dlerror());
+        (void)pthread_rwlock_unlock(&(g_libpqApi.lock));
         return CM_ERROR;
     }
 
@@ -185,7 +184,7 @@ void Finish(cltPqConn_t *conn)
 
 int Ntuples(const cltPqResult_t *res)
 {
-    return g_libpqApi.ntuples((PGresult *)res);
+    return g_libpqApi.ntuples((const PGresult *)res);
 }
 
 int Nfields(const cltPqResult_t *res)

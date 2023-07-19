@@ -22,15 +22,15 @@
  * -------------------------------------------------------------------------
  */
 
+#include <string>
+#include <termios.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <sys/unistd.h>
-#include "securec.h"
 #include "cm_misc.h"
 #include "securec_check.h"
 #include "cm/libpq-fe.h"
 #include "ctl_common.h"
-#include <termios.h>
 
 static const int MAX_PARAM_VALUE_LEN = 2048;
 static const int CONF_COMMAND_LEN = 16;
@@ -92,13 +92,11 @@ status_t CheckConfigFileStatus(struct stat statBuf, struct stat tmpBuf)
 
 static bool IsLineCommented(const char *optLine)
 {
-    char *tmp = NULL;
-
     if (optLine == NULL) {
         return false;
     }
 
-    tmp = const_cast<char*>(optLine);
+    char *tmp = (char*)(optLine);
 
     while (isspace((unsigned char)*tmp)) {
         ++tmp;
@@ -167,6 +165,7 @@ static void PrintResults(bool isSuccess, const CtlOption *ctx)
         case NODE_TYPE_SERVER:
             rc = strcpy_s(nodeType, NODE_TYPE_LEN, "cm_server.conf");
             break;
+        case NODE_TYPE_UNDEF:
         default:
             rc = strcpy_s(nodeType, NODE_TYPE_LEN, "unknown");
             break;
@@ -183,6 +182,7 @@ static void PrintResults(bool isSuccess, const CtlOption *ctx)
         case LIST_CONF_COMMAND:
             rc = strcpy_s(gucType, CONF_COMMAND_LEN, "list");
             break;
+        case UNKNOWN_COMMAND:
         default:
             break;
     }
@@ -308,13 +308,31 @@ static void GetRemoteGucCommand(const CtlOption *ctx, char *cmd, size_t cmdLen)
     securec_check_intval(ret, (void)ret);
     curLen = (size_t)ret;
 
-    if (ctx->guc.gucCommand == SET_CONF_COMMAND && ctx->guc.value != NULL && ctx->guc.parameter != NULL) {
+    if (ctx->guc.gucCommand != SET_CONF_COMMAND || ctx->guc.value == NULL || ctx->guc.parameter == NULL) {
+        return;
+    }
+
+    if (strcmp(ctx->guc.parameter, "event_triggers") != 0) {
         ret = snprintf_s((cmd + curLen), (cmdLen - curLen), ((cmdLen - curLen) - 1),
             SYSTEMQUOTE "-k %s=\\\"%s\\\" " SYSTEMQUOTE, ctx->guc.parameter, ctx->guc.value);
         securec_check_intval(ret, (void)ret);
+    } else {
+        // event_triggers value contain double quotes, so an escape character is added before remote execution
+        const char *value = ctx->guc.value;
+        char valueCopy[cmdLen] = {0};
+        int j = 0;
+        for (size_t i = 0; i < strlen(value); ++i) {
+            if (value[i] == '"') {
+                valueCopy[j++] = '\\';
+                valueCopy[j++] = '\\';
+                valueCopy[j++] = '\\';
+            }
+            valueCopy[j++] = value[i];
+        }
+        ret = snprintf_s((cmd + curLen), (cmdLen - curLen), ((cmdLen - curLen) - 1),
+            SYSTEMQUOTE "-k %s=\\\"%s\\\" " SYSTEMQUOTE, ctx->guc.parameter, valueCopy);
+        securec_check_intval(ret, (void)ret);
     }
-
-    return;
 }
 
 static void PrintOneParameterAndValue(char *line)
@@ -364,9 +382,7 @@ static void PrintValueAndParameter(char **lines)
 
 static void FreeFile(char **file)
 {
-    char **tmp = NULL;
-
-    tmp = file;
+    char **tmp = file;
     while (*tmp != NULL) {
         free(*tmp);
         *tmp = NULL;
@@ -383,25 +399,26 @@ static status_t WriteFile(char *path, uint32 pathLen, char **lines)
         return CM_ERROR;
     }
     int fd;
-    char **line = NULL;
-    FILE *outFile = NULL;
 
     canonicalize_path(path);
-    if ((outFile = fopen(path, "w")) == NULL) {
+    FILE *outFile = fopen(path, "w");
+    if (outFile == NULL) {
         write_runlog(ERROR, "cm_ctl: could not open file \"%s\" for writing: %s.\n", path, gs_strerror(errno));
         return CM_ERROR;
     }
     fd = fileno(outFile);
-    if ((fd >= 0) && (-1 == fchmod(fd, S_IRUSR | S_IWUSR))) {
+    if ((fd >= 0) && (fchmod(fd, S_IRUSR | S_IWUSR) == -1)) {
         write_runlog(ERROR, "could not set permissions of file  \"%s\".\n", path);
     }
     rewind(outFile);
-    for (line = lines; *line != NULL; ++line) {
+    char **line = lines;
+    while (*line != NULL) {
         if (fputs(*line, outFile) < 0) {
             write_runlog(ERROR, "cm_ctl: could not write file \"%s\": %s.\n", path, gs_strerror(errno));
             (void)fclose(outFile);
             return CM_ERROR;
         }
+        ++line;
     }
 
     if (fsync(fileno(outFile)) != 0) {
@@ -421,9 +438,8 @@ static status_t WriteFile(char *path, uint32 pathLen, char **lines)
 static char **ReadAndBackupConfigFile(const char *readFile, char *writeFile, uint32 len)
 {
     status_t ret;
-    char **configLines = NULL;
 
-    configLines = CmReadfile(readFile);
+    char **configLines = CmReadfile(readFile);
     if (configLines == NULL) {
         write_runlog(ERROR, "read conf file failed: %s.\n", gs_strerror(errno));
         return NULL;
@@ -505,8 +521,6 @@ static status_t ExeGucParameterValueWrite(char **optLines)
 {
     errno_t rc;
     status_t ret;
-    FILE *fp = NULL;
-    char **newLines = NULL;
     char newTempFile[CM_PATH_LENGTH + CM_PATH_LENGTH] = { 0 };
 
     rc = snprintf_s(newTempFile, (CM_PATH_LENGTH + CM_PATH_LENGTH), (CM_PATH_LENGTH + CM_PATH_LENGTH - 1),
@@ -519,8 +533,8 @@ static status_t ExeGucParameterValueWrite(char **optLines)
         return CM_ERROR;
     }
 
-    newLines = CmReadfile(g_tmpFile);
-    if (newLines == NULL) {
+    char **newLines = CmReadfile(g_tmpFile);
+    if (newLines == NULL || *newLines == NULL) {
         write_runlog(ERROR, "read file \"%s\" failed: %s.\n", g_tmpFile, gs_strerror(errno));
         return CM_ERROR;
     }
@@ -538,7 +552,7 @@ static status_t ExeGucParameterValueWrite(char **optLines)
     }
 
     /* fsync the file_dest file immediately, in case of an unfortunate system crash */
-    fp = fopen(g_confFile, "r");
+    FILE *fp = fopen(g_confFile, "r");
     if (fp == NULL) {
         write_runlog(ERROR, "could not open file \"%s\", errmsg: %s.\n", g_confFile, gs_strerror(errno));
         return CM_ERROR;
@@ -556,9 +570,7 @@ static status_t ExeGucParameterValueWrite(char **optLines)
 static status_t ExeGucConfigReload()
 {
     long pid;
-    FILE* pidFd = NULL;
-
-    pidFd = fopen(g_pidFile, "r");
+    FILE* pidFd = fopen(g_pidFile, "r");
     if (pidFd == NULL) {
         if (errno != ENOENT) {
             write_runlog(ERROR, "cm_ctl: could not open PID file \"%s\":%s.\n", g_pidFile, gs_strerror(errno));
@@ -635,7 +647,6 @@ static status_t ExeGucConfigList()
 {
     struct stat statBuf = { 0 };
     struct stat tempBuf = { 0 };
-    char **configLines = NULL;
 
     if (CheckConfigFileStatus(statBuf, tempBuf) != CM_SUCCESS) {
         return CM_ERROR;
@@ -646,8 +657,8 @@ static status_t ExeGucConfigList()
         return CM_ERROR;
     }
 
-    configLines = CmReadfile(g_confFile);
-    if (configLines == NULL) {
+    char **configLines = CmReadfile(g_confFile);
+    if (configLines == NULL || *configLines == NULL) {
         write_runlog(ERROR, "read conf file failed: %s.\n", gs_strerror(errno));
         return CM_ERROR;
     }
@@ -735,6 +746,7 @@ static status_t ListRemoteConf(const char *actualCmd, uint32 nodeId)
         (void)printf(_("%s"), buf);
     } else {
         write_runlog(LOG, "execute cmd (%s) failed, or conf of node(%u) is empty.\n", actualCmd, nodeId);
+        (void)pclose(fp);
         return CM_ERROR;
     }
     while (fgets(buf, sizeof(buf), fp) != NULL) {
@@ -774,7 +786,7 @@ static status_t ListRemoteConfMain(staticNodeConfig *node, const char *cmd)
 
 static status_t ProcessInRemoteInstance(const CtlOption *ctx)
 {
-    char remoteCmd[CM_PATH_LENGTH] = {0};
+    char remoteCmd[MAX_COMMAND_LEN] = {0};
 
     if (ctx->comm.nodeId == g_currentNode->node) {
         if (ProcessInLocalInstance(&ctx->guc) == CM_ERROR) {
@@ -868,9 +880,8 @@ static void MemsetPassword(char **password)
     }
     size_t len = strlen(*password);
     const int32 tryTimes = 3;
-    errno_t rc = 0;
     for (int32 i = 0; i < tryTimes; ++i) {
-        rc = memset_s((*password), len, 0, len);
+        errno_t rc = memset_s((*password), len, 0, len);
         securec_check_errno(rc, (void)rc);
     }
     FREE_AND_RESET((*password));
@@ -969,8 +980,6 @@ static char *CmSimplePrompt(const char *tipsStr, uint32 maxlen, bool echo)
 int DoEncrypt(const CtlOption *ctx)
 {
     int ret;
-    char *password = NULL;
-    char *passwordAgain = NULL;
 
     write_runlog(DEBUG1, "exec \"cm_ctl encrypt -M %s -D %s\".\n", GetModeString(ctx->guc.keyMod), ctx->comm.dataPath);
     if (!IsPathPermissionRight(ctx->comm.dataPath)) {
@@ -979,15 +988,15 @@ int DoEncrypt(const CtlOption *ctx)
     }
 
     write_runlog(DEBUG1, "enter password.\n");
-    password = CmSimplePrompt("please enter the password:", KEY_LEN + 1, false);
-    if (!check_input_password(password)) {
+    char *password = CmSimplePrompt("please enter the password:", KEY_LEN + 1, false);
+    if (!CheckInputPassword(password)) {
         write_runlog(LOG, "The input key must be 8~15 bytes and contain at least three kinds of characters!\n");
         MemsetPassword(&password);
         return 1;
     }
 
     write_runlog(DEBUG1, "enter password again.\n");
-    passwordAgain = CmSimplePrompt("please enter the password again:", KEY_LEN + 1, false);
+    char *passwordAgain = CmSimplePrompt("please enter the password again:", KEY_LEN + 1, false);
     if (passwordAgain == NULL || strcmp(password, passwordAgain) != 0) {
         write_runlog(LOG, "two passwords do not match!\n");
         MemsetPassword(&passwordAgain);
@@ -999,7 +1008,7 @@ int DoEncrypt(const CtlOption *ctx)
     MemsetPassword(&passwordAgain);
 
     write_runlog(DEBUG1, "begin to generate cipher file.\n");
-    ret = gen_cipher_rand_files(ctx->guc.keyMod, password, "client", ctx->comm.dataPath, NULL);
+    ret = GenCipherRandFiles(ctx->guc.keyMod, password, ctx->comm.dataPath);
 
     write_runlog(DEBUG1, "clear password.\n");
     MemsetPassword(&password);

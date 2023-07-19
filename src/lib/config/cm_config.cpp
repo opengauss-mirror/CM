@@ -22,26 +22,26 @@
  * -------------------------------------------------------------------------
  */
 
-#include "common/config/cm_config.h"
-#include "securec.h"
-#include "securec_check.h"
 #include <map>
 #include <algorithm>
 #include <string>
+#include "securec.h"
+#include "securec_check.h"
+#include "common/config/cm_config.h"
 
 using namespace std;
 
 /* This macro was used to replace the "goto" statement of the function "read_logic_config_file". */
-#define READ_LOGICAL_CONFIG_FAILED                      \
+#define READ_LOGICAL_CONFIG_FAILED(fd)                      \
     do {                                                \
         if (NULL != LCStaticConfig->logicClusterNode) { \
             free(LCStaticConfig->logicClusterNode);     \
             LCStaticConfig->logicClusterNode = NULL;    \
         }                                               \
-        fclose(fd);                                     \
+        (void)fclose(fd);                               \
         *err_no = errno;                                \
         return READ_FILE_ERROR;                         \
-    } while (0);
+    } while (0)
 
 staticConfigHeader g_nodeHeader;
 staticNodeConfig *g_node = NULL;
@@ -106,38 +106,17 @@ bool g_isCmRead = false;
         }                 \
     } while (0)
 
-static int read_all_logic_config_file(logicClusterList lcList, int *err_no);
-static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no);
+static int read_all_logic_config_file(const logicClusterList lcList, int *err_no);
+static int read_logic_config_file(const logicClusterInfo lcInfo, int *err_no);
 
 void check_input_for_security(const char *input)
 {
-    const char *danger_character_list[] = {"|",
-        ";",
-        "&",
-        "$",
-        "<",
-        ">",
-        "`",
-        "\\",
-        "'",
-        "\"",
-        "{",
-        "}",
-        "(",
-        ")",
-        "[",
-        "]",
-        "~",
-        "*",
-        "?",
-        "!",
-        "\n",
-        NULL};
-    int i = 0;
+    const char *danger_character_list[] = {"|", ";", "&", "$", "<", ">", "`", "\\", "'", "\"", "{", "}",
+        "(", ")", "[", "]", "~", "*", "?", "!", "\n", NULL};
 
-    for (i = 0; danger_character_list[i] != NULL; i++) {
+    for (int32 i = 0; danger_character_list[i] != NULL; i++) {
         if (strstr(input, danger_character_list[i]) != NULL) {
-            fprintf(stderr, "invalid token \"%s\" in input_value: (%s)\n", danger_character_list[i], input);
+            (void)fprintf(stderr, "FATAL invalid token \"%s\" in input_value: (%s)\n", danger_character_list[i], input);
             exit(1);
         }
     }
@@ -145,26 +124,23 @@ void check_input_for_security(const char *input)
 
 int cmconfig_getenv(const char *env_var, char *output_env_value, uint32 env_value_len)
 {
-    char *env_value = NULL;
-    int rc = 0;
-
     if (env_var == NULL) {
-        fprintf(stderr, "cmconfig_getenv: invalid env_var !\n");
+        (void)fprintf(stderr, "cmconfig_getenv: invalid env_var !\n");
         return -1;
     }
 
-    env_value = getenv(env_var);
+    char *env_value = getenv(env_var);
     if (env_value == NULL || env_value[0] == '\0') {
-        fprintf(stderr,
+        (void)fprintf(stderr,
             "cmconfig_getenv: failed to get environment variable:%s. Please check and make sure it is configured!\n",
             env_var);
         return -1;
     }
     check_input_for_security(env_value);
 
-    rc = strcpy_s(output_env_value, env_value_len, env_value);
+    int32 rc = strcpy_s(output_env_value, env_value_len, env_value);
     if (rc != EOK) {
-        fprintf(stderr,
+        (void)fprintf(stderr,
             "cmconfig_getenv: failed to get environment variable:%s, variable length:%lu.\n",
             env_var,
             strlen(env_value));
@@ -201,7 +177,7 @@ int find_node_index_by_nodeid(uint32 nodeId, uint32 *node_index)
     return -1;
 }
 
-int find_current_node_by_nodeid(uint32 nodeId)
+int find_current_node_by_nodeid()
 {
     uint32 node_index = 0;
     int ret = find_node_index_by_nodeid(g_nodeHeader.node, &node_index);
@@ -236,13 +212,17 @@ void setAZPriority()
         if (it != nameAndPriority.end() && it->second > azPriority) {
             it->second = azPriority;
         } else {
-            nameAndPriority.insert(pair<string, uint32>(azName, azPriority));
+            (void)nameAndPriority.emplace(pair<string, uint32>(azName, azPriority));
         }
     }
 
-    uint32 num;
-    for (it = nameAndPriority.begin(), num = 0; it != nameAndPriority.end() && num < azNumber; it++, num++) {
-        priorities[num] = it->second;
+    it = nameAndPriority.begin();
+    for (uint32 i = 0; i < azNumber; ++i) {
+        if (it == nameAndPriority.end()) {
+            break;
+        }
+        priorities[i] = it->second;
+        (void)(it++);
     }
 
     sort(priorities, priorities + azNumber);
@@ -263,14 +243,12 @@ using ReadConfigContext = struct StReadConfigContext {
 
 static FILE *open_config_file(const char *file_path, int *err_no)
 {
-    FILE *fd = NULL;
-    int rcs = 0;
     char configFilePath[MAX_PATH_LEN];
 
-    rcs = strncpy_s(configFilePath, MAX_PATH_LEN, file_path, MAX_PATH_LEN - 1);
-    securec_check_c(rcs, "\0", "\0");
+    int32 rcs = strncpy_s(configFilePath, MAX_PATH_LEN, file_path, MAX_PATH_LEN - 1);
+    securec_check_c(rcs, "", "");
     canonicalize_path(configFilePath);
-    fd = fopen(configFilePath, "r");
+    FILE *fd = fopen(configFilePath, "r");
     if (fd == NULL) {
         *err_no = errno;
         return NULL;
@@ -281,20 +259,20 @@ static FILE *open_config_file(const char *file_path, int *err_no)
 
 static int read_config_header(FILE *fd)
 {
-    int rcs = 0;
     const uint32 v3SingleInstClusterVersionBegin = 9301;
     const uint32 v3SingleInstClusterVersionEnd = 10301;
     const uint32 headerVersion1 = 100;
     const uint32 headerVersion2 = 200;
     const uint32 headerVersion3 = 300;
     const uint32 headerVersion4 = 400;
+    const uint32 headerVersion5 = 500;
 
     /********************************************************************************
      *  DISCLAIMER: Any Change in file format need to update the Version Number      *
      *              Version Number Offset should not be changed                      *
      ********************************************************************************/
-    rcs = memset_s(&g_nodeHeader, sizeof(staticConfigHeader), 0, sizeof(staticConfigHeader));
-    securec_check_c(rcs, "\0", "\0");
+    int32 rcs = memset_s(&g_nodeHeader, sizeof(staticConfigHeader), 0, sizeof(staticConfigHeader));
+    securec_check_c(rcs, "", "");
 
     // read head info
     FREAD1(&g_nodeHeader.crc, 1, sizeof(uint32), fd);
@@ -305,20 +283,25 @@ static int read_config_header(FILE *fd)
         g_single_node_cluster = false;
         g_multi_az_cluster = false;
         g_clusterType = MasterStandbyDummyCluster;
-    } else if (((headerVersion1 + 1) <= g_nodeHeader.version) && (g_nodeHeader.version <= headerVersion2)) {
+    } else if ((g_nodeHeader.version > headerVersion1) && (g_nodeHeader.version <= headerVersion2)) {
         g_single_node_cluster = true;
         g_multi_az_cluster = false;
         g_clusterType = SingleCluster;
-    } else if (((headerVersion2 + 1) <= g_nodeHeader.version) && (g_nodeHeader.version <= headerVersion3)) {
+    } else if ((g_nodeHeader.version > headerVersion2) && (g_nodeHeader.version <= headerVersion3)) {
         g_multi_az_cluster = true;
         g_one_master_multi_slave = true;
         g_clusterType = SinglePrimaryMultiStandbyCluster;
-    } else if (((headerVersion3 + 1) <= g_nodeHeader.version) && (g_nodeHeader.version <= headerVersion4)) {
+    } else if ((g_nodeHeader.version > headerVersion3) && (g_nodeHeader.version <= headerVersion4)) {
         g_only_dn_cluster = true;
         // only dn is a subset for multi az
         g_multi_az_cluster = true;
         g_one_master_multi_slave = true;
         g_clusterType = SingleInstCluster;
+    } else if ((g_nodeHeader.version >= headerVersion4) && (g_nodeHeader.version <= headerVersion5)) {
+        g_single_node_cluster = true;
+        g_only_dn_cluster = true;
+        g_multi_az_cluster = false;
+        g_clusterType = SingleInstClusterCent;
     } else if ((g_nodeHeader.version >= v3SingleInstClusterVersionBegin) &&
                (g_nodeHeader.version <= v3SingleInstClusterVersionEnd)) {
         g_only_dn_cluster = true;
@@ -355,7 +338,7 @@ static int alloc_node_buffer(bool inReload, int mallocByNodeNum)
         }
     }
 
-    /* g_node size may be larger than SECUREC_STRING_MAX_LEN in large cluster.*/
+    /* g_node size may be larger than SECUREC_STRING_MAX_LEN in large cluster. */
     if (mallocByNodeNum == MALLOC_BY_NODE_NUM) {
         rcs = memset_s(g_node,
             sizeof(staticNodeConfig) * g_nodeHeader.nodeCount,
@@ -365,7 +348,7 @@ static int alloc_node_buffer(bool inReload, int mallocByNodeNum)
         rcs = memset_s(g_node, sizeof(staticNodeConfig) * CM_NODE_MAXNUM, 0, sizeof(staticNodeConfig) * CM_NODE_MAXNUM);
     }
     if (rcs != EOK && rcs != ERANGE) {
-        printf("ERROR at %s : %d : Initialize is failed, error num is: %d.\n", __FILE__, __LINE__, rcs);
+        (void)printf("FATAL at %s : %d : Initialize is failed, error num is: %d.\n", __FUNCTION__, __LINE__, rcs);
         free(g_node);
         g_node = NULL;
         exit(1);
@@ -374,7 +357,7 @@ static int alloc_node_buffer(bool inReload, int mallocByNodeNum)
     return 0;
 }
 
-static int ReadNodeInfo(FILE *fd,uint32 nodeId)
+static int ReadNodeInfo(FILE *fd, uint32 nodeId)
 {
     /* read node info */
     FREAD1(&g_node[nodeId].crc, 1, sizeof(uint32), fd);
@@ -383,8 +366,8 @@ static int ReadNodeInfo(FILE *fd,uint32 nodeId)
     g_node[nodeId].nodeName[CM_NODE_NAME - 1] = '\0';
     check_input_for_security(g_node[nodeId].nodeName);
 
-    max_node_name_len =
-        (max_node_name_len < strlen(g_node[nodeId].nodeName)) ? strlen(g_node[nodeId].nodeName) : max_node_name_len;
+    max_node_name_len = (max_node_name_len < (uint32)strlen(g_node[nodeId].nodeName)) ?
+        (uint32)strlen(g_node[nodeId].nodeName) : max_node_name_len;
 
     if (g_clusterType >= SinglePrimaryMultiStandbyCluster && g_clusterType <= V3SingleInstCluster) {
         /* read az info */
@@ -392,14 +375,14 @@ static int ReadNodeInfo(FILE *fd,uint32 nodeId)
         g_node[nodeId].azName[CM_AZ_NAME - 1] = '\0';
         check_input_for_security(g_node[nodeId].azName);
         FREAD1(&g_node[nodeId].azPriority, 1, sizeof(uint32), fd);
-        max_az_name_len = (max_az_name_len < (uint32)strlen(g_node[nodeId].azName))?
-            strlen(g_node[nodeId].azName) : max_az_name_len;
+        max_az_name_len = (max_az_name_len < (uint32)strlen(g_node[nodeId].azName)) ?
+            (uint32)strlen(g_node[nodeId].azName) : max_az_name_len;
     }
 
     return 0;
 }
 
-static int ReadNodeBackIp(FILE *fd,uint32 nodeId)
+static int ReadNodeBackIp(FILE *fd, uint32 nodeId)
 {
     FREAD1(&g_node[nodeId].backIpCount, 1, sizeof(uint32), fd);
     if (g_node[nodeId].backIpCount > CM_IP_NUM) {
@@ -414,7 +397,7 @@ static int ReadNodeBackIp(FILE *fd,uint32 nodeId)
     return 0;
 }
 
-static int ReadNodeSsh(FILE *fd,uint32 nodeId)
+static int ReadNodeSsh(FILE *fd, uint32 nodeId)
 {
     FREAD1(&g_node[nodeId].sshCount, 1, sizeof(uint32), fd);
     if (g_node[nodeId].sshCount > CM_IP_NUM) {
@@ -428,7 +411,7 @@ static int ReadNodeSsh(FILE *fd,uint32 nodeId)
     return 0;
 }
 
-static int ReadNodeCmserver(FILE *fd,uint32 nodeId, ReadConfigContext *ctx)
+static int ReadNodeCmserver(FILE *fd, uint32 nodeId, ReadConfigContext *ctx)
 {
     /* read CMServer info */
     FREAD1(&g_node[nodeId].cmServerId, 1, sizeof(uint32), fd);
@@ -440,8 +423,8 @@ static int ReadNodeCmserver(FILE *fd,uint32 nodeId, ReadConfigContext *ctx)
     g_node[nodeId].cmDataPath[CM_PATH_LENGTH - 1] = '\0';
     check_input_for_security(g_node[nodeId].cmDataPath);
 
-    max_cmpath_len =
-        (max_cmpath_len < strlen(g_node[nodeId].cmDataPath)) ? strlen(g_node[nodeId].cmDataPath) : max_cmpath_len;
+    max_cmpath_len = (max_cmpath_len < (uint32)strlen(g_node[nodeId].cmDataPath)) ?
+        (uint32)strlen(g_node[nodeId].cmDataPath) : max_cmpath_len;
 
     FREAD1(&g_node[nodeId].cmServerLevel, 1, sizeof(uint32), fd);
     FREAD1(g_node[nodeId].cmServerFloatIP, 1, CM_IP_LENGTH, fd);
@@ -484,10 +467,10 @@ static int ReadNodeCmserver(FILE *fd,uint32 nodeId, ReadConfigContext *ctx)
     return 0;
 }
 
-static int ReadNodeGtm(FILE *fd,uint32 nodeId, ReadConfigContext *ctx)
+static int ReadNodeGtm(FILE *fd, uint32 nodeId, ReadConfigContext *ctx)
 {
     /* read GTM info */
-    FREAD1(&g_node[nodeId].gtmAgentId, 1, sizeof(uint32), fd);
+    FREAD1(&g_node[nodeId].cmAgentId, 1, sizeof(uint32), fd);
     FREAD1(&g_node[nodeId].cmAgentMirrorId, 1, sizeof(uint32), fd);
     FREAD1(&g_node[nodeId].cmAgentListenCount, 1, sizeof(uint32), fd);
     if (g_node[nodeId].cmAgentListenCount > CM_IP_NUM) {
@@ -515,9 +498,8 @@ static int ReadNodeGtm(FILE *fd,uint32 nodeId, ReadConfigContext *ctx)
     g_node[nodeId].gtmLocalDataPath[CM_PATH_LENGTH - 1] = '\0';
     check_input_for_security(g_node[nodeId].gtmLocalDataPath);
 
-    max_gtmpath_len = (max_gtmpath_len < strlen(g_node[nodeId].gtmLocalDataPath))
-                            ? strlen(g_node[nodeId].gtmLocalDataPath)
-                            : max_gtmpath_len;
+    max_gtmpath_len = (max_gtmpath_len < (uint32)strlen(g_node[nodeId].gtmLocalDataPath)) ?
+        (uint32)strlen(g_node[nodeId].gtmLocalDataPath) : max_gtmpath_len;
 
     FREAD1(&g_node[nodeId].gtmLocalListenCount, 1, sizeof(uint32), fd);
     if (g_node[nodeId].gtmLocalListenCount > CM_IP_NUM) {
@@ -569,7 +551,7 @@ static int ReadNodeGtm(FILE *fd,uint32 nodeId, ReadConfigContext *ctx)
     return 0;
 }
 
-static int ReadNodeCn(FILE *fd,uint32 nodeId)
+static int ReadNodeCn(FILE *fd, uint32 nodeId)
 {
     /* read CN info */
     FREAD1(&g_node[nodeId].coordinateId, 1, sizeof(uint32), fd);
@@ -583,8 +565,8 @@ static int ReadNodeCn(FILE *fd,uint32 nodeId)
     g_node[nodeId].SSDDataPath[CM_PATH_LENGTH - 1] = '\0';
     check_input_for_security(g_node[nodeId].SSDDataPath);
 
-    max_cnpath_len =
-        (max_cnpath_len < strlen(g_node[nodeId].DataPath)) ? strlen(g_node[nodeId].DataPath) : max_cnpath_len;
+    max_cnpath_len = (max_cnpath_len < (uint32)strlen(g_node[nodeId].DataPath)) ?
+        (uint32)strlen(g_node[nodeId].DataPath) : max_cnpath_len;
 
     FREAD1(&g_node[nodeId].coordinateListenCount, 1, sizeof(uint32), fd);
     if (g_node[nodeId].coordinateListenCount > CM_IP_NUM) {
@@ -601,7 +583,7 @@ static int ReadNodeCn(FILE *fd,uint32 nodeId)
     return 0;
 }
 
-static int ReadNodeOneDnListenIp(FILE *fd,uint32 nodeId, uint32 dnId)
+static int ReadNodeOneDnListenIp(FILE *fd, uint32 nodeId, uint32 dnId)
 {
     FREAD1(&g_node[nodeId].datanode[dnId].datanodeListenCount, 1, sizeof(uint32), fd);
     if (g_node[nodeId].datanode[dnId].datanodeListenCount > CM_IP_NUM) {
@@ -616,7 +598,7 @@ static int ReadNodeOneDnListenIp(FILE *fd,uint32 nodeId, uint32 dnId)
     return 0;
 }
 
-static int ReadNodeOneDnListenHaip(FILE *fd,uint32 nodeId, uint32 dnId)
+static int ReadNodeOneDnListenHaip(FILE *fd, uint32 nodeId, uint32 dnId)
 {
     FREAD1(&g_node[nodeId].datanode[dnId].datanodeLocalHAListenCount, 1, sizeof(uint32), fd);
     if (g_node[nodeId].datanode[dnId].datanodeLocalHAListenCount > CM_IP_NUM) {
@@ -632,7 +614,7 @@ static int ReadNodeOneDnListenHaip(FILE *fd,uint32 nodeId, uint32 dnId)
     return 0;
 }
 
-static int ReadNodeOneDnPeerDataNode(FILE *fd,uint32 nodeId, uint32 dnId)
+static int ReadNodeOneDnPeerDataNode(FILE *fd, uint32 nodeId, uint32 dnId)
 {
     for (uint32 peerdnId = 0; peerdnId < CM_MAX_DATANODE_STANDBY_NUM; peerdnId++) {
         FREAD1(g_node[nodeId].datanode[dnId].peerDatanodes[peerdnId].datanodePeerDataPath, 1, CM_PATH_LENGTH, fd);
@@ -655,7 +637,7 @@ static int ReadNodeOneDnPeerDataNode(FILE *fd,uint32 nodeId, uint32 dnId)
     return 0;
 }
 
-static int ReadNodeOneDnPeerDataNode1(FILE *fd,uint32 nodeId, uint32 dnId)
+static int ReadNodeOneDnPeerDataNode1(FILE *fd, uint32 nodeId, uint32 dnId)
 {
     /* former cluster: single primary, single standby and single dummy standby */
     FREAD1(g_node[nodeId].datanode[dnId].datanodePeerDataPath, 1, CM_PATH_LENGTH, fd);
@@ -691,10 +673,8 @@ static int ReadNodeOneDnPeerDataNode1(FILE *fd,uint32 nodeId, uint32 dnId)
     return 0;
 }
 
-static int ReadNodeOneDn(FILE *fd,uint32 nodeId, uint32 dnId, ReadConfigContext *ctx)
+static int ReadNodeOneDn(FILE *fd, uint32 nodeId, uint32 dnId, ReadConfigContext *ctx)
 {
-    int ret = 0;
-
     /* calculate datanode group number */
     if (g_node[nodeId].datanode[dnId].datanodeRole == PRIMARY_DN) {
         g_cluster_total_instance_group_num++;
@@ -721,10 +701,10 @@ static int ReadNodeOneDn(FILE *fd,uint32 nodeId, uint32 dnId, ReadConfigContext 
     g_node[nodeId].datanode[dnId].datanodeSSDDataPath[CM_PATH_LENGTH - 1] = '\0';
     check_input_for_security(g_node[nodeId].datanode[dnId].datanodeSSDDataPath);
 
-    max_datapath_len = (max_datapath_len < strlen(g_node[nodeId].datanode[dnId].datanodeLocalDataPath))?
-        strlen(g_node[nodeId].datanode[dnId].datanodeLocalDataPath) : max_datapath_len;
+    max_datapath_len = (max_datapath_len < (uint32)strlen(g_node[nodeId].datanode[dnId].datanodeLocalDataPath)) ?
+        (uint32)strlen(g_node[nodeId].datanode[dnId].datanodeLocalDataPath) : max_datapath_len;
 
-    ret = ReadNodeOneDnListenIp(fd, nodeId, dnId);
+    int32 ret = ReadNodeOneDnListenIp(fd, nodeId, dnId);
     RETURN_IFERR(ret);
 
     FREAD1(&g_node[nodeId].datanode[dnId].datanodePort, 1, sizeof(uint32), fd);
@@ -744,7 +724,7 @@ static int ReadNodeOneDn(FILE *fd,uint32 nodeId, uint32 dnId, ReadConfigContext 
     return 0;
 }
 
-static int ReadNodeAllDn(FILE *fd,uint32 nodeId,ReadConfigContext* ctx)
+static int ReadNodeAllDn(FILE *fd, uint32 nodeId, ReadConfigContext *ctx)
 {
     int ret = 0;
     /* read DNs info */
@@ -754,14 +734,14 @@ static int ReadNodeAllDn(FILE *fd,uint32 nodeId,ReadConfigContext* ctx)
         return READ_FILE_ERROR;
     }
     for (uint32 dnId = 0; dnId < g_node[nodeId].datanodeCount; dnId++) {
-        ret = ReadNodeOneDn(fd, nodeId, dnId,ctx);
+        ret = ReadNodeOneDn(fd, nodeId, dnId, ctx);
         RETURN_IFERR(ret);
     }
 
     return 0;
 }
 
-static int ReadNodeEtcd(FILE *fd,uint32 nodeId,ReadConfigContext* ctx)
+static int ReadNodeEtcd(FILE *fd, uint32 nodeId, ReadConfigContext *ctx)
 {
     FREAD1(&g_node[nodeId].etcd, 1, sizeof(uint32), fd);
     if (g_node[nodeId].etcd == 1) {
@@ -777,8 +757,8 @@ static int ReadNodeEtcd(FILE *fd,uint32 nodeId,ReadConfigContext* ctx)
     g_node[nodeId].etcdDataPath[CM_PATH_LENGTH - 1] = '\0';
     check_input_for_security(g_node[nodeId].etcdDataPath);
 
-    max_etcdpath_len = (max_etcdpath_len < strlen(g_node[nodeId].etcdDataPath)) ?
-        strlen(g_node[nodeId].etcdDataPath) : max_etcdpath_len;
+    max_etcdpath_len = (max_etcdpath_len < (uint32)strlen(g_node[nodeId].etcdDataPath)) ?
+        (uint32)strlen(g_node[nodeId].etcdDataPath) : max_etcdpath_len;
 
     FREAD1(&g_node[nodeId].etcdClientListenIPCount, 1, sizeof(uint32), fd);
     if (g_node[nodeId].etcdClientListenIPCount > CM_IP_NUM) {
@@ -806,9 +786,7 @@ static int ReadNodeEtcd(FILE *fd,uint32 nodeId,ReadConfigContext* ctx)
 
 static int ReadOneNode(FILE *fd, uint32 nodeId, ReadConfigContext *ctx)
 {
-    int ret = 0;
-
-    ret = ReadNodeInfo(fd,nodeId);
+    int ret = ReadNodeInfo(fd, nodeId);
     RETURN_IFERR(ret);
 
     ret = ReadNodeBackIp(fd, nodeId);
@@ -877,8 +855,7 @@ static int ReadAllNodes(FILE *fd, ReadConfigContext *ctx)
 
 static int ReadConfigContent(FILE *fd, bool inReload, int mallocByNodeNum, ReadConfigContext *ctx)
 {
-    int ret = 0;
-    ret = read_config_header(fd);
+    int ret = read_config_header(fd);
     RETURN_IFERR(ret);
 
     ret = alloc_node_buffer(inReload, mallocByNodeNum);
@@ -892,9 +869,6 @@ static int ReadConfigContent(FILE *fd, bool inReload, int mallocByNodeNum, ReadC
 
 int read_config_file(const char *file_path, int *err_no, bool inReload, int mallocByNodeNum)
 {
-    FILE *fd = NULL;
-    int rcs = 0;
-
     ReadConfigContext ctx;
     ctx.datanodeMirrorIDInit = false;
     ctx.datanodeMirrorID = 0;
@@ -904,18 +878,18 @@ int read_config_file(const char *file_path, int *err_no, bool inReload, int mall
     ctx.etcdNum = 0;
     ctx.cnNum = 0;
 
-    fd = open_config_file(file_path, err_no);
+    FILE *fd = open_config_file(file_path, err_no);
     if (fd == NULL) {
         return OPEN_FILE_ERROR;
     }
 
-    rcs = ReadConfigContent(fd, inReload, mallocByNodeNum, &ctx);
+    int32 rcs = ReadConfigContent(fd, inReload, mallocByNodeNum, &ctx);
     if (rcs != 0) {
-        fclose(fd);
+        (void)fclose(fd);
         fd = NULL;
         *err_no = errno;
         if (inReload) {
-            return READ_FILE_ERROR;
+            return rcs;
         }
         if (g_node != NULL) {
             free(g_node);
@@ -924,7 +898,7 @@ int read_config_file(const char *file_path, int *err_no, bool inReload, int mall
         /* test only dn cluster */
         g_multi_az_cluster = false;
         g_one_master_multi_slave = false;
-        return READ_FILE_ERROR;
+        return rcs;
     }
 
     g_node_num = g_nodeHeader.nodeCount;
@@ -934,29 +908,28 @@ int read_config_file(const char *file_path, int *err_no, bool inReload, int mall
     g_etcd_num = ctx.etcdNum;
     g_coordinator_num = ctx.cnNum;
     setAZPriority();
-    fclose(fd);
+    (void)fclose(fd);
     fd = 0;
 
     return 0;
 }
 
-void set_para_for_cm_read(logicClusterList lcList)
+void set_para_for_cm_read(const logicClusterList lcList)
 {
-    int rcs = 0;
-    char *lcName = NULL;
+    const char *lcName = NULL;
 
     max_logic_cluster_name_len = 0;
-    rcs = memset_s(g_logicClusterStaticConfig,
+    int rcs = memset_s(g_logicClusterStaticConfig,
         sizeof(logicClusterStaticConfig) * LOGIC_CLUSTER_NUMBER,
         0,
         sizeof(logicClusterStaticConfig) * LOGIC_CLUSTER_NUMBER);
-    securec_check_c(rcs, "\0", "\0");
+    securec_check_c(rcs, "", "");
 
     g_logic_cluster_count = lcList.logicClusterCount;
     for (uint32 i = 0; i < g_logic_cluster_count; ++i) {
         lcName = lcList.lcInfoArray[i].logicClusterName;
         rcs = strcpy_s(g_logicClusterStaticConfig[i].LogicClusterName, CM_LOGIC_CLUSTER_NAME_LEN, lcName);
-        securec_check_c(rcs, "\0", "\0");
+        securec_check_c(rcs, "", "");
         if (strlen(lcName) > max_logic_cluster_name_len) {
             max_logic_cluster_name_len = (uint32)strlen(lcName);
         }
@@ -965,16 +938,16 @@ void set_para_for_cm_read(logicClusterList lcList)
 
 int read_logic_cluster_config_files(const char *file_path, int *err_no)
 {
-    int status = 0;
     logicClusterList lcList;
     int rcs = memset_s(&lcList, sizeof(logicClusterList), 0, sizeof(logicClusterList));
-    securec_check_c(rcs, "\0", "\0");
+    securec_check_c(rcs, "", "");
 
     /* g_node not null means cm read */
-    if (g_node != NULL)
+    if (g_node != NULL) {
         g_isCmRead = true;
+    }
 
-    status = read_logic_cluster_name(file_path, lcList, err_no);
+    int32 status = read_logic_cluster_name(file_path, lcList, err_no);
     if (status == 0) {
         status = read_all_logic_config_file(lcList, err_no);
     }
@@ -984,17 +957,14 @@ int read_logic_cluster_config_files(const char *file_path, int *err_no)
 
 int read_lc_config_file(const char *file_path, int *err_no)
 {
-    FILE *fd = NULL;
     uint32 ii = 0;
-    uint32 header_size = 0;
-    uint32 header_aglinment_size = 0;
     long current_pos = 0;
 
-    header_size = sizeof(staticConfigHeader);
-    header_aglinment_size =
+    uint32 header_size = sizeof(staticConfigHeader);
+    uint32 header_aglinment_size =
         (header_size / AGLINMENT_SIZE + ((header_size % AGLINMENT_SIZE) == 0 ? 0 : 1)) * AGLINMENT_SIZE;
 
-    fd = fopen(file_path, "r");
+    FILE *fd = fopen(file_path, "r");
     if (fd == NULL) {
         *err_no = errno;
         return OPEN_FILE_ERROR;
@@ -1019,14 +989,14 @@ int read_lc_config_file(const char *file_path, int *err_no)
     /* The cluster must be primary_standby_salve */
     g_node_num = g_nodeHeader.nodeCount;
     if (g_node_num > CM_NODE_MAXNUM) {
-        fclose(fd);
+        (void)fclose(fd);
         return READ_FILE_ERROR;
     }
 
     if (g_node == NULL) {
         g_node = (staticNodeConfig *)malloc(sizeof(staticNodeConfig) * g_node_num);
         if (g_node == NULL) {
-            fclose(fd);
+            (void)fclose(fd);
             return OUT_OF_MEMORY;
         }
     }
@@ -1152,18 +1122,19 @@ int read_lc_config_file(const char *file_path, int *err_no)
         body_aglinment_size =
             (current_pos / AGLINMENT_SIZE + ((current_pos % AGLINMENT_SIZE == 0) ? 0 : 1)) * AGLINMENT_SIZE;
 
-        if (fseek(fd, (off_t)body_aglinment_size, SEEK_SET))
+        if (fseek(fd, (off_t)body_aglinment_size, SEEK_SET)) {
             goto read_failed;
+        }
     }
 
-    fclose(fd);
+    (void)fclose(fd);
     return 0;
 read_failed:
     if (g_node != NULL) {
         free(g_node);
         g_node = NULL;
     }
-    fclose(fd);
+    (void)fclose(fd);
     g_node_num = 0;
     *err_no = errno;
     return READ_FILE_ERROR;
@@ -1178,10 +1149,9 @@ void set_cm_read_flag(bool falg)
 /* read the logic_cluster_name.txt file */
 int read_logic_cluster_name(const char *file_path, logicClusterList &lcList, int *err_no)
 {
-    FILE *fd = NULL;
     uint32 logic_cluster_Index = 0;
 
-    fd = fopen(file_path, "r");
+    FILE *fd = fopen(file_path, "r");
     if (fd == NULL) {
         *err_no = errno;
         return OPEN_FILE_ERROR;
@@ -1190,7 +1160,7 @@ int read_logic_cluster_name(const char *file_path, logicClusterList &lcList, int
     while (logic_cluster_Index < LOGIC_CLUSTER_NUMBER && !feof(fd)) {
         if (fscanf_s(fd, "%s\n", lcList.lcInfoArray[logic_cluster_Index].logicClusterName, CM_LOGIC_CLUSTER_NAME_LEN) <
             0) {
-            fclose(fd);
+            (void)fclose(fd);
             *err_no = errno;
             return READ_FILE_ERROR;
         }
@@ -1203,16 +1173,15 @@ int read_logic_cluster_name(const char *file_path, logicClusterList &lcList, int
     if (g_isCmRead) {
         set_para_for_cm_read(lcList);
     }
-    fclose(fd);
+    (void)fclose(fd);
     return 0;
 }
 
-static int read_all_logic_config_file(logicClusterList lcList, int *err_no)
+static int read_all_logic_config_file(const logicClusterList lcList, int *err_no)
 {
-    uint32 logic_cluster_index = 0;
     int status = 0;
 
-    for (logic_cluster_index = 0; logic_cluster_index < lcList.logicClusterCount; logic_cluster_index++) {
+    for (uint32 logic_cluster_index = 0; logic_cluster_index < lcList.logicClusterCount; logic_cluster_index++) {
         status = read_logic_config_file(lcList.lcInfoArray[logic_cluster_index], err_no);
         /* means has found dn's logicCluster */
         if (!g_isCmRead && g_logicClusterName[0] != '\0') {
@@ -1228,30 +1197,27 @@ static int read_all_logic_config_file(logicClusterList lcList, int *err_no)
     return 0;
 }
 
-static FILE* OpenLogicConfigFile(logicClusterInfo* lcInfo, int *err_no)
+static FILE *OpenLogicConfigFile(const char *logicClusterName, int *err_no)
 {
-    FILE *fd = NULL;
     char file_path[MAX_PATH_LEN] = {0};
     char exec_path[MAX_PATH_LEN] = {0};
-    errno_t rc = 0;
-    int rcs = 0;
 
-    rcs = cmconfig_getenv("GAUSSHOME", exec_path, sizeof(exec_path));
+    int rcs = cmconfig_getenv("GAUSSHOME", exec_path, sizeof(exec_path));
     if (rcs != EOK) {
-        fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
+        (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return NULL;
     } else {
-        rc = snprintf_s(file_path,
+        errno_t rc = snprintf_s(file_path,
             MAX_PATH_LEN,
             MAX_PATH_LEN - 1,
             "%s/bin/%s.cluster_static_config",
             exec_path,
-            lcInfo->logicClusterName);
-        securec_check_ss_c(rc, "\0", "\0");
+            logicClusterName);
+        securec_check_ss_c(rc, "", "");
     }
     canonicalize_path(file_path);
 
-    fd = fopen(file_path, "r");
+    FILE *fd = fopen(file_path, "r");
     if (fd == NULL) {
         *err_no = errno;
         return NULL;
@@ -1260,9 +1226,8 @@ static FILE* OpenLogicConfigFile(logicClusterInfo* lcInfo, int *err_no)
     return fd;
 }
 
-static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
+static int read_logic_config_file(const logicClusterInfo lcInfo, int *err_no)
 {
-    FILE *fd = NULL;
     int rcs = 0;
     uint32 ii = 0;
     uint32 header_size = 0;
@@ -1277,7 +1242,7 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
 
     logicClusterStaticConfig *LCStaticConfig = &g_logicClusterStaticConfig[lcInfo.logicClusterId];
 
-    fd = OpenLogicConfigFile(&lcInfo, err_no);
+    FILE *fd = OpenLogicConfigFile(lcInfo.logicClusterName, err_no);
     if (fd == NULL) {
         return OPEN_FILE_ERROR;
     }
@@ -1297,8 +1262,9 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
     header_size = sizeof(staticConfigHeader);
     header_aglinment_size =
         (header_size / AGLINMENT_SIZE + ((header_size % AGLINMENT_SIZE) == 0 ? 0 : 1)) * AGLINMENT_SIZE;
-    if (fseek(fd, (off_t)(header_aglinment_size), SEEK_SET) != 0)
-        READ_LOGICAL_CONFIG_FAILED;
+    if (fseek(fd, (off_t)(header_aglinment_size), SEEK_SET) != 0) {
+        READ_LOGICAL_CONFIG_FAILED(fd);
+    }
 
     logicClusterNodeNum = LCStaticConfig->logicClusterNodeHeader.nodeCount;
     /*
@@ -1306,11 +1272,11 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
      * than the maximum number limit of logic cluster nodes.
      */
     if (logicClusterNodeNum == 0 || logicClusterNodeNum > CM_NODE_MAXNUM) {
-        fprintf(stderr,
+        (void)fprintf(stderr,
             "The logic cluster node number [count=%u] is greater than the max node number [max_num=%d].\n",
             logicClusterNodeNum,
             CM_NODE_MAXNUM);
-        fclose(fd);
+        (void)fclose(fd);
         return -1;
     }
 
@@ -1323,14 +1289,14 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
         LCStaticConfig->logicClusterNode =
             (staticLogicNodeConfig *)malloc(sizeof(staticLogicNodeConfig) * logicClusterNodeNum);
         if (LCStaticConfig->logicClusterNode == NULL) {
-            fclose(fd);
+            (void)fclose(fd);
             return OUT_OF_MEMORY;
         } else {
             rcs = memset_s(LCStaticConfig->logicClusterNode,
                 sizeof(staticLogicNodeConfig) * logicClusterNodeNum,
                 0,
                 sizeof(staticLogicNodeConfig) * logicClusterNodeNum);
-            securec_check_c(rcs, "\0", "\0");
+            securec_check_c(rcs, "", "");
         }
     }
 
@@ -1375,10 +1341,10 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
         } else {
             /* seek to datanodeInfo */
             current_pos = ftell(fd);
-            int node_head_size = sizeof(uint32) * 4 + (CM_NODE_NAME - 1) + (CM_IP_NUM * CM_IP_LENGTH * 2);
-            body_aglinment_size = current_pos + (long)node_head_size;
+            long node_head_size = (long)sizeof(uint32) * 4 + (CM_NODE_NAME - 1) + (CM_IP_NUM * CM_IP_LENGTH * 2);
+            body_aglinment_size = current_pos + node_head_size;
             if (fseek(fd, (off_t)body_aglinment_size, SEEK_SET)) {
-                READ_LOGICAL_CONFIG_FAILED;
+                READ_LOGICAL_CONFIG_FAILED(fd);
             }
         }
 
@@ -1389,12 +1355,12 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
          * than the maximum data node limit of a single node.
          */
         if (datanodeCount > CM_MAX_DATANODE_PER_NODE) {
-            fprintf(stderr,
+            (void)fprintf(stderr,
                 "The logic cluster data node number [count=%u] is greater than the max data node number per node "
                 "[max_num=%d].\n",
                 datanodeCount,
                 CM_MAX_DATANODE_PER_NODE);
-            fclose(fd);
+            (void)fclose(fd);
             return -1;
         }
 
@@ -1413,23 +1379,24 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
                         rc = strcpy_s(g_node[node_index].datanode[datanode_index].LogicClusterName,
                             CM_LOGIC_CLUSTER_NAME_LEN,
                             g_logicClusterStaticConfig[lcInfo.logicClusterId].LogicClusterName);
-                        securec_check_c(rc, "\0", "\0");
+                        securec_check_c(rc, "", "");
                         break;
                     }
                 }
             } else if (datanodeId == g_datanodeid) {
                 rc = strcpy_s(g_logicClusterName, CM_LOGIC_CLUSTER_NAME_LEN, lcInfo.logicClusterName);
-                securec_check_c(rc, "\0", "\0");
-                fclose(fd);
+                securec_check_c(rc, "", "");
+                (void)fclose(fd);
                 return 0;
             }
 
             /* seek to next datanode */
             current_pos = ftell(fd);
-            body_aglinment_size = current_pos + sizeof(dataNodeInfo) - sizeof(uint32) -
-                                  sizeof(peerDatanodeInfo) * CM_MAX_DATANODE_STANDBY_NUM - CM_LOGIC_CLUSTER_NAME_LEN;
+            body_aglinment_size = current_pos + (long)sizeof(dataNodeInfo) - (long)sizeof(uint32) -
+                                  (long)sizeof(peerDatanodeInfo) * CM_MAX_DATANODE_STANDBY_NUM -
+                                  CM_LOGIC_CLUSTER_NAME_LEN;
             if (fseek(fd, (off_t)body_aglinment_size, SEEK_SET)) {
-                READ_LOGICAL_CONFIG_FAILED;
+                READ_LOGICAL_CONFIG_FAILED(fd);
             }
         }
 
@@ -1438,7 +1405,7 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
         body_aglinment_size =
             (current_pos / AGLINMENT_SIZE + ((current_pos % AGLINMENT_SIZE == 0) ? 0 : 1)) * AGLINMENT_SIZE;
         if (fseek(fd, (off_t)body_aglinment_size, SEEK_SET)) {
-            READ_LOGICAL_CONFIG_FAILED;
+            READ_LOGICAL_CONFIG_FAILED(fd);
         }
     }
     /* means not found dn's logicCluster */
@@ -1446,11 +1413,11 @@ static int read_logic_config_file(logicClusterInfo lcInfo, int *err_no)
         g_logicClusterName[0] = '\0';
     }
 
-    fclose(fd);
+    (void)fclose(fd);
     return 0;
 
 read_failed:
-    READ_LOGICAL_CONFIG_FAILED;
+    READ_LOGICAL_CONFIG_FAILED(fd);
 }
 
 char *getAZNamebyPriority(uint32 azPriority)
@@ -1476,7 +1443,7 @@ bool read_single_file_local(uint32 node_index)
         }
         for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
             if (strcmp(g_node[node_index].datanode[node_index].datanodeLocalDataPath,
-                    g_node[i].datanode[j].datanodeLocalDataPath) == 0) {
+                g_node[i].datanode[j].datanodeLocalDataPath) == 0) {
                 if (g_nodeHeader.node == g_node[i].node) {
                     isLocal = true;
                 }
@@ -1487,7 +1454,7 @@ bool read_single_file_local(uint32 node_index)
                         sizeof(dataNodeInfo),
                         (void *)(&(g_node[i].datanode[j])),
                         sizeof(dataNodeInfo));
-                    securec_check_c(ret, "\0", "\0");
+                    securec_check_c(ret, "", "");
                 }
             }
             for (uint32 m = 0; (m < g_dn_replication_num - 1) && !find; m++) {
@@ -1496,9 +1463,9 @@ bool read_single_file_local(uint32 node_index)
                 }
 
                 if (strcmp(g_node[node_index].datanode[node_index].peerDatanodes[m].datanodePeerDataPath,
-                        g_node[i].datanode[j].datanodeLocalDataPath) == 0 &&
+                    g_node[i].datanode[j].datanodeLocalDataPath) == 0 &&
                     strcmp(g_node[node_index].datanode[node_index].peerDatanodes[m].datanodePeerHAIP[0],
-                        g_node[i].datanode[j].datanodeListenIP[0]) == 0) {
+                    g_node[i].datanode[j].datanodeListenIP[0]) == 0) {
                     if (g_nodeHeader.node == g_node[i].node) {
                         isLocal = false;
                     }
@@ -1509,7 +1476,7 @@ bool read_single_file_local(uint32 node_index)
                             sizeof(dataNodeInfo),
                             (void *)(&(g_node[i].datanode[j])),
                             sizeof(dataNodeInfo));
-                        securec_check_c(ret, "\0", "\0");
+                        securec_check_c(ret, "", "");
                     }
                     break;
                 }
@@ -1527,22 +1494,20 @@ bool read_single_file_local(uint32 node_index)
 
 int read_single_file(const char *file_path, int *err_no, uint32 nodeId, const char *dataPath)
 {
-    int ret = 0;
-    ret = read_config_file(file_path, err_no);
+    int ret = read_config_file(file_path, err_no);
     if (ret != 0) {
         return ret;
     }
 
     uint32 node_index = 0;
     bool find = false;
-    bool isLocal = false;
     for (uint32 i = 0; i < g_node_num; i++) {
         if (g_node[i].datanodeCount > CM_MAX_DATANODE_PER_NODE) {
             break;
         }
         if (g_node[i].node == nodeId) {
             for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
-                if (0 == strcmp(dataPath, g_node[i].datanode[j].datanodeLocalDataPath)) {
+                if (strcmp(dataPath, g_node[i].datanode[j].datanodeLocalDataPath) == 0) {
                     node_index = i;
                     find = true;
                     break;
@@ -1553,7 +1518,7 @@ int read_single_file(const char *file_path, int *err_no, uint32 nodeId, const ch
     if (!find) {
         return -1;
     }
-    isLocal = read_single_file_local(node_index);
+    bool isLocal = read_single_file_local(node_index);
     if (!isLocal) {
         return -2;
     }
@@ -1563,25 +1528,22 @@ int read_single_file(const char *file_path, int *err_no, uint32 nodeId, const ch
 int get_dynamic_dn_role(void)
 {
     char path[MAXPGPATH];
-    int nRet = 0;
-    FILE *fp = NULL;
     char line_info[MAXPGPATH] = {0};
     char *node_name = NULL;
     char *dn_role = NULL;
-    uint32 nodeidx = 0;
     struct stat statbuf;
 
     char *gausshome = gs_getenv_r("GAUSSHOME");
     check_input_for_security(gausshome);
 
-    nRet = snprintf_s(path, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", gausshome, DYNAMIC_DNROLE_FILE);
-    securec_check_ss_c(nRet, "\0", "\0");
+    int nRet = snprintf_s(path, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", gausshome, DYNAMIC_DNROLE_FILE);
+    securec_check_ss_c(nRet, "", "");
 
     if (lstat(path, &statbuf) != 0) {
         return 0;
     }
 
-    fp = fopen(path, "r");
+    FILE *fp = fopen(path, "r");
     if (fp == NULL) {
         return OPEN_FILE_ERROR;
     }
@@ -1589,7 +1551,7 @@ int get_dynamic_dn_role(void)
     while ((fgets(line_info, 1023 - 1, fp)) != NULL) {
         line_info[(int)strlen(line_info) - 1] = '\0';
         node_name = strtok_r(line_info, "=", &dn_role);
-        for (nodeidx = 0; node_name && (nodeidx < g_node_num); nodeidx++) {
+        for (uint32 nodeidx = 0; node_name && (nodeidx < g_node_num); nodeidx++) {
             if (strncmp(g_node[nodeidx].nodeName, node_name, strlen(node_name)) == 0) {
                 g_node[nodeidx].datanode[0].datanodeRole = (uint32)atoi(dn_role);
                 break;
@@ -1612,17 +1574,12 @@ int get_dynamic_dn_role(void)
 */
 int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nodeNameList)
 {
-    uint32 nodeidx = 0;
+    uint32 nodeidx;
     uint32 count = 0;
-    uint32 len = 0;
-    uint32 i = 0;
     uint32 j = 0;
-    AZList *azList = NULL;
     uint32 tmpAZPriority = 0;
     char *tmpNodeName = NULL;
     size_t buflen = 1;
-    char *buffer = NULL;
-    int nRet = 0;
     size_t curlen = 0;
 
     // get the node number which in azName
@@ -1637,15 +1594,14 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
     }
 
     // init azList, i must less than count
-    azList = (AZList *)malloc(sizeof(AZList) * count);
-    if (NULL == azList) {
+    AZList *azList = (AZList *)malloc(sizeof(AZList) * count);
+    if (azList == NULL) {
         return OUT_OF_MEMORY;
     }
 
     dataNodeInfo *dni = NULL;
     {
-        uint32 idx = 0;
-        for (idx = 0; idx < g_currentNode->datanodeCount; idx++) {
+        for (uint32 idx = 0; idx < g_currentNode->datanodeCount; idx++) {
             dataNodeInfo *dni_tmp = &(g_currentNode->datanode[idx]);
             if (strcmp(dni_tmp->datanodeLocalDataPath, data_dir) == 0) {
                 dni = dni_tmp;
@@ -1660,26 +1616,28 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
         return OPEN_FILE_ERROR;
     }
 
-    for (nodeidx = 0, i = 0; nodeidx < g_node_num; nodeidx++) {
+    uint32 i = 0;
+    for (nodeidx = 0; nodeidx < g_node_num; nodeidx++) {
         staticNodeConfig *dest = &(g_node[nodeidx]);
         bool get_dn_in_same_shard = false;
 
         if (nodeidx != g_local_node_idx && strcmp(dest->azName, AZName) == 0) {
-            uint32 l = 0;
-            for (l = 0; l < dest->datanodeCount && !get_dn_in_same_shard; l++) {
+            for (uint32 l = 0; l < dest->datanodeCount && !get_dn_in_same_shard; l++) {
                 dataNodeInfo *dn = &(dest->datanode[l]);
-                int n = 0;
 
-                if (dn->datanodeId == 0)
+                if (dn->datanodeId == 0) {
                     continue;
+                }
 
-                if (dn->datanodeRole == CASCADE_STANDBY_TYPE)
+                if (dn->datanodeRole == CASCADE_STANDBY_TYPE) {
                     continue;
+                }
 
-                for (n = 0; n < CM_MAX_DATANODE_STANDBY_NUM && !get_dn_in_same_shard; n++) {
+                for (int32 n = 0; n < CM_MAX_DATANODE_STANDBY_NUM && !get_dn_in_same_shard; n++) {
                     peerDatanodeInfo *peer_datanode = &(dn->peerDatanodes[n]);
-                    if (strlen(peer_datanode->datanodePeerHAIP[0]) == 0)
+                    if (strlen(peer_datanode->datanodePeerHAIP[0]) == 0) {
                         continue;
+                    }
 
                     if (strcmp(peer_datanode->datanodePeerHAIP[0], dni->datanodeLocalHAIP[0]) == 0 &&
                         peer_datanode->datanodePeerHAPort == dni->datanodeLocalHAPort) {
@@ -1689,7 +1647,7 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
                             sizeof(dn_instance_id) / sizeof(char) - 1,
                             "dn_%4u",
                             dn->datanodeId);
-                        securec_check_ss_c(nRc, "\0", "\0");
+                        securec_check_ss_c(nRc, "", "");
                         azList[i].nodeName = strdup(dn_instance_id);
                         azList[i].azPriority = dest->azPriority;
                         buflen += strlen(azList[i].nodeName) + 1;
@@ -1703,7 +1661,7 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
     }
 
     // the real node name number
-    len = i;
+    uint32 len = i;
     // sort by azPriority asc
     for (i = 0; len > 0 && i < len - 1; i++) {
         for (j = 0; len > 0 && j < (len - i) - 1; j++) {
@@ -1727,8 +1685,8 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
     }
 
     // Exclude the local node name and output the remaining information
-    buffer = (char *)malloc(sizeof(char) * (buflen + 1));
-    if (NULL == buffer) {
+    char *buffer = (char *)malloc(sizeof(char) * (buflen + 1));
+    if (buffer == NULL) {
         // free AZList
         for (i = 0; i < len; i++) {
             if (azList[i].nodeName != NULL) {
@@ -1741,8 +1699,8 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
         azList = NULL;
         return OUT_OF_MEMORY;
     }
-    nRet = memset_s(buffer, buflen + 1, 0, buflen + 1);
-    securec_check_c(nRet, buffer, "\0");
+    int32 nRet = memset_s(buffer, buflen + 1, 0, buflen + 1);
+    securec_check_c(nRet, buffer, "");
 
     for (i = 0; i < len; i++) {
         if (strcmp(g_local_node_name, azList[i].nodeName) == 0) {
@@ -1750,8 +1708,8 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
         }
         // the type like this: node1,node2,
         nRet = snprintf_s(buffer + curlen, (buflen + 1 - curlen), (buflen - curlen), "%s,", azList[i].nodeName);
-        securec_check_ss_c(nRet, buffer, "\0");
-        curlen = curlen + nRet;
+        securec_check_ss_c(nRet, buffer, "");
+        curlen = curlen + (size_t)nRet;
     }
     // skip the last character ','
     if (strlen(buffer) >= 1) {
@@ -1775,7 +1733,6 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
 /*
  ******************************************************************************
  Function    : checkPath
- Description :
  Input       : fileName
  Output      : None
  Return      : None
@@ -1783,10 +1740,9 @@ int get_nodename_list_by_AZ(const char *AZName, const char *data_dir, char **nod
 */
 int checkPath(const char *fileName)
 {
-    char *retVal = NULL;
     char realFileName[MAX_REALPATH_LEN + 1] = {0};
-    retVal = realpath(fileName, realFileName);
-    if (NULL == retVal) {
+    char *retVal = realpath(fileName, realFileName);
+    if (retVal == NULL) {
         return -1;
     }
     return 0;
@@ -1801,12 +1757,12 @@ bool has_static_config()
     char *gausshome = gs_getenv_r("GAUSSHOME");
     check_input_for_security(gausshome);
 
-    if (NULL != g_lcname) {
+    if (g_lcname != NULL) {
         nRet = snprintf_s(path, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s.%s", gausshome, g_lcname, STATIC_CONFIG_FILE);
     } else {
         nRet = snprintf_s(path, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", gausshome, STATIC_CONFIG_FILE);
     }
-    securec_check_ss_c(nRet, "\0", "\0");
+    securec_check_ss_c(nRet, "", "");
 
     if (checkPath(path) != 0) {
         return false;
@@ -1832,8 +1788,6 @@ bool has_static_config()
 bool CheckDataNameValue(const char *datanodeName, const char *dataDir)
 {
     int nRet;
-    uint32 nodeIdx = 0;
-    uint32 datanodeIdx = 0;
     int dnIdMaxLen = 64;
     char dnId[dnIdMaxLen];
 
@@ -1843,7 +1797,7 @@ bool CheckDataNameValue(const char *datanodeName, const char *dataDir)
 
     dataNodeInfo *dnI = NULL;
 
-    for (datanodeIdx = 0; datanodeIdx < g_currentNode->datanodeCount; datanodeIdx++) {
+    for (uint32 datanodeIdx = 0; datanodeIdx < g_currentNode->datanodeCount; datanodeIdx++) {
         dataNodeInfo *dniTmp = &(g_currentNode->datanode[datanodeIdx]);
         if (strcmp(dniTmp->datanodeLocalDataPath, dataDir) == 0) {
             dnI = dniTmp;
@@ -1852,25 +1806,24 @@ bool CheckDataNameValue(const char *datanodeName, const char *dataDir)
     }
 
     if (dnI == NULL) {
-        fprintf(stderr, "Failed: cannot find the expected data dir\n");
+        (void)fprintf(stderr, "Failed: cannot find the expected data dir\n");
         return false;
     }
 
-    for (nodeIdx = 0; nodeIdx < g_node_num; ++nodeIdx) {
+    for (uint32 nodeIdx = 0; nodeIdx < g_node_num; ++nodeIdx) {
         staticNodeConfig *dest = &(g_node[nodeIdx]);
-        for (datanodeIdx = 0; datanodeIdx < dest->datanodeCount; ++datanodeIdx) {
+        for (uint32 datanodeIdx = 0; datanodeIdx < dest->datanodeCount; ++datanodeIdx) {
             dataNodeInfo *dn = &(dest->datanode[datanodeIdx]);
             if (dn->datanodeId == 0 || dn->datanodeId == dnI->datanodeId) {
                 continue;
             }
             nRet = memset_s(dnId, sizeof(dnId), '\0', sizeof(dnId));
-            securec_check_c(nRet, "\0", "\0");
+            securec_check_c(nRet, "", "");
             nRet = snprintf_s(
-                dnId, sizeof(dnId) / sizeof(char), sizeof(dnId) / sizeof(char) - 1, "dn_%4d", dn->datanodeId);
-            securec_check_ss_c(nRet, "\0", "\0");
-            if (strncmp(dnId,
-                    datanodeName,
-                    ((strlen(dnId) > strlen(datanodeName)) ? strlen(dnId) : strlen(datanodeName))) != 0) {
+                dnId, sizeof(dnId) / sizeof(char), sizeof(dnId) / sizeof(char) - 1, "dn_%4u", dn->datanodeId);
+            securec_check_ss_c(nRet, "", "");
+            if (strncmp(dnId, datanodeName,
+                ((strlen(dnId) > strlen(datanodeName)) ? strlen(dnId) : strlen(datanodeName))) != 0) {
                 continue;
             }
             for (int peerIndex = 0; peerIndex < CM_MAX_DATANODE_STANDBY_NUM; ++peerIndex) {

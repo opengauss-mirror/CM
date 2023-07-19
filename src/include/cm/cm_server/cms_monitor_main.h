@@ -25,6 +25,7 @@
 #define CMS_MONITOR_MAIN_H
 
 extern void* CM_ThreadMonitorMain(void* argp);
+extern void *CM_ThreadDdbStatusCheckAndSetMain(void *argp);
 extern void* CM_ThreadMonitorNodeStopMain(void* argp);
 void *CheckBlackList(void *arg);
 

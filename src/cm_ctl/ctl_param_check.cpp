@@ -16,6 +16,7 @@
 #include "securec_check.h"
 #include "cm/libpq-fe.h"
 #include "ctl_common.h"
+#include "cjson/cJSON.h"
 
 const char *g_cmaParamInfo[] = {
     "log_dir|string|0,0|NULL|NULL|",
@@ -34,6 +35,9 @@ const char *g_cmaParamInfo[] = {
     "alarm_report_max_count|int|1,2592000|NULL|NULL|",
     "agent_check_interval|int|0,2147483647|NULL|NULL|",
     "enable_log_compress|bool|0,0|NULL|NULL|",
+    "enable_ssl|bool|0,0|NULL|NULL|",
+    "ssl_cert_expire_alert_threshold|int|7,180|NULL|NULL|",
+    "ssl_cert_expire_check_interval|int|0,2147483647|NULL|NULL|",
     "process_cpu_affinity|int|0,2|NULL|Only the ARM architecture is supported.|",
     "enable_xc_maintenance_mode|bool|0,0|NULL|NULL|",
     "log_threshold_check_interval|int|0,2147483647|NULL|NULL|",
@@ -46,15 +50,20 @@ const char *g_cmaParamInfo[] = {
     "enable_dcf|bool|0,0|NULL|NULL|",
     "disaster_recovery_type|int|0,2|NULL|NULL|",
     "agent_backup_open|int|0,2|NULL|NULL|",
-#ifndef ENABLE_PRIVATEGAUSS
+    "enable_e2e_rto|int|0,1|NULL|NULL|",
+    "disk_timeout|int|0,2147483647|NULL|NULL|",
+    "voting_disk_path|string|0,0|NULL|NULL|",
+    "agent_rhb_interval|int|0,2147483647|NULL|NULL|",
+#ifndef ENABLE_MULTIPLE_NODES
     "enable_fence_dn|string|0,0|NULL|NULL|",
 #endif
 #ifdef ENABLE_MULTIPLE_NODES
     "enable_cn_auto_repair|bool|0,0|NULL|NULL|",
     "enable_gtm_phony_dead_check|int|0,1|NULL|NULL|",
-    "enable_e2e_rto|int|0,1|NULL|NULL|",
     "environment_threshold|string|0,0|NULL|NULL|",
 #endif
+    "db_service_vip|string|0,0|NULL|NULL|",
+    "event_triggers|string|0,0|NULL|NULL|"
 };
 
 const char *g_cmsParamInfo[] = {
@@ -80,7 +89,7 @@ const char *g_cmsParamInfo[] = {
     "az_connect_check_interval|int|1,2147483647|NULL|NULL|",
     "az_connect_check_delay_time|int|1,2147483647|NULL|NULL|",
     "cmserver_demote_delay_on_etcd_fault|int|1,2147483647|NULL|NULL|",
-    "instance_phony_dead_restart_interval|int|1800,2147483647|NULL|NULL|",
+    "instance_phony_dead_restart_interval|int|0,2147483647|NULL|NULL|",
     "enable_transaction_read_only|bool|0,0|NULL|NULL|",
     "datastorage_threshold_check_interval|int|1,2592000|NULL|NULL|",
     "datastorage_threshold_value_check|int|1,99|NULL|NULL|",
@@ -97,17 +106,27 @@ const char *g_cmsParamInfo[] = {
     "ssl_cert_expire_alert_threshold|int|7,180|NULL|NULL|",
     "ssl_cert_expire_check_interval|int|0,2147483647|NULL|NULL|",
     "delay_arbitrate_timeout|int|0,2147483647|NULL|NULL|",
+    "delay_arbitrate_max_cluster_timeout|int|0,1000|NULL|NULL|",
     "ddb_log_level|string|0,0|NULL|NULL|",
     "ddb_log_backup_file_count|int|1,100|NULL|NULL|",
     "ddb_max_log_file_size|string|0,0|NULL|NULL|",
     "ddb_log_suppress_enable|int|0,1|NULL|NULL|",
     "ddb_election_timeout|int|1,600|NULL|NULL|",
+    "enable_e2e_rto|int|0,1|NULL|NULL|",
+    "disk_timeout|int|0,2147483647|NULL|NULL|",
+    "agent_network_timeout|int|0,2147483647|NULL|NULL|",
+    "share_disk_path|string|0,0|NULL|NULL|",
+    "voting_disk_path|string|0,0|NULL|NULL|",
+    "dn_arbitrate_mode|enum|quorum,paxos,share_disk|NULL|NULL|",
     "agent_fault_timeout|int|0,2147483647|NULL|NULL|",
 #ifdef ENABLE_MULTIPLE_NODES
     "coordinator_heartbeat_timeout|int|0,2592000|NULL|if set 0,the function is disabled|",
     "cluster_starting_aribt_delay|int|1,2592000|NULL|NULL|",
-    "enable_e2e_rto|int|0,1|NULL|NULL|",
 #endif
+    "third_party_gateway_ip|string|0,0|NULL|NULL|",
+    "cms_enable_failover_on2nodes|bool|0,0|NULL|NULL|",
+    "cms_enable_db_crash_recovery|bool|0,0|NULL|NULL|",
+    "cms_network_isolation_timeout|int|10,2147483647|NULL|NULL|",
 };
 
 const char *g_valueTypeStr[] = {
@@ -180,6 +199,29 @@ static const int THRESHOLD_FORMAT = 4;
 static const int THRESHOLD_MAX_VALUE = 100;
 static const int THRESHOLD_MIN_VALUE = 0;
 
+using EventTriggerType = enum EventTriggerTypeEn {
+    EVENT_UNKNOWN = -1,
+    EVENT_START = 0,
+    EVENT_STOP,
+    EVENT_FAILOVER,
+    EVENT_SWITCHOVER,
+    EVENT_COUNT
+};
+
+typedef struct TriggerTypeStringMap {
+    EventTriggerType type;
+    char *typeStr;
+} TriggerTypeStringMap;
+
+const TriggerTypeStringMap triggerTypeStringMap[EVENT_COUNT] = {
+    {EVENT_START, "on_start"},
+    {EVENT_STOP, "on_stop"},
+    {EVENT_FAILOVER, "on_failover"},
+    {EVENT_SWITCHOVER, "on_switchover"}
+};
+
+static status_t CheckEventTriggers(const char *value);
+
 static status_t CheckParameterNameType(const char *param)
 {
     if (param == NULL) {
@@ -212,12 +254,8 @@ static status_t CheckParameterValueType(const char *value)
         return CM_ERROR;
     }
     if ((!isdigit((unsigned char)(value[0]))) && (value[0] != '\'') && (value[0] != '(') &&
-        (!isalpha((unsigned char)(value[0]))) && (value[0] != '-') && (value[0] != ')')) {
+        (!isalpha((unsigned char)(value[0]))) && (value[0] != '-') && (value[0] != ')') && (value[0] != '{')) {
         write_runlog(ERROR, "The parameter value(%s) exists illegal character:\"%c\".\n", value, value[0]);
-        return CM_ERROR;
-    }
-    if (strcmp(value, "-0") == 0) {
-        write_runlog(ERROR, "Unknown the value \"%s\".\n", value);
         return CM_ERROR;
     }
     for (int i = 0; i < (int)strnlen(value, MAX_PATH_LEN); ++i) {
@@ -917,6 +955,13 @@ static status_t CheckEnvThresholdSize(const char *value)
 
 static status_t CheckStringTypeValue(const char *param, const char *value)
 {
+    size_t valueLen = strlen(value);
+    for (size_t i = 0; i < valueLen; ++i) {
+        if (value[i] == ' ') {
+            write_runlog(ERROR, "The parameter value(%s) exists illegal character:\" \".\n", value);
+            return CM_ERROR;
+        }
+    }
     if ((strncmp(param, "log_dir", strlen("log_dir")) == 0) ||
         (strncmp(param, "alarm_component", strlen("alarm_component")) == 0) ||
         (strncmp(param, "unix_socket_directory", strlen("unix_socket_directory")) == 0)) {
@@ -930,6 +975,9 @@ static status_t CheckStringTypeValue(const char *param, const char *value)
     }
     if (strncmp(param, "environment_threshold", strlen("environment_threshold")) == 0) {
         return CheckEnvThresholdSize(value);
+    }
+    if (strncmp(param, "event_triggers", strlen("event_triggers")) == 0) {
+        return CheckEventTriggers(value);
     }
 
     return CM_SUCCESS;
@@ -947,11 +995,20 @@ static status_t CheckParamValue(const char *param, const char *newValue, const P
         case CM_PARA_STRING:
             return CheckStringTypeValue(param, newValue);
         case CM_PARA_ERROR:
-            break;
         default:
             break;
     }
     return CM_ERROR;
+}
+
+static uint32 CleanZeroOfInt(const char *value, uint32 valueLen)
+{
+    for (uint32 i = 0; i < (valueLen - 1); ++i) {
+        if (value[i] != '0') {
+            return i;
+        }
+    }
+    return (valueLen - 1);
 }
 
 static status_t GetNewValue(const CmParaType &type, char *newValue, const char *value, int valueLen, const char *param)
@@ -969,14 +1026,21 @@ static status_t GetNewValue(const CmParaType &type, char *newValue, const char *
     }
     if (type == CM_PARA_INT || type == CM_PARA_ENUM || type == CM_PARA_BOOL) {
         /* the value like this "XXX" or 'XXXX' */
+        char tmpValue[MAX_PATH_LEN] = {0};
         if ((value[0] == '\'' || value[0] == '"') && (value[0] == value[valueLen - 1])) {
             for (int i = 1, j = 0; i < valueLen - 1 && j < MAX_PATH_LEN; i++, j++) {
-                newValue[j] = value[i];
+                tmpValue[j] = value[i];
             }
         } else {
-            ret = snprintf_s(newValue, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s", value);
+            ret = snprintf_s(tmpValue, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s", value);
             securec_check_intval(ret, (void)ret);
         }
+        uint32 pos = 0;
+        if (type == CM_PARA_INT) {
+            pos = CleanZeroOfInt(tmpValue, (uint32)strlen(tmpValue));
+        }
+        ret = snprintf_s(newValue, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s", (tmpValue + pos));
+        securec_check_intval(ret, (void)ret);
     }
     if (type == CM_PARA_STRING) {
         ret = snprintf_s(newValue, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s", value);
@@ -1025,12 +1089,11 @@ static bool IsParameterValueValid(const char *infoStr, const char *param, const 
 
 static status_t CheckParameter(const GucOption &gucCtx)
 {
-    char *oneParamInfo;
-
-    oneParamInfo = GetOneParamInfo(gucCtx);
+    char *oneParamInfo = GetOneParamInfo(gucCtx);
     if (oneParamInfo == NULL || oneParamInfo[0] == '\0') {
         write_runlog(ERROR, "The parameter \"%s\" is incorrect. Please check if the parameter in the required range.\n",
             gucCtx.parameter);
+        free(oneParamInfo);
         return CM_ERROR;
     }
 
@@ -1055,5 +1118,120 @@ status_t CheckGucOptionValidate(const GucOption &gucCtx)
         return CM_ERROR;
     }
 
+    return CM_SUCCESS;
+}
+
+static EventTriggerType GetTriggerTypeFromStr(const char *typeStr)
+{
+    for (int i = EVENT_START; i < EVENT_COUNT; ++i) {
+        if (strcmp(typeStr, triggerTypeStringMap[i].typeStr) == 0) {
+            return triggerTypeStringMap[i].type;
+        }
+    }
+    write_runlog(ERROR, "Event trigger type %s is not supported.\n", typeStr);
+    return EVENT_UNKNOWN;
+}
+
+/*
+ * check trigger item, key and value can't be empty and must be string,
+ * value must be shell script file, current user has right permission.
+ */
+static status_t CheckEventTriggersItem(const cJSON *item)
+{
+    if (!cJSON_IsString(item)) {
+        write_runlog(ERROR, "The trigger value must be string.\n");
+        return CM_ERROR;
+    }
+
+    char *valuePtr = item->valuestring;
+    if (valuePtr == NULL || strlen(valuePtr) == 0) {
+        write_runlog(ERROR, "The trigger value can't be empty.\n");
+        return CM_ERROR;
+    }
+
+    if (valuePtr[0] != '/') {
+        write_runlog(ERROR, "The trigger script path must be absolute path.\n");
+        return CM_ERROR;
+    }
+
+    const char *extention = ".sh";
+    const size_t shExtLen = strlen(extention);
+    size_t pathLen = strlen(valuePtr);
+    if (pathLen < shExtLen ||
+        strncmp((valuePtr + (pathLen - shExtLen)), extention, shExtLen) != 0) {
+        write_runlog(ERROR, "The trigger value %s is not shell script.\n", valuePtr);
+        return CM_ERROR;
+    }
+
+    if (access(valuePtr, F_OK) != 0) {
+        write_runlog(ERROR, "The trigger script %s is not a file or does not exist.\n", valuePtr);
+        return CM_ERROR;
+    }
+    if (access(valuePtr, R_OK | X_OK) != 0) {
+        write_runlog(ERROR, "Current user has no permission to access the "
+            "trigger script %s.\n", valuePtr);
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+/*
+ * event_triggers sample:
+ * {
+ *     "on_start": "/dir/on_start.sh",
+ *     "on_stop": "/dir/on_stop.sh",
+ *     "on_failover": "/dir/on_failover.sh",
+ *     "on_switchover": "/dir/on_switchover.sh"
+ * }
+ */
+static status_t CheckEventTriggers(const char *value)
+{
+    if (value == NULL || value[0] == 0) {
+        write_runlog(ERROR, "The value of event_triggers is empty.\n");
+        return CM_ERROR;
+    }
+    if (CheckStringLen(value) == CM_ERROR) {
+        return CM_ERROR;
+    }
+
+    cJSON *root = NULL;
+    root = cJSON_Parse(value);
+    if (!root) {
+        write_runlog(ERROR, "The value of event_triggers is not a json.\n");
+        return CM_ERROR;
+    }
+    if (!cJSON_IsObject(root)) {
+        write_runlog(ERROR, "The value of event_triggers must be an object.\n");
+        cJSON_Delete(root);
+        return CM_ERROR;
+    }
+
+    int triggerNums[EVENT_COUNT] = {0};
+    cJSON *item = root->child;
+    while (item != NULL) {
+        if (CheckEventTriggersItem(item) == CM_ERROR) {
+            cJSON_Delete(root);
+            return CM_ERROR;
+        }
+
+        char *typeStr = item->string;
+        EventTriggerType type = GetTriggerTypeFromStr(typeStr);
+        if (type == EVENT_UNKNOWN) {
+            write_runlog(ERROR, "The trigger type %s does support.\n", typeStr);
+            cJSON_Delete(root);
+            return CM_ERROR;
+        }
+
+        ++triggerNums[type];
+        if (triggerNums[type] > 1) {
+            write_runlog(ERROR, "Duplicated trigger %s are supported.\n", typeStr);
+            cJSON_Delete(root);
+            return CM_ERROR;
+        }
+
+        item = item->next;
+    }
+    cJSON_Delete(root);
     return CM_SUCCESS;
 }

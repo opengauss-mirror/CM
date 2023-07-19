@@ -26,6 +26,7 @@
 #define CMA_PHONY_DEAD_CHECK_H
 
 void* DNPhonyDeadStatusCheckMain(void * const arg);
+void* DNCoreDumpCheckMain(void *arg);
 void* FaultDetectMain(void* arg);
 
 #ifdef ENABLE_UT

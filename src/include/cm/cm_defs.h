@@ -41,7 +41,7 @@ extern "C" {
 typedef enum en_status {
     CM_ERROR = -1,
     CM_SUCCESS = 0,
-    CM_TIMEDOUT = 1,
+    CM_TIMEDOUT = 1
 } status_t;
 
 typedef enum ResStatusEn {
@@ -52,6 +52,19 @@ typedef enum ResStatusEn {
     CM_RES_STAT_COUNT = 3,
 } ResStatus;
 
+typedef enum ClientErrorEn {
+    CM_RES_CLIENT_SUCCESS = 0,
+    CM_RES_CLIENT_CANNOT_DO = 1,
+    CM_RES_CLIENT_DDB_ERR = 2,
+    CM_RES_CLIENT_VERSION_ERR = 3,
+    CM_RES_CLIENT_CONNECT_ERR = 4,
+    CM_RES_CLIENT_TIMEOUT = 5,
+    CM_RES_CLIENT_NO_LOCK_OWNER = 6,
+} ClientError;
+
+typedef unsigned char bool8;
+
+#define CMS_ONE_PRIMARY_ONE_STANDBY 2
 #define CM_EXIT ((int)-2)
 #define CM_FALSE (uint8)0
 #define CM_TRUE  (uint8)1
@@ -122,6 +135,14 @@ typedef int socket_t;
         }                             \
     } while (0)
 
+#define CM_RETURN_ERR_IF_INTERR(ret)  \
+    do {                              \
+        int _status_ = (ret);    \
+        if (_status_ != 0) { \
+            return CM_ERROR;          \
+        }                             \
+    } while (0)
+
 #define CM_RETERR_IF_FALSE(ret) \
     do {                        \
         if ((ret) != CM_TRUE) { \
@@ -136,6 +157,13 @@ typedef int socket_t;
         }                       \
     } while (0)
 
+#define CM_RETURN_IF_NULL(ret) \
+    do {                       \
+        if ((ret) == NULL) {   \
+            return;            \
+        }                      \
+    } while (0)
+
 #define CM_RETERR_IF_NULL(ret) \
     do {                       \
         if ((ret) == NULL) {   \
@@ -143,11 +171,27 @@ typedef int socket_t;
         }                      \
     } while (0)
 
+#define CM_RETERR_IF_NULL_EX(ret, func) \
+    do {                                \
+        if ((ret) == NULL) {            \
+            func;                            \
+            return CM_ERROR;            \
+        }                               \
+    } while (0)
+
 // return NULLL if error occurs
 #define CM_RETNULL_IFERR(ret)      \
     do {                           \
         if ((ret) != CM_SUCCESS) { \
             return NULL;           \
+        }                          \
+    } while (0)
+
+// return NULLL if error occurs
+#define CM_RETVOID_IFERR(ret)      \
+    do {                           \
+        if ((ret) != CM_SUCCESS) { \
+            return;           \
         }                          \
     } while (0)
 
@@ -193,13 +237,28 @@ typedef int socket_t;
         continue;               \
     }
 
-#define CM_RETURN_IFERR_EX(ret, func)  \
-    do {                               \
-        status_t _status_ = (ret);     \
+#define CM_RETURN_IF_FALSE(ret) \
+    do {                        \
+        if ((ret) != CM_TRUE) { \
+            return CM_ERROR;    \
+        }                       \
+    } while (0)
+
+#define CM_RETURN_IF_FALSE_EX(ret, func) \
+    do {                                 \
+        if ((ret) != CM_TRUE) {          \
+            (func);                      \
+            return CM_ERROR;             \
+        }                                \
+    } while (0)
+
+#define CM_RETURN_IFERR_EX(ret, func)                   \
+    do {                                                \
+        status_t _status_ = (ret);                      \
         if (SECUREC_UNLIKELY(_status_ != CM_SUCCESS)) { \
-            func;                     \
-            return _status_;          \
-        }                             \
+            func;                                       \
+            return _status_;                            \
+        }                                               \
     } while (0)
 
 /* To decide whether a pointer is null */
@@ -216,9 +275,24 @@ typedef int socket_t;
 
 #define CM_IS_EMPTY_STR(str)     (((str) == NULL) || ((str)[0] == 0))
 
+/* simple mathematical calculation */
+#define CM_MIN(A, B) ((B) < (A) ? (B) : (A))
+#define CM_MAX(A, B) ((B) > (A) ? (B) : (A))
+#define CM_SWAP(type, A, B) \
+    do {                    \
+        type t_ = (A);      \
+        (A) = (B);          \
+        (B) = t_;           \
+    } while (0)
+#define CM_DELTA(A, B) (((A) > (B)) ? ((A) - (B)) : ((B) - (A)))
+
 #define CM_PASSWORD_BUFFER_SIZE (uint32)512
+#ifndef ITERATE_TIMES
 #define ITERATE_TIMES 10000
+#endif
+#ifndef MAX_PATH_LEN
 #define MAX_PATH_LEN 1024
+#endif
 
 #define GS_FILE_NAME_BUFFER_SIZE        (uint32)256
 #define GS_MAX_FILE_NAME_LEN            (uint32)(GS_FILE_NAME_BUFFER_SIZE - 1)

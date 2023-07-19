@@ -22,7 +22,6 @@
  * -------------------------------------------------------------------------
  */
 #include "cma_global_params.h"
-#include "cm/cm_cgroup.h"
 
 struct passwd* pw = NULL;
 /* last time receive heartbeat from cmserver */
@@ -38,9 +37,10 @@ datanode_status_info g_dnReportMsg[CM_MAX_DATANODE_PER_NODE];
 DnSyncListInfo g_dnSyncListInfo[CM_MAX_DATANODE_PER_NODE];
 CmDoWriteOper g_cmDoWriteOper[CM_MAX_DATANODE_PER_NODE];
 kerberos_status_info g_kerberosReportMsg;
+OneNodeResStatusInfo g_resReportMsg;
 
 pthread_t g_repairCnThread;
-pthread_t g_threadId[CM_MAX_DATANODE_PER_NODE + 5] = {0};
+pthread_t g_threadId[CM_MAX_THREAD_NUM] = {0};
 FILE* g_lockfile = NULL;
 
 bool enable_xc_maintenance_mode = true;
@@ -58,13 +58,14 @@ char g_cmLibnetManualStartPath[MAX_PATH_LEN] = {0};
 #endif
 char g_cmResumingCnStopPath[MAX_PATH_LEN] = {0};
 /* on is online off is offline */
-char g_enableOnlineOrOffline[10] = {'\0'};
+char g_enableOnlineOrOffline[BOOL_STR_MAX_LEN] = {0};
 char g_unixSocketDirectory[MAXPGPATH] = {'\0'};
-char g_enableCnAutoRepair[10] = {'\0'};
+char g_votingDiskPath[MAX_PATH_LEN] = {0};
+char g_enableCnAutoRepair[BOOL_STR_MAX_LEN] = {0};
 /* root directory of trace */
 char g_logBasePath[MAXPGPATH];
 /* gateway to control log compress */
-char g_enableLogCompress[10] = {'\0'};
+char g_enableLogCompress[BOOL_STR_MAX_LEN] = {0};
 char configDir[MAX_PATH_LEN] = {0};
 char g_alarmConfigDir[MAX_PATH_LEN] = {0};
 char g_cmagentLockfile[MAX_PATH_LEN] = {0};
@@ -105,10 +106,14 @@ bool g_dnBuild[CM_MAX_DATANODE_PER_NODE];
 bool g_nicDown[CM_MAX_DATANODE_PER_NODE];
 bool g_dnPingFault[CM_MAX_DATANODE_PER_NODE];
 bool g_mostAvailableSync[CM_MAX_DATANODE_PER_NODE];
+bool g_dnNoFreeProc[CM_MAX_DATANODE_PER_NODE];
+bool g_dnReadOnly[CM_MAX_DATANODE_PER_NODE];
+bool g_cnReadOnly;
 bool g_cnPhonyDeadD = false;
-bool g_dnNoFreeProc = false;
 bool g_cnNoFreeProc = false;
 bool g_cnWaiting = false;
+bool g_isCatalogChanged = false;
+bool g_cleanDropCnFlag = false;
 #ifndef ENABLE_MULTIPLE_NODES
 bool g_ltranDown[CM_MAX_DATANODE_PER_NODE];
 #endif
@@ -119,22 +124,19 @@ int g_cnDnPairsCount = 0;
 /* cm_ctl stop single instance, single node or all nodes */
 int g_cmShutdownLevel = ALL_NODES;
 /* fast shutdown */
-int g_cmShutdownMode = FAST_MODE;
+ShutdownMode g_cmShutdownMode = FAST_MODE;
 /* Indicates pgxc_node or pgxc_group is changed. if not, we do not need to execute pgxc_pool_reload. */
-int g_isCatalogChanged = false;
 int g_currenPgxcNodeNum = 0;
 int g_normalStopTryTimes = 0;
 int g_startCmsCount = -1;
 int g_startCnCount = 0;
 int g_startDnCount[CM_MAX_DATANODE_PER_NODE] = {0};
 int g_startGtmCount = 0;
-int g_cleanDropCnFlag = false;
 int g_cmServerInstanceStatus = CM_SERVER_DOWN;
 int g_dnRoleForPhonyDead[CM_MAX_DATANODE_PER_NODE] = {0};
 int g_gtmRoleForPhonyDead = 0;
 int g_localCnStatus = 0;
 int g_dnPhonyDeadTimes[CM_MAX_DATANODE_PER_NODE] = {0};
-bool g_dnCascade[CM_MAX_DATANODE_PER_NODE];
 int g_gtmPhonyDeadTimes = 0;
 int g_cnPhonyDeadTimes = 0;
 volatile uint32 g_cnDnDisconnectTimes = 0;
@@ -150,7 +152,6 @@ uint32 agent_phony_dead_check_interval = 10;
 DisasterRecoveryType g_disasterRecoveryType = DISASTER_RECOVERY_NULL;
 /* T status agent check phony dead inteval */
 uint32 g_agentCheckTStatusInterval = 36;
-uint32 g_agentToDb = 2;
 uint32 enable_gtm_phony_dead_check = 1;
 uint32 g_enableE2ERto = 0;
 /* disk capacity,the unit is MB,the highest priority */
@@ -158,7 +159,7 @@ int64 log_max_size = 1024;
 /* the maximum trace count save on disk,the lowest priority */
 uint32 log_max_count = 10000;
 
-char g_agentEnableDcf[10] = {0};
+char g_agentEnableDcf[BOOL_STR_MAX_LEN] = {0};
 /* guard trace saved days,the priority,the medium priority */
 uint32 log_saved_days = 90;
 /* interval of next check disk capacity,the unit is second */
@@ -176,12 +177,12 @@ uint32 agent_connect_retries = 15;
 uint32 agent_check_interval = 2;
 uint32 agent_kill_instance_timeout = 0;
 uint32 g_agentKerberosStatusCheckInterval = 5;
-uint32 g_agentDiskUsageStatusCheckTimes = 5;
 const uint32 AGENT_WATCH_DOG_THRESHOLD = 200;
 uint32 g_cmaConnectCmsInOtherNodeCount = 0;
 uint32 g_cmaConnectCmsPrimaryInLocalNodeCount = 0;
 uint32 g_cmaConnectCmsInOtherAzCount = 0;
 uint32 g_cmaConnectCmsPrimaryInLocalAzCount = 0;
+uint32 g_diskTimeout = 200;
 uint32 g_dnBuildCheckTimes[CM_MAX_DATANODE_PER_NODE] = {0};
 uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM] = {INVALID_NODE_NUM,
     INVALID_NODE_NUM,
@@ -193,25 +194,25 @@ uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM] = {INVALID_NODE_NUM,
     INVALID_NODE_NUM};
 
 /* Update secbox.conf when CN/DN starting */
-bool g_needUpdateSecboxConf = true;
 bool g_exitFlag = false;
 bool g_shutdownRequest = false;
 bool g_gtmDiskDamage = false;
 bool g_cnDiskDamage = false;
 bool g_cmsDiskDamage = false;
-bool g_isNeedGetDoradoIp = false;
 
 bool g_fencedUdfStopped = false;
 bool g_needReloadActive = false;
 bool g_isCmaBuildingDn[CM_MAX_DATANODE_PER_NODE] = {0};
 
 long g_check_disc_state = 0;
-long g_thread_state[CM_MAX_DATANODE_PER_NODE + 5] = {0};
+long g_thread_state[CM_MAX_THREAD_NUM] = {0};
+const char *g_threadName[CM_MAX_THREAD_NUM] = {0};
 uint32 g_serverNodeId;
 bool g_pgxcPoolReload = false;
 uint32 g_autoRepairCnt = 0;
 char g_autoRepairPath[MAX_PATH_LEN] = {0};
 bool g_dnPhonyDeadD[CM_MAX_DATANODE_PER_NODE] = {0};
+bool g_dnCore[CM_MAX_DATANODE_PER_NODE] = {0};
 bool g_gtmPhonyDeadD = false;
 char g_agentQueryBarrier[BARRIERLEN] = {0};
 char g_agentTargetBarrier[BARRIERLEN] = {0};
@@ -220,10 +221,16 @@ CmDdbOperRes g_gtmCmDdbOperRes;
 char g_environmentThreshold[CM_PATH_LENGTH] = {0};
 bool g_isSharedStorageMode = false;
 char g_doradoIp[CM_IP_LENGTH] = {0};
-
-MsgQueue g_sendQueue;
-MsgQueue g_recvQueue;
+char g_enableMesSsl[BOOL_STR_MAX_LEN] = {0};
+uint32 g_sslCertExpireCheckInterval = SECONDS_PER_DAY;
+uint32 g_cmaRhbItvl = 1000;
+CmResConfList g_resConf[CM_MAX_RES_INST_COUNT] = {{{0}}};
+#ifndef ENABLE_MULTIPLE_NODES
+char g_dbServiceVip[CM_IP_LENGTH] = {0};
 char g_enableFenceDn[10] = {0};
+#endif
+bool g_isPauseArbitration = false;
+char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 
 bool &GetIsSharedStorageMode()
 {

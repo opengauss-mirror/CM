@@ -124,8 +124,8 @@ static bool InitConnCheck(ConnCheck *leaf1Az, ConnCheck *leaf2Az, ConnCheck *cur
     return true;
 }
 
-static AzPingCheckRes AzAndInnerConnectCheck(
-    ConnCheck *leaf1Az, ConnCheck *leaf2Az, ConnCheck *curAz, int32 *checkTimes)
+static AzPingCheckRes AzAndInnerConnectCheck(ConnCheck *leaf1Az, ConnCheck *leaf2Az, ConnCheck *curAz,
+    int32 *checkTimes)
 {
     const int32 checkConnMax = 5;
     bool leaf1AzConnectOK = AzPingCheck(&(leaf1Az->curConn), leaf1Az->azName);
@@ -146,11 +146,13 @@ static AzPingCheckRes AzAndInnerConnectCheck(
             *checkTimes = 0;
         }
     }
-    if ((leaf1Az->curConn != leaf1Az->lastConn) || (curAz->curConn != curAz->lastConn)
-        || (leaf2Az->curConn != leaf2Az->lastConn) || (g_dbConn.modId == MOD_ALL)) {
-        write_runlog(LOG, "leaf1Az(%s %d: %d), curAz(%s %d: %d), leaf2Az(%s %d: %d), will open "
-            "new ddb Connect.\n", leaf1Az->azName, leaf1Az->lastConn, leaf1Az->curConn, curAz->azName,
-            curAz->lastConn, curAz->curConn, leaf2Az->azName, leaf2Az->lastConn, leaf2Az->curConn);
+    if ((leaf1Az->curConn != leaf1Az->lastConn) || (curAz->curConn != curAz->lastConn) ||
+        (leaf2Az->curConn != leaf2Az->lastConn) || (g_dbConn.modId == MOD_ALL)) {
+        write_runlog(LOG,
+            "leaf1Az(%s %d: %d), curAz(%s %d: %d), leaf2Az(%s %d: %d), will open "
+            "new ddb Connect.\n",
+            leaf1Az->azName, leaf1Az->lastConn, leaf1Az->curConn, curAz->azName, curAz->lastConn, curAz->curConn,
+            leaf2Az->azName, leaf2Az->lastConn, leaf2Az->curConn);
         leaf1Az->lastConn = leaf1Az->curConn;
         curAz->lastConn = curAz->curConn;
         leaf2Az->lastConn = leaf2Az->curConn;
@@ -192,7 +194,7 @@ static void DoStartCurNodeOrCurAz(const ConnCheck *curAz)
     }
     if (CheckStopFileExist(SINGLENODE_TYPE)) {
         write_runlog(LOG, "check the single_node file, We only need start current node(%u).\n", g_currentNode->node);
-        StartOrStopNodeInstanceByCommand(START_AZ, g_currentNode->node - 1);
+        StartOrStopNodeInstanceByCommand(START_AZ, g_currentNode->node);
         UnlinkStopFile(SINGLENODE_TYPE);
     }
 }
@@ -245,7 +247,7 @@ static void DoStopCurNodeOrCurAz(const ConnCheck *curAz)
         if (CheckStopFileExist(SINGLENODE_TYPE)) {
             return;
         }
-        StartOrStopNodeInstanceByCommand(STOP_AZ, g_currentNode->node - 1);
+        StartOrStopNodeInstanceByCommand(STOP_AZ, g_currentNode->node);
         if (CreateStopNodeInstancesFlagFile(SINGLENODE_TYPE) == -1) {
             write_runlog(ERROR, "Create stop cms node FlagFile failed.\n");
         }

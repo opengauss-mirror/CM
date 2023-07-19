@@ -22,8 +22,12 @@
  * -------------------------------------------------------------------------
  */
 #include "cma_global_params.h"
-#include "cma_datanode_utils.h"
 #include "cma_common.h"
+#include "cjson/cJSON.h"
+#include "cma_datanode_utils.h"
+
+#define MAX_ROLE_LEN 16
+#define MAX_JSONSTR_LEN 2048
 
 cltPqConn_t* g_dnConn[CM_MAX_DATANODE_PER_NODE] = {NULL};
 THR_LOCAL cltPqConn_t* g_Conn = NULL;
@@ -39,19 +43,18 @@ int GetDBTableFromSQL(int index, uint32 databaseId, uint32 tableId, uint32 table
 #define static
 #endif
 
-static const char *g_roleLeader = "LEADER";
-static const char *g_roleFollower = "FOLLOWER";
-static const char *g_rolePassive = "PASSIVE";
-static const char *g_roleLogger = "LOGGER";
-static const char *g_rolePrecandicate = "PRE_CANDIDATE";
-static const char *g_roleCandicate = "CANDIDATE";
+const char *RoleLeader = "LEADER";
+const char *RoleFollower = "FOLLOWER";
+const char *RolePassive = "PASSIVE";
+const char *RoleLogger = "LOGGER";
+const char *RolePrecandicate = "PRE_CANDIDATE";
+const char *RoleCandicate = "CANDIDATE";
 
 static int g_errCountPgStatBadBlock[CM_MAX_DATANODE_PER_NODE] = {0};
 
-static void fill_sql6_report_msg1(agent_to_cm_datanode_status_report* report_msg, cltPqResult_t* node_result)
+static void fill_sql6_report_msg1(agent_to_cm_datanode_status_report* report_msg, const cltPqResult_t* node_result)
 {
-    int rc;
-    rc = sscanf_s(Getvalue(node_result, 0, 0), "%lu", &(report_msg->parallel_redo_status.redo_start_ptr));
+    int rc = sscanf_s(Getvalue(node_result, 0, 0), "%lu", &(report_msg->parallel_redo_status.redo_start_ptr));
     check_sscanf_s_result(rc, 1);
 
     securec_check_intval(rc, (void)rc);
@@ -84,10 +87,10 @@ static void fill_sql6_report_msg1(agent_to_cm_datanode_status_report* report_msg
     securec_check_intval(rc, (void)rc);
 }
 
-static void fill_sql6_report_msg2(agent_to_cm_datanode_status_report* report_msg, cltPqResult_t* node_result)
+static void fill_sql6_report_msg2(agent_to_cm_datanode_status_report* report_msg,
+    const cltPqResult_t* node_result)
 {
-    int rc;
-    rc = sscanf_s(Getvalue(node_result, 0, 8), "%ld", &(report_msg->parallel_redo_status.wait_info[0].counter));
+    int rc = sscanf_s(Getvalue(node_result, 0, 8), "%ld", &(report_msg->parallel_redo_status.wait_info[0].counter));
     check_sscanf_s_result(rc, 1);
     securec_check_intval(rc, (void)rc);
     rc =
@@ -126,13 +129,11 @@ static void fill_sql6_report_msg2(agent_to_cm_datanode_status_report* report_msg
 
 int ReadRedoStateFile(RedoStatsData* redo_state, const char* redo_state_path)
 {
-    FILE* statef = NULL;
-
     if (redo_state == NULL) {
         write_runlog(LOG, "Could not get information from redo.state\n");
         return -1;
     }
-    statef = fopen(redo_state_path, "re");
+    FILE *statef = fopen(redo_state_path, "re");
     if (statef == NULL) {
         if (errno == ENOENT) {
             char errBuffer[ERROR_LIMIT_LEN];
@@ -151,52 +152,51 @@ int ReadRedoStateFile(RedoStatsData* redo_state, const char* redo_state_path)
     }
     if ((fread(redo_state, 1, sizeof(RedoStatsData), statef)) == 0) {
         write_runlog(LOG, "get redo state infomation from the file \"%s\" failed\n", redo_state_path);
-        fclose(statef);
+        (void)fclose(statef);
         return -1;
     }
-    fclose(statef);
+    (void)fclose(statef);
     return 0;
 }
 
-void check_parallel_redo_status_by_file(
-    agent_to_cm_datanode_status_report *report_msg, uint32 ii, const char *redo_state_path)
+void check_parallel_redo_status_by_file(agent_to_cm_datanode_status_report *reportMsg, const char *redoStatePath)
 {
     RedoStatsData parallel_redo_state;
 
     int rcs = memset_s(&parallel_redo_state, sizeof(parallel_redo_state), 0, sizeof(parallel_redo_state));
     securec_check_errno(rcs, (void)rcs);
 
-    rcs = ReadRedoStateFile(&parallel_redo_state, redo_state_path);
+    rcs = ReadRedoStateFile(&parallel_redo_state, redoStatePath);
     if (rcs == 0) {
-        report_msg->local_redo_stats.is_by_query = 0;
-        report_msg->parallel_redo_status.redo_start_ptr = parallel_redo_state.redo_start_ptr;
+        reportMsg->local_redo_stats.is_by_query = 0;
+        reportMsg->parallel_redo_status.redo_start_ptr = parallel_redo_state.redo_start_ptr;
 
-        report_msg->parallel_redo_status.redo_start_time = parallel_redo_state.redo_start_time;
+        reportMsg->parallel_redo_status.redo_start_time = parallel_redo_state.redo_start_time;
 
-        report_msg->parallel_redo_status.redo_done_time = parallel_redo_state.redo_done_time;
+        reportMsg->parallel_redo_status.redo_done_time = parallel_redo_state.redo_done_time;
 
-        report_msg->parallel_redo_status.curr_time = parallel_redo_state.curr_time;
+        reportMsg->parallel_redo_status.curr_time = parallel_redo_state.curr_time;
 
-        report_msg->parallel_redo_status.min_recovery_point = parallel_redo_state.min_recovery_point;
+        reportMsg->parallel_redo_status.min_recovery_point = parallel_redo_state.min_recovery_point;
 
-        report_msg->parallel_redo_status.read_ptr = parallel_redo_state.read_ptr;
+        reportMsg->parallel_redo_status.read_ptr = parallel_redo_state.read_ptr;
 
-        report_msg->parallel_redo_status.last_replayed_read_ptr = parallel_redo_state.last_replayed_read_ptr;
+        reportMsg->parallel_redo_status.last_replayed_read_ptr = parallel_redo_state.last_replayed_read_ptr;
 
-        report_msg->parallel_redo_status.local_max_lsn = parallel_redo_state.local_max_lsn;
+        reportMsg->parallel_redo_status.local_max_lsn = parallel_redo_state.local_max_lsn;
 
-        report_msg->parallel_redo_status.recovery_done_ptr = parallel_redo_state.recovery_done_ptr;
+        reportMsg->parallel_redo_status.recovery_done_ptr = parallel_redo_state.recovery_done_ptr;
 
-        report_msg->parallel_redo_status.worker_info_len = parallel_redo_state.worker_info_len;
+        reportMsg->parallel_redo_status.worker_info_len = parallel_redo_state.worker_info_len;
 
-        report_msg->parallel_redo_status.speed_according_seg = parallel_redo_state.speed_according_seg;
+        reportMsg->parallel_redo_status.speed_according_seg = parallel_redo_state.speed_according_seg;
 
-        rcs = memcpy_s(report_msg->parallel_redo_status.worker_info,
+        rcs = memcpy_s(reportMsg->parallel_redo_status.worker_info,
             REDO_WORKER_INFO_BUFFER_SIZE,
             parallel_redo_state.worker_info,
             parallel_redo_state.worker_info_len);
         securec_check_errno(rcs, (void)rcs);
-        rcs = memcpy_s(report_msg->parallel_redo_status.wait_info,
+        rcs = memcpy_s(reportMsg->parallel_redo_status.wait_info,
             WAIT_REDO_NUM * sizeof(RedoWaitInfo),
             parallel_redo_state.wait_info,
             WAIT_REDO_NUM * sizeof(RedoWaitInfo));
@@ -206,14 +206,13 @@ void check_parallel_redo_status_by_file(
 
 int check_datanode_status_by_SQL0(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
 {
-    cltPqResult_t* node_result = NULL;
     int maxRows = 0;
     int maxColums = 0;
 
     /* in case we return 0 without set the db_state. */
     const char* sqlCommands =
         "select local_role,static_connections,db_state,detail_information from pg_stat_get_stream_replications();";
-    node_result = Exec(g_dnConn[ii], sqlCommands);
+    cltPqResult_t *node_result = Exec(g_dnConn[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "sqlCommands[0] fail return NULL!\n");
         CLOSE_CONNECTION(g_dnConn[ii]);
@@ -233,8 +232,9 @@ int check_datanode_status_by_SQL0(agent_to_cm_datanode_status_report* report_msg
             }
 
             report_msg->local_status.local_role = datanode_role_string_to_int(Getvalue(node_result, 0, 0));
-            if (report_msg->local_status.local_role == INSTANCE_ROLE_UNKNOWN)
+            if (report_msg->local_status.local_role == INSTANCE_ROLE_UNKNOWN) {
                 write_runlog(LOG, "sqlCommands[0] get local_status.local_role is: INSTANCE_ROLE_UNKNOWN\n");
+            }
             rc = sscanf_s(Getvalue(node_result, 0, 1), "%d", &(report_msg->local_status.static_connections));
             check_sscanf_s_result(rc, 1);
             securec_check_intval(rc, (void)rc);
@@ -258,7 +258,6 @@ int check_datanode_status_by_SQL0(agent_to_cm_datanode_status_report* report_msg
 /* DN instance status check SQL 1 */
 int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
 {
-    cltPqResult_t* node_result = NULL;
     int maxRows = 0;
     int maxColums = 0;
     uint32 hi = 0;
@@ -266,7 +265,7 @@ int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report* report_msg
 
     const char* sqlCommands = "select term, lsn from pg_last_xlog_replay_location();";
 
-    node_result = Exec(g_dnConn[ii], sqlCommands);
+    cltPqResult_t *node_result = Exec(g_dnConn[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "sqlCommands[1] fail return NULL!\n");
         CLOSE_CONNECTION(g_dnConn[ii]);
@@ -278,8 +277,6 @@ int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report* report_msg
             CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
         } else {
             int rc;
-            char* xlog_location = NULL;
-            char* term = NULL;
 
             maxColums = Nfields(node_result);
             if (maxColums != 2) {
@@ -287,15 +284,15 @@ int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report* report_msg
                 CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
             }
 
-            term = Getvalue(node_result, 0, 0);
-            if (term == NULL || 0 == strcmp(term, "")) {
+            char *term = Getvalue(node_result, 0, 0);
+            if (term == NULL || strcmp(term, "") == 0) {
                 write_runlog(ERROR, "term is invalid.\n");
                 CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
             } else {
-                report_msg->local_status.term = strtoul(term, NULL, 0);
+                report_msg->local_status.term = (uint32)strtoul(term, NULL, 0);
             }
 
-            xlog_location = Getvalue(node_result, 0, 1);
+            char *xlog_location = Getvalue(node_result, 0, 1);
             if (xlog_location == NULL || strcmp(xlog_location, "") == 0) {
                 write_runlog(ERROR, "pg_last_xlog_replay_location is empty.\n");
                 CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
@@ -317,47 +314,46 @@ int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report* report_msg
 
 int check_datanode_status_by_SQL2(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
 {
-    cltPqResult_t* node_result = NULL;
-    int maxRows = 0;
-    int maxColums = 0;
     uint32 hi = 0;
     uint32 lo = 0;
     int dn_sync_state = 0;
     char* most_available = NULL;
 
-    /* DN instance status check SQL 2 */
-    const char* sqlCommands =
+    char sqlCommands[CM_MAX_COMMAND_LEN];
+    errno_t rc = snprintf_s(sqlCommands, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
         "select sender_pid,local_role,peer_role,peer_state,state,sender_sent_location,sender_write_location,"
         "sender_flush_location,sender_replay_location,receiver_received_location,receiver_write_location,"
         "receiver_flush_location,receiver_replay_location,sync_percent,sync_state,sync_priority,"
-        "sync_most_available,channel from pg_stat_get_wal_senders() where peer_role='Standby';";
-    node_result = Exec(g_dnConn[ii], sqlCommands);
+        "sync_most_available,channel from pg_stat_get_wal_senders() where peer_role='%s';",
+        agent_backup_open == CLUSTER_STREAMING_STANDBY ? "Cascade Standby" : "Standby");
+    securec_check_intval(rc, (void)rc);
+
+    cltPqResult_t *node_result = Exec(g_dnConn[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "sqlCommands[2] fail return NULL!\n");
         CLOSE_CONNECTION(g_dnConn[ii]);
     }
     if ((ResultStatus(node_result) == CLTPQRES_CMD_OK) || (ResultStatus(node_result) == CLTPQRES_TUPLES_OK)) {
-        maxRows = Ntuples(node_result);
+        int maxRows = Ntuples(node_result);
         if (maxRows == 0) {
             write_runlog(DEBUG5, "walsender information is empty.\n");
         } else {
-            int rc;
-
-            maxColums = Nfields(node_result);
+            int maxColums = Nfields(node_result);
             if (maxColums != 18) {
                 write_runlog(ERROR, "sqlCommands[2] fail! col is %d\n", maxColums);
                 CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
             }
-
             rc = sscanf_s(Getvalue(node_result, 0, 0), "%d", &(report_msg->sender_status[0].sender_pid));
             check_sscanf_s_result(rc, 1);
             securec_check_intval(rc, (void)rc);
             report_msg->sender_status[0].local_role = datanode_role_string_to_int(Getvalue(node_result, 0, 1));
-            if (report_msg->sender_status[0].local_role == INSTANCE_ROLE_UNKNOWN)
+            if (report_msg->sender_status[0].local_role == INSTANCE_ROLE_UNKNOWN) {
                 write_runlog(LOG, "sqlCommands[2] get sender_status.local_role is: INSTANCE_ROLE_UNKNOWN\n");
+            }
             report_msg->sender_status[0].peer_role = datanode_role_string_to_int(Getvalue(node_result, 0, 2));
-            if (report_msg->sender_status[0].peer_role == INSTANCE_ROLE_UNKNOWN)
+            if (report_msg->sender_status[0].peer_role == INSTANCE_ROLE_UNKNOWN) {
                 write_runlog(LOG, "sqlCommands[2] get sender_status.peer_role is: INSTANCE_ROLE_UNKNOWN\n");
+            }
             report_msg->sender_status[0].peer_state = datanode_dbstate_string_to_int(Getvalue(node_result, 0, 3));
             report_msg->sender_status[0].state = datanode_wal_send_state_string_to_int(Getvalue(node_result, 0, 4));
             /* Shielding %x format read Warning. */
@@ -429,7 +425,6 @@ int check_datanode_status_by_SQL2(agent_to_cm_datanode_status_report* report_msg
 
 int check_datanode_status_by_SQL3(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
 {
-    cltPqResult_t* node_result = NULL;
     int maxRows = 0;
     int maxColums = 0;
     uint32 hi = 0;
@@ -443,7 +438,7 @@ int check_datanode_status_by_SQL3(agent_to_cm_datanode_status_report* report_msg
         "sender_flush_location,sender_replay_location,receiver_received_location,receiver_write_location,"
         "receiver_flush_location,receiver_replay_location,sync_percent,sync_state,sync_priority,"
         "sync_most_available,channel from pg_stat_get_wal_senders() where peer_role='Secondary';";
-    node_result = Exec(g_dnConn[ii], sqlCommands);
+    cltPqResult_t *node_result = Exec(g_dnConn[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "sqlCommands[3] fail return NULL!\n");
         CLOSE_CONNECTION(g_dnConn[ii]);
@@ -465,11 +460,13 @@ int check_datanode_status_by_SQL3(agent_to_cm_datanode_status_report* report_msg
             check_sscanf_s_result(rc, 1);
             securec_check_intval(rc, (void)rc);
             report_msg->sender_status[1].local_role = datanode_role_string_to_int(Getvalue(node_result, 0, 1));
-            if (report_msg->sender_status[1].local_role == INSTANCE_ROLE_UNKNOWN)
+            if (report_msg->sender_status[1].local_role == INSTANCE_ROLE_UNKNOWN) {
                 write_runlog(LOG, "sqlCommands[3] get sender_status.local_role is: INSTANCE_ROLE_UNKNOWN\n");
+            }
             report_msg->sender_status[1].peer_role = datanode_role_string_to_int(Getvalue(node_result, 0, 2));
-            if (report_msg->sender_status[1].peer_role == INSTANCE_ROLE_UNKNOWN)
+            if (report_msg->sender_status[1].peer_role == INSTANCE_ROLE_UNKNOWN) {
                 write_runlog(LOG, "sqlCommands[3] get sender_status.peer_role is: INSTANCE_ROLE_UNKNOWN\n");
+            }
             report_msg->sender_status[1].peer_state = datanode_dbstate_string_to_int(Getvalue(node_result, 0, 3));
             report_msg->sender_status[1].state = datanode_wal_send_state_string_to_int(Getvalue(node_result, 0, 4));
             /* Shielding %x format read Warning. */
@@ -570,7 +567,6 @@ static void GetLpInfoByStr(char *channel, DnLocalPeer *lpInfo, uint32 instId)
 
 int check_datanode_status_by_SQL4(agent_to_cm_datanode_status_report *report_msg, DnLocalPeer *lpInfo, uint32 ii)
 {
-    cltPqResult_t* node_result = NULL;
     int maxRows = 0;
     int maxColums = 0;
     uint32 hi = 0;
@@ -581,7 +577,7 @@ int check_datanode_status_by_SQL4(agent_to_cm_datanode_status_report *report_msg
         "select receiver_pid,local_role,peer_role,peer_state,state,sender_sent_location,sender_write_location,"
         "sender_flush_location,sender_replay_location,receiver_received_location,receiver_write_location,"
         "receiver_flush_location,receiver_replay_location,sync_percent,channel from pg_stat_get_wal_receiver();";
-    node_result = Exec(g_dnConn[ii], sqlCommands);
+    cltPqResult_t *node_result = Exec(g_dnConn[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "sqlCommands[4] fail return NULL!\n");
         CLOSE_CONNECTION(g_dnConn[ii]);
@@ -603,11 +599,13 @@ int check_datanode_status_by_SQL4(agent_to_cm_datanode_status_report *report_msg
             check_sscanf_s_result(rc, 1);
             securec_check_intval(rc, (void)rc);
             report_msg->receive_status.local_role = datanode_role_string_to_int(Getvalue(node_result, 0, 1));
-            if (report_msg->receive_status.local_role == INSTANCE_ROLE_UNKNOWN)
+            if (report_msg->receive_status.local_role == INSTANCE_ROLE_UNKNOWN) {
                 write_runlog(LOG, "sqlCommands[4] get receive_status.local_role is: INSTANCE_ROLE_UNKNOWN\n");
+            }
             report_msg->receive_status.peer_role = datanode_role_string_to_int(Getvalue(node_result, 0, 2));
-            if (report_msg->receive_status.peer_role == INSTANCE_ROLE_UNKNOWN)
+            if (report_msg->receive_status.peer_role == INSTANCE_ROLE_UNKNOWN) {
                 write_runlog(LOG, "sqlCommands[4] get receive_status.peer_role is: INSTANCE_ROLE_UNKNOWN\n");
+            }
             report_msg->receive_status.peer_state = datanode_dbstate_string_to_int(Getvalue(node_result, 0, 3));
             report_msg->receive_status.state = datanode_wal_send_state_string_to_int(Getvalue(node_result, 0, 4));
             /* Shielding %x format read Warning. */
@@ -658,9 +656,8 @@ int check_datanode_status_by_SQL4(agent_to_cm_datanode_status_report *report_msg
     return 0;
 }
 
-void check_datanode_status_by_SQL5(agent_to_cm_datanode_status_report *report_msg, uint32 ii, const char *data_path)
+void check_datanode_status_by_SQL5(uint32 instanceId, uint32 ii, const char *data_path)
 {
-    cltPqResult_t* node_result = NULL;
     int maxRows = 0;
     int maxColums = 0;
     bool needClearResult = true;
@@ -669,8 +666,8 @@ void check_datanode_status_by_SQL5(agent_to_cm_datanode_status_report *report_ms
         return;
     }
     /* DN instance status check SQL 5 */
-    const char* sqlCommands = "select sum(error_count) from pg_stat_bad_block;";
-    node_result = Exec(g_dnConn[ii], sqlCommands);
+    const char* sqlCommands = "select pg_catalog.sum(error_count) from pg_stat_bad_block;";
+    cltPqResult_t *node_result = Exec(g_dnConn[ii], sqlCommands);
 
     if (node_result == NULL) {
         write_runlog(ERROR, "sqlCommands[5] fail return NULL!\n");
@@ -689,13 +686,14 @@ void check_datanode_status_by_SQL5(agent_to_cm_datanode_status_report *report_ms
 
             int tmpErrCount = 0;
             char* tmpErrCountValue = Getvalue(node_result, 0, 0);
-            if (tmpErrCountValue != NULL)
+            if (tmpErrCountValue != NULL) {
                 tmpErrCount = CmAtoi(tmpErrCountValue, 0);
+            }
             tmpErrCount = (tmpErrCount < 0) ? 0 : tmpErrCount;
 
             char instanceName[CM_NODE_NAME] = {0};
             rc = snprintf_s(
-                instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "%s_%u", "dn", report_msg->instanceId);
+                instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "%s_%u", "dn", instanceId);
             securec_check_intval(rc, (void)rc);
 
             /*
@@ -706,11 +704,11 @@ void check_datanode_status_by_SQL5(agent_to_cm_datanode_status_report *report_ms
             if (((tmpErrCount - g_errCountPgStatBadBlock[ii]) >= 1) ||
                 (((tmpErrCount - g_errCountPgStatBadBlock[ii]) < 0) && (tmpErrCount != 0))) {
                 /* report the alarm. */
-                report_dn_disk_alarm(ALM_AT_Fault, instanceName, ii, data_path);
+                report_dn_disk_alarm(ALM_AT_Fault, instanceName, (int)ii, data_path);
                 write_runlog(WARNING, "pg_stat_bad_block error count is %d\n", tmpErrCount);
             } else {
                 if (tmpErrCount == 0) {
-                    report_dn_disk_alarm(ALM_AT_Resume, instanceName, ii, data_path);
+                    report_dn_disk_alarm(ALM_AT_Resume, instanceName, (int)ii, data_path);
                 }
             }
 
@@ -726,7 +724,6 @@ void check_datanode_status_by_SQL5(agent_to_cm_datanode_status_report *report_ms
 
 int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg, uint32 ii, const char* data_path)
 {
-    cltPqResult_t* node_result = NULL;
     int maxRows = 0;
     int maxColums = 0;
     /* DN instance status check SQL 6 */
@@ -736,7 +733,7 @@ int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg
         "read_xlog_io_counter, read_xlog_io_total_dur, read_data_io_counter, read_data_io_total_dur,"
         "write_data_io_counter, write_data_io_total_dur, process_pending_counter, process_pending_total_dur,"
         "apply_counter, apply_total_dur,speed, local_max_ptr, worker_info FROM local_redo_stat();";
-    node_result = Exec(g_dnConn[ii], sqlCommands);
+    cltPqResult_t *node_result = Exec(g_dnConn[ii], sqlCommands);
     if (node_result == NULL) {
         write_runlog(ERROR, "sqlCommands[6] fail return NULL!\n");
         CLOSE_CONNECTION(g_dnConn[ii]);
@@ -752,14 +749,14 @@ int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg
             report_msg->local_redo_stats.is_by_query = 1;
             fill_sql6_report_msg1(report_msg, node_result);
             fill_sql6_report_msg2(report_msg, node_result);
-            report_msg->parallel_redo_status.speed_according_seg = -1;
+            report_msg->parallel_redo_status.speed_according_seg = 0xFFFFFFFF;
 
             rc = sscanf_s(Getvalue(node_result, 0, 19), "%lu", &(report_msg->parallel_redo_status.local_max_lsn));
             check_sscanf_s_result(rc, 1);
             securec_check_intval(rc, (void)rc);
 
             char* info = Getvalue(node_result, 0, 20);
-            report_msg->parallel_redo_status.worker_info_len = strlen(info);
+            report_msg->parallel_redo_status.worker_info_len = (uint32)strlen(info);
             rc = memcpy_s(
                 report_msg->parallel_redo_status.worker_info, REDO_WORKER_INFO_BUFFER_SIZE, info, strlen(info));
             securec_check_errno(rc, (void)rc);
@@ -770,7 +767,7 @@ int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg
         securec_check_intval(rcs, (void)rcs);
         check_input_for_security(redo_state_path);
         canonicalize_path(redo_state_path);
-        check_parallel_redo_status_by_file(report_msg, ii, redo_state_path);
+        check_parallel_redo_status_by_file(report_msg, redo_state_path);
         write_runlog(ERROR, "sqlCommands[6] fail  FAIL! Status=%d\n", ResultStatus(node_result));
         write_runlog(LOG, "read parallel redo status from redo.state file\n");
     }
@@ -804,8 +801,7 @@ int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg
             report_msg->local_status.disconn_mode = datanode_lockmode_string_to_int(Getvalue(node_result, 0, 0));
             errno_t rc = memset_s(report_msg->local_status.disconn_host, HOST_LENGTH, 0, HOST_LENGTH);
             securec_check_errno(rc, (void)rc);
-            char* tmp_result = NULL;
-            tmp_result = Getvalue(node_result, 0, 1);
+            char *tmp_result = Getvalue(node_result, 0, 1);
             if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
                 rc = snprintf_s(report_msg->local_status.disconn_host, HOST_LENGTH, HOST_LENGTH - 1, "%s", tmp_result);
                 securec_check_intval(rc, (void)rc);
@@ -841,11 +837,10 @@ int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg
 
 int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltPqConn_t **curDnConn)
 {
-    cltPqResult_t *nodeResult = NULL;
     int maxRows = 0;
     int maxColums = 0;
     const char *sqlCommands = "show synchronous_standby_names;";
-    nodeResult = Exec((*curDnConn), sqlCommands);
+    cltPqResult_t *nodeResult = Exec((*curDnConn), sqlCommands);
     if (nodeResult == NULL) {
         write_runlog(ERROR, "instd is %u, CheckDatanodeSyncList fail return NULL!\n", instd);
         CLOSE_CONNECTION((*curDnConn));
@@ -856,24 +851,24 @@ int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, 
             write_runlog(ERROR, "instd is %u, synchronous_standby_names information is empty.\n", instd);
         } else {
             int rc;
-            char *result = NULL;
             maxColums = Nfields(nodeResult);
             if (maxColums != 1) {
                 write_runlog(ERROR, "instd is %u, CheckDatanodeSyncList fail! col is %d.\n", instd, maxColums);
                 CLEAR_AND_CLOSE_CONNECTION(nodeResult, (*curDnConn));
             }
-            result = Getvalue(nodeResult, 0, 0);
+            char *result = Getvalue(nodeResult, 0, 0);
             if (result == NULL || strcmp(result, "") == 0) {
                 write_runlog(ERROR, "instd is %u, synchronous_standby_names is empty.\n", instd);
                 CLEAR_AND_CLOSE_CONNECTION(nodeResult, (*curDnConn));
             }
             rc = strcpy_s(syncListMsg->dnSynLists, DN_SYNC_LEN, result);
             securec_check_errno(rc, (void)rc);
-            write_runlog(DEBUG1, "instd is %u, result=%s, len is %ld, report_msg->dnSynLists=%s.\n", instd, result,
+            write_runlog(DEBUG1, "instd is %u, result=%s, len is %lu, report_msg->dnSynLists=%s.\n", instd, result,
                 strlen(result), syncListMsg->dnSynLists);
         }
     } else {
-        write_runlog(ERROR, "instd is %u, CheckDatanodeSyncList fail Status=%d!\n", instd, ResultStatus(nodeResult));
+        write_runlog(ERROR, "instd is %u, CheckDatanodeSyncList fail Status=%d!\n",
+            instd, ResultStatus(nodeResult));
     }
     Clear(nodeResult);
     return 0;
@@ -926,9 +921,9 @@ int StandbyClusterCheckQueryBarrierID(cltPqConn_t* &conn, AgentToCmBarrierStatus
             sqlCommand, ResultStatus(nodeResult));
         CLEAR_AND_CLOSE_CONNECTION(nodeResult, conn);
     }
-    Clear(nodeResult);
     write_runlog(LOG, "check_query_barrierID, val is %s, query barrier ID is %s, result is %s\n",
         queryBarrier, barrierInfo->query_barrierId, tmpResult);
+    Clear(nodeResult);
     return 0;
 }
 
@@ -971,8 +966,8 @@ int StandbyClusterSetTargetBarrierID(cltPqConn_t* &conn)
             sqlCommand, ResultStatus(nodeResult));
         CLEAR_AND_CLOSE_CONNECTION(nodeResult, conn);
     }
-    Clear(nodeResult);
     write_runlog(LOG, "set_tatget_barrierID, val is %s, set result is %s\n", targetBarrier, tmpResult);
+    Clear(nodeResult);
     return 0;
 }
 
@@ -1003,8 +998,8 @@ int StandbyClusterGetBarrierInfo(cltPqConn_t* &conn, AgentToCmBarrierStatusRepor
             sqlCommand, ResultStatus(nodeResult));
         CLEAR_AND_CLOSE_CONNECTION(nodeResult, conn);
     }
-    Clear(nodeResult);
     write_runlog(LOG, "StandbyClusterGetBarrierInfo, get barrier ID is %s\n", barrierInfo->barrierID);
+    Clear(nodeResult);
     return 0;
 }
 
@@ -1036,7 +1031,6 @@ int StandbyClusterCheckCnWaiting(cltPqConn_t* &conn)
             sqlCommand, ResultStatus(nodeResult));
         CLEAR_AND_CLOSE_CONNECTION(nodeResult, conn);
     }
-    Clear(nodeResult);
     if (strlen(g_agentTargetBarrier) != 0 && strncmp(localBarrier, g_agentTargetBarrier, BARRIERLEN - 1) > 0) {
         write_runlog(LOG, "localBarrier %s is bigger than targetbarrier %s\n", localBarrier, g_agentTargetBarrier);
         g_cnWaiting = true;
@@ -1044,27 +1038,79 @@ int StandbyClusterCheckCnWaiting(cltPqConn_t* &conn)
         g_cnWaiting = false;
     }
     write_runlog(LOG, "StandbyClusterCheckCnWaiting, get localbarrier is %s\n", localBarrier);
+    Clear(nodeResult);
     return 0;
+}
+
+static status_t GetValueStrFromCJson(char *str, uint32 strLen, const cJSON *object, const char *infoKey)
+{
+    cJSON *objValue = cJSON_GetObjectItem(object, infoKey);
+    if (!cJSON_IsString(objValue)) {
+        write_runlog(ERROR, "(%s) object is not string.\n", infoKey);
+        return CM_ERROR;
+    }
+    if (CM_IS_EMPTY_STR(objValue->valuestring)) {
+        write_runlog(ERROR, "(%s) object is empty.\n", infoKey);
+        return CM_ERROR;
+    }
+
+    if (str != NULL) {
+        if (strlen(objValue->valuestring) >= strLen) {
+            write_runlog(ERROR, "(%s):str(%s) is longer than max(%u).\n", infoKey, objValue->valuestring, strLen - 1);
+            return CM_ERROR;
+        }
+        errno_t rc = strcpy_s(str, strLen, objValue->valuestring);
+        securec_check_errno(rc, (void)rc);
+        check_input_for_security(str);
+    }
+
+    return CM_SUCCESS;
+}
+
+static int ParseDcfConfigInfo(const char *tmpResult, char *role, uint32 roleLen)
+{
+    int ret = 0;
+    int rc = 0;
+
+    char jsonString[MAX_JSONSTR_LEN] = {0};
+    rc = strncpy_s(jsonString, MAX_JSONSTR_LEN, tmpResult, MAX_JSONSTR_LEN - 1);
+    securec_check_errno(rc, (void)rc);
+    cJSON *object = cJSON_Parse(jsonString);
+
+    status_t res = GetValueStrFromCJson(role, roleLen, object, "role");
+    if (res !=  CM_SUCCESS) {
+        ret = -1;
+    }
+    if (object != NULL) {
+        cJSON_Delete(object);
+    }
+    return ret;
 }
 
 int SetDnRoleOnDcfMode(const cltPqResult_t *nodeResult)
 {
-    char* tmpResult = NULL;
-    int role = 0;
+    char dcfRole[MAX_ROLE_LEN] = {0};
+    int role = DCF_ROLE_UNKNOWN;
 
-    tmpResult = Getvalue(nodeResult, 0, 0);
-    if (tmpResult != NULL && (strlen(tmpResult) > 0)) {
-        if (strstr(tmpResult, g_roleLeader) != NULL) {
+    char *tmpResult = Getvalue(nodeResult, 0, 0);
+    int res = ParseDcfConfigInfo((const char *)tmpResult, dcfRole, MAX_ROLE_LEN);
+    if (res == -1) {
+        role = DCF_ROLE_UNKNOWN;
+        return role;
+    }
+
+    if (dcfRole != NULL && (strlen(dcfRole) > 0)) {
+        if (strstr(dcfRole, RoleLeader) != NULL) {
             role = DCF_ROLE_LEADER;
-        } else if (strstr(tmpResult, g_roleFollower) != NULL) {
+        } else if (strstr(dcfRole, RoleFollower) != NULL) {
             role = DCF_ROLE_FOLLOWER;
-        } else if (strstr(tmpResult, g_rolePassive) != NULL) {
+        } else if (strstr(dcfRole, RolePassive) != NULL) {
             role = DCF_ROLE_PASSIVE;
-        } else if (strstr(tmpResult, g_roleLogger) != NULL) {
+        } else if (strstr(dcfRole, RoleLogger) != NULL) {
             role = DCF_ROLE_LOGGER;
-        } else if (strstr(tmpResult, g_rolePrecandicate) != NULL) {
+        } else if (strstr(dcfRole, RolePrecandicate) != NULL) {
             role = DCF_ROLE_PRE_CANDIDATE;
-        } else if (strstr(tmpResult, g_roleCandicate) != NULL) {
+        } else if (strstr(dcfRole, RoleCandicate) != NULL) {
             role = DCF_ROLE_CANDIDATE;
         } else {
             role = DCF_ROLE_UNKNOWN;
@@ -1074,14 +1120,10 @@ int SetDnRoleOnDcfMode(const cltPqResult_t *nodeResult)
     return role;
 }
 
-int CheckDatanodeStatusBySqL10(agent_to_cm_datanode_status_report *reportMsg,
-    uint32 ii)
+int CheckDatanodeStatusBySqL10(agent_to_cm_datanode_status_report *reportMsg, uint32 ii)
 {
-    cltPqResult_t* nodeResult = NULL;
-
-    const char* sqlCommand = "SELECT substring(dcf_replication_info, "
-        "position('role' in dcf_replication_info)+6, 10) from get_paxos_replication_info();";
-    nodeResult = Exec(g_dnConn[ii], sqlCommand);    
+    const char* sqlCommand = "SELECT dcf_replication_info from get_paxos_replication_info();";
+    cltPqResult_t *nodeResult = Exec(g_dnConn[ii], sqlCommand);
     if (nodeResult == NULL) {
         write_runlog(ERROR, "sqlCommands[10]: sqlCommands:%s, return NULL!\n", sqlCommand);
         CLOSE_CONNECTION(g_dnConn[ii]);
@@ -1107,13 +1149,12 @@ int CheckDatanodeStatusBySqL10(agent_to_cm_datanode_status_report *reportMsg,
 
 int cmagent_execute_query(cltPqConn_t* db_connection, const char* run_command)
 {
-    cltPqResult_t* node_result = NULL;
     if (db_connection == NULL) {
         write_runlog(ERROR, "error, the connection to coordinator is NULL!\n");
         return -1;
     }
 
-    node_result = Exec(db_connection, run_command);
+    cltPqResult_t *node_result = Exec(db_connection, run_command);
     if (node_result == NULL) {
         write_runlog(ERROR, "execute command(%s) return NULL!\n", run_command);
         return -1;
@@ -1135,14 +1176,12 @@ int cmagent_execute_query(cltPqConn_t* db_connection, const char* run_command)
 
 int cmagent_execute_query_and_check_result(cltPqConn_t* db_connection, const char* run_command)
 {
-    cltPqResult_t* node_result = NULL;
-    char* res_s = NULL;
     if (db_connection == NULL) {
         write_runlog(ERROR, "error, the connection to coordinator is NULL!\n");
         return -1;
     }
 
-    node_result = Exec(db_connection, run_command);
+    cltPqResult_t *node_result = Exec(db_connection, run_command);
     if (node_result == NULL) {
         write_runlog(ERROR, "execute command(%s) return NULL!\n", run_command);
         return -1;
@@ -1157,7 +1196,7 @@ int cmagent_execute_query_and_check_result(cltPqConn_t* db_connection, const cha
         Clear(node_result);
         return -1;
     }
-    res_s = Getvalue(node_result, 0, 0);
+    char *res_s = Getvalue(node_result, 0, 0);
     write_runlog(LOG, "execute command(%s) result %s!\n", run_command, res_s);
     if (strcmp(res_s, "t") == 0) {
         Clear(node_result);
@@ -1175,12 +1214,11 @@ int cmagent_execute_query_and_check_result(cltPqConn_t* db_connection, const cha
  */
 int cmagent_to_coordinator_connect(const char* pid_path)
 {
-    cltPqResult_t* res = NULL;
-
-    if (pid_path == NULL)
+    if (pid_path == NULL) {
         return -1;
+    }
 
-    g_Conn = get_connection(pid_path, true, g_agentToDb);
+    g_Conn = get_connection(pid_path, true, AGENT_CONN_DN_TIMEOUT);
     if (g_Conn == NULL) {
         write_runlog(ERROR, "get coordinate connect failed!\n");
         return -1;
@@ -1191,7 +1229,7 @@ int cmagent_to_coordinator_connect(const char* pid_path)
         CLOSE_CONNECTION(g_Conn);
     }
 
-    res = Exec(g_Conn, "SET statement_timeout = 10000000;");
+    cltPqResult_t *res = Exec(g_Conn, "SET statement_timeout = 10000000;");
     if (res == NULL) {
         write_runlog(ERROR, "cmagent_to_coordinator_connect: set command time out fail return NULL!\n");
         CLOSE_CONNECTION(g_Conn);
@@ -1205,12 +1243,13 @@ int cmagent_to_coordinator_connect(const char* pid_path)
     return 0;
 }
 
-uint32 find_cn_active_info_index(agent_to_cm_coordinate_status_report_old* report_msg, uint32 coordinatorId)
+uint32 find_cn_active_info_index(const agent_to_cm_coordinate_status_report_old* report_msg, uint32 coordinatorId)
 {
-    uint32 index = 0;
+    uint32 index;
     for (index = 0; index < max_cn_node_num_for_old_version; index++) {
-        if (coordinatorId == report_msg->cn_active_info[index].cn_Id)
+        if (coordinatorId == report_msg->cn_active_info[index].cn_Id) {
             return index;
+        }
     }
     write_runlog(ERROR, "find_cn_active_info_index: can not find cn %u\n", coordinatorId);
     return index;
@@ -1225,7 +1264,6 @@ int is_cn_connect_ok(uint32 coordinatorId)
     int test_result = 0;
     errno_t rc = 0;
     char connStr[MAXCONNINFO] = {0};
-    cltPqConn_t* test_cn_conn = NULL;
 
     for (uint32 i = 0; i < g_node_num; i++) {
         if (g_node[i].coordinateId == coordinatorId) {
@@ -1243,7 +1281,7 @@ int is_cn_connect_ok(uint32 coordinatorId)
         }
     }
 
-    test_cn_conn = Connect(connStr);
+    cltPqConn_t *test_cn_conn = Connect(connStr);
     if (test_cn_conn == NULL) {
         write_runlog(LOG, "[autodeletecn] connect to cn_%u failed, connStr: %s.\n", coordinatorId, connStr);
         test_result = -1;
@@ -1318,11 +1356,8 @@ cltPqConn_t* get_connection(const char* pid_path, bool isCoordinater, int connec
          * OK, seems to be a valid pidfile from our child.
          */
         int portnum;
-        char* sockdir = NULL;
-        char* hostaddr = NULL;
         char host_str[MAXPGPATH] = {0};
         char local_conninfo[MAXCONNINFO] = {0};
-        char* cptr = NULL;
         int rc;
 
         /*
@@ -1332,22 +1367,21 @@ cltPqConn_t* get_connection(const char* pid_path, bool isCoordinater, int connec
          * so that we do not need to be queued by thread pool controller.
          */
         portnum = CmAtoi(optlines[LOCK_FILE_LINE_PORT - 1], 0);
-        sockdir = optlines[LOCK_FILE_LINE_SOCKET_DIR - 1];
-        hostaddr = optlines[LOCK_FILE_LINE_LISTEN_ADDR - 1];
-
+        char *sockdir = optlines[LOCK_FILE_LINE_SOCKET_DIR - 1];
+        char *hostaddr = optlines[LOCK_FILE_LINE_LISTEN_ADDR - 1];
         if (hostaddr != NULL && hostaddr[0] != '\0' && hostaddr[0] != '\n') {
             rc = strncpy_s(host_str, sizeof(host_str), hostaddr, sizeof(host_str) - 1);
             securec_check_errno(rc, (void)rc);
-
         } else if (sockdir[0] == '/') {
             rc = strncpy_s(host_str, sizeof(host_str), sockdir, sizeof(host_str) - 1);
             securec_check_errno(rc, (void)rc);
         }
 
         /* remove trailing newline */
-        cptr = strchr(host_str, '\n');
-        if (cptr != NULL)
+        char *cptr = strchr(host_str, '\n');
+        if (cptr != NULL) {
             *cptr = '\0';
+        }
 
         /* Fail if couldn't get either sockdir or host addr */
         if (host_str[0] == '\0') {
@@ -1408,7 +1442,7 @@ static cltPqConn_t* GetDnConnect(int index, const char *dbname)
     long pmpid;
     cltPqConn_t* dbConn = NULL;
     char pidPath[MAXPGPATH] = {0};
-    int rcs = snprintf_s(pidPath, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", 
+    int rcs = snprintf_s(pidPath, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid",
         g_currentNode->datanode[index].datanodeLocalDataPath);
     securec_check_intval(rcs, (void)rcs);
 
@@ -1433,17 +1467,14 @@ static cltPqConn_t* GetDnConnect(int index, const char *dbname)
     }
 
     /* File is complete enough for us, parse it */
-    pmpid = atol(optlines[LOCK_FILE_LINE_PID - 1]);
+    pmpid = CmAtol(optlines[LOCK_FILE_LINE_PID - 1], 0);
     if (pmpid > 0) {
         /*
          * OK, seems to be a valid pidfile from our child.
          */
         int portnum;
-        char* sockdir = NULL;
-        char* hostaddr = NULL;
         char host_str[MAXPGPATH] = {0};
         char local_conninfo[MAXCONNINFO] = {0};
-        char* cptr = NULL;
         int rc = 0;
 
         /*
@@ -1453,8 +1484,8 @@ static cltPqConn_t* GetDnConnect(int index, const char *dbname)
          * so that we do not need to be queued by thread pool controller.
          */
         portnum = CmAtoi(optlines[LOCK_FILE_LINE_PORT - 1], 0);
-        sockdir = optlines[LOCK_FILE_LINE_SOCKET_DIR - 1];
-        hostaddr = optlines[LOCK_FILE_LINE_LISTEN_ADDR - 1];
+        char *sockdir = optlines[LOCK_FILE_LINE_SOCKET_DIR - 1];
+        char *hostaddr = optlines[LOCK_FILE_LINE_LISTEN_ADDR - 1];
 
         if (hostaddr != NULL && hostaddr[0] != '\0' && hostaddr[0] != '\n') {
             rc = strncpy_s(host_str, sizeof(host_str), hostaddr, sizeof(host_str) - 1);
@@ -1465,9 +1496,10 @@ static cltPqConn_t* GetDnConnect(int index, const char *dbname)
         }
 
         /* remove trailing newline */
-        cptr = strchr(host_str, '\n');
-        if (cptr != NULL)
+        char *cptr = strchr(host_str, '\n');
+        if (cptr != NULL) {
             *cptr = '\0';
+        }
 
         /* Fail if couldn't get either sockdir or host addr */
         if (host_str[0] == '\0') {
@@ -1510,11 +1542,10 @@ static cltPqConn_t* GetDnConnect(int index, const char *dbname)
 static int GetDnDatabaseResult(cltPqConn_t* dnConn, const char* runCommand, char* databaseName)
 {
     errno_t rcs = 0;
-    cltPqResult_t* node_result = NULL;
 
     write_runlog(DEBUG1, "[%s()][line:%d] runCommand = %s\n", __FUNCTION__, __LINE__, runCommand);
 
-    node_result = Exec(dnConn, runCommand);
+    cltPqResult_t *node_result = Exec(dnConn, runCommand);
     if (node_result == NULL) {
         write_runlog(ERROR, "[%s()][line:%d]  datanode check set command time out fail return NULL!\n",
             __FUNCTION__, __LINE__);
@@ -1549,7 +1580,6 @@ int GetDBTableFromSQL(int index, uint32 databaseId, uint32 tableId, uint32 table
 {
     char runCommand[CM_MAX_COMMAND_LONG_LEN] = {0};
     errno_t rc;
-    int i = 0;
     int rcs = 0;
 
     if (dnDatabaseInfo == NULL) {
@@ -1564,7 +1594,7 @@ int GetDBTableFromSQL(int index, uint32 databaseId, uint32 tableId, uint32 table
     write_runlog(DEBUG1, "[%s()][line:%d] database databaseId:%u\n", __FUNCTION__, __LINE__, databaseId);
     rc = memset_s(databaseName, NAMEDATALEN, 0, NAMEDATALEN);
     securec_check_errno(rc, (void)rc);
-    for (i = 0; i < dnDatabaseCount; i++) {
+    for (int i = 0; i < dnDatabaseCount; i++) {
         write_runlog(DEBUG1, "[%s()][line:%d] oid:[%u] dbname:[%s]\n",
             __FUNCTION__, __LINE__, dnDatabaseInfo[i].oid, dnDatabaseInfo[i].dbname);
         if (databaseId == dnDatabaseInfo[i].oid) {
@@ -1618,16 +1648,13 @@ int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDataba
     char *dbname = NULL;
     int database_count;
     errno_t rc = 0;
-    cltPqConn_t *dnConn = NULL;
-    cltPqResult_t *node_result = NULL;
-    DNDatabaseInfo *localDnDBInfo = NULL;
     char postmaster_pid_path[MAXPGPATH] = {0};
     const char *STMT_GET_DATABASE_LIST = "SELECT DATNAME,OID FROM PG_DATABASE;";
     errno_t rcs = snprintf_s(postmaster_pid_path,
         MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", g_currentNode->datanode[index].datanodeLocalDataPath);
     securec_check_intval(rcs, (void)rcs);
 
-    dnConn = get_connection(postmaster_pid_path);
+    cltPqConn_t *dnConn = get_connection(postmaster_pid_path);
     if (dnConn == NULL) {
         write_runlog(ERROR, "[%s()][line:%d] get connect failed!\n", __FUNCTION__, __LINE__);
         return -1;
@@ -1640,7 +1667,7 @@ int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDataba
         return -1;
     }
 
-    node_result = Exec(dnConn, STMT_GET_DATABASE_LIST);
+    cltPqResult_t *node_result = Exec(dnConn, STMT_GET_DATABASE_LIST);
     if (node_result == NULL) {
         write_runlog(ERROR, "[%s()][line:%d] sqlCommands[0] fail return NULL!\n", __FUNCTION__, __LINE__);
         close_and_reset_connection(dnConn);
@@ -1676,15 +1703,15 @@ int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDataba
     }
     *dnDatabaseCount = database_count;
 
-    localDnDBInfo = (DNDatabaseInfo *)malloc(sizeof(DNDatabaseInfo) * database_count);
+    DNDatabaseInfo *localDnDBInfo = (DNDatabaseInfo *)malloc(sizeof(DNDatabaseInfo) * (size_t)database_count);
     if (localDnDBInfo == NULL) {
         write_runlog(ERROR, "[%s()][line:%d] g_dnDatabaseList malloc failed!\n", __FUNCTION__, __LINE__);
         Clear(node_result);
         close_and_reset_connection(dnConn);
         return -1;
     }
-    rcs = memset_s(localDnDBInfo, sizeof(DNDatabaseInfo) * database_count, 0,
-                   sizeof(DNDatabaseInfo) * database_count);
+    rcs = memset_s(localDnDBInfo, sizeof(DNDatabaseInfo) * (size_t)database_count, 0,
+                   sizeof(DNDatabaseInfo) * (size_t)database_count);
     securec_check_errno(rcs, FREE_AND_RESET(localDnDBInfo));
 
     for (int i = 0; i < database_count; i++) {
@@ -1704,11 +1731,10 @@ int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDataba
 
 int CheckMostAvailableSync(uint32 index)
 {
-    cltPqResult_t *nodeResult = NULL;
     int maxRows = 0;
     int maxColums = 0;
     const char *sqlCommands = "show most_available_sync;";
-    nodeResult = Exec(g_dnConn[index], sqlCommands);
+    cltPqResult_t *nodeResult = Exec(g_dnConn[index], sqlCommands);
     if (nodeResult == NULL) {
         write_runlog(ERROR, "CheckMostAvailableSync fail return NULL!\n");
         CLOSE_CONNECTION(g_dnConn[index]);
@@ -1718,13 +1744,12 @@ int CheckMostAvailableSync(uint32 index)
         if (maxRows == 0) {
             write_runlog(ERROR, "most_available_sync information is empty.\n");
         } else {
-            char *result = NULL;
             maxColums = Nfields(nodeResult);
             if (maxColums != 1) {
                 write_runlog(ERROR, "CheckMostAvailableSync fail! col is %d.\n", maxColums);
                 CLEAR_AND_CLOSE_CONNECTION(nodeResult, g_dnConn[index]);
             }
-            result = Getvalue(nodeResult, 0, 0);
+            char *result = Getvalue(nodeResult, 0, 0);
             write_runlog(DEBUG1, "CheckMostAvailableSync most_available_sync is %s.\n", result);
             if (strcmp(result, "on") == 0) {
                 g_mostAvailableSync[index] = true;
@@ -1737,6 +1762,47 @@ int CheckMostAvailableSync(uint32 index)
     }
     Clear(nodeResult);
     return 0;
+}
+
+void CheckTransactionReadOnly(cltPqConn_t* Conn, uint32 index, int instanceType)
+{
+    bool *readOnly;
+    if (instanceType == INSTANCE_TYPE_DATANODE) {
+        readOnly = &g_dnReadOnly[index];
+    } else {
+        readOnly = &g_cnReadOnly;
+    }
+    const char *sqlCommands = "show default_transaction_read_only;";
+    cltPqResult_t *nodeResult = Exec(Conn, sqlCommands);
+    if (nodeResult == NULL) {
+        write_runlog(ERROR, "[%s] fail return NULL!\n", __FUNCTION__);
+        return;
+    }
+    if ((ResultStatus(nodeResult) == CLTPQRES_CMD_OK) || (ResultStatus(nodeResult) == CLTPQRES_TUPLES_OK)) {
+        int maxRows = Ntuples(nodeResult);
+        if (maxRows == 0) {
+            write_runlog(ERROR, "default_transaction_read_only information is empty.\n");
+        } else {
+            int maxColums = Nfields(nodeResult);
+            if (maxColums != 1) {
+                write_runlog(ERROR, "[%s] fail! col is %d.\n", __FUNCTION__, maxColums);
+                Clear(nodeResult);
+                return;
+            }
+            char *result = Getvalue(nodeResult, 0, 0);
+            *readOnly = strcmp(result, "on") == 0 ? true : false;
+            if (*readOnly) {
+                write_runlog(LOG, "[%s] default_transaction_read_only is %s.\n", __FUNCTION__, result);
+            }
+            if (undocumentedVersion != 0) {
+                *readOnly = false;
+            }
+        }
+    } else {
+        write_runlog(ERROR, "[%s] fail Status=%d!\n", __FUNCTION__, (int)ResultStatus(nodeResult));
+    }
+    Clear(nodeResult);
+    return;
 }
 
 int32 CheckDnSyncDone(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltPqConn_t **curDnConn)
@@ -1798,7 +1864,7 @@ status_t GetDnBarrierConn(cltPqConn_t* &dnBarrierConn, int dnIdx)
         char pid_path[MAXPGPATH] = {0};
         errno_t rc = snprintf_s(pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", dataPath);
         securec_check_intval(rc, (void)rc);
-        dnBarrierConn = get_connection(pid_path, false, (int)g_agentToDb);
+        dnBarrierConn = get_connection(pid_path, false, AGENT_CONN_DN_TIMEOUT);
         if (dnBarrierConn == NULL || (!IsConnOk(dnBarrierConn))) {
             write_runlog(ERROR, "instId(%u) failed to connect\n", g_currentNode->datanode[dnIdx].datanodeId);
             if (dnBarrierConn != NULL) {
@@ -1815,15 +1881,8 @@ status_t GetDnBarrierConn(cltPqConn_t* &dnBarrierConn, int dnIdx)
 // we use cn reportMsg when in single-node cluster
 void InitDNBarrierMsg(AgentToCmBarrierStatusReport &barrierMsg, int dnIdx, CM_MessageType &barrierMsgType)
 {
-    bool isInUpgrade = isUpgradeCluster();
-    if (isInUpgrade) {
-        // won't check and report barrier
-        barrierMsgType = MSG_AGENT_CM_BUTT;
-    } else {
-        barrierMsgType = MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER;
-    }
-    write_runlog(LOG, "Get barrier info, instanceId=%u, isInUpgrade=%d\n",
-        g_currentNode->datanode[dnIdx].datanodeId, isInUpgrade);
+    barrierMsgType = MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER;
+    write_runlog(LOG, "Init barrier info, instanceId=%u\n", g_currentNode->datanode[dnIdx].datanodeId);
     barrierMsg.barrierID[0] = '\0';
     barrierMsg.msg_type = (int)MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER;
     barrierMsg.node = g_currentNode->node;

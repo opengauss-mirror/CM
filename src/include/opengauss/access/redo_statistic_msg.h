@@ -62,6 +62,4 @@ typedef struct RedoStatsData {
     char worker_info[REDO_WORKER_INFO_BUFFER_SIZE];
 } RedoStatsData;
 
-
-
 #endif

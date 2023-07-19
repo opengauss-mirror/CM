@@ -35,7 +35,7 @@ CM_ThreadMonitorMain(), the default g_wait_seconds is 180s, we need to increase 
 #define PROMOTING_TIME 100
 #define DYNAMIC_PRIMARY_AND_DYNAMIC_STANDBY 2
 
-typedef struct NeedQuickSwitchoverInstanceArray {
+typedef struct NeedQuickSwitchoverInstanceArraySt {
     int instance_type[DYNAMIC_PRIMARY_AND_DYNAMIC_STANDBY];
     uint32 instanceId[DYNAMIC_PRIMARY_AND_DYNAMIC_STANDBY];
     uint32 nodeId[DYNAMIC_PRIMARY_AND_DYNAMIC_STANDBY];
@@ -48,7 +48,7 @@ typedef struct SwitchoverOperT {
 } SwitchoverOper;
 
 static const int UNEXPECTED_TIME = 120;
-static const int QUICK_SWITCH_WAIT_SECONDS = 180;
+static const long QUICK_SWITCH_WAIT_SECONDS = 180;
 static const int MAX_CONN_CMS_P = 30;
 
 extern bool g_detailQuery;
@@ -113,10 +113,10 @@ static int DoSwitchoverBase(const CtlOption *ctx)
         return -1;
     }
 
-    write_runlog(DEBUG1, "send switchover msg to cms, nodeId:%d, dataPath:%s.\n", ctx->comm.nodeId, ctx->comm.dataPath);
+    write_runlog(DEBUG1, "send switchover msg to cms, nodeId:%u, dataPath:%s.\n", ctx->comm.nodeId, ctx->comm.dataPath);
 
     if (FindInstanceIdAndType(ctx->comm.nodeId, ctx->comm.dataPath, &instanceId, &instanceType) != 0) {
-        write_runlog(ERROR, "can't find the node_id:%d, data_path:%s.\n", ctx->comm.nodeId, ctx->comm.dataPath);
+        write_runlog(ERROR, "can't find the node_id:%u, data_path:%s.\n", ctx->comm.nodeId, ctx->comm.dataPath);
         return -1;
     }
 
@@ -125,9 +125,9 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     }
 
     if (ctx->switchover.switchoverFast) {
-        switchoverMsg.msg_type = MSG_CTL_CM_SWITCHOVER_FAST;
+        switchoverMsg.msg_type = (int)MSG_CTL_CM_SWITCHOVER_FAST;
     } else {
-        switchoverMsg.msg_type = MSG_CTL_CM_SWITCHOVER;
+        switchoverMsg.msg_type = (int)MSG_CTL_CM_SWITCHOVER;
     }
 
     switchoverMsg.node = ctx->comm.nodeId;
@@ -220,7 +220,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
             FINISH_CONNECTION();
         }
 
-        queryMsg.msg_type = MSG_CTL_CM_QUERY;
+        queryMsg.msg_type = (int)MSG_CTL_CM_QUERY;
         queryMsg.node = ctx->comm.nodeId;
         queryMsg.instanceId = instanceId;
         queryMsg.instance_type = instanceType;
@@ -240,10 +240,10 @@ static int DoSwitchoverBase(const CtlOption *ctx)
 
     if (timePass >= g_waitSeconds) {
         write_runlog(ERROR,
-                "switchover command timeout!\n\n"
-                "HINT: Maybe the switchover action is continually running in the background.\n"
-                "You can wait for a while and check the status of current cluster using "
-                "\"cm_ctl query -Cv\".\n");
+            "switchover command timeout!\n\n"
+            "HINT: Maybe the switchover action is continually running in the background.\n"
+            "You can wait for a while and check the status of current cluster using "
+            "\"cm_ctl query -Cv\".\n");
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
         return -3;
@@ -290,7 +290,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
         g_waitSeconds = SWITCHOVER_DEFAULT_WAIT;
     }
 
-    switchoverMsg.msg_type = MSG_CTL_CM_SWITCHOVER_FULL;
+    switchoverMsg.msg_type = (int)MSG_CTL_CM_SWITCHOVER_FULL;
     switchoverMsg.wait_seconds = g_waitSeconds;
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)&switchoverMsg, sizeof(switchoverMsg)) != 0) {
         FINISH_CONNECTION();
@@ -325,9 +325,9 @@ static int DoSwitchoverFull(const CtlOption *ctx)
 
                 case MSG_CM_CTL_SWITCHOVER_FULL_CHECK_ACK:
                     msgSwitchoverFullCheckAck = (cm_to_ctl_switchover_full_check_ack*)receiveMsg;
-                    if (msgSwitchoverFullCheckAck->switchoverDone == SWITCHOVER_SUCCESS)
+                    if (msgSwitchoverFullCheckAck->switchoverDone == SWITCHOVER_SUCCESS) {
                         success = true;
-                    else if (msgSwitchoverFullCheckAck->switchoverDone == SWITCHOVER_FAIL) {
+                    } else if (msgSwitchoverFullCheckAck->switchoverDone == SWITCHOVER_FAIL) {
                         write_runlog(ERROR, "failed to do switch-over: unknown reason.\n");
                         FINISH_CONNECTION();
                     } else if (msgSwitchoverFullCheckAck->switchoverDone == INVALID_COMMAND) {
@@ -367,7 +367,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
         /* check if the switchover is done */
         if (waitSwitchoverFull) {
             cm_msg_type msgSwitchoverFullCheck;
-            msgSwitchoverFullCheck.msg_type = MSG_CTL_CM_SWITCHOVER_FULL_CHECK;
+            msgSwitchoverFullCheck.msg_type = (int)MSG_CTL_CM_SWITCHOVER_FULL_CHECK;
 
             ret =
                 cm_client_send_msg(CmServer_conn, 'C', (char*)&msgSwitchoverFullCheck, sizeof(msgSwitchoverFullCheck));
@@ -384,7 +384,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
         if (timePass == g_waitSeconds) {
             if (CmServer_conn != NULL) {
                 cm_msg_type msgSwitchoverFullTimeout;
-                msgSwitchoverFullTimeout.msg_type = MSG_CTL_CM_SWITCHOVER_FULL_TIMEOUT;
+                msgSwitchoverFullTimeout.msg_type = (int)MSG_CTL_CM_SWITCHOVER_FULL_TIMEOUT;
                 ret = cm_client_send_msg(
                     CmServer_conn, 'C', (char*)&msgSwitchoverFullTimeout, sizeof(msgSwitchoverFullTimeout));
                 if (ret != 0) {
@@ -432,7 +432,7 @@ static int BalanceResultReq(int &timePass, bool waitBalance, int &sendCheckCount
     if (waitBalance) {
         if (CmServer_conn != NULL) {
             cm_msg_type msgBalanceCheck;
-            msgBalanceCheck.msg_type = MSG_CTL_CM_BALANCE_CHECK;
+            msgBalanceCheck.msg_type = (int)MSG_CTL_CM_BALANCE_CHECK;
             if (cm_client_send_msg(CmServer_conn, 'C', (char*)&msgBalanceCheck, sizeof(msgBalanceCheck)) != 0) {
                 FINISH_CONNECTION_WITHOUT_EXIT();
             }
@@ -447,20 +447,19 @@ static int BalanceResultReq(int &timePass, bool waitBalance, int &sendCheckCount
     if (timePass == g_waitSeconds) {
         if (CmServer_conn != NULL) {
             cm_msg_type msgBalanceResultReq;
-            msgBalanceResultReq.msg_type = MSG_CTL_CM_BALANCE_RESULT;
+            msgBalanceResultReq.msg_type = (int)MSG_CTL_CM_BALANCE_RESULT;
             if (cm_client_send_msg(CmServer_conn, 'C', (char*)&msgBalanceResultReq, sizeof(msgBalanceResultReq)) != 0) {
                 FINISH_CONNECTION();
             }
-         } else {
-             timePass += 3;
-         }
+        } else {
+            timePass += 3;
+        }
     }
 
     if (timePass > g_waitSeconds) {
         write_runlog(ERROR,
             "switchover command timeout!\n\n"
             "HINT: Maybe the switchover action is continually running in the background.\n"
-            "You can wait for a while and check the status of current cluster using "
             "\"cm_ctl query -Cv\".\n");
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
@@ -501,7 +500,7 @@ static int DoSwitchoverAll(const CtlOption *ctx)
         g_waitSeconds = SWITCHOVER_DEFAULT_WAIT;
     }
 
-    switchoverMsg.msg_type = MSG_CTL_CM_SWITCHOVER_ALL;
+    switchoverMsg.msg_type = (int)MSG_CTL_CM_SWITCHOVER_ALL;
     switchoverMsg.wait_seconds = g_waitSeconds;
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)&switchoverMsg, sizeof(switchoverMsg)) != 0) {
         FINISH_CONNECTION();
@@ -524,7 +523,7 @@ static int DoSwitchoverAll(const CtlOption *ctx)
                 connToCmsP++;
                 if (connToCmsP > MAX_CONN_CMS_P) {
                     write_runlog(ERROR,
-                        "send switchover msg to cm_server, connect fail node_id:%d, data_path:%s.\n",
+                        "send switchover msg to cm_server, connect fail node_id:%u, data_path:%s.\n",
                         ctx->comm.nodeId,
                         ctx->comm.dataPath);
                     return -1;
@@ -569,7 +568,8 @@ static int DoSwitchoverAll(const CtlOption *ctx)
                     getCheckAckCount++;
                     msgBalanceCheckAck = (cm_to_ctl_balance_check_ack*)receiveMsg;
                     if (msgBalanceCheckAck->switchoverDone == SWITCHOVER_SUCCESS) {
-                        if (hasWarning && retryFlag && tryTimeForWarn-- > 0) {
+                        if (hasWarning && retryFlag && tryTimeForWarn > 0) {
+                            --tryTimeForWarn;
                             toTryForWarn = true;
                             getCheckAckCount = 0;
                             hasWarning = false;
@@ -586,7 +586,7 @@ static int DoSwitchoverAll(const CtlOption *ctx)
                         (void)sleep(5);
 #ifdef ENABLE_MULTIPLE_NODES
                         write_runlog(LOG, "switchover partly successfully.\n");
-#else 
+#else
                         write_runlog(LOG, "switchover failed.\n");
 #endif
                         CMPQfinish(CmServer_conn);
@@ -614,7 +614,7 @@ static int DoSwitchoverAll(const CtlOption *ctx)
                             timePass);
 
                         for (int i = 0; i < msgBalanceResult->imbalanceCount; i++) {
-                            write_runlog(LOG, " instance: %d\n", msgBalanceResult->instances[i]);
+                            write_runlog(LOG, " instance: %u\n", msgBalanceResult->instances[i]);
                         }
 
                         write_runlog(LOG,
@@ -622,8 +622,9 @@ static int DoSwitchoverAll(const CtlOption *ctx)
                         CMPQfinish(CmServer_conn);
                         CmServer_conn = NULL;
                         return 1;
-                    } else
+                    } else {
                         goto done;
+                    }
 
                 case MSG_CM_CTL_SWITCHOVER_INCOMPLETE_ACK:
                     incompleteSwitchoverMsg = (cm_switchover_incomplete_msg*)receiveMsg;
@@ -696,7 +697,7 @@ static int DoSwitchoverAz(const char *azName, const CtlOption *ctx)
         g_waitSeconds = SWITCHOVER_DEFAULT_WAIT;
     }
 
-    switchoverMsg.msg_type = MSG_CTL_CM_SWITCHOVER_AZ;
+    switchoverMsg.msg_type = (int)MSG_CTL_CM_SWITCHOVER_AZ;
     rc = strcpy_s(switchoverMsg.azName, CM_AZ_NAME, azName);
     securec_check_errno(rc, (void)rc);
     switchoverMsg.wait_seconds = g_waitSeconds;
@@ -756,8 +757,9 @@ static int DoSwitchoverAz(const char *azName, const CtlOption *ctx)
                     getCheckAckCount++;
                     msgSwitchoverAZCheckAck = (cm_to_ctl_switchover_az_check_ack*)receiveMsg;
                     if (msgSwitchoverAZCheckAck->switchoverDone == SWITCHOVER_SUCCESS) {
-                        if (hasWarning && retryFlag && tryTimeForWarn-- > 0) {
+                        if (hasWarning && retryFlag && tryTimeForWarn > 0) {
                             // has warning ,will try
+                            --tryTimeForWarn;
                             getCheckAckCount = 0;
                             toTryForWarn = true;
                             hasWarning = false;
@@ -819,7 +821,7 @@ static int DoSwitchoverAz(const char *azName, const CtlOption *ctx)
             /* check if the switchover is done */
             if (waitSwitchoverAz && (CmServer_conn != NULL)) {
                 cm_msg_type msgSwitchoverAZCheck;
-                msgSwitchoverAZCheck.msg_type = MSG_CTL_CM_SWITCHOVER_AZ_CHECK;
+                msgSwitchoverAZCheck.msg_type = (int)MSG_CTL_CM_SWITCHOVER_AZ_CHECK;
 
                 ret =
                     cm_client_send_msg(CmServer_conn, 'C', (char*)&msgSwitchoverAZCheck, sizeof(msgSwitchoverAZCheck));
@@ -832,7 +834,7 @@ static int DoSwitchoverAz(const char *azName, const CtlOption *ctx)
         } else if (timePass == g_waitSeconds) {
             if (CmServer_conn != NULL) {
                 cm_msg_type msgSwitchoverAZTimeout;
-                msgSwitchoverAZTimeout.msg_type = MSG_CTL_CM_SWITCHOVER_AZ_TIMEOUT;
+                msgSwitchoverAZTimeout.msg_type = (int)MSG_CTL_CM_SWITCHOVER_AZ_TIMEOUT;
 
                 ret = cm_client_send_msg(
                     CmServer_conn, 'C', (char*)&msgSwitchoverAZTimeout, sizeof(msgSwitchoverAZTimeout));
@@ -963,7 +965,7 @@ static int DoSwitchoverQuick(const CtlOption *ctx)
     }
 
     // stop the primary instance;
-    (void)stop_instance(nodeId, dataPath);
+    stop_instance(nodeId, dataPath);
     struct timespec checkBegin;
     (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
 
@@ -978,15 +980,14 @@ static int DoSwitchoverQuick(const CtlOption *ctx)
 
         struct timespec checkEnd;
         (void)clock_gettime(CLOCK_MONOTONIC, &checkEnd);
-        int sleepTime = checkEnd.tv_sec - checkBegin.tv_sec;
-
+        long sleepTime = checkEnd.tv_sec - checkBegin.tv_sec;
         if (sleepTime > QUICK_SWITCH_WAIT_SECONDS) {
-            write_runlog(ERROR, "quick switchover one instance command failed in %d s.\n", QUICK_SWITCH_WAIT_SECONDS);
+            write_runlog(ERROR, "quick switchover one instance command failed in %ld s.\n", QUICK_SWITCH_WAIT_SECONDS);
             break;
         }
     }
 
-    (void)start_instance(nodeId, dataPath);
+    start_instance(nodeId, dataPath);
     write_runlog(LOG, "now start the stopped instance.\n");
 
     for (;;) {
@@ -1001,10 +1002,9 @@ static int DoSwitchoverQuick(const CtlOption *ctx)
 
         struct timespec checkEnd = {0, 0};
         (void)clock_gettime(CLOCK_MONOTONIC, &checkEnd);
-        int sleepTime = checkEnd.tv_sec - checkBegin.tv_sec;
-
+        long sleepTime = checkEnd.tv_sec - checkBegin.tv_sec;
         if (sleepTime > QUICK_SWITCH_WAIT_SECONDS) {
-            write_runlog(ERROR, "final start the instance timeout in %d s.\n", QUICK_SWITCH_WAIT_SECONDS);
+            write_runlog(ERROR, "final start the instance timeout in %ld s.\n", QUICK_SWITCH_WAIT_SECONDS);
             return -1;
         }
     }
@@ -1078,7 +1078,7 @@ static int DoSwitchoverAllQuick()
                 needQuickSwitchoverInstance[i].instanceId[DYNAMIC_PRIMARY]);
             continue;
         }
-        (void)stop_instance(needQuickSwitchoverInstance[i].nodeId[DYNAMIC_PRIMARY],
+        stop_instance(needQuickSwitchoverInstance[i].nodeId[DYNAMIC_PRIMARY],
             needQuickSwitchoverInstance[i].datapath[DYNAMIC_PRIMARY]);
     }
 
@@ -1098,7 +1098,7 @@ static int DoSwitchoverAllQuick()
                 write_runlog(
                     ERROR, "query the instance status failed, please try to run the quick switchover command again.\n");
                 for (int j = 0; j < needQuickSwitchoverNum; j++) {
-                    (void)start_instance(needQuickSwitchoverInstance[j].nodeId[DYNAMIC_PRIMARY],
+                    start_instance(needQuickSwitchoverInstance[j].nodeId[DYNAMIC_PRIMARY],
 
                         needQuickSwitchoverInstance[j].datapath[DYNAMIC_PRIMARY]);
                 }
@@ -1109,20 +1109,20 @@ static int DoSwitchoverAllQuick()
 
             struct timespec checkEnd = {0, 0};
             (void)clock_gettime(CLOCK_MONOTONIC, &checkEnd);
-            int sleepTime = checkEnd.tv_sec - checkBegin.tv_sec;
+            long sleepTime = checkEnd.tv_sec - checkBegin.tv_sec;
 
             /* the PROMOTING_TIME is ensure dn has failovered, it's must lager than the sum of instance heartbeat time
                15s and failover heartbeat time 0s so we set 100s */
             if (sleepTime > PROMOTING_TIME && sleepTime < QUICK_SWITCH_WAIT_SECONDS) {
                 for (int j = 0; j < needQuickSwitchoverNum; j++) {
-                    (void)start_instance(needQuickSwitchoverInstance[j].nodeId[DYNAMIC_PRIMARY],
+                    start_instance(needQuickSwitchoverInstance[j].nodeId[DYNAMIC_PRIMARY],
 
                         needQuickSwitchoverInstance[j].datapath[DYNAMIC_PRIMARY]);
                 }
             }
 
             if (sleepTime > QUICK_SWITCH_WAIT_SECONDS) {
-                write_runlog(ERROR, "quick switchover command failed in %d s.\n", QUICK_SWITCH_WAIT_SECONDS);
+                write_runlog(ERROR, "quick switchover command failed in %ld s.\n", QUICK_SWITCH_WAIT_SECONDS);
                 break;
             }
         }
@@ -1130,7 +1130,7 @@ static int DoSwitchoverAllQuick()
 
     // if quick switchover -a successful, will start the instances in advance
     for (int j = 0; j < needQuickSwitchoverNum; j++) {
-        (void)start_instance(needQuickSwitchoverInstance[j].nodeId[DYNAMIC_PRIMARY],
+        start_instance(needQuickSwitchoverInstance[j].nodeId[DYNAMIC_PRIMARY],
             needQuickSwitchoverInstance[j].datapath[DYNAMIC_PRIMARY]);
     }
 
@@ -1153,11 +1153,10 @@ static int DoSwitchoverAllQuick()
 
             struct timespec checkEnd = {0, 0};
             (void)clock_gettime(CLOCK_MONOTONIC, &checkEnd);
-            int sleepTime = checkEnd.tv_sec - checkBegin.tv_sec;
-
+            long sleepTime = checkEnd.tv_sec - checkBegin.tv_sec;
             if (sleepTime > QUICK_SWITCH_WAIT_SECONDS) {
                 write_runlog(
-                    ERROR, "switchover -a final start the instance timeout in %d s.\n", QUICK_SWITCH_WAIT_SECONDS);
+                    ERROR, "switchover -a final start the instance timeout in %ld s.\n", QUICK_SWITCH_WAIT_SECONDS);
                 FREE_AND_RESET(needQuickSwitchoverInstance);
                 return -1;
             }
@@ -1186,7 +1185,7 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
         return -1;
     }
 
-    queryMsg.msg_type = MSG_CTL_CM_QUERY;
+    queryMsg.msg_type = (int)MSG_CTL_CM_QUERY;
     queryMsg.node = INVALID_NODE_NUM;
     queryMsg.instanceId = INVALID_INSTACNE_NUM;
     queryMsg.wait_seconds = g_waitSeconds;
@@ -1205,7 +1204,7 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
     bool rec_data_end = false;
     for (; wait_time > 0;) {
         ret = cm_client_flush_msg(CmServer_conn);
-        if (TCP_SOCKET_ERROR_EPIPE == ret) {
+        if (ret == TCP_SOCKET_ERROR_EPIPE) {
             write_runlog(ERROR, "Failed to flush message to the CM Server.\n");
             FINISH_CONNECTION();
         }
@@ -1217,14 +1216,14 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
                 case MSG_CM_CTL_DATA_BEGIN:
                     cm_to_ctl_cluster_status_ptr = (cm_to_ctl_cluster_status*)receiveMsg;
                     if (switchover_query_second) {
-                        if (0 == cm_to_ctl_cluster_status_ptr->switchedCount) {
+                        if (cm_to_ctl_cluster_status_ptr->switchedCount == 0) {
                             *is_cluster_balance = true;
                         } else {
                             *is_cluster_balance = false;
                         }
                         FINISH_CONNECTION0();
                     } else {
-                        if (0 == cm_to_ctl_cluster_status_ptr->switchedCount) {
+                        if (cm_to_ctl_cluster_status_ptr->switchedCount == 0) {
                             *is_cluster_balance = true;
                         }
                     }
@@ -1460,9 +1459,9 @@ static int JudgeGtmStatus(uint32 node_id, const char* data_path, int gtm_state)
 
 static int GetDatapathByInstanceId(uint32 instanceId, int instanceType, char* data_path, uint32 data_path_len)
 {
-    uint32 node_index = 0;
-    uint32 datanode_index = 0;
-    int rc = 0;
+    uint32 node_index;
+    uint32 datanode_index;
+    int rc;
     for (node_index = 0; node_index < g_node_num; node_index++) {
         if (instanceType == INSTANCE_TYPE_DATANODE) {
             for (datanode_index = 0; datanode_index < g_node[node_index].datanodeCount; datanode_index++) {

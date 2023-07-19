@@ -57,6 +57,122 @@ static bool CanDoCmInit(const char *resName)
     return true;
 }
 
+ClientCmLockMsg *GetLockSendMsg(const char *lockName, LockOption opt)
+{
+    ClientCmLockMsg *sendMsg = (ClientCmLockMsg*) malloc(sizeof(ClientCmLockMsg));
+    if (sendMsg == NULL) {
+        write_runlog(ERROR, "out of memory, lock option = %u.\n", (uint32)opt);
+        return NULL;
+    }
+    sendMsg->head.msgType = (uint32)MSG_CM_RES_LOCK;
+    sendMsg->info.lockOpt = (uint32)opt;
+    errno_t rc = strcpy_s(sendMsg->info.lockName, CM_MAX_LOCK_NAME, lockName);
+    securec_check_errno(rc, (void)rc);
+    return sendMsg;
+}
+
+int ResLockCore(const char *lockName)
+{
+    ClientCmLockMsg *sendMsg = GetLockSendMsg(lockName, CM_RES_LOCK);
+    if (sendMsg == NULL) {
+        write_runlog(ERROR, "generate (%s)lock msg failed.\n", lockName);
+        return 1;
+    }
+
+    ClientLockResult lockResult = SendLockMsgAndWaitResult((char*)sendMsg, sizeof(ClientCmLockMsg));
+    if (lockResult.error != 0) {
+        write_runlog(ERROR, "(%s)lock fail, error=%u.\n", lockName, lockResult.error);
+    } else {
+        write_runlog(LOG, "(%s)lock success.\n", lockName);
+    }
+
+    return (int)lockResult.error;
+}
+
+int ResUnlockCore(const char *lockName)
+{
+    ClientCmLockMsg *sendMsg = GetLockSendMsg(lockName, CM_RES_UNLOCK);
+    if (sendMsg == NULL) {
+        write_runlog(ERROR, "generate (%s) unlock msg failed.\n", lockName);
+        return 1;
+    }
+
+    ClientLockResult lockResult = SendLockMsgAndWaitResult((char*)sendMsg, sizeof(ClientCmLockMsg));
+    if (lockResult.error != 0) {
+        write_runlog(ERROR, "unlock fail, error=%u.\n", lockResult.error);
+    } else {
+        write_runlog(LOG, "unlock success.\n");
+    }
+
+    return (int)lockResult.error;
+}
+
+int ResGetLockOwnerCore(const char *lockName, unsigned int *instId)
+{
+    ClientCmLockMsg *sendMsg = GetLockSendMsg(lockName, CM_RES_GET_LOCK_OWNER);
+    if (sendMsg == NULL) {
+        write_runlog(ERROR, "generate (%s) get lock owner msg failed.\n", lockName);
+        return 1;
+    }
+
+    ClientLockResult lockResult = SendLockMsgAndWaitResult((char*)sendMsg, sizeof(ClientCmLockMsg));
+    if (lockResult.error != 0) {
+        write_runlog(ERROR, "get lock owner fail, error=%u.\n", lockResult.error);
+    } else {
+        *instId = lockResult.ownerId;
+    }
+
+    return (int)lockResult.error;
+}
+
+int ResTransLockCore(const char *lockName, unsigned int instId)
+{
+    ClientCmLockMsg *sendMsg = GetLockSendMsg(lockName, CM_RES_LOCK_TRANS);
+    if (sendMsg == NULL) {
+        write_runlog(ERROR, "generate (%s) get lock owner msg failed.\n", lockName);
+        return 1;
+    }
+    sendMsg->info.transInstId = instId;
+
+    ClientLockResult lockResult = SendLockMsgAndWaitResult((char*)sendMsg, sizeof(ClientCmLockMsg));
+    if (lockResult.error != 0) {
+        write_runlog(ERROR, "trans lock owner failed, error=%u.\n", lockResult.error);
+    } else {
+        write_runlog(LOG, "trans lock owner to %u success.\n", instId);
+    }
+
+    return (int)lockResult.error;
+}
+
+bool CanDoLockOperate(const char *lockName)
+{
+    if (!GetIsClientInit()) {
+        (void)printf(_("cm_client is not alive, please init cm_client first.\n"));
+        return false;
+    }
+    if (lockName == NULL) {
+        write_runlog(ERROR, "lock name is NULL.\n");
+        return false;
+    }
+    if (!IsStrOverLength(lockName, CM_MAX_LOCK_NAME)) {
+        write_runlog(ERROR, "lock name is too long, max len is %d.\n", CM_MAX_LOCK_NAME);
+        return false;
+    }
+    return true;
+}
+
+bool CanDoGetLockOwner(const char *lockName, const unsigned int *instId)
+{
+    if (!CanDoLockOperate(lockName)) {
+        return false;
+    }
+    if (instId == NULL) {
+        write_runlog(ERROR, "input parameter is NULL, can't get lock owner.\n");
+        return false;
+    }
+    return true;
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -67,13 +183,14 @@ int CmInit(unsigned int instId, const char *resName, CmNotifyFunc func)
     if (!CanDoCmInit(resName)) {
         return -1;
     }
-    if (PreInit(instId, resName, func, &isFirstInit) != 0) {
+    if (PreInit(instId, resName, func, &isFirstInit) != CM_SUCCESS) {
         (void)printf(_("resName(%s) instanceId(%u) init cm_client failed.\n"), resName, instId);
         return -1;
     }
     bool &isClientInit = GetIsClientInit();
     isClientInit = false;
-    if (CreateConnectAgentThread() != 0 || CreateSendMsgThread() != 0 || CreateRecvMsgThread() != 0) {
+    if (CreateConnectAgentThread() != CM_SUCCESS || CreateSendMsgThread() != CM_SUCCESS ||
+        CreateRecvMsgThread() != CM_SUCCESS) {
         write_runlog(LOG, "cm_client create thread failed.\n");
         ShutdownClient();
         return -1;
@@ -89,28 +206,35 @@ int CmInit(unsigned int instId, const char *resName, CmNotifyFunc func)
     return 0;
 }
 
+void CmClientFini()
+{
+    ShutdownClient();
+    FreeClientMemory();
+}
+
 static void GetResStatJsonHead(char *jsonStr, uint32 strLen, const OneResStatList *statList)
 {
     int ret = snprintf_s(jsonStr,
-         strLen,
-         strLen - 1,
-         "{\"version\":%llu,\"res_name\":\"%s\",\"inst_count\":%u,\"inst_status\":[",
-         statList->version,
-         statList->resName,
-         statList->instanceCount);
+        strLen,
+        strLen - 1,
+        "{\"version\":%llu,\"res_name\":\"%s\",\"inst_count\":%u,\"inst_status\":[",
+        statList->version,
+        statList->resName,
+        statList->instanceCount);
     securec_check_intval(ret, (void)ret);
 }
 
 static void GetResStatJsonInst(char *instInfo, uint32 strLen, const CmResStatInfo *instStat, bool isEnd)
 {
     int ret = snprintf_s(instInfo,
-         strLen,
-         strLen - 1,
-         "{\"node_id\":%u,\"res_instance_id\":%u,\"is_work_member\":%u,\"status\":%u}",
-         instStat->nodeId,
-         instStat->resInstanceId,
-         instStat->isWorkMember,
-         instStat->status);
+        strLen,
+        strLen - 1,
+        "{\"node_id\":%u,\"cm_instance_id\":%u,\"res_instance_id\":%u,\"is_work_member\":%u,\"status\":%u}",
+        instStat->nodeId,
+        instStat->cmInstanceId,
+        instStat->resInstanceId,
+        instStat->isWorkMember,
+        instStat->status);
     securec_check_intval(ret, (void)ret);
     if (!isEnd) {
         errno_t rc = strcat_s(instInfo, MAX_PATH_LEN, ",");
@@ -120,7 +244,7 @@ static void GetResStatJsonInst(char *instInfo, uint32 strLen, const CmResStatInf
 
 static void ResStatusToJsonStr(const OneResStatList *statList)
 {
-    const int maxJsonStrLen = 102400;
+    const int maxJsonStrLen = 10240;
     char jsonStr[maxJsonStrLen] = {0};
 
     GetResStatJsonHead(jsonStr, maxJsonStrLen, statList);
@@ -140,13 +264,59 @@ static void ResStatusToJsonStr(const OneResStatList *statList)
 
 char *CmGetResStats()
 {
-    OneResStatList &statusList = GetClientStatusList();
-    if (statusList.version == 0) {
+    OneResStatList *statusList = GetClientStatusList();
+    if (statusList->version == 0) {
         write_runlog(LOG, "version is 0, statList is invalid.\n");
         return NULL;
     }
-    ResStatusToJsonStr(&statusList);
+    ResStatusToJsonStr(statusList);
     return g_jsonStrPtr;
+}
+
+int CmFreeResStats(char *resStats)
+{
+    if (resStats == NULL) {
+        write_runlog(ERROR, "res stat ptr is NULL, can't free.\n");
+        return 1;
+    }
+    if (resStats != g_jsonStrPtr) {
+        write_runlog(ERROR, "res stat ptr is not stat list ptr, can't free.\n");
+        return 1;
+    }
+    FREE_AND_RESET(g_jsonStrPtr);
+    return 0;
+}
+
+int CmResLock(const char *lockName)
+{
+    if (!CanDoLockOperate(lockName)) {
+        return 1;
+    }
+    return ResLockCore(lockName);
+}
+
+int CmResUnlock(const char *lockName)
+{
+    if (!CanDoLockOperate(lockName)) {
+        return 1;
+    }
+    return ResUnlockCore(lockName);
+}
+
+int CmResGetLockOwner(const char *lockName, unsigned int *instId)
+{
+    if (!CanDoGetLockOwner(lockName, instId)) {
+        return 1;
+    }
+    return ResGetLockOwnerCore(lockName, instId);
+}
+
+int CmResTransLock(const char *lockName, unsigned int instId)
+{
+    if (!CanDoLockOperate(lockName)) {
+        return 1;
+    }
+    return ResTransLockCore(lockName, instId);
 }
 
 #ifdef __cplusplus

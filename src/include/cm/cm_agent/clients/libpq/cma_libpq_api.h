@@ -24,6 +24,8 @@
 #ifndef CMA_LIBPQ_API_H
 #define CMA_LIBPQ_API_H
 
+#include <assert.h>
+
 typedef void cltPqConn_t;
 typedef void cltPqResult_t;
 
@@ -44,7 +46,7 @@ typedef enum {
 #define CLOSE_CONNECTION(con)            \
     do {                                 \
         close_and_reset_connection(con); \
-        assert(NULL == con);             \
+        assert((con) == NULL);             \
         return -1;                       \
     } while (0)
 
@@ -52,7 +54,7 @@ typedef enum {
     do {                                             \
         Clear(node_result);                          \
         close_and_reset_connection(con);             \
-        assert(NULL == con);                         \
+        assert((con) == NULL);                         \
         return -1;                                   \
     } while (0)
 
@@ -68,7 +70,7 @@ int Nfields(const cltPqResult_t *res);
 void CloseConn(cltPqConn_t *conn);
 void FreeConn(cltPqConn_t *conn);
 void Finish(cltPqConn_t *conn);
-char *Getvalue(const cltPqResult_t *res, int tup_num, int field_num);
+char *Getvalue(const cltPqResult_t *res, int tupNum, int fieldNum);
 int Status(const cltPqConn_t *conn);
 int SendQuery(cltPqConn_t *conn, const char *query);
 char *ErrorMessage(const cltPqConn_t *conn);

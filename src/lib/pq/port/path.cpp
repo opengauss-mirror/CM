@@ -15,7 +15,6 @@
 
 #include <sys/stat.h>
 #include <stdlib.h>
-#include <limits.h>
 #include <securec.h>
 #include "cm/elog.h"
 
@@ -49,17 +48,15 @@ static void trim_directory(char *path)
         return;
     }
     /* back up over trailing slash(es) */
-    for (p = path + strlen(path) - 1; IS_DIR_SEP(*p) && p > path; p--)
-        ;
+    for (p = path + strlen(path) - 1; IS_DIR_SEP(*p) && p > path; p--) {}
     /* back up over directory name */
-    for (; !IS_DIR_SEP(*p) && p > path; p--)
-        ;
+    for (; !IS_DIR_SEP(*p) && p > path; p--) {}
     /* if multiple slashes before directory name, remove 'em all */
-    for (; p > path && IS_DIR_SEP(*(p - 1)); p--)
-        ;
+    for (; p > path && IS_DIR_SEP(*(p - 1)); p--) {}
     /* don't erase a leading slash */
-    if (p == path && IS_DIR_SEP(*p))
+    if (p == path && IS_DIR_SEP(*p)) {
         p++;
+    }
     *p = '\0';
 }
 
@@ -89,7 +86,7 @@ static void trim_trailing_separator(char *path)
  */
 void canonicalize_path(char *path)
 {
-    int oldLen = strlen(path);
+    size_t oldLen = strlen(path);
     errno_t ret = 0;
 
     trim_trailing_separator(path);

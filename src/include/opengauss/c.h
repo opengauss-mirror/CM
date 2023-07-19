@@ -288,18 +288,22 @@ typedef uint32 bits32; /* >= 32 bits */
 /* Plain "long int" fits, use it */
 
 #ifndef HAVE_INT64
+#define HAVE_INT64
 typedef long int int64;
 #endif
 #ifndef HAVE_UINT64
+#define HAVE_UINT64
 typedef unsigned long int uint64;
 #endif
 #elif defined(HAVE_LONG_LONG_INT_64)
 /* We have working support for "long long int", use that */
 
 #ifndef HAVE_INT64
+#define HAVE_INT64
 typedef long long int int64;
 #endif
 #ifndef HAVE_UINT64
+#define HAVE_UINT64
 typedef unsigned long long int uint64;
 #endif
 #else
@@ -958,7 +962,7 @@ static inline void* MemCpy(void* dest, const void* src, Size len)
             !u_sess->attr.attr_common.IsInplaceUpgrade)                            \
             ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg(x)));   \
     } while (0)
-#endif /*PGXC*/
+#endif /* PGXC */
 
 /* gettext domain name mangling */
 

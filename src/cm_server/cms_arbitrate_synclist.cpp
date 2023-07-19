@@ -136,8 +136,7 @@ void GetDnDynamicStatus(uint32 groupIndex, CurrentInstanceStatus *statusInstance
 
 void MemsetDnStatus(CurrentInstanceStatus *statusInstance, char *value, size_t len)
 {
-    errno_t rc = 0;
-    rc = memset_s(statusInstance, sizeof(CurrentInstanceStatus), 0, sizeof(CurrentInstanceStatus));
+    errno_t rc = memset_s(statusInstance, sizeof(CurrentInstanceStatus), 0, sizeof(CurrentInstanceStatus));
     securec_check_errno(rc, (void)rc);
     rc = memset_s(value, len, '\0', len);
     securec_check_errno(rc, (void)rc);
@@ -180,18 +179,17 @@ void ReportAlarmSyncList(uint32 groupIndex, bool isIncrease)
     }
 }
 
-void SyncCurrentWithExceptSyncList(uint32 groupIndex, bool isCurSameWithExpect)
+static void SyncCurrentWithExceptSyncList(uint32 groupIndex, bool isCurSameWithExpect)
 {
     if (isCurSameWithExpect) {
         return;
     }
-    bool hasDoGsGucFlag = true;
     errno_t rc = 0;
     char statusKey[MAX_PATH_LEN] = {0};
     char statusValue[MAX_PATH_LEN] = {0};
     bool isIncrease = false;
     uint32 instanceId = g_instance_role_group_ptr[groupIndex].instanceMember[0].instanceId;
-    hasDoGsGucFlag = IsDoGsGucFlag(groupIndex);
+    bool hasDoGsGucFlag = IsDoGsGucFlag(groupIndex);
     cm_instance_report_status *reportGrp = &(g_instance_group_report_status_ptr[groupIndex].instance_status);
     if (reportGrp->currentSyncList.count < reportGrp->exceptSyncList.count) {
         isIncrease = true;
@@ -250,7 +248,7 @@ static bool PrimaryDnSyncDone(uint32 groupIdx, int32 memIdx)
     return false;
 }
 
-bool IsDoGsGucFlag(uint32 groupIndex)
+static bool IsDoGsGucFlag(uint32 groupIndex)
 {
     char doGsGuc[MAX_PATH_LEN] = {0};
     char expectSyncListStr[MAX_PATH_LEN] = {0};
@@ -280,7 +278,7 @@ bool IsDoGsGucFlag(uint32 groupIndex)
     return hasDoGsGucFlag;
 }
 
-bool CompareDnOnlineWithExpectSyncList(const DatanodeDynamicStatus *statusDn, const DatanodeSyncList *syncList)
+static bool CompareDnOnlineWithExpectSyncList(const DatanodeDynamicStatus *statusDn, const DatanodeSyncList *syncList)
 {
     if (statusDn->count != syncList->count) {
         return false;
@@ -293,7 +291,7 @@ bool CompareDnOnlineWithExpectSyncList(const DatanodeDynamicStatus *statusDn, co
     return true;
 }
 
-int SetCurSyncListStatusValue(uint32 groupIndex, char *value, size_t len)
+static int SetCurSyncListStatusValue(uint32 groupIndex, char *value, size_t len)
 {
     // the first datanode instanceId
     uint32 instanceId = 6001;
@@ -338,7 +336,7 @@ int SetCurSyncListStatusValue(uint32 groupIndex, char *value, size_t len)
     return 0;
 }
 
-void SetInitWaitReduceOrIncreaseTime()
+static void SetInitWaitReduceOrIncreaseTime()
 {
     for (uint32 i = 0; i < g_dynamic_header->relationCount; ++i) {
         if (g_instance_role_group_ptr[i].instanceMember[0].instanceType != INSTANCE_TYPE_DATANODE) {
@@ -353,18 +351,18 @@ void ComputeTimeForArbitrate(struct timeval checkBegin, struct timeval checkEnd,
 {
     int arbitrateTime = 2;
     // 1s = 1000000us
-    uint64 sleepInterval = 1000000;
-    gettimeofday(&checkEnd, NULL);
+    uint32 sleepInterval = 1000000;
+    (void)gettimeofday(&checkEnd, NULL);
     ++(*printTime);
     if (*printTime > MAX_VALUE_OF_PRINT) {
         *printTime = 0;
     }
-    uint64 usedTime = GetTimeMinus(checkEnd, checkBegin);
+    uint32 usedTime = (uint32)GetTimeMinus(checkEnd, checkBegin);
     if ((checkEnd.tv_sec - checkBegin.tv_sec) > arbitrateTime) {
-        write_runlog(LOG, "it take %llu us for group arbitrate.\n", (unsigned long long)usedTime);
+        write_runlog(LOG, "it take %u us for group arbitrate.\n", usedTime);
     }
     if (sleepInterval > usedTime) {
-        cm_usleep(sleepInterval - usedTime);
+        CmUsleep(sleepInterval - usedTime);
     }
 }
 
@@ -421,18 +419,6 @@ static void GetHistoryClusterSyncListWhenEmptySyncList()
     return;
 }
 
-static maintenance_mode GetClusterMaintenanceMode()
-{
-    maintenance_mode mode = MAINTENANCE_MODE_NONE;
-    for (uint32 groupIndex = 0; groupIndex < g_dynamic_header->relationCount; ++groupIndex) {
-        mode = getMaintenanceMode(groupIndex);
-        if (mode != MAINTENANCE_MODE_NONE) {
-            return mode;
-        }
-    }
-    return MAINTENANCE_MODE_NONE;
-}
-
 static bool CheckDnPendingCmd(uint32 groupIdx)
 {
     cm_instance_command_status *cmd = g_instance_group_report_status_ptr[groupIdx].instance_status.command_member;
@@ -465,19 +451,18 @@ static bool CheckCurDnModifySyncList(uint32 groupIdx, const CurrentInstanceStatu
 void *DnGroupStatusCheckAndArbitrateMain(void *arg)
 {
     uint32 sleepInterval = 1;
-    errno_t rc = 0;
     thread_name = "GpArbitrate";
     bool hasHistory = false;
     // record last status
     DatanodeDynamicStatus *historyDnOnline =
         (DatanodeDynamicStatus *)malloc(sizeof(DatanodeDynamicStatus) * MAX_INSTANCE_NUM);
     if (historyDnOnline == NULL) {
-        write_runlog(ERROR, "Out of memory: historyDnOnline failed.\n");
+        write_runlog(FATAL, "Out of memory: historyDnOnline failed.\n");
         g_isEnableUpdateSyncList = CANNOT_START_SYNCLIST_THREADS;
         FreeNotifyMsg();
         exit(-1);
     }
-    rc = memset_s(historyDnOnline, sizeof(DatanodeDynamicStatus) * MAX_INSTANCE_NUM, 0,
+    errno_t rc = memset_s(historyDnOnline, sizeof(DatanodeDynamicStatus) * MAX_INSTANCE_NUM, 0,
         sizeof(DatanodeDynamicStatus) * MAX_INSTANCE_NUM);
     securec_check_errno(rc, (void)rc);
     CurrentInstanceStatus statusInstance = {{0}};
@@ -489,28 +474,23 @@ void *DnGroupStatusCheckAndArbitrateMain(void *arg)
     int printTime = 0;
     bool isCurSameWithExpect = false;
     int logLevel = 0;
-    maintenance_mode upgradeMode = MAINTENANCE_MODE_NONE;
     bool isNeedReduce = false;
     bool isNeedIncrease = false;
     int count = 0;
-    bool isDdbHealth = false;
+    CmsArbitrateStatus cmsSt = {false, CM_SERVER_UNKNOWN, MAINTENANCE_MODE_NONE};
     for (;;) {
-        gettimeofday(&checkBegin, NULL);
-        if (got_stop) {
+        (void)gettimeofday(&checkBegin, NULL);
+        if (got_stop == 1) {
             write_runlog(LOG, "receive exit request in DnGroupStatusCheckAndArbitrateMain.\n");
             cm_sleep(sleepInterval);
             continue;
         }
-        upgradeMode = GetClusterMaintenanceMode();
-        isDdbHealth = IsDdbHealth(DDB_PRE_CONN);
-        isResult = (g_HA_status->local_role != CM_SERVER_PRIMARY) || !isDdbHealth ||
-                    (upgradeMode != MAINTENANCE_MODE_NONE);
-        if (isResult) {
+        if (CmsCanArbitrate(&cmsSt, "[DnGroupStatusCheckAndArbitrateMain]") != CM_SUCCESS) {
             hasHistory = false;
             logLevel = (g_HA_status->local_role != CM_SERVER_PRIMARY) ? DEBUG1 : LOG;
             write_runlog(logLevel, "cannot arbitrate reduce or increase, in the condition that ddb is health is %d "
-                "or upgradeMode is %u.\n", isDdbHealth, upgradeMode);
-            UpdateSyncListStat(upgradeMode);
+                "or upgradeMode is %u.\n", cmsSt.isDdbHealth, (uint32)cmsSt.upgradeMode);
+            UpdateSyncListStat(cmsSt.upgradeMode);
             GetHistoryClusterSyncListWhenEmptySyncList();
             cm_sleep(sleepInterval);
             continue;
@@ -549,16 +529,15 @@ void *DnGroupStatusCheckAndArbitrateMain(void *arg)
             count = (g_instance_role_group_ptr[groupIndex].count - statusInstance.statusDnVoteAz.count) / 2;
             // the process that reduce synchronized standby nodes, and only all syncList can do this.
             // only statusDnonline all are in curSyncList, and then do reduce synchronized standby nodes
-            isNeedReduce = statusInstance.statusDnOnline.count <= reportStatus->currentSyncList.count
-                && statusInstance.statusDnOnline.count <= count;
+            isNeedReduce = statusInstance.statusDnOnline.count <= reportStatus->currentSyncList.count &&
+                statusInstance.statusDnOnline.count <= count;
             if (isNeedReduce) {
                 PrintReduceOrIncreaseMsg(groupIndex, reportStatus, value, true, &statusInstance);
                 DoReduceSyncList(groupIndex, &statusInstance, printTime, reportStatus);
                 continue;
             }
             // the process is add synchronized standby nodes
-            isNeedIncrease =
-                statusInstance.statusDnOnline.count > reportStatus->currentSyncList.count &&
+            isNeedIncrease = statusInstance.statusDnOnline.count > reportStatus->currentSyncList.count &&
                 statusInstance.statusDnOnline.count >= count;
             if (isNeedIncrease) {
                 PrintReduceOrIncreaseMsg(groupIndex, reportStatus, value, false, &statusInstance);
@@ -571,8 +550,8 @@ void *DnGroupStatusCheckAndArbitrateMain(void *arg)
     return NULL;
 }
 
-void PrintReduceOrIncreaseMsg(uint32 groupIndex, const cm_instance_report_status *reportStatus, const char *value,
-    bool isReduce, const CurrentInstanceStatus *statusInstance)
+static void PrintReduceOrIncreaseMsg(uint32 groupIndex, const cm_instance_report_status *reportStatus,
+    const char *value, bool isReduce, const CurrentInstanceStatus *statusInstance)
 {
     char curSyncListStr[MAX_PATH_LEN] = {0};
     char expectSyncListStr[MAX_PATH_LEN] = {0};
@@ -602,7 +581,7 @@ void PrintReduceOrIncreaseMsg(uint32 groupIndex, const cm_instance_report_status
     }
 }
 
-void PrintLogMsg(uint32 groupIndex, const CurrentInstanceStatus *statusInstance, const char *value)
+static void PrintLogMsg(uint32 groupIndex, const CurrentInstanceStatus *statusInstance, const char *value)
 {
     if (log_min_messages > DEBUG1) {
         return;
@@ -673,7 +652,7 @@ void GetDnStatusString(const DatanodeDynamicStatus *dnDynamicStatus, char *dnSta
     }
 }
 
-bool IsDoReduceOrIncreaseSyncList(uint32 groupIndex, const DatanodeDynamicStatus *statusDnOnline,
+static bool IsDoReduceOrIncreaseSyncList(uint32 groupIndex, const DatanodeDynamicStatus *statusDnOnline,
     cm_instance_report_status *reportStatus, DatanodeDynamicStatus *historyDnOnline, bool isCurSameWithExpect)
 {
     errno_t rc = 0;
@@ -710,23 +689,21 @@ bool IsDoReduceOrIncreaseSyncList(uint32 groupIndex, const DatanodeDynamicStatus
     return true;
 }
 
-void DoIncreaseSyncList(
+static void DoIncreaseSyncList(
     uint32 groupIndex, const CurrentInstanceStatus *statusInstance, cm_instance_report_status *reportStatus)
 {
-    bool doResult = false;
     if ((reportStatus->waitIncreaseTimes--) > 0) {
         return;
     }
-    doResult = SetGroupExpectSyncList(groupIndex, statusInstance);
+    bool doResult = SetGroupExpectSyncList(groupIndex, statusInstance);
     if (doResult) {
         reportStatus->waitIncreaseTimes = DELAY_TIME_TO_INCREASE_STANDBY;
     }
 }
 
-void DoReduceSyncList(uint32 groupIndex, const CurrentInstanceStatus *statusInstance, int printTime,
+static void DoReduceSyncList(uint32 groupIndex, const CurrentInstanceStatus *statusInstance, int printTime,
     cm_instance_report_status *reportStatus)
 {
-    bool doResult = false;
     if (statusInstance->statusDnOnline.count < ONE_PRIMARY_ONE_SLAVE) {
         if (printTime % 10 == 0) {
             write_runlog(ERROR,
@@ -739,13 +716,13 @@ void DoReduceSyncList(uint32 groupIndex, const CurrentInstanceStatus *statusInst
     if ((reportStatus->waitReduceTimes--) > 0) {
         return;
     }
-    doResult = SetGroupExpectSyncList(groupIndex, statusInstance);
+    bool doResult = SetGroupExpectSyncList(groupIndex, statusInstance);
     if (doResult) {
         reportStatus->waitReduceTimes = DELAY_TIME_TO_REDUCE_STANDBY;
     }
 }
 
-bool GetHistoryClusterSyncListFromDdb()
+static bool GetHistoryClusterSyncListFromDdb()
 {
     // get history currnet synlist from ddb
     if (GetHistoryClusterCurSyncListFromDdb() == FAILED_GET_VALUE) {
@@ -774,7 +751,8 @@ bool CompareCurWithExceptSyncList(uint32 groupIndex)
     return true;
 }
 
-bool CompareMemberSyncWithExceptSyncList(const DatanodeSyncList *memberSyncList, const DatanodeSyncList *expectSyncList)
+static bool CompareMemberSyncWithExceptSyncList(const DatanodeSyncList *memberSyncList,
+    const DatanodeSyncList *expectSyncList)
 {
     if (memberSyncList->count != expectSyncList->count) {
         return false;

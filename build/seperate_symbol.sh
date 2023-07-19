@@ -1,15 +1,18 @@
 #!/bin/bash
 # Copyright Huawei Technologies Co., Ltd. 2010-2018. All rights reserved.
+set -e
 
 function help() {
     echo ""
     echo $1
     echo ""
-    echo "Usage: $0 \${FILE} \${OUT_PATH} \${EXCLUDE_OBJ}"
+    echo "Usage: $0 \${FILE} \${OUT_PATH} \${EXCLUDE_OBJ} \${STRIP_MODE}"
+    echo "    STRIP_MODE like: '--strip-all' or '--strip-debug'(default)"
     echo ""
 }
 
 EXCLUDE_OBJ="$3"
+STRIP_MODE="--strip-debug"
 
 function seperate_symbol() {
     local obj_name=${1}
@@ -32,7 +35,9 @@ function seperate_symbol() {
 
         local obj_base_name=$(basename ${obj_name})
         local obj_name_len=$(echo ${#obj_base_name})
+        set +e
         local align=$(expr ${obj_name_len} % 4)
+        set -e
         local obj_symbol_name="${out_path}/${obj_base_name}"
         case ${align} in
             0)
@@ -50,7 +55,9 @@ function seperate_symbol() {
         esac
 
         objcopy --only-keep-debug "${obj_name}" "${obj_symbol_name}"
-        objcopy --strip-debug "${obj_name}"
+
+        objcopy ${STRIP_MODE} "${obj_name}"
+
         objcopy --add-gnu-debuglink="${obj_symbol_name}" "${obj_name}"
 
         printf '\E[33m'"\033[1mSeperate debug symbol from ${obj_name} to ${obj_symbol_name} ..... \033[0m"
@@ -106,13 +113,17 @@ function seperate_by_file_type() {
 
 function main() {
 
-    if [ $# != 3 ]; then
-        help "Error : Argu must be 3!"
+    if [ $# -lt 3 ]; then
+        help "Error : Argu must large equal 3!"
         exit 1
     fi
 
     if [ ! -e "${1}" ]; then
         help "File $1 not Found!"
+    fi
+
+    if [ "x$4" != "x" ]; then
+        STRIP_MODE="$4"
     fi
 
     seperate_by_file_type "${1}" "${2}"

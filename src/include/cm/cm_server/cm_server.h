@@ -31,8 +31,9 @@
 #include "cm/pqsignal.h"
 #include "cm/cm_misc.h"
 #include "cm_ddb_adapter.h"
+#include "cms_msg_que.h"
 
-#define CM_MAX_RES_SLOT_COUNT 8
+#define CM_MAX_RES_SLOT_COUNT 16
 
 #define CM_MAX_CONNECTIONS 1024
 #define CM_MAX_THREADS 1024
@@ -50,6 +51,8 @@
 
 #define CM_INCREMENT_TERM_VALUE 100
 
+#define CM_INCREMENT_BIG_TERM_VALUE 10000
+
 #define CM_UINT32_MAX 0xFFFFFFFFU
 
 #define CM_MIN_CONN_TO_DDB (2)
@@ -60,11 +63,11 @@
 
 #define INVALID_CN_ID (0)
 
-typedef void (*PCallback)(int fd, int events, void* arg);
+typedef void (*PCallback)(int fd, void* arg);
 
-typedef enum { NOT_NEED_TO_NOTITY_CN = 0, WAIT_TO_NOTFY_CN, NEED_TO_NOTITY_CN } NotifyCn_t;
+typedef enum NotifyCnE { NOT_NEED_TO_NOTITY_CN = 0, WAIT_TO_NOTFY_CN, NEED_TO_NOTITY_CN } NotifyCn_t;
 
-typedef struct CM_Connection {
+typedef struct CM_Connection_t {
     int fd;
     int epHandle;
     int events;
@@ -73,6 +76,7 @@ typedef struct CM_Connection {
     Port* port;
     CM_StringInfo inBuffer;
     long last_active;
+    long msgFirstPartRecvTime;
 #ifdef KRB5
     bool gss_check;
     gss_ctx_id_t gss_ctx;           /* GSS context */
@@ -81,51 +85,73 @@ typedef struct CM_Connection {
     gss_buffer_desc gss_outbuf;     /* GSS output token */
 #endif // KRB5
     NotifyCn_t notifyCn;
+    uint64 connSeq;
 } CM_Connection;
 
-typedef struct CM_Connections {
-    uint32 count;
-    CM_Connection* connections[CM_MAX_CONNECTIONS + MAXLISTEN];
-    pthread_rwlock_t lock;
-} CM_Connections;
-
-typedef struct CM_Thread {
+typedef struct CM_WorkThread_t {
     pthread_t tid;
+    uint32 id;
     int type;
-    int epHandle;
+    uint32 procMsgCount;
+    ConnID ProcConnID; // which connection is processing now;
     volatile bool isBusy;
-} CM_Thread;
+} CM_WorkThread;
 
-typedef struct CM_Threads {
+typedef struct CM_WorkThreads_t {
     uint32 count;
-    CM_Thread threads[CM_MAX_THREADS];
-} CM_Threads;
+    CM_WorkThread threads[CM_MAX_THREADS];
+} CM_WorkThreads;
 
-typedef struct CM_HAThread {
-    CM_Thread thread;
+typedef struct CM_HAThread_t {
+    CM_WorkThread thread;
 } CM_HAThread;
 
-typedef struct CM_HAThreads {
+typedef struct CM_HAThreads_t {
     uint32 count;
     CM_HAThread threads[CM_HA_THREAD_NUM];
 } CM_HAThreads;
 
-typedef struct CM_MonitorThread {
-    CM_Thread thread;
+typedef struct CM_MonitorThread_t {
+    CM_WorkThread thread;
 } CM_MonitorThread;
 
-typedef struct CM_MonitorNodeStopThread {
-    CM_Thread thread;
+typedef struct CM_DdbStatusCheckAndSetThread_t {
+    CM_WorkThread thread;
+} CM_DdbStatusCheckAndSetThread;
+
+typedef struct CM_MonitorNodeStopThread_t {
+    CM_WorkThread thread;
 } CM_MonitorNodeStopThread;
 
-typedef enum CM_ThreadStatus {
+typedef struct {
+    pthread_t tid;
+    uint32 id;
+    int epHandle;
+    int wakefd;
+    volatile bool isBusy;
+    volatile int gotConnClose;
+    void* recvMsgQue;
+    void* sendMsgQue;
+    uint32 pushRecvQueWaitTime;
+    uint32 getSendQueWaitTime;
+    uint32 recvMsgCount;
+    uint32 sendMsgCount;
+    uint32 innerProcCount;
+} CM_IOThread;
+
+typedef struct CM_IOThreads_t {
+    uint32 count;
+    CM_IOThread threads[CM_MAX_THREADS];
+} CM_IOThreads;
+
+typedef enum CM_ThreadStatus_e {
     CM_THREAD_STARTING,
     CM_THREAD_RUNNING,
     CM_THREAD_EXITING,
     CM_THREAD_INVALID
 } CM_ThreadStatus;
 
-typedef struct CM_Server_HA_Status {
+typedef struct CM_Server_HA_Status_t {
     int local_role;
     int peer_role;
     int status;
@@ -153,7 +179,7 @@ typedef struct GlobalBackUpInfo_t {
     uint32 newKeyCnInstId;  // we choose cn when cn can't use
 } GlobalBackUpInfo;
 
-typedef struct global_barrier {
+typedef struct global_barrier_t {
     uint32 slotCount;
     GlobalBackUpInfo globalBackUpInfo[MAX_BARRIER_SLOT_COUNT];
     GlobalBarrierStatus globalBarrierInfo;
@@ -161,16 +187,17 @@ typedef struct global_barrier {
     pthread_rwlock_t barrier_lock;
 } global_barrier;
 
-typedef struct CM_ConnectionInfo {
+typedef struct CM_ConnectionInfo_t {
     /* Port contains all the vital information about this connection */
-    Port* con_port;
+    Port *con_port;
 } CM_ConnectionInfo;
 
-typedef struct CM_ConnDdbInfo {
+typedef struct CM_ConnDdbInfo_t {
     uint32 count;
     uint32 curIdx;
     DdbConn ddbConn[CM_MAX_CONN_TO_DDB];
 } CM_ConnDdbInfo;
+
 
 #define THREAD_TYPE_HA 1
 #define THREAD_TYPE_MONITOR 2
@@ -178,6 +205,7 @@ typedef struct CM_ConnDdbInfo {
 #define THREAD_TYPE_AGENT_SERVER 4
 #define THREAD_TYPE_INIT 5
 #define THREAD_TYPE_ALARM_CHECKER 6
+#define THREAD_TYPE_DDB_STATUS_CHECKER 7
 
 #define MONITOR_CYCLE_TIMER 1000000
 #define MONITOR_CYCLE_TIMER_OUT 6000000
@@ -208,14 +236,15 @@ typedef struct CM_ConnDdbInfo {
 
 #define INSTANCE_ARBITRATE_DELAY_NO_SET 0
 #define INSTANCE_ARBITRATE_DELAY_HAVE_SET 1
+
 constexpr int NO_NEED_TO_SET_PARAM = -1;
 
-typedef struct DatanodeDynamicStatus {
+typedef struct DatanodeDynamicStatusT {
     int count;
     uint32 dnStatus[CM_PRIMARY_STANDBY_NUM];
 } DatanodeDynamicStatus;
 
-typedef struct cm_instance_report_status {
+typedef struct cm_instance_report_status_t {
     cm_instance_command_status command_member[CM_PRIMARY_STANDBY_NUM];
     cm_instance_datanode_report_status data_node_member[CM_PRIMARY_STANDBY_NUM];
     cm_instance_gtm_report_status gtm_member[CM_PRIMARY_STANDBY_NUM];
@@ -239,30 +268,30 @@ typedef struct cm_instance_report_status {
     uint32 lastFailoverDn;
 } cm_instance_report_status;
 
-typedef struct cm_instance_group_report_status {
+typedef struct cm_instance_group_report_status_t {
     pthread_rwlock_t lk_lock;
     cm_instance_report_status instance_status;
 } cm_instance_group_report_status;
 
-typedef struct cm_fenced_UDF_report_status {
+typedef struct cm_fenced_UDF_report_status_t {
     pthread_rwlock_t lk_lock;
     int heart_beat;
     int status;
 } cm_fenced_UDF_report_status;
 
-typedef enum ProcessingMode {
+typedef enum ProcessingModeE {
     BootstrapProcessing,  /* bootstrap creation of template database */
     InitProcessing,       /* initializing system */
     NormalProcessing,     /* normal processing */
     PostUpgradeProcessing /* Post upgrade to run script */
 } ProcessingMode;
 
-typedef enum VoteAZ {
+typedef enum VoteAZE {
     IS_NOT_VOTE_AZ = 0,
     IS_VOTE_AZ
 } VoteAZ;
 
-typedef struct CmAzInfo {
+typedef struct CmAzInfoT {
     char azName[CM_AZ_NAME];
     uint32 azPriority;
     uint32 cnCount;
@@ -277,7 +306,7 @@ typedef struct CmAzInfo {
     uint32 cnDuplicate;
 } CmAzInfo;
 
-typedef struct ThreadExecStatus {
+typedef struct ThreadExecStatusT {
     uint32 count;
     uint32 execStatus[CM_MAX_THREADS];
 } ThreadExecStatus;
@@ -300,11 +329,11 @@ extern volatile sig_atomic_t got_stop;
 extern volatile sig_atomic_t g_gotParameterReload;
 extern volatile sig_atomic_t g_SetReplaceCnStatus;
 extern volatile sig_atomic_t ha_connection_closed;
-extern THR_LOCAL volatile sig_atomic_t got_conns_close;
 extern char g_replaceCnStatusFile[MAX_PATH_LEN];
 
-extern void ProcessStartupPacket(int epollFd, int events, void* arg);
+void ProcessStartupPacket(int epollFd, void* arg);
 extern int cm_server_send_msg(CM_Connection* con, char msgtype, const char* s, size_t len, int log_level = LOG);
+int CmsSendAndFlushMsg(CM_Connection *con, char msgType, const char *s, size_t len, int logLevel = LOG);
 void set_pending_command(
     const uint32 &group_index,
     const int &member_index,

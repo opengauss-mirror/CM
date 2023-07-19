@@ -26,6 +26,7 @@
 #include "cm/libpq-fe.h"
 #include "cm/cm_misc.h"
 #include "ctl_common.h"
+#include "ctl_common_res.h"
 #include "cm/cm_msg.h"
 #include "cm/cm_agent/cma_main.h"
 #include "cm/libpq-int.h"
@@ -68,14 +69,13 @@ static int stop_check_dn_relation(uint32  node, const char *dataPath);
 static int stop_check_instance(uint32 node_id_check, const char* datapath);
 static int stop_cm_server_arbitration();
 static int calDigitNum(uint32 num);
-static void StopResourceInstance();
-
 
 static int g_cluster_stop_status = CM_STOP_STATUS_UNKNOWN;
 static int g_az_stop_status = CM_STOP_STATUS_UNKNOWN;
 static int g_node_stop_status = CM_STOP_STATUS_UNKNOWN;
 static int g_instance_stop_status = CM_STOP_STATUS_UNKNOWN;
 static int g_dn_relation_stop_status = CM_STOP_STATUS_UNKNOWN;
+static int g_resStopStatus = CM_STOP_STATUS_UNKNOWN;
 static int shutdown_level = 0;
 
 extern bool got_stop;
@@ -102,91 +102,96 @@ extern char instance_manual_start_file[MAXPGPATH];
 extern char etcd_manual_start_file[MAXPGPATH];
 extern char g_appPath[MAXPGPATH];
 extern CM_Conn* CmServer_conn;
-extern CtlCommand ctl_command;
-extern uint32 g_execNodes;
 extern bool g_stopAbnormal;
 
-void DoCheckAndStopRes()
+static int StopResInstCheck(uint32 instId)
 {
-    /* check whether cm_agent is running */
-    if (GetAgentStatus() != PROCESS_RUNNING) {
-        write_runlog(ERROR, "The state of cm_agent is abnormal, maybe the cluster is not running.\n");
-        exit(1);
+    if (GetResInstStatus(instId) == CM_RES_STAT_OFFLINE) {
+        return 0;
     }
-
-    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
-        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
-            if (g_resStatus[i].status.resStat[j].cmInstanceId == g_commandOperationInstanceId) {
-                StopResourceInstance();
-                (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
-                exit(0);
-            }
-        }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
-    }
-    write_runlog(FATAL, "instanceId specified is illegal.\n");
-    exit(1);
+    return -1;
 }
 
-void do_stop(void)
+static void StopResInst(uint32 nodeId, uint32 instId)
 {
+    char instanceStartFile[MAX_PATH_LEN] = {0};
+    int ret = snprintf_s(instanceStartFile, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+        "%s/bin/instance_manual_start_%u", g_appPath, instId);
+    securec_check_intval(ret, (void)ret);
+
+    char command[MAX_PATH_LEN] = {0};
+    ret = snprintf_s(command, MAX_PATH_LEN, MAX_PATH_LEN - 1, SYSTEMQUOTE "touch %s;chmod 600 %s < \"%s\" 2>&1"
+        SYSTEMQUOTE, instanceStartFile, instanceStartFile, DEVNULL);
+    securec_check_intval(ret, (void)ret);
+
+    ret = runCmdByNodeId(command, nodeId);
+    if (ret != 0) {
+        write_runlog(DEBUG1, "Failed to stop the resource instance executing the command: command=\"%s\","
+            " nodeId=%u, instId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
+            command, nodeId, instId, ret, SHELL_RETURN_CODE(ret), errno);
+    }
+}
+
+int DoStop(void)
+{
+    CtlGetCmJsonConf();
     if (g_commandOperationNodeId > 0 && get_node_index(g_commandOperationNodeId) >= g_node_num) {
         write_runlog(FATAL, "node_id specified is illegal. \n");
-        exit(1);
+        return 1;
     }
 #ifdef ENABLE_MULTIPLE_NODES
-    if (NULL == g_command_operation_azName && 0 == g_commandOperationNodeId && shutdown_mode_num == RESUME_MODE) {
+    if (g_command_operation_azName == NULL && g_commandOperationNodeId == 0 && shutdown_mode_num == RESUME_MODE) {
         write_runlog(LOG, "disable resuming fault CN which is deleted. \n");
         stop_resuming_cn();
-        exit(0);
+        return 0;
     }
 #endif
-    if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
-        DoCheckAndStopRes();
-    }
-    if (NULL == g_command_operation_azName && 0 == g_commandOperationNodeId) {
+
+    if (g_commandOperationInstanceId == 0 && g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
         write_runlog(LOG, "stop cluster. \n");
         stop_cluster();
-    } else if (NULL != g_command_operation_azName) {
+    } else if (g_command_operation_azName != NULL) {
         write_runlog(LOG, "stop the availability zone: %s. \n", g_command_operation_azName);
-
         stop_az(g_command_operation_azName);
-    } else if ('\0' == g_cmData[0]) {
-        write_runlog(LOG, "stop the node: %d. \n", g_commandOperationNodeId);
+    } else if (g_commandOperationInstanceId > 0) {
+        if (CheckResInstInfo(&g_commandOperationNodeId, g_commandOperationInstanceId) != CM_SUCCESS) {
+            write_runlog(ERROR, "can't do stop resource instance, instId:%u.\n", g_commandOperationInstanceId);
+            return 1;
+        }
+        write_runlog(LOG, "stop resource instance.\n");
+        StopResInst(g_commandOperationNodeId, g_commandOperationInstanceId);
+    } else if (g_cmData[0] == '\0') {
+        write_runlog(LOG, "stop the node: %u. \n", g_commandOperationNodeId);
 
         (void)stop_node(g_commandOperationNodeId);
     } else if (g_commandRelationship) {
         if (g_commandOperationNodeId == 0) {
             write_runlog(FATAL, "node_id specified is illegal.\n");
-            exit(1);
+            return 1;
         }
         if (g_cmData[0] == '\0') {
             write_runlog(FATAL, "data path specified is illegal.\n");
-            exit(1);
+            return 1;
         }
 
         write_runlog(LOG, "stop relation datanode.\n");
         stop_datanode_instance_relation(g_commandOperationNodeId, g_cmData);
     } else {
-        write_runlog(LOG, "stop the node: %d, datapath: %s. \n", g_commandOperationNodeId, g_cmData);
+        write_runlog(LOG, "stop the node: %u, datapath: %s. \n", g_commandOperationNodeId, g_cmData);
 
         stop_instance(g_commandOperationNodeId, g_cmData);
     }
 
-    /* creaet a thread to check cluster' status */
+    /* create a thread to check cluster' status */
     pthread_t thr_id;
-    int ret = pthread_create(&thr_id, NULL, &check_cluster_stop_status, NULL);
-    if (ret != 0) {
+    if (pthread_create(&thr_id, NULL, &check_cluster_stop_status, NULL) != 0) {
         write_runlog(FATAL, "failed to create thread to check if cluster stopped.\n");
-        exit(-1);
+        return -1;
     }
 
-    if (HAS_RES_DEFINED_ONLY) {
-        write_runlog(LOG, "resource stop command execute sucessfully.\n");
-        return;
-    }
     stop_check();
+
+    return 0;
 }
 
 static void stop_cluster(void)
@@ -212,7 +217,7 @@ static void stop_cluster(void)
     }
 
     if (g_single_node_cluster) {
-        if ('\0' == mpp_env_separate_file[0]) {
+        if (mpp_env_separate_file[0] == '\0') {
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
@@ -240,7 +245,7 @@ static void stop_cluster(void)
          * need also stop cluster by touching cluster_manual_start file through pssh, which has better performance than
          * ssh.
          */
-        if ('\0' == mpp_env_separate_file[0]) {
+        if (mpp_env_separate_file[0] == '\0') {
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
@@ -299,11 +304,11 @@ static void stop_az(const char* azName)
 {
     uint32 stopNodes[g_node_num];
     int num = 0;
-    int nodeId = 0;
+    int nodeId;
 
     write_runlog(LOG, "stop availability zone, availability zone name: %s.\n", azName);
     for (uint32 ii = 0; ii < g_node_num; ii++) {
-        if (0 == strcmp(g_node[ii].azName, azName)) {
+        if (strcmp(g_node[ii].azName, azName) == 0) {
             nodeId = stop_node(g_node[ii].node);
             if (nodeId != -1) {
                 stopNodes[num] = (uint32)nodeId;
@@ -330,13 +335,13 @@ static void stop_az(const char* azName)
     securec_check_errno(rc, (void)rc);
 
     for (int ii = 0; ii < num; ii++) {
-        int nextLength = strlen(etcdStopNodesValue) + 1 + calDigitNum(stopNodes[ii]);
+        int nextLength = (int)strlen(etcdStopNodesValue) + 1 + calDigitNum(stopNodes[ii]);
         if (nextLength < MAXPGPATH) {
             if (strlen(etcdStopNodesValue) == 0) {
-                rc = snprintf_s(etcdStopNodesValue, MAXPGPATH, MAXPGPATH - 1, "%d", stopNodes[ii]);
+                rc = snprintf_s(etcdStopNodesValue, MAXPGPATH, MAXPGPATH - 1, "%u", stopNodes[ii]);
                 securec_check_intval(rc, (void)rc);
             } else {
-                rc = snprintf_s(stopNodesStr, MAXPGPATH, MAXPGPATH - 1, "%d", stopNodes[ii]);
+                rc = snprintf_s(stopNodesStr, MAXPGPATH, MAXPGPATH - 1, "%u", stopNodes[ii]);
                 securec_check_intval(rc, (void)rc);
                 errno_t rno = strcat_s(etcdStopNodesValue, MAXPGPATH, ",");
                 securec_check_errno(rno, (void)rno);
@@ -389,8 +394,8 @@ static int stop_node(uint32 nodeid)
     }
     char command[MAXPGPATH] = {0};
     char command_opts[MAXPGPATH] = {0};
-    uint32 ii = 0;
-    int ret = 0;
+    uint32 ii;
+    int ret;
     
     shutdown_level = SINGLE_NODE;
     if (g_etcd_num > 0 && nodeid != g_currentNode->node && CheckDdbHealth()) {
@@ -436,27 +441,20 @@ static int stop_node(uint32 nodeid)
             command, nodeid, ret, SHELL_RETURN_CODE(ret), errno);
         return -1;
     } else {
-        return nodeid;
+        return (int)nodeid;
     }
 }
 
 static void StopInstanceByInstanceId(uint32 instanceId)
 {
-    bool find = false;
     for (uint32 i = 0; i < g_node_num; i++) {
         for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
             if (instanceId == g_node[i].datanode[j].datanodeId) {
-                find = true;
                 stop_instance(g_node[i].node, g_node[i].datanode[j].datanodeLocalDataPath);
-                write_runlog(LOG,
-                    "stop the node:%d,datapath:%s. \n",
-                    g_node[i].node,
-                    g_node[i].datanode[j].datanodeLocalDataPath);
-                break;
+                write_runlog(LOG, "stop the node:%u,datapath:%s. \n",
+                    g_node[i].node, g_node[i].datanode[j].datanodeLocalDataPath);
+                return;
             }
-        }
-        if (find == true) {
-            break;
         }
     }
 }
@@ -526,8 +524,8 @@ void stop_instance(uint32 nodeid, const char *datapath)
 
 static void* check_cluster_stop_status(void* arg)
 {
-    int i = 0;
-    uint32 ii = 0;
+    int i;
+    uint32 ii;
     const time_t startTime = get_start_time();
 
 #ifndef ENABLE_MULTIPLE_NODES
@@ -547,7 +545,7 @@ restop:
         write_runlog(LOG, ".");
 
         if (g_cluster_stop_status == CM_STOP_STATUS_STOP) {
-            if (g_stopAbnormal == true) {
+            if (g_stopAbnormal) {
                 write_runlog(LOG, "stop cluster partly successfully.\n");
             } else {
                 write_runlog(LOG, "stop cluster successfully.\n");
@@ -567,11 +565,11 @@ restop:
             exit(0);
         } else if (g_az_stop_status == CM_STOP_STATUS_STOP) {
             for (ii = 0; ii < g_node_num; ii++) {
-                if (0 == strcmp(g_node[ii].azName, g_command_operation_azName)) {
-                    write_runlog(LOG, "stop node successfully, nodeid: %d. \n", g_node[ii].node);
+                if (strcmp(g_node[ii].azName, g_command_operation_azName) == 0) {
+                    write_runlog(LOG, "stop node successfully, nodeid: %u. \n", g_node[ii].node);
 
                     if (g_node[ii].etcd) {
-                        write_runlog(LOG, "stopping the ETCD instance in node: %d. \n", g_node[ii].node);
+                        write_runlog(LOG, "stopping the ETCD instance in node: %u. \n", g_node[ii].node);
                         stop_and_check_etcd_node(g_node[ii].node);
                     }
 #ifndef ENABLE_MULTIPLE_NODES
@@ -609,6 +607,10 @@ restop:
             write_runlog(LOG, "stop relation instance successfully. \n");
             (void)unlink(result_path);
             exit(0);
+        } else if (g_resStopStatus == CM_STOP_STATUS_STOP) {
+            write_runlog(LOG, "stop resource instance successfully(nodeId:%u, instId:%u).\n",
+                g_commandOperationNodeId, g_commandOperationInstanceId);
+            exit(0);
         }
     }
 
@@ -632,25 +634,33 @@ restop:
         }
     } else if (g_az_stop_status == CM_STOP_STATUS_INIT) {
         write_runlog(ERROR,
-                     "stop availability zone failed in (%d)s!\n\n"
-                     "HINT: Maybe the availability zone is continually being stopped in the background.\n"
-                     "You can wait for a while and check whether the availability zone stops, or immediately stop the cluster using "
-                     "\"cm_ctl stop -z <azid> -m i\".\n",
-                     g_waitSeconds);
+            "stop availability zone failed in (%d)s!\n\n"
+            "HINT: Maybe the availability zone is continually being stopped in the background.\n"
+            "You can wait for a while and check whether the availability zone stops, or immediately stop the cluster "
+            "using "
+            "\"cm_ctl stop -z <azid> -m i\".\n",
+            g_waitSeconds);
     } else if (g_node_stop_status == CM_STOP_STATUS_INIT) {
         write_runlog(ERROR,
-                     "stop node failed in (%d)s!\n\n"
-                     "HINT: Maybe the node is continually being stopped in the background.\n"
-                     "You can wait for a while and check whether the node stops, or immediately stop the node using "
-                     "\"cm_ctl stop -n <nodeid> -m i\".\n",
-                     g_waitSeconds);
+            "stop node failed in (%d)s!\n\n"
+            "HINT: Maybe the node is continually being stopped in the background.\n"
+            "You can wait for a while and check whether the node stops, or immediately stop the node using "
+            "\"cm_ctl stop -n <nodeid> -m i\".\n",
+            g_waitSeconds);
     } else if (g_instance_stop_status == CM_STOP_STATUS_INIT) {
         write_runlog(ERROR,
-                     "stop instance failed in (%d)s!\n\n"
-                     "HINT: Maybe the instance is continually being stopped in the background.\n"
-                     "You can wait for a while and check whether the instance stops, or immediately stop the instance using "
-                     "\"cm_ctl stop -D <datapath> -m i\".\n",
-                     g_waitSeconds);
+            "stop instance failed in (%d)s!\n\n"
+            "HINT: Maybe the instance is continually being stopped in the background.\n"
+            "You can wait for a while and check whether the instance stops, or immediately stop the instance using "
+            "\"cm_ctl stop -D <datapath> -m i\".\n",
+            g_waitSeconds);
+    } else if (g_resStopStatus == CM_STOP_STATUS_INIT) {
+        write_runlog(ERROR,
+            "stop resource instance failed in (%d)s!\n\n"
+            "HINT: Maybe the instance is continually being stopped in the background.\n"
+            "You can wait for a while and check whether the instance stops, or immediately stop the instance using "
+            "\"cm_ctl stop -D <datapath> -m i\".\n",
+            g_waitSeconds);
     }
 
     exit(-1);
@@ -667,7 +677,7 @@ static void stop_and_check_etcd_cluster()
     while (j < ETCD_STOP_WAIT) {
         (void)sleep(1);
         write_runlog(LOG, ".");
-        if (0 == stop_check_etcd_cluster()) {
+        if (stop_check_etcd_cluster() == 0) {
             write_runlog(LOG, "The ETCD cluster stops successfully.\n");
             break;
         }
@@ -702,18 +712,16 @@ static int StopExecEtcdCluser(uint32 num, char *command, uint32 cmdLen)
 
 static int stop_check_etcd_cluster()
 {
-    int result = -1;
+    int result;
 
     for (uint32 i = 0; i < g_node_num; i++) {
         if (g_node[i].etcd) {
             char command[MAX_PATH_LEN] = {0};
-
-            if (0 != checkStaticConfigExist(i)) {
+            if (checkStaticConfigExist(i) != 0) {
                 write_runlog(ERROR, "the cluster static config file does not exist on the node: %u.\n", g_node[i].node);
                 write_runlog(FATAL, "failed to check the etcd cluster stop status.\n");
                 exit(-1);
             }
-
             result = StopExecEtcdCluser(i, command, MAX_PATH_LEN);
             if (result == PROCESS_WAIT_START) {
                 write_runlog(LOG, "When check instance, process is working in WAIT_START.\n");
@@ -752,7 +760,7 @@ static void stop_check()
             (void)sleep(1);
         }
 
-        if (NULL == g_command_operation_azName && 0 == g_commandOperationNodeId) {
+        if (g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
             g_cluster_stop_status = CM_STOP_STATUS_INIT;
 
             ret = g_single_node_cluster ? CheckSingleClusterRunningStatus() : CheckClusterRunningStatus();
@@ -760,7 +768,7 @@ static void stop_check()
                 g_cluster_stop_status = CM_STOP_STATUS_STOP;
                 finished = true;
             }
-        } else if (NULL != g_command_operation_azName) {
+        } else if (g_command_operation_azName != NULL) {
             g_az_stop_status = CM_STOP_STATUS_INIT;
 
             ret = stop_check_az(g_command_operation_azName);
@@ -768,7 +776,13 @@ static void stop_check()
                 g_az_stop_status = CM_STOP_STATUS_STOP;
                 finished = true;
             }
-        } else if ('\0' == g_cmData[0]) {
+        } else if ((g_commandOperationNodeId > 0) && (g_commandOperationInstanceId > 0)) {
+            g_resStopStatus = CM_STOP_STATUS_INIT;
+            if (StopResInstCheck(g_commandOperationInstanceId) == 0) {
+                g_resStopStatus = CM_STOP_STATUS_STOP;
+                finished = true;
+            }
+        } else if (g_cmData[0] == '\0') {
             g_node_stop_status = CM_STOP_STATUS_INIT;
 
             for (ii = 0; ii < g_node_num; ii++) {
@@ -778,7 +792,7 @@ static void stop_check()
             }
 
             if (ii >= g_node_num) {
-                write_runlog(FATAL, "can't find the nodeid: %d\n", g_commandOperationNodeId);
+                write_runlog(FATAL, "can't find the nodeid: %u\n", g_commandOperationNodeId);
                 exit(1);
             }
 
@@ -799,7 +813,7 @@ static void stop_check()
             }
 
             if (ii >= g_node_num) {
-                write_runlog(FATAL, "can't find the nodeid: %d\n", g_commandOperationNodeId);
+                write_runlog(FATAL, "can't find the nodeid: %u\n", g_commandOperationNodeId);
                 exit(1);
             }
 
@@ -818,7 +832,7 @@ static int stop_check_az(const char* azName)
     uint32 stopped_node_count = 0;
 
     for (uint32 ii = 0; ii < g_node_num; ii++) {
-        if (0 == strcmp(g_node[ii].azName, azName)) {
+        if (strcmp(g_node[ii].azName, azName) == 0) {
             node_count++;
             if (stop_check_node(ii) == 0) {
                 stopped_node_count++;
@@ -856,7 +870,7 @@ int stop_check_node(uint32 node_id_check)
     char command[MAX_PATH_LEN] = {0};
     char cmBinPath[MAX_PATH_LEN] = {0};
 
-    if (0 != checkStaticConfigExist(node_id_check)) {
+    if (checkStaticConfigExist(node_id_check) != 0) {
         write_runlog(
             ERROR, "the cluster static config file does not exist on the node: %u.\n", g_node[node_id_check].node);
         write_runlog(FATAL, "failed to check the node stop status.\n");
@@ -891,11 +905,11 @@ static int CheckInstanceByInstanceid(uint32 instanceId)
                 break;
             }
         }
-        if (find == true) {
+        if (find) {
             break;
         }
     }
-    if (find == false) {
+    if (!find) {
         write_runlog(ERROR, "can't find node:path.\n");
         exit(1);
     }
@@ -933,27 +947,27 @@ static void stop_and_check_etcd_node(uint32 nodeid)
     while (j < ETCD_STOP_WAIT) {
         (void)sleep(1);
         write_runlog(LOG, ".");
-        if (0 == stop_check_etcd_node(nodeid)) {
-            write_runlog(LOG, "The ETCD instance stopped successfully in node: %d.\n", nodeid);
+        if (stop_check_etcd_node(nodeid) == 0) {
+            write_runlog(LOG, "The ETCD instance stopped successfully in node: %u.\n", nodeid);
             break;
         }
         j++;
     }
     if (j == ETCD_STOP_WAIT) {
-        write_runlog(ERROR, "failed to stop the ETCD instance in node: %d.\n", nodeid);
+        write_runlog(ERROR, "failed to stop the ETCD instance in node: %u.\n", nodeid);
         exit(-1);
     }
 }
 
 static int stop_check_etcd_node(uint32 nodeid)
 {
-    int result = -1;
+    int result;
 
     for (uint32 i = 0; i < g_node_num; i++) {
         if (g_node[i].node == nodeid && g_node[i].etcd) {
             char command[MAX_PATH_LEN] = {0};
 
-            if (0 != checkStaticConfigExist(i)) {
+            if (checkStaticConfigExist(i) != 0) {
                 write_runlog(ERROR, "the cluster static config file does not exist on the node: %u.\n", g_node[i].node);
                 write_runlog(FATAL, "failed to check the etcd instance stop status.\n");
                 exit(-1);
@@ -989,7 +1003,7 @@ void stop_etcd_node(uint32 nodeid)
         command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE "%s < \"%s\" 2>&1 &" SYSTEMQUOTE, command_opts, DEVNULL);
     securec_check_intval(ret, (void)ret);
 
-    write_runlog(LOG, "stop the ETCD instance in this node, nodeid: %d.\n", nodeid);
+    write_runlog(LOG, "stop the ETCD instance in this node, nodeid: %u.\n", nodeid);
 
     ret = runCmdByNodeId(command, nodeid);
     if (ret != 0) {
@@ -1035,35 +1049,6 @@ void stop_etcd_cluster(void)
     }
 }
 
-static void StopResourceInstance()
-{
-    errno_t rcs;
-    int ret;
-    char command[MAX_PATH_LEN] = {0};
-    char instanceStartFile[MAX_PATH_LEN] = {'\0'};
-
-    rcs = snprintf_s(instanceStartFile, sizeof(instanceStartFile), sizeof(instanceStartFile) - 1,
-        "%s/bin/instance_manual_start_%u", g_appPath, g_commandOperationInstanceId);
-    securec_check_intval(rcs, (void)rcs);
-
-    ret = snprintf_s(command, sizeof(command), sizeof(command) - 1,
-        SYSTEMQUOTE "touch %s;chmod 600 %s < \"%s\" 2>&1" SYSTEMQUOTE,
-        instanceStartFile, instanceStartFile, DEVNULL);
-    securec_check_intval(ret, (void)ret);
-
-    write_runlog(LOG, "stop resource instance, nodeid: %d, instanceid %d\n", g_commandOperationNodeId, g_commandOperationInstanceId);
-
-    ret = runCmdByNodeId(command, g_commandOperationNodeId);
-    if (ret != 0) {
-        write_runlog(ERROR, "Failed to stop the resource instance with executing the command: command=\"%s\","
-            " nodeId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
-            command, g_commandOperationNodeId, ret, SHELL_RETURN_CODE(ret), errno);
-    } else {
-        write_runlog(LOG, "Stop resource instance successfully.\n");
-    }
-}
-
-
 /* a simple func to calculate int digit, for node num can not be unlimited */
 static int calDigitNum(uint32 num)
 {
@@ -1098,7 +1083,7 @@ static int stop_cm_server_arbitration()
 
     write_runlog(DEBUG1, "First sending msg to cm_server to stop the arbitration process.\n");
 
-    ctl_to_cm_stop_arbitration_content.msg_type = MSG_CTL_CM_STOP_ARBITRATION;
+    ctl_to_cm_stop_arbitration_content.msg_type = (int)MSG_CTL_CM_STOP_ARBITRATION;
     ret = cm_client_send_msg(
         CmServer_conn, 'C', (char*)&ctl_to_cm_stop_arbitration_content, sizeof(ctl_to_cm_stop_arbitration_content));
     if (ret != 0) {
@@ -1143,7 +1128,7 @@ static int stop_check_instance(uint32 node_id_check, const char* datapath)
 {
     int result = -1;
 
-    if (0 != checkStaticConfigExist(node_id_check)) {
+    if (checkStaticConfigExist(node_id_check) != 0) {
         write_runlog(
             ERROR, "the cluster static config file does not exist on the node: %u.\n", g_node[node_id_check].node);
         write_runlog(FATAL, "failed to check the instance stop status: %s.\n", datapath);
@@ -1156,7 +1141,7 @@ static int stop_check_instance(uint32 node_id_check, const char* datapath)
         if (result == PROCESS_WAIT_START) {
             write_runlog(LOG, "When check instance, process is working in WAIT_START.\n");
         }
-        return (result == PROCESS_NOT_EXIST || result == PROCESS_WAIT_START) ? 
+        return (result == PROCESS_NOT_EXIST || result == PROCESS_WAIT_START) ?
             CHECKED_FINISH_STATUS : CHECKED_OTHER_STATUS;
     }
 
@@ -1167,7 +1152,7 @@ static int stop_check_instance(uint32 node_id_check, const char* datapath)
         if (strncmp(datapath, local_data_path, MAX_PATH_LEN) == 0) {
             CheckDnNodeStatusById(node_id_check, &result, ii);
             if (result == PROCESS_NOT_EXIST && (shutdown_mode_num == IMMEDIATE_MODE || 
-                (shutdown_mode_num == FAST_MODE && is_check_building_dn == true))) {
+                (shutdown_mode_num == FAST_MODE && is_check_building_dn))) {
                 char command[MAX_PATH_LEN] = {0};
                 result = StopExecGsCtlInstance(node_id_check, command, MAX_PATH_LEN, local_data_path);
             }
@@ -1175,7 +1160,7 @@ static int stop_check_instance(uint32 node_id_check, const char* datapath)
             if (result == PROCESS_WAIT_START) {
                 write_runlog(LOG, "When check instance, process is working in WAIT_START.\n");
             }
-            return (result == PROCESS_NOT_EXIST || result == PROCESS_WAIT_START) ? 
+            return (result == PROCESS_NOT_EXIST || result == PROCESS_WAIT_START) ?
                 CHECKED_FINISH_STATUS : CHECKED_OTHER_STATUS;
         }
     }
@@ -1187,7 +1172,7 @@ static int stop_check_instance(uint32 node_id_check, const char* datapath)
         if (result == PROCESS_WAIT_START) {
             write_runlog(LOG, "When check instance, process is working in WAIT_START.\n");
         }
-        return (result == PROCESS_NOT_EXIST || result == PROCESS_WAIT_START) ? 
+        return (result == PROCESS_NOT_EXIST || result == PROCESS_WAIT_START) ?
             CHECKED_FINISH_STATUS : CHECKED_OTHER_STATUS;
     }
 

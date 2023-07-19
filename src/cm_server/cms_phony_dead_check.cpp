@@ -27,7 +27,7 @@
 #include "cms_global_params.h"
 #include "cms_phony_dead_check.h"
 
-void* deal_phony_dead_alarm(void* arg)
+void *deal_phony_dead_alarm(void *arg)
 {
     int rc = 0;
     char instanceName[CM_NODE_NAME] = {0};
@@ -39,36 +39,27 @@ void* deal_phony_dead_alarm(void* arg)
 
         for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
             for (int32 j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-                if ((INSTANCE_TYPE_DATANODE == g_instance_role_group_ptr[i].instanceMember[j].instanceType) &&
+                if ((g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_DATANODE) &&
                     g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].phony_dead_times <
-                        phony_dead_effective_time) {
-                    rc = snprintf_s(instanceName,
-                        sizeof(instanceName),
-                        sizeof(instanceName) - 1,
-                        "dn_%u",
+                    phony_dead_effective_time) {
+                    rc = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "dn_%u",
                         g_instance_role_group_ptr[i].instanceMember[j].instanceId);
                     securec_check_intval(rc, (void)rc);
-                } else if ((INSTANCE_TYPE_GTM == g_instance_role_group_ptr[i].instanceMember[j].instanceType) &&
-                           g_instance_group_report_status_ptr[i].instance_status.gtm_member[j].phony_dead_times <
-                               phony_dead_effective_time) {
-                    rc = snprintf_s(instanceName,
-                        sizeof(instanceName),
-                        sizeof(instanceName) - 1,
-                        "gtm_%u",
+                } else if ((g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_GTM) &&
+                    g_instance_group_report_status_ptr[i].instance_status.gtm_member[j].phony_dead_times <
+                    phony_dead_effective_time) {
+                    rc = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "gtm_%u",
                         g_instance_role_group_ptr[i].instanceMember[j].instanceId);
                     securec_check_intval(rc, (void)rc);
-                } else if ((INSTANCE_TYPE_COORDINATE == g_instance_role_group_ptr[i].instanceMember[j].instanceType) &&
-                           g_instance_group_report_status_ptr[i].instance_status.coordinatemember.phony_dead_times <
-                               phony_dead_effective_time) {
-                    rc = snprintf_s(instanceName,
-                        sizeof(instanceName),
-                        sizeof(instanceName) - 1,
-                        "cn_%u",
+                } else if ((g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_COORDINATE) &&
+                    g_instance_group_report_status_ptr[i].instance_status.coordinatemember.phony_dead_times <
+                    phony_dead_effective_time) {
+                    rc = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "cn_%u",
                         g_instance_role_group_ptr[i].instanceMember[j].instanceId);
                     securec_check_intval(rc, (void)rc);
                 }
-                report_phony_dead_alarm(
-                    ALM_AT_Resume, instanceName, g_instance_role_group_ptr[i].instanceMember[j].instanceId);
+                report_phony_dead_alarm(ALM_AT_Resume, instanceName,
+                    g_instance_role_group_ptr[i].instanceMember[j].instanceId);
             }
         }
 

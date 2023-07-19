@@ -187,7 +187,7 @@ const int ETCD_DEFAULT_TIMEOUT = 2000;
  *      time_out
  *      This parameter is used to set the session timeout period.
  */
-int etcd_open(EtcdSession* session, EtcdServerSocket* server_list, EtcdTlsAuthPath* tls_path, int time_out);
+int etcd_open(EtcdSession* session, EtcdServerSocket* serverList, const EtcdTlsAuthPath* tlsPath, int timeout);
 
 /*
  * etcd_close
@@ -198,7 +198,7 @@ int etcd_open(EtcdSession* session, EtcdServerSocket* server_list, EtcdTlsAuthPa
  *      session
  *      The index of the session to be closed.
  */
-int etcd_close(int session);
+int etcd_close(EtcdSession session);
 
 /*
  * etcd_open_str
@@ -220,7 +220,7 @@ int etcd_close(int session);
  *      timeout
  *      This parameter is used to set the session timeout period.
  */
-int etcd_open_str(EtcdSession* session, char* server_names, EtcdTlsAuthPath* tls_path, int timeout);
+int etcd_open_str(EtcdSession* session, char* serverNames, const EtcdTlsAuthPath* tlsPath, int timeOut);
 
 /*
  * etcd_set
@@ -268,7 +268,7 @@ int etcd_set(EtcdSession session, char* key, char* value, SetEtcdOption* option)
  *      value applied in the member arbitration to ensure external consistency
  *      (or linearization).
  */
-int etcd_get(int session, char* key, char* value, int max_size, GetEtcdOption* option);
+int etcd_get(EtcdSession session, char* key, char* value, int maxSize, const GetEtcdOption* option);
 
 /*
  * etcd_delete
@@ -285,7 +285,7 @@ int etcd_get(int session, char* key, char* value, int max_size, GetEtcdOption* o
  *      Indicates the operation information structure of the Delete operation.
  *      No information is used at present.
  */
-int etcd_delete(int session, char* key, DeleteEtcdOption* option);
+int etcd_delete(EtcdSession session, char* key, DeleteEtcdOption* option);
 
 /*
  * etcd_cluster_health
@@ -309,7 +309,7 @@ int etcd_delete(int session, char* key, DeleteEtcdOption* option);
  *      state_Size
  *      defines the max buffer size of health_member
  */
-int etcd_cluster_health(int session, char* member_name, char* health_state, int state_Size);
+int etcd_cluster_health(EtcdSession session, char* memberName, char* healthState, int stateSize);
 
 /*
  * etcd_cluster_state
@@ -325,7 +325,7 @@ int etcd_cluster_health(int session, char* member_name, char* health_state, int 
  *      is_leader
  *      Whether this node is the leader node or not
  */
-int etcd_cluster_state(int session, char* member_name, bool* is_leader);
+int etcd_cluster_state(EtcdSession session, char* memberName, bool* isLeader);
 
 /*
  * get_last_error

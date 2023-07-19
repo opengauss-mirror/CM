@@ -32,27 +32,20 @@
 #define MAX_BUF_LEN 10
 #define CHECK_DN_BUILD_TIME 25
 
-#define MAX_OPTION_LEN 20
+#define MAX_OPTION_LEN 1048
 
 void kill_instance_force(const char* data_path, InstanceTypes ins_type);
 void immediate_stop_one_instance(const char* instance_data_path, InstanceTypes instance_type);
 void immediate_shutdown_nodes(bool kill_cmserver, bool kill_cn);
 void* agentStartAndStopMain(void* arg);
 bool ExecuteCmdWithResult(char* cmd, char* result, int resultLen);
-bool getnicstatus(uint32 listen_ip_count, char ips[][CM_IP_LENGTH]);
 int agentCheckPort(uint32 port);
 void CheckOfflineNode(uint32 i);
 uint32 GetLibcommPort(const char* file_path, uint32 base_port, int port_type);
 extern bool UpdateLibcommConfig();
-void StartResourceCheck(void);
-void StopResourceInstances(void);
-void StopResourceCheck(void);
-void StartOneResInst(const char *scriptPath, uint32 resInstanceId, uint32 timeout);
-void StopOneResInst(const char *scriptPath, uint32 resInstanceId, uint32 timeout);
-ResStatus CheckOneResInst(const char *scriptPath, uint32 resInstanceId, uint32 timeout);
-int ResourceStoppedCheck(void);
-int SystemExecute(const char *scriptPath, const char *oper, uint32 timeout);
 int stop_instance_check(void);
+int killInstanceByPid(const char *processName, const char *cmdLine);
+void DelAndDownFloatIpInDn(uint32 index);
 
 #ifdef ENABLE_UT
 extern void StopOneZengine(uint32 index);

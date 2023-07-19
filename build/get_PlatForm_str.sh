@@ -19,18 +19,15 @@ set -e
 kernel=""
 if [ -f "/etc/euleros-release" ]
 then
-	kernel=$(cat /etc/euleros-release | awk -F ' ' '{print $1}' | tr A-Z a-z)
-elif [ -f "/etc/openEuler-release" ]
+    kernel=$(cat /etc/euleros-release | awk -F ' ' '{print $1}' | tr A-Z a-z)
+elif [ -f "/etc/FusionOS-release" ]
 then
-	kernel=$(cat /etc/openEuler-release | awk -F ' ' '{print $1}' | tr A-Z a-z)
-elif [ -f "/etc/centos-release" ]
-then
-	kernel=$(cat /etc/centos-release | awk -F ' ' '{print $1}' | tr A-Z a-z)
+    kernel=$(cat /etc/FusionOS-release | awk -F ' ' '{print $1}' | tr A-Z a-z)
 elif [ -f "/etc/kylin-release" ]
 then
-	kernel=$(cat /etc/kylin-release | awk -F ' ' '{print $1}' | tr A-Z a-z)
+    kernel=$(cat /etc/kylin-release | awk -F ' ' '{print $1}' | tr A-Z a-z)
 else
-	kernel=$(lsb_release -d | awk -F ' ' '{print $2}'| tr A-Z a-z)
+    kernel=$(lsb_release -d | awk -F ' ' '{print $2}'| tr A-Z a-z)
 fi
 
 ## to solve kernel="name=openeuler"
@@ -51,7 +48,7 @@ plat_form_str=""
 ##################################################################################
 if [ "$kernel"x = "red"x ]
 then
-	plat_form_str=redhat6.4_"$cpu_bit"
+    plat_form_str=redhat6.4_"$cpu_bit"
 fi
 
 ##################################################################################
@@ -60,7 +57,7 @@ fi
 ##################################################################################
 if [ "$kernel"x = "fedora"x ]
 then
-	plat_form_str=redhat6.4_"$cpu_bit"
+    plat_form_str=redhat6.4_"$cpu_bit"
 fi
 
 ##################################################################################
@@ -72,7 +69,6 @@ then
     version=$(lsb_release -r | awk -F ' ' '{print $2}')
     plat_form_str=suse${version%%\.*}_sp${version##*\.}_"$cpu_bit"
 fi
-
 ##################################################################################
 # euler platform 
 # the result form like this: euleros2.0_sp8_aarch64
@@ -122,19 +118,23 @@ then
     plat_form_str=openeuler_"$cpu_bit"
 fi
 
+##################################################################################
+# FusionOS platform
+# the result form like this: fusionos_x86_64
+##################################################################################
+if [ "$kernel"x = "fusionos"x ]
+then
+    plat_form_str=fusionos_"$cpu_bit"
+fi
 
 ##################################################################################
 # kylin platform
 # the result form like this: kylin_aarch64
 ##################################################################################
-if [ "$kernel"x = "kylin"x ];then
-    if [ "$cpu_bit"x = "aarch64"x ];then
-        plat_form_str=kylinv10_sp1_"$cpu_bit"
-    else
-        plat_form_str=kylinv10_sp1_"$cpu_bit"_intel
-    fi
+if [ "$kernel"x = "kylin"x ]
+then
+    plat_form_str=kylinv10_sp1_"$cpu_bit"
 fi
-
 ##################################################################################
 #
 # other platform 

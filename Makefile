@@ -11,7 +11,4 @@ endif
 
 SUBDIRS = src
 
-# Supress parallel build to avoid depencies in the subdirectories.
-.NOTPARALLEL:
-
 $(recurse)

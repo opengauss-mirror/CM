@@ -38,7 +38,7 @@
 #include <unordered_map>
 
 #ifdef ENABLE_THREAD_SAFETY
-#if defined(WIN32) && !defined(_MINGW32) 
+#if defined(WIN32) && !defined(_MINGW32)
 #include "pthread-win32.h"
 #else
 #include <pthread.h>
@@ -52,7 +52,6 @@
 #include "libpq/sha2.h"
 /* include stuff found in fe only */
 #include "pqexpbuffer.h"
-#include "cipher.h"
 #include "securec.h"
 #include "securec_check.h"
 #ifndef WIN32
@@ -321,7 +320,7 @@ struct pg_conn {
                                 * retransmits */
     char* keepalives_count;    /* maximum number of TCP keepalive
                                 * retransmits */
-    char* rw_timeout;          /* read-write timeout during idle connection.*/
+    char* rw_timeout;          /* read-write timeout during idle connection. */
     char* sslmode;             /* SSL mode (require,prefer,allow,disable) */
     char* sslcompression;      /* SSL compression (0 or 1) */
     char* sslkey;              /* client key filename */
@@ -390,7 +389,7 @@ struct pg_conn {
     ThreadId remote_pid;         /* remote pid */
     int be_key;      /* key of backend --- needed for cancels */
     char md5Salt[4]; /* password salt received from backend */
-    /*password stored method on server : md5, sha256 or plain*/
+    /* password stored method on server : md5, sha256 or plain */
     int32 password_stored_method;
     pgParameterStatus* pstatus; /* ParameterStatus data */
     int client_encoding;        /* encoding id */

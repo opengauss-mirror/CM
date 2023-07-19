@@ -26,25 +26,24 @@
 #include "cms_global_params.h"
 #include "cms_process_messages.h"
 #include "cms_ddb.h"
-#include "cms_conn.h"
 #include "cms_write_dynamic_config.h"
 #include "cms_common.h"
 
 /**
  * @brief
- *  Sends arbitration-related command to the CM Agent instance.
+ * Sends arbitration-related command to the CM Agent instance.
  *
  * @note
- *  1. If the message was sent failed, the connection would be closed.
- *  2. The following message types are supported:
- *      MSG_CM_AGENT_RESTART
- *      MSG_CM_AGENT_NOTIFY
- *      MSG_CM_AGENT_FAILOVER
- *      MSG_CM_AGENT_BUILD
- *      MSG_CM_AGENT_REP_SYNC
- *      MSG_CM_AGENT_REP_MOST_AVAILABLE
- *  3. The parameter "instance_role", "time_out" and "full_build" are optional.
- * 
+ * 1. If the message was sent failed, the connection would be closed.
+ * 2. The following message types are supported:
+ * MSG_CM_AGENT_RESTART
+ * MSG_CM_AGENT_NOTIFY
+ * MSG_CM_AGENT_FAILOVER
+ * MSG_CM_AGENT_BUILD
+ * MSG_CM_AGENT_REP_SYNC
+ * MSG_CM_AGENT_REP_MOST_AVAILABLE
+ * 3. The parameter "instance_role", "time_out" and "full_build" are optional.
+ *
  * @param  con              Connection object between the CM Server and CM Agent.
  * @param  msg_type         Type of the message.
  * @param  node             The node id.
@@ -53,94 +52,83 @@
  * @param  time_out         The operation timeout interval.
  * @param  full_build       The full build flag
  */
-void send_arbitration_command(
-    CM_Connection* con,
-    const CM_MessageType &msg_type,
-    const uint32 &node,
-    const uint32 &instance_id,
-    const int &instance_role = NO_NEED_TO_SET_PARAM,
-    const int &time_out = NO_NEED_TO_SET_PARAM,
-    const int &full_build = NO_NEED_TO_SET_PARAM)
+void send_arbitration_command(MsgRecvInfo* recvMsgInfo, const CM_MessageType &msg_type, const uint32 &node,
+    const uint32 &instance_id, const int &instance_role = NO_NEED_TO_SET_PARAM,
+    const int &time_out = NO_NEED_TO_SET_PARAM, const int &full_build = NO_NEED_TO_SET_PARAM)
 {
     switch (msg_type) {
-        case MSG_CM_AGENT_RESTART:
-        {
+        case MSG_CM_AGENT_RESTART: {
             cm_to_agent_restart msg;
-            msg.msg_type = MSG_CM_AGENT_RESTART;
+            msg.msg_type = (int)MSG_CM_AGENT_RESTART;
             msg.node = node;
             msg.instanceId = instance_id;
             WriteKeyEventLog(KEY_EVENT_RESTART, instance_id, "send restart message to instance(%u)", instance_id);
-            (void)cm_server_send_msg(con, 'S', reinterpret_cast<char *>(&msg), sizeof(cm_to_agent_restart));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msg), sizeof(cm_to_agent_restart));
+            break;
         }
-        break;
-        case MSG_CM_AGENT_NOTIFY:
-        {
+        case MSG_CM_AGENT_NOTIFY: {
             cm_to_agent_notify msg;
             msg.term = FirstTerm;
-            msg.msg_type = MSG_CM_AGENT_NOTIFY;
+            msg.msg_type = (int)MSG_CM_AGENT_NOTIFY;
             msg.node = node;
             msg.instanceId = instance_id;
             msg.role = instance_role;
             WriteKeyEventLog(KEY_EVENT_NOTIFY, instance_id, "send notify message to instance(%u)", instance_id);
-            (void)cm_server_send_msg(con, 'S', reinterpret_cast<char *>(&msg), sizeof(cm_to_agent_notify));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msg), sizeof(cm_to_agent_notify));
+            break;
         }
-        break;
-        case MSG_CM_AGENT_FAILOVER:
-        {
+        case MSG_CM_AGENT_FAILOVER: {
             cm_to_agent_failover msg;
             msg.term = FirstTerm;
-            msg.msg_type = MSG_CM_AGENT_FAILOVER;
+            msg.msg_type = (int)MSG_CM_AGENT_FAILOVER;
             msg.node = node;
             msg.instanceId = instance_id;
             WriteKeyEventLog(KEY_EVENT_FAILOVER, instance_id, "send failover message to instance(%u)", instance_id);
-            (void)cm_server_send_msg(con, 'S', reinterpret_cast<char *>(&msg), sizeof(cm_to_agent_failover));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msg), sizeof(cm_to_agent_failover));
+            break;
         }
-        break;
-        case MSG_CM_AGENT_BUILD:
-        {
+        case MSG_CM_AGENT_BUILD: {
             cm_to_agent_build msg;
             msg.term = FirstTerm;
-            msg.msg_type = MSG_CM_AGENT_BUILD;
+            msg.msg_type = (int)MSG_CM_AGENT_BUILD;
             msg.node = node;
             msg.instanceId = instance_id;
             msg.wait_seconds = time_out;
             msg.full_build = full_build;
             WriteKeyEventLog(KEY_EVENT_BUILD, instance_id, "send build message to instance(%u)", instance_id);
-            (void)cm_server_send_msg(con, 'S', reinterpret_cast<char *>(&msg), sizeof(cm_to_agent_build));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msg), sizeof(cm_to_agent_build));
+            break;
         }
-        break;
-        case MSG_CM_AGENT_REP_SYNC:
-        {
+        case MSG_CM_AGENT_REP_SYNC: {
             cm_to_agent_rep_sync msg;
-            msg.msg_type = MSG_CM_AGENT_REP_SYNC;
+            msg.msg_type = (int)MSG_CM_AGENT_REP_SYNC;
             msg.node = node;
             msg.instanceId = instance_id;
             msg.sync_mode = INSTANCE_DATA_REPLICATION_SYNC;
             WriteKeyEventLog(KEY_EVENT_REP_SYNC, instance_id, "send rep sync message to instance(%u)", instance_id);
-            (void)cm_server_send_msg(con, 'S', reinterpret_cast<char *>(&msg), sizeof(cm_to_agent_rep_sync));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msg), sizeof(cm_to_agent_rep_sync));
+            break;
         }
-        break;
-        case MSG_CM_AGENT_REP_MOST_AVAILABLE:
-        {
+        case MSG_CM_AGENT_REP_MOST_AVAILABLE: {
             cm_to_agent_rep_most_available msg;
-            msg.msg_type = MSG_CM_AGENT_REP_MOST_AVAILABLE;
+            msg.msg_type = (int)MSG_CM_AGENT_REP_MOST_AVAILABLE;
             msg.node = node;
             msg.instanceId = instance_id;
             msg.sync_mode = INSTANCE_DATA_REPLICATION_MOST_AVAILABLE;
             WriteKeyEventLog(KEY_EVENT_REP_MOST_AVAILABLE, instance_id,
                 "send rep most available message to instance(%u)", instance_id);
-            (void)cm_server_send_msg(con, 'S', reinterpret_cast<char *>(&msg), sizeof(cm_to_agent_rep_most_available));
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msg), sizeof(cm_to_agent_rep_most_available));
+            break;
         }
-        break;
         default:
             break;
     }
 }
 
-void NotifyDatanodeDynamicPrimary(CM_Connection *con, const uint32 &node, const uint32 &instanceId, const uint32 &group,
-                                  const int &member)
+void NotifyDatanodeDynamicPrimary(MsgRecvInfo* recvMsgInfo, const uint32 &node, const uint32 &instanceId,
+    const uint32 &group, const int &member)
 {
-    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
+    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
     g_instance_group_report_status_ptr[group].instance_status.data_node_member[member].arbitrateFlag = true;
     cm_pending_notify_broadcast_msg(group, instanceId);
 }
@@ -172,7 +160,7 @@ static int GetDatanodeInitPrimaryIndex(const uint32 &group_index)
     }
 
     /* If can not find the init primary member index, use the first instance instead. */
-    if (unlikely(initPrimaryIndex == -1)) {
+    if (initPrimaryIndex == -1) {
         initPrimaryIndex = 0;
         write_runlog(ERROR, "Failed to find the init primary instance, use the first instance instead:"
             " node_id=%u, instance_id=%u.\n",
@@ -185,14 +173,14 @@ static int GetDatanodeInitPrimaryIndex(const uint32 &group_index)
 
 /**
  * @brief
- *  Obtains the instance status structure reference based on the instance group index.
+ * Obtains the instance status structure reference based on the instance group index.
  *
  * @note
- *  Generally, the instance group index is obtained from the dynamic configuration information
- *   based on the node ID and instance ID.
- * 
+ * Generally, the instance group index is obtained from the dynamic configuration information
+ * based on the node ID and instance ID.
+ *
  * @param  group_index      The instance group index.
- * @return Return the instance status structure reference. 
+ * @return Return the instance status structure reference.
  */
 inline cm_instance_report_status &get_instance_status(const uint32& group_index)
 {
@@ -216,13 +204,13 @@ bool is_pending_command(const uint32 &group_index, const int &member_index, cons
 
 /**
  * @brief
- *  Sets the pending command of the build type.
+ * Sets the pending command of the build type.
  *
  * @note
- *  1. Generally, the instance group index and the instance member index is obtained from the
- *      dynamic configuration information based on the node ID and instance ID.
- *  2. Search for the instance command status structure by the group index and the member index.
- *  3. The parameter "full_build" can be 1 (full build) or 0(not specified) or NO_NEED_TO_SET_PARAM.
+ * 1. Generally, the instance group index and the instance member index is obtained from the
+ * dynamic configuration information based on the node ID and instance ID.
+ * 2. Search for the instance command status structure by the group index and the member index.
+ * 3. The parameter "full_build" can be 1 (full build) or 0(not specified) or NO_NEED_TO_SET_PARAM.
  *
  * @param group_index       The instance group index.
  * @param member_index      The instance member index.
@@ -240,8 +228,8 @@ void set_pending_command(
     cm_instance_command_status& instance_command_status = get_command_status(group_index, member_index);
     switch (pending_command) {
         case MSG_CM_AGENT_SWITCHOVER:
-            instance_command_status.command_status = INSTANCE_COMMAND_WAIT_EXEC;
-            instance_command_status.pengding_command = MSG_CM_AGENT_SWITCHOVER;
+            instance_command_status.command_status = (int)INSTANCE_COMMAND_WAIT_EXEC;
+            instance_command_status.pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
             instance_command_status.command_send_num = 0;
             if (time_out != NO_NEED_TO_SET_PARAM) {
                 instance_command_status.time_out = time_out;
@@ -250,22 +238,24 @@ void set_pending_command(
             break;
 
         case MSG_CM_AGENT_BUILD:
-            instance_command_status.command_status = INSTANCE_COMMAND_WAIT_EXEC;
-            instance_command_status.pengding_command = MSG_CM_AGENT_BUILD;
-            if (time_out != NO_NEED_TO_SET_PARAM)
+            instance_command_status.command_status = (int)INSTANCE_COMMAND_WAIT_EXEC;
+            instance_command_status.pengding_command = (int)MSG_CM_AGENT_BUILD;
+            if (time_out != NO_NEED_TO_SET_PARAM) {
                 instance_command_status.time_out = time_out;
-            if (full_build != NO_NEED_TO_SET_PARAM)
+            }
+            if (full_build != NO_NEED_TO_SET_PARAM) {
                 instance_command_status.full_build = full_build;
+            }
             break;
 
         case MSG_CM_AGENT_NOTIFY_CN:
-            instance_command_status.command_status = INSTANCE_COMMAND_WAIT_EXEC;
-            instance_command_status.pengding_command = MSG_CM_AGENT_NOTIFY_CN;
+            instance_command_status.command_status = (int)INSTANCE_COMMAND_WAIT_EXEC;
+            instance_command_status.pengding_command = (int)MSG_CM_AGENT_NOTIFY_CN;
             break;
 
         case MSG_CM_AGENT_BUTT:
-            instance_command_status.command_status = INSTANCE_NONE_COMMAND;
-            instance_command_status.pengding_command = MSG_CM_AGENT_BUTT;
+            instance_command_status.command_status = (int)INSTANCE_NONE_COMMAND;
+            instance_command_status.pengding_command = (int)MSG_CM_AGENT_BUTT;
             instance_command_status.time_out = 0;
             instance_command_status.full_build = 0;
             instance_command_status.command_send_num = 0;
@@ -274,17 +264,17 @@ void set_pending_command(
 
         default:
             write_runlog(ERROR, "The specified command type does not support pending command setting:"
-                " pending_command=%d(%s).", pending_command, cluster_msg_int_to_string(pending_command));
+                " pending_command=%d(%s).", (int)pending_command, cluster_msg_int_to_string((int)pending_command));
             break;
     }
 }
 
 /**
  * @brief Get the Data Node Member object
- * 
+ *
  * @param  group            My Param doc
  * @param  member           My Param doc
- * @return cm_instance_datanode_report_status& 
+ * @return cm_instance_datanode_report_status&
  */
 cm_instance_datanode_report_status &GetDataNodeMember(const uint32 &group, const int &member)
 {
@@ -296,14 +286,14 @@ static inline int GetInstanceType(const uint32 &group, const int &member)
     return g_instance_role_group_ptr[group].instanceMember[member].instanceType;
 }
 
-static inline
-uint32 GetInstanceId(const uint32 &group, const int &member)
+static inline uint32 GetInstanceId(const uint32 &group, const int &member)
 {
     return g_instance_role_group_ptr[group].instanceMember[member].instanceId;
 }
+
 void DealDataNodeDBStateChange(const uint32 &group, const int &member, const int &dbStatePrev)
 {
-    if (INSTANCE_TYPE_DATANODE != GetInstanceType(group, member)) {
+    if (GetInstanceType(group, member) != INSTANCE_TYPE_DATANODE) {
         write_runlog(ERROR, "Instance %u is not a datanode.\n", GetInstanceId(group, member));
         return;
     }
@@ -313,10 +303,9 @@ void DealDataNodeDBStateChange(const uint32 &group, const int &member, const int
     if (cdt) {
         write_runlog(LOG,
             "The db_state of instance %u is changed from %d (%s) to %d (%s). "
-            "Clean the corresponding pending command.\n", 
-            GetInstanceId(group, member), 
-            dbStatePrev, datanode_dbstate_int_to_string(dbStatePrev),
-            dbStateCurr, datanode_dbstate_int_to_string(dbStateCurr));
+            "Clean the corresponding pending command.\n",
+            GetInstanceId(group, member), dbStatePrev, datanode_dbstate_int_to_string(dbStatePrev), dbStateCurr,
+            datanode_dbstate_int_to_string(dbStateCurr));
         set_pending_command(group, member, MSG_CM_AGENT_BUTT);
     }
 }
@@ -327,50 +316,44 @@ bool check_datanode_arbitrate_status(uint32 group_index, int member_index)
     bool arbitrateFlag = false;
     for (int i = 0; i < g_instance_role_group_ptr[group_index].count; i++) {
         if (g_instance_group_report_status_ptr[group_index]
-                .instance_status.data_node_member[i]
-                .local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+            .instance_status.data_node_member[i]
+            .local_status.local_role == INSTANCE_ROLE_PRIMARY) {
             findPrimary = true;
         }
 
         if (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i].arbitrateFlag) {
-            if (g_instance_group_report_status_ptr[group_index]
-                        .instance_status.data_node_member[i]
-                        .local_status.local_role != INSTANCE_ROLE_STANDBY &&
-                g_instance_group_report_status_ptr[group_index]
-                        .instance_status.data_node_member[i]
-                        .local_status.local_role != INSTANCE_ROLE_PRIMARY) {
+            if (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i]
+                .local_status.local_role != INSTANCE_ROLE_STANDBY &&
+                g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i]
+                .local_status.local_role != INSTANCE_ROLE_PRIMARY) {
                 g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i].arbitrateFlag =
                     false;
                 if (i == member_index) {
-                    write_runlog(LOG,
-                        "reset arbitrateFlag for instance %u.\n",
+                    write_runlog(LOG, "reset arbitrateFlag for instance %u.\n",
                         g_instance_role_group_ptr[group_index].instanceMember[i].instanceId);
                     return true;
                 }
                 continue;
             }
-            write_runlog(LOG,
-                "find instanceId %u is arbitrating now.\n",
+            write_runlog(LOG, "find instanceId %u is arbitrating now.\n",
                 g_instance_role_group_ptr[group_index].instanceMember[i].instanceId);
             if (arbitrateFlag) {
                 write_runlog(LOG, "find double arbitrate for %u.\n", group_index);
             }
             if (i == member_index) {
                 arbitrateFlag = false;
-                write_runlog(LOG,
-                    "instance %d is promoting to primary now.\n",
+                write_runlog(LOG, "instance %d is promoting to primary now.\n",
                     g_instance_role_group_ptr[group_index].instanceMember[i].role);
             } else {
                 arbitrateFlag = true;
                 bool cdt = (g_instance_role_group_ptr[group_index].instanceMember[i].role != INSTANCE_ROLE_PRIMARY &&
                     g_instance_group_report_status_ptr[group_index]
-                            .instance_status.data_node_member[i]
-                            .local_status.db_state != INSTANCE_HA_STATE_PROMOTING);
+                                    .instance_status.data_node_member[i]
+                                    .local_status.db_state != INSTANCE_HA_STATE_PROMOTING);
                 if (cdt) {
                     g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i].arbitrateFlag =
                         false;
-                    write_runlog(LOG,
-                        "reset arbitrateFlag for instance %u, it't static role is standby.\n",
+                    write_runlog(LOG, "reset arbitrateFlag for instance %u, it't static role is standby.\n",
                         g_instance_role_group_ptr[group_index].instanceMember[i].instanceId);
                 }
             }
@@ -390,14 +373,13 @@ bool check_datanode_arbitrate_status(uint32 group_index, int member_index)
     }
 }
 
-
 int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int member_index)
 {
     int candiate_primary_member_index = -1;
-    cm_instance_role_group* role_group = &g_instance_role_group_ptr[group_index];
+    cm_instance_role_group *role_group = &g_instance_role_group_ptr[group_index];
     int count = role_group->count;
-    cm_instance_role_status* instanceMember = role_group->instanceMember;
-    cm_instance_datanode_report_status* dnReportStatus =
+    cm_instance_role_status *instanceMember = role_group->instanceMember;
+    cm_instance_datanode_report_status *dnReportStatus =
         g_instance_group_report_status_ptr[group_index].instance_status.data_node_member;
     uint32 unknownNum = 0;
     int staticPrimaryIndex = 0;
@@ -412,7 +394,7 @@ int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int me
     DealDbstateNormalPrimaryDown(group_index, INSTANCE_TYPE_DATANODE);
 
     for (int i = 0; i < count; i++) {
-        if (INSTANCE_ROLE_PRIMARY == instanceMember[i].role) {
+        if (instanceMember[i].role == INSTANCE_ROLE_PRIMARY) {
             staticPrimaryIndex = i;
             isStaticPrimaryIndexSet = true;
             break;
@@ -423,10 +405,10 @@ int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int me
         int other_member_index = ((member_index == 0) ? 1 : 0);
         cdt = (dnReportStatus[member_index].local_status.db_state == INSTANCE_HA_STATE_NEED_REPAIR ||
             (dnReportStatus[member_index].local_status.db_state == INSTANCE_HA_STATE_NORMAL &&
-                g_instance_group_report_status_ptr[group_index].instance_status.cma_kill_instance_timeout == 1) ||
+            g_instance_group_report_status_ptr[group_index].instance_status.cma_kill_instance_timeout == 1) ||
             (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[other_member_index]
                 .phony_dead_times > 2 * phony_dead_effective_time &&
-                dnReportStatus[other_member_index].local_status.local_role == INSTANCE_ROLE_UNKNOWN));
+            dnReportStatus[other_member_index].local_status.local_role == INSTANCE_ROLE_UNKNOWN));
         if (cdt) {
             return member_index;
         } else {
@@ -447,13 +429,13 @@ int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int me
 
             cdt = (db_state == INSTANCE_HA_STATE_NEED_REPAIR ||
                 ((db_state == INSTANCE_HA_STATE_NORMAL) &&
-                    (g_instance_group_report_status_ptr[group_index].instance_status.cma_kill_instance_timeout == 1)) ||
-                    (isStaticPrimaryIndexSet && g_instance_group_report_status_ptr[group_index].instance_status
-                        .data_node_member[staticPrimaryIndex].phony_dead_times > 2 * phony_dead_effective_time));
+                (g_instance_group_report_status_ptr[group_index].instance_status.cma_kill_instance_timeout == 1)) ||
+                (isStaticPrimaryIndexSet && g_instance_group_report_status_ptr[group_index]
+                                                    .instance_status.data_node_member[staticPrimaryIndex]
+                                                    .phony_dead_times > 2 * phony_dead_effective_time));
             if (cdt) {
                 /* get highest xlog instance */
-                cdt = (XLByteLT_W_TERM(term, last_lsn,
-                    dnReportStatus[i].local_status.term,
+                cdt = (XLByteLT_W_TERM(term, last_lsn, dnReportStatus[i].local_status.term,
                     dnReportStatus[i].local_status.last_flush_lsn) &&
                     isStaticPrimaryIndexSet);
                 if (cdt) {
@@ -464,15 +446,13 @@ int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int me
                     if (i == staticPrimaryIndex) {
                         findSameAzForStaticPrimary = true;
                         findSameAz = true;
-                    } else if (0 == strcmp(instanceMember[i].azName, instanceMember[staticPrimaryIndex].azName)) {
+                    } else if (strcmp(instanceMember[i].azName, instanceMember[staticPrimaryIndex].azName) == 0) {
                         findSameAz = true;
                     }
-                } else if (XLByteEQ_W_TERM(term, last_lsn,
-                    dnReportStatus[i].local_status.term,
+                } else if (XLByteEQ_W_TERM(term, last_lsn, dnReportStatus[i].local_status.term,
                     dnReportStatus[i].local_status.last_flush_lsn) &&
-                    !XLogRecPtrIsInvalid(dnReportStatus[i].local_status.last_flush_lsn) &&
-                    isStaticPrimaryIndexSet &&
-                        (strcmp(instanceMember[i].azName, instanceMember[staticPrimaryIndex].azName) == 0)) {
+                    !XLogRecPtrIsInvalid(dnReportStatus[i].local_status.last_flush_lsn) && isStaticPrimaryIndexSet &&
+                    (strcmp(instanceMember[i].azName, instanceMember[staticPrimaryIndex].azName) == 0)) {
                     if (findSameAzForStaticPrimary) {
                         continue;
                     }
@@ -484,16 +464,15 @@ int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int me
                     term = dnReportStatus[i].local_status.term;
                     candiate_primary_member_index = i;
                     azPriority = instanceMember[i].azPriority;
-                } else if (XLByteEQ_W_TERM(term, last_lsn,
-                    dnReportStatus[i].local_status.term,
+                } else if (XLByteEQ_W_TERM(term, last_lsn, dnReportStatus[i].local_status.term,
                     dnReportStatus[i].local_status.last_flush_lsn) &&
                     !XLogRecPtrIsInvalid(dnReportStatus[i].local_status.last_flush_lsn) &&
                     (!isStaticPrimaryIndexSet ||
-                        (strcmp(instanceMember[i].azName, instanceMember[staticPrimaryIndex].azName) != 0))) {
+                    (strcmp(instanceMember[i].azName, instanceMember[staticPrimaryIndex].azName) != 0))) {
                     if (findSameAz) {
                         continue;
                     }
-                    cdt = (azPriority > instanceMember[i].azPriority || g_az_invalid == azPriority);
+                    cdt = (azPriority > instanceMember[i].azPriority || azPriority == g_az_invalid);
                     if (cdt) {
                         last_lsn = dnReportStatus[i].local_status.last_flush_lsn;
                         term = dnReportStatus[i].local_status.term;
@@ -502,10 +481,8 @@ int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int me
                     }
                 }
             } else {
-                write_runlog(LOG,
-                    "db state is not need repair(%u,%d).\n",
-                    g_instance_role_group_ptr[group_index].instanceMember[i].instanceId,
-                    db_state);
+                write_runlog(LOG, "db state is not need repair(%u,%d).\n",
+                    g_instance_role_group_ptr[group_index].instanceMember[i].instanceId, db_state);
                 candiate_primary_member_index = -1;
                 break;
             }
@@ -519,8 +496,7 @@ int find_candiate_primary_node_in_instance_role_group(uint32 group_index, int me
     }
 
     if (member_index == candiate_primary_member_index) {
-        write_runlog(LOG,
-            "find prep dn %u that to be primary.\n",
+        write_runlog(LOG, "find prep dn %u that to be primary.\n",
             g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceId);
         for (int32 j = 0; j < g_instance_role_group_ptr[group_index].count; j++) {
             write_runlog(LOG,
@@ -565,12 +541,12 @@ int find_auto_switchover_primary_node(uint32 group_index, int member_index)
     uint32 azPriority = g_az_invalid;
 
     for (int i = 0; i < count; i++) {
-        if (MSG_CM_AGENT_SWITCHOVER == dnCommandStatus[i].pengding_command) {
+        if (dnCommandStatus[i].pengding_command == (int)MSG_CM_AGENT_SWITCHOVER) {
             return -1;
         }
     }
     for (int i = 0; i < count; i++) {
-        if (INSTANCE_ROLE_PRIMARY == instanceMember[i].role) {
+        if (instanceMember[i].role == INSTANCE_ROLE_PRIMARY) {
             staticPrimaryIndex = i;
             break;
         }
@@ -593,7 +569,7 @@ int find_auto_switchover_primary_node(uint32 group_index, int member_index)
                     break;
                 } else if (strcmp(instanceMember[i].azName, instanceMember[staticPrimaryIndex].azName) != 0) {
                     if ((azPriority < instanceMember[i].azPriority && azPriority > g_az_invalid) ||
-                        g_az_invalid == azPriority) {
+                        azPriority == g_az_invalid) {
                         candiate_primary = i;
                         azPriority = instanceMember[i].azPriority;
                     }
@@ -731,7 +707,7 @@ static void CheckDnRoleAndDbState(uint32 groupIndex, int memberIndex, int otherM
     int localSyncState;
     int buildReason;
     int doubleRestarting;
-    uint32 peerInstanceId = 0;
+    uint32 peerInstanceId;
 
     localStaticRole = g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex].role;
     localDynamicRole = g_instance_group_report_status_ptr[groupIndex]
@@ -751,7 +727,7 @@ static void CheckDnRoleAndDbState(uint32 groupIndex, int memberIndex, int otherM
         .instance_status.data_node_member[memberIndex].sender_status[0].sync_state;
     buildReason = g_instance_group_report_status_ptr[groupIndex]
         .instance_status.data_node_member[memberIndex].local_status.buildReason;
-    doubleRestarting = g_instance_group_report_status_ptr[groupIndex]
+    doubleRestarting = (int)g_instance_group_report_status_ptr[groupIndex]
         .instance_status.arbitrate_status_member[memberIndex].restarting;
     peerInstanceId = g_instance_role_group_ptr[groupIndex].instanceMember[otherMemberIndex].instanceId;
 
@@ -783,13 +759,13 @@ static void ArbitrationSetRestarting(uint32 groupIndex, int memberIndex, int oth
 }
 
 static void PeerStaticRoleCheckStandbyProcess(uint32 groupIndex, int memberIndex, int otherMemberIndex,
-    CM_Connection *con, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
 {
     uint32 node = agentToCmDatanodeStatusPtr->node;
     uint32 instanceId = agentToCmDatanodeStatusPtr->instanceId;
     int peerStaticRole = g_instance_role_group_ptr[groupIndex].instanceMember[otherMemberIndex].role;
     if (peerStaticRole != INSTANCE_ROLE_STANDBY) {
-        send_arbitration_command(con, MSG_CM_AGENT_RESTART, node, instanceId);
+        send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_RESTART, node, instanceId);
         g_instance_group_report_status_ptr[groupIndex]
             .instance_status.arbitrate_status_member[memberIndex].restarting = true;
         write_runlog(LOG, "double primary datanode instance, restart to pending.\n");
@@ -843,7 +819,7 @@ static void MultiAzOrOnlyDnProcess(uint32 groupIndex, int memberIndex, int other
 }
 
 static void NotMultiAzOrOnlyDnProcess(uint32 groupIndex, int memberIndex, maintenance_mode mode,
-    CM_Connection *con, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
+    MsgRecvInfo *recvMsgInfo, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
 {
     uint32 node = agentToCmDatanodeStatusPtr->node;
     uint32 instanceId = agentToCmDatanodeStatusPtr->instanceId;
@@ -857,10 +833,10 @@ static void NotMultiAzOrOnlyDnProcess(uint32 groupIndex, int memberIndex, mainte
                 .instance_status.arbitrate_status_member[memberIndex].restarting = false;
             write_runlog(LOG, "%d Maintaining cluster: instance %u restart done.\n", __LINE__, instanceId);
         } else {
-            /* 
+            /*
              * If restarting flag is set, forced to notify to standby and waiting for failover if necessary
              */
-            send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+            send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
             g_instance_group_report_status_ptr[groupIndex]
                 .instance_status.arbitrate_status_member[memberIndex].restarting = false;
             write_runlog(LOG, "Notify instance %u to standby after restarted.\n", instanceId);
@@ -884,12 +860,12 @@ static void PerformPeerInstancePostSwitchoverWork(uint32 groupIndex, int otherMe
 
 #ifndef ENABLE_LLT
 static void ArbitrationSendCmdAndSetRestarting(uint32 groupIndex, int memberIndex, int otherMemberIndex,
-    CM_Connection *con, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
 {
     uint32 node = agentToCmDatanodeStatusPtr->node;
     uint32 instanceId = agentToCmDatanodeStatusPtr->instanceId;
 
-    send_arbitration_command(con, MSG_CM_AGENT_RESTART, node, instanceId);
+    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_RESTART, node, instanceId);
     g_instance_group_report_status_ptr[groupIndex]
         .instance_status.arbitrate_status_member[memberIndex].restarting = true;
     g_instance_group_report_status_ptr[groupIndex]
@@ -925,7 +901,7 @@ static void SetMemberArbitrateFlag(uint32 groupIndex, int memberIndex)
 }
 
 static void ArbitratesNodeToDynamicPrimary(uint32 groupIndex, int memberIndex, int otherMemberIndex,
-    CM_Connection *con, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
 {
     int peerStaticRole = g_instance_role_group_ptr[groupIndex].instanceMember[otherMemberIndex].role;
     uint32 node = agentToCmDatanodeStatusPtr->node;
@@ -935,13 +911,13 @@ static void ArbitratesNodeToDynamicPrimary(uint32 groupIndex, int memberIndex, i
         int initPrimaryIndex = GetDatanodeInitPrimaryIndex(groupIndex);
         uint32 initNode = g_instance_role_group_ptr[groupIndex].instanceMember[initPrimaryIndex].node;
         uint32 initId = g_instance_role_group_ptr[groupIndex].instanceMember[initPrimaryIndex].instanceId;
-        NotifyDatanodeDynamicPrimary(con, initNode, initId, groupIndex, initPrimaryIndex);
+        NotifyDatanodeDynamicPrimary(recvMsgInfo, initNode, initId, groupIndex, initPrimaryIndex);
         write_runlog(LOG,
             "%d Maintaining cluster with double static primary: "
             "cm server arbitrate init primary (%u) to dynamic primary.\n",
             __LINE__, initId);
     } else {
-        NotifyDatanodeDynamicPrimary(con, node, instanceId, groupIndex, memberIndex);
+        NotifyDatanodeDynamicPrimary(recvMsgInfo, node, instanceId, groupIndex, memberIndex);
         write_runlog(LOG,
             "%d Maintaining cluster: cm server arbitrates static primary (%u) to dynamic primary.\n",
             __LINE__, instanceId);
@@ -949,7 +925,7 @@ static void ArbitratesNodeToDynamicPrimary(uint32 groupIndex, int memberIndex, i
 }
 
 static void CheckIfNotifyDataNodeToStandby(uint32 groupIndex, int memberIndex, int otherMemberIndex,
-    CM_Connection *con, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
 {
     uint32 node = agentToCmDatanodeStatusPtr->node;
     uint32 instanceId = agentToCmDatanodeStatusPtr->instanceId;
@@ -984,7 +960,7 @@ static void CheckIfNotifyDataNodeToStandby(uint32 groupIndex, int memberIndex, i
          * operation and maintenance status, arbitrate the static primary is primary;
          * operating status arbitrate the static is standby
          */
-        send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+        send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
         write_runlog(LOG, "notify datanode to %s.\n", datanode_role_int_to_string(INSTANCE_ROLE_STANDBY));
     }
 }
@@ -1028,7 +1004,7 @@ static void LocalStandbyBuildingProcess(uint32 groupIndex, int memberIndex, uint
 }
 
 static void CheckIfPendingOnlyDnOrNot(uint32 groupIndex, int memberIndex, int otherMemberIndex,
-    CM_Connection *con, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
+    MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
 {
     uint32 node = agentToCmDatanodeStatusPtr->node;
     uint32 instanceId = agentToCmDatanodeStatusPtr->instanceId;
@@ -1055,7 +1031,7 @@ static void CheckIfPendingOnlyDnOrNot(uint32 groupIndex, int memberIndex, int ot
     } else {
         if (localDynamicRole == INSTANCE_ROLE_PENDING) {
             /* If restarting flag is set, forced to notify to standby and waiting for failover if necessary */
-            send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+            send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
             g_instance_group_report_status_ptr[groupIndex]
                 .instance_status.arbitrate_status_member[memberIndex].restarting = false;
             write_runlog(LOG, "instance %u restart done, notify to standby.\n", instanceId);
@@ -1063,8 +1039,7 @@ static void CheckIfPendingOnlyDnOrNot(uint32 groupIndex, int memberIndex, int ot
     }
 }
 
-void datanode_instance_arbitrate_for_psd(
-    CM_Connection *con, agent_to_cm_datanode_status_report *agent_to_cm_datanode_status_ptr)
+void datanode_instance_arbitrate_for_psd(MsgRecvInfo* recvMsgInfo, const agent_to_cm_datanode_status_report *status_ptr)
 {
     uint32 group_index = 0;
     int member_index = 0;
@@ -1086,9 +1061,9 @@ void datanode_instance_arbitrate_for_psd(
 
     int localDBStatePrev;
     maintenance_mode mode = MAINTENANCE_MODE_NONE;
-    uint32 node = agent_to_cm_datanode_status_ptr->node;
-    uint32 instanceId = agent_to_cm_datanode_status_ptr->instanceId;
-    int instanceType = agent_to_cm_datanode_status_ptr->instanceType;
+    uint32 node = status_ptr->node;
+    uint32 instanceId = status_ptr->instanceId;
+    int instanceType = status_ptr->instanceType;
     bool cdt;
 
     ret = find_node_in_dynamic_configure(node, instanceId, &group_index, &member_index);
@@ -1097,25 +1072,32 @@ void datanode_instance_arbitrate_for_psd(
         return;
     }
 
+    if (g_needReloadSyncStandbyMode) {
+        write_runlog(LOG,
+            "instance(node=%u instanceid=%u) arbitrate will wait to reload sync standby mode ddb value.\n",
+            node,
+            instanceId);
+        return;
+    }
+
     GetDatanodeDynamicConfigChangeFromDdb(group_index);
     (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
 
     if (g_HA_status->local_role == CM_SERVER_STANDBY) {
         write_runlog(LOG, "datanode_arbitrate: cm_server is in standby state\n");
-        EventDel(con->epHandle, con);
-        RemoveCMAgentConnection(con);
+        AsyncProcMsg(recvMsgInfo, PM_REMOVE_CONN, NULL, 0);
         goto process_finish;
     }
 
     localDBStatePrev = GetDataNodeMember(group_index, member_index).local_status.db_state;
 
     ResetInstanceStatusHeartbeat(group_index, member_index);
-    UpdateDataNodeMemberStatus(agent_to_cm_datanode_status_ptr, group_index, member_index);
-    UpdateDataNodeMemberDnRestartCount(agent_to_cm_datanode_status_ptr, group_index, member_index);
-    CheckAndUpdatePhonyDeadInfo(agent_to_cm_datanode_status_ptr, group_index, member_index);
+    UpdateDataNodeMemberStatus(status_ptr, group_index, member_index);
+    UpdateDataNodeMemberDnRestartCount(status_ptr, group_index, member_index);
+    CheckAndUpdatePhonyDeadInfo(status_ptr, group_index, member_index);
 
     mode = getMaintenanceMode(group_index);
-    DealPhonyDeadStatus(con, INSTANCE_TYPE_DATANODE, group_index, member_index, mode);
+    DealPhonyDeadStatus(recvMsgInfo, INSTANCE_TYPE_DATANODE, group_index, member_index, mode);
 
     DealDataNodeDBStateChange(group_index, member_index, localDBStatePrev);
 
@@ -1177,7 +1159,7 @@ void datanode_instance_arbitrate_for_psd(
             ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index, member_index,
                 MONITOR_INSTANCE_ARBITRATE_DELAY_CYCLE_MAX_COUNT);
             if (ret == 1) {
-                send_arbitration_command(con, MSG_CM_AGENT_RESTART, node, instanceId);
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_RESTART, node, instanceId);
                 ArbitrationSetRestarting(group_index, member_index, other_member_index);
                 write_runlog(LOG,
                     "Connection states of primary(%u)-standby(%u) and primary-secondary are %d (%s) and %d (%s), "
@@ -1198,8 +1180,7 @@ void datanode_instance_arbitrate_for_psd(
             (local_db_state != INSTANCE_HA_STATE_DEMOTING && peer_db_state != INSTANCE_HA_STATE_DEMOTING) &&
             !is_pending_command(group_index, other_member_index, MSG_CM_AGENT_SWITCHOVER));
         if (cdt) {
-            PeerStaticRoleCheckStandbyProcess(group_index, member_index, other_member_index, con,
-                agent_to_cm_datanode_status_ptr);
+            PeerStaticRoleCheckStandbyProcess(group_index, member_index, other_member_index, recvMsgInfo, status_ptr);
             goto process_finish;
         }
 
@@ -1208,7 +1189,7 @@ void datanode_instance_arbitrate_for_psd(
             cdt = (local_dynamic_role == INSTANCE_ROLE_PRIMARY ||
                 (local_dynamic_role == INSTANCE_ROLE_STANDBY && local_db_state != INSTANCE_HA_STATE_BUILDING));
             if (cdt) {
-                send_arbitration_command(con, MSG_CM_AGENT_RESTART, node, instanceId);
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_RESTART, node, instanceId);
                 goto process_finish;
             }
 
@@ -1218,7 +1199,7 @@ void datanode_instance_arbitrate_for_psd(
             if (cdt) {
                 MultiAzOrOnlyDnProcess(group_index, member_index, other_member_index, instanceId);
             } else {
-                NotMultiAzOrOnlyDnProcess(group_index, member_index, mode, con, agent_to_cm_datanode_status_ptr);
+                NotMultiAzOrOnlyDnProcess(group_index, member_index, mode, recvMsgInfo, status_ptr);
             }
             cdt = (g_instance_group_report_status_ptr[group_index]
                     .instance_status.arbitrate_status_member[member_index].restarting ||
@@ -1263,7 +1244,7 @@ void datanode_instance_arbitrate_for_psd(
                 int bestPrimaryIndex =
                     g_multi_az_cluster ? find_auto_switchover_primary_node(group_index, member_index) : member_index;
                 ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index,
-                    member_index, instance_failover_delay_timeout);
+                    member_index, (int)instance_failover_delay_timeout);
                 cdt = (ret == 1 && bestPrimaryIndex == member_index);
                 if (cdt) {
                     write_runlog(LOG, "the primary dn restarts count: %d in 10 min, %d in hour.\n", peer_restart_counts,
@@ -1311,12 +1292,12 @@ void datanode_instance_arbitrate_for_psd(
                 /*
                  * when switchover, if switchover has timeout, there is a scenes, the primary become standby, but the
                  * standby  promte to primary after 10+ second.
-                 */ 
+                 */
                 ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index,
                     member_index, MONITOR_INSTANCE_ARBITRATE_DELAY_CYCLE_MAX_COUNT * 2);
                 if (ret == 1) {
-                    ArbitrationSendCmdAndSetRestarting(group_index, member_index, other_member_index, con,
-                        agent_to_cm_datanode_status_ptr);
+                    ArbitrationSendCmdAndSetRestarting(group_index, member_index, other_member_index, recvMsgInfo,
+                        status_ptr);
                     write_runlog(LOG, "double standby datanode instance, restart to pending.\n");
                 }
                 goto process_finish;
@@ -1332,8 +1313,8 @@ void datanode_instance_arbitrate_for_psd(
                     ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index,
                         member_index, MONITOR_INSTANCE_ARBITRATE_DELAY_CYCLE_MAX_COUNT * 2);
                     if (ret == 1) {
-                        ArbitrationSendCmdAndSetRestarting(group_index, member_index, other_member_index, con,
-                            agent_to_cm_datanode_status_ptr);
+                        ArbitrationSendCmdAndSetRestarting(group_index, member_index, other_member_index, recvMsgInfo,
+                            status_ptr);
                         write_runlog(LOG, "%d Maintaining cluster with double standby: restart to pending.\n",
                             __LINE__);
                     }
@@ -1369,12 +1350,12 @@ void datanode_instance_arbitrate_for_psd(
 
                         InstanceUpdateMemberRole(group_index, member_index, other_member_index);
 
-                        send_arbitration_command(con, MSG_CM_AGENT_FAILOVER, node, instanceId);
+                        send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_FAILOVER, node, instanceId);
                         cm_pending_notify_broadcast_msg(group_index, instanceId);
                         write_runlog(LOG,
                             "Failover instance, instance_id=%u, instance_type=%s[%u],"
                             " local_static_role = %s[%d], local_dynamic_role=%s[%d].\n",
-                            instanceId, type_int_to_string(INSTANCE_TYPE_DATANODE), INSTANCE_TYPE_DATANODE,
+                            instanceId, type_int_to_string(INSTANCE_TYPE_DATANODE), (uint32)INSTANCE_TYPE_DATANODE,
                             datanode_role_int_to_string(local_static_role), local_static_role,
                             datanode_role_int_to_string(local_dynamic_role), local_dynamic_role);
 
@@ -1404,7 +1385,7 @@ void datanode_instance_arbitrate_for_psd(
 
                 change_primary_member_index(group_index, member_index);
 
-                send_arbitration_command(con, MSG_CM_AGENT_FAILOVER, node, instanceId);
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_FAILOVER, node, instanceId);
                 /* set local dynamic role to primary now */
                 g_instance_group_report_status_ptr[group_index]
                     .instance_status.data_node_member[member_index].arbitrateFlag = true;
@@ -1441,7 +1422,7 @@ void datanode_instance_arbitrate_for_psd(
 
                     change_primary_member_index(group_index, static_cast<int>(member_index));
 
-                    send_arbitration_command(con, MSG_CM_AGENT_FAILOVER, node, instanceId);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_FAILOVER, node, instanceId);
                     SetMemberArbitrateFlag(group_index, member_index);
                     cm_pending_notify_broadcast_msg(group_index, instanceId);
                 }
@@ -1458,7 +1439,7 @@ void datanode_instance_arbitrate_for_psd(
         cdt = ((local_dynamic_role == INSTANCE_ROLE_PENDING) && (peer_dynamic_role == INSTANCE_ROLE_PRIMARY));
         if (cdt) {
             change_primary_member_index(group_index, other_member_index);
-            send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+            send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
             cm_pending_notify_broadcast_msg(group_index,
                 g_instance_role_group_ptr[group_index].instanceMember[other_member_index].instanceId);
             goto process_finish;
@@ -1469,7 +1450,7 @@ void datanode_instance_arbitrate_for_psd(
         if (cdt) {
             cdt = (mode == MAINTENANCE_MODE_UPGRADE || mode == MAINTENANCE_MODE_DILATATION);
             if (cdt) {
-                NotifyDatanodeDynamicPrimary(con, node, instanceId, group_index, member_index);
+                NotifyDatanodeDynamicPrimary(recvMsgInfo, node, instanceId, group_index, member_index);
                 write_runlog(LOG,
                     "%d Maintaining cluster: cm server arbitrates static primary (%u) to dynamic primary.\n", __LINE__,
                     instanceId);
@@ -1483,7 +1464,7 @@ void datanode_instance_arbitrate_for_psd(
                     (XLByteLE(peer_last_xlog_location, local_last_xlog_location)) &&
                     (bestPrimaryIndex == member_index) && !check_datanode_arbitrate_status(group_index, member_index));
                 if (cdt) {
-                    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
                     SetMemberArbitrateFlag(group_index, member_index);
                     cm_pending_notify_broadcast_msg(group_index, instanceId);
                     goto process_finish;
@@ -1492,7 +1473,8 @@ void datanode_instance_arbitrate_for_psd(
                         (!XLogRecPtrIsInvalid(peer_last_xlog_location)) &&
                         (XLByteLT(local_last_xlog_location, peer_last_xlog_location)) && bestPrimaryIndex != -1);
                     if (cdt) {
-                        send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+                        send_arbitration_command(
+                            recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
                         write_runlog(LOG,
                             "%d pending-standby, XLByteLE:local_last_xlog_location=%X/%X, "
                             "peer_last_xlog_location=%X/%X, LE=%d. Notify %u to be standby\n",
@@ -1518,7 +1500,7 @@ void datanode_instance_arbitrate_for_psd(
                         (uint32)(peer_last_xlog_location >> 32), (uint32)peer_last_xlog_location,
                         XLByteLE(peer_last_xlog_location, local_last_xlog_location));
 
-                    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
                     cm_pending_notify_broadcast_msg(group_index, instanceId);
                     goto process_finish;
                 } else {
@@ -1532,8 +1514,8 @@ void datanode_instance_arbitrate_for_psd(
         if (cdt) {
             cdt = (mode == MAINTENANCE_MODE_UPGRADE || mode == MAINTENANCE_MODE_DILATATION);
             if (cdt) {
-                ArbitratesNodeToDynamicPrimary(group_index, member_index, other_member_index, con,
-                    agent_to_cm_datanode_status_ptr);
+                ArbitratesNodeToDynamicPrimary(group_index, member_index, other_member_index, recvMsgInfo,
+                    status_ptr);
                 goto process_finish;
             }
 
@@ -1552,7 +1534,7 @@ void datanode_instance_arbitrate_for_psd(
                         XLogRecPtrIsInvalid(peer_last_xlog_location),
                         XLByteLE(peer_last_xlog_location, local_last_xlog_location));
 
-                    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
                     SetMemberArbitrateFlag(group_index, member_index);
                     cm_pending_notify_broadcast_msg(group_index, instanceId);
                     goto process_finish;
@@ -1568,7 +1550,7 @@ void datanode_instance_arbitrate_for_psd(
 
                     change_primary_member_index(group_index, other_member_index);
 
-                    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
                     goto process_finish;
                 } else {
                     write_runlog(LOG,
@@ -1588,7 +1570,7 @@ void datanode_instance_arbitrate_for_psd(
                         __LINE__, (uint32)(local_last_xlog_location >> 32), (uint32)local_last_xlog_location,
                         (uint32)(peer_last_xlog_location >> 32), (uint32)peer_last_xlog_location);
 
-                    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
                     goto process_finish;
                 } else {
                     write_runlog(LOG,
@@ -1610,15 +1592,15 @@ void datanode_instance_arbitrate_for_psd(
             (peer_db_state == INSTANCE_HA_STATE_STARTING && peer_pre_restart_counts > DN_RESTART_COUNTS)));
         if (cdt) {
             if (mode == MAINTENANCE_MODE_UPGRADE || mode == MAINTENANCE_MODE_DILATATION) {
-                NotifyDatanodeDynamicPrimary(con, node, instanceId, group_index, member_index);
+                NotifyDatanodeDynamicPrimary(recvMsgInfo, node, instanceId, group_index, member_index);
                 write_runlog(LOG,
-                    "%d Maintaining cluster: cm server arbitrates static primary (%u) to dynamic primary.\n",
-                    __LINE__, instanceId);
+                    "%d Maintaining cluster: cm server arbitrates static primary (%u) to dynamic primary.\n", __LINE__,
+                    instanceId);
                 goto process_finish;
             }
 
-            CheckIfNotifyDataNodeToStandby(group_index, member_index, other_member_index, con,
-                agent_to_cm_datanode_status_ptr);
+            CheckIfNotifyDataNodeToStandby(group_index, member_index, other_member_index, recvMsgInfo,
+                status_ptr);
             goto process_finish;
         }
     } else if (local_static_role == INSTANCE_ROLE_STANDBY) {
@@ -1627,10 +1609,10 @@ void datanode_instance_arbitrate_for_psd(
             (local_db_state != INSTANCE_HA_STATE_DEMOTING && peer_db_state != INSTANCE_HA_STATE_DEMOTING) &&
             !is_pending_command(group_index, member_index, MSG_CM_AGENT_SWITCHOVER));
         if (cdt) {
-            send_arbitration_command(con, MSG_CM_AGENT_RESTART, node, instanceId);
+            send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_RESTART, node, instanceId);
 
             PeerStaticRoleCheckPrimaryProcess(group_index, member_index, other_member_index,
-                agent_to_cm_datanode_status_ptr);
+                status_ptr);
             goto process_finish;
         }
 
@@ -1639,14 +1621,14 @@ void datanode_instance_arbitrate_for_psd(
             cdt = (local_dynamic_role == INSTANCE_ROLE_PRIMARY ||
                 (local_dynamic_role == INSTANCE_ROLE_STANDBY && local_db_state != INSTANCE_HA_STATE_BUILDING));
             if (cdt) {
-                send_arbitration_command(con, MSG_CM_AGENT_RESTART, node, instanceId);
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_RESTART, node, instanceId);
                 goto process_finish;
             }
 
             LocalStandbyBuildingProcess(group_index, member_index, instanceId);
 
-            CheckIfPendingOnlyDnOrNot(group_index, member_index, other_member_index, con,
-                agent_to_cm_datanode_status_ptr);
+            CheckIfPendingOnlyDnOrNot(group_index, member_index, other_member_index, recvMsgInfo,
+                status_ptr);
 
             cdt = (g_instance_group_report_status_ptr[group_index]
                     .instance_status.arbitrate_status_member[member_index].restarting ||
@@ -1739,12 +1721,12 @@ void datanode_instance_arbitrate_for_psd(
                             .command_status == INSTANCE_NONE_COMMAND &&
                     is_pending_command(group_index, member_index, MSG_CM_AGENT_BUTT) &&
                     (peer_restart_counts > DN_RESTART_COUNTS ||
-                        peer_restart_counts_in_hour > DN_RESTART_COUNTS_IN_HOUR)) {
-                    int bestPrimaryIndex = g_multi_az_cluster 
-                        ? find_auto_switchover_primary_node(group_index, member_index) 
-                        : member_index;
+                    peer_restart_counts_in_hour > DN_RESTART_COUNTS_IN_HOUR)) {
+                    int bestPrimaryIndex = g_multi_az_cluster ?
+                        find_auto_switchover_primary_node(group_index, member_index) :
+                        member_index;
                     ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index,
-                        member_index, instance_failover_delay_timeout);
+                        member_index, (int)instance_failover_delay_timeout);
                     cdt = (ret == 1 && bestPrimaryIndex == member_index);
                     if (cdt) {
                         write_runlog(LOG, "the primary dn restarts count: %d in 10 min, %d in hour.\n",
@@ -1784,7 +1766,7 @@ void datanode_instance_arbitrate_for_psd(
                 if (g_only_dn_cluster) {
                     write_runlog(LOG,
                         "WAL segment removed: "
-                        "group_index = %u member_index = %u local_dynamic_role = %d(%s) peer_dynamic_role = %d(%s) "
+                        "group_index = %u member_index = %d local_dynamic_role = %d(%s) peer_dynamic_role = %d(%s) "
                         "arbitrate_delay_set = %d arbitrate_delay_time_out = %d\n",
                         group_index, member_index, local_dynamic_role, datanode_role_int_to_string(local_dynamic_role),
                         peer_dynamic_role, datanode_role_int_to_string(peer_dynamic_role),
@@ -1798,7 +1780,7 @@ void datanode_instance_arbitrate_for_psd(
                         goto process_finish;
                     }
 
-                    send_arbitration_command(con, MSG_CM_AGENT_BUILD, node, instanceId, NO_NEED_TO_SET_PARAM,
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_BUILD, node, instanceId, NO_NEED_TO_SET_PARAM,
                         BUILD_TIMER_OUT, 0);
 
                     goto process_finish;
@@ -1828,8 +1810,13 @@ void datanode_instance_arbitrate_for_psd(
                         ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index,
                             member_index, MONITOR_INSTANCE_ARBITRATE_DELAY_CYCLE_MAX_COUNT * 2);
                         if (ret == 1) {
-                            send_arbitration_command(con, MSG_CM_AGENT_BUILD, node, instanceId, NO_NEED_TO_SET_PARAM,
-                                BUILD_TIMER_OUT, 0);
+                            send_arbitration_command(recvMsgInfo,
+                                MSG_CM_AGENT_BUILD,
+                                node,
+                                instanceId,
+                                NO_NEED_TO_SET_PARAM,
+                                BUILD_TIMER_OUT,
+                                0);
                             goto process_finish;
                         }
                     } else {
@@ -1855,7 +1842,7 @@ void datanode_instance_arbitrate_for_psd(
                     goto process_finish;
                 }
 
-                send_arbitration_command(con, MSG_CM_AGENT_BUILD, node, instanceId, NO_NEED_TO_SET_PARAM,
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_BUILD, node, instanceId, NO_NEED_TO_SET_PARAM,
                     BUILD_TIMER_OUT, 0);
                 goto process_finish;
             } else {
@@ -1875,7 +1862,7 @@ void datanode_instance_arbitrate_for_psd(
                 ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index,
                     member_index, MONITOR_INSTANCE_ARBITRATE_DELAY_CYCLE_MAX_COUNT * 2);
                 if (ret == 1) {
-                    send_arbitration_command(con, MSG_CM_AGENT_RESTART, node, instanceId);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_RESTART, node, instanceId);
                     g_instance_group_report_status_ptr[group_index]
                         .instance_status.arbitrate_status_member[member_index]
                         .restarting = true;
@@ -1933,7 +1920,7 @@ void datanode_instance_arbitrate_for_psd(
                         }
                     }
                     ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index,
-                        member_index, tmpDelayTime);
+                        member_index, (int)tmpDelayTime);
                 }
 
                 cdt = (ret == 1 && !check_datanode_arbitrate_status(group_index, member_index));
@@ -1947,7 +1934,7 @@ void datanode_instance_arbitrate_for_psd(
                     }
 
                     change_primary_member_index(group_index, member_index);
-                    send_arbitration_command(con, MSG_CM_AGENT_FAILOVER, node, instanceId);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_FAILOVER, node, instanceId);
                     g_instance_group_report_status_ptr[group_index]
                         .instance_status.data_node_member[member_index].arbitrateFlag = true;
                     cm_pending_notify_broadcast_msg(group_index, instanceId);
@@ -1964,7 +1951,7 @@ void datanode_instance_arbitrate_for_psd(
         /* local is pengding process */
         cdt = ((local_dynamic_role == INSTANCE_ROLE_PENDING) && (peer_dynamic_role == INSTANCE_ROLE_PRIMARY));
         if (cdt) {
-            send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+            send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
             goto process_finish;
         }
 
@@ -1973,7 +1960,7 @@ void datanode_instance_arbitrate_for_psd(
             if (g_only_dn_cluster) {
                 /* do nothing */
             } else {
-                send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
             }
             /* need no operation */
             goto process_finish;
@@ -1988,7 +1975,7 @@ void datanode_instance_arbitrate_for_psd(
                     int initPrimaryIndex = GetDatanodeInitPrimaryIndex(group_index);
                     uint32 initNode = g_instance_role_group_ptr[group_index].instanceMember[initPrimaryIndex].node;
                     uint32 initId = g_instance_role_group_ptr[group_index].instanceMember[initPrimaryIndex].instanceId;
-                    NotifyDatanodeDynamicPrimary(con, initNode, initId, group_index, initPrimaryIndex);
+                    NotifyDatanodeDynamicPrimary(recvMsgInfo, initNode, initId, group_index, initPrimaryIndex);
                     write_runlog(LOG,
                         "%d Maintaining cluster with neither static nor dynamic primary: "
                         "cm server arbitrate init primary (%u) to dynamic primary.\n",
@@ -1998,7 +1985,7 @@ void datanode_instance_arbitrate_for_psd(
                     }
                 }
 
-                send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
                 write_runlog(LOG, "%d Maintaining cluster: cm server arbitrates %u to standby.\n", __LINE__,
                     instanceId);
                 goto process_finish;
@@ -2018,7 +2005,7 @@ void datanode_instance_arbitrate_for_psd(
                         XLogRecPtrIsInvalid(peer_last_xlog_location),
                         XLByteLE(peer_last_xlog_location, local_last_xlog_location));
 
-                    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
                     goto process_finish;
                 } else if ((!XLogRecPtrIsInvalid(local_last_xlog_location)) &&
                     (!XLogRecPtrIsInvalid(peer_last_xlog_location)) &&
@@ -2033,7 +2020,7 @@ void datanode_instance_arbitrate_for_psd(
 
                     change_primary_member_index(group_index, member_index);
 
-                    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
                     g_instance_group_report_status_ptr[group_index]
                         .instance_status.data_node_member[member_index]
                         .arbitrateFlag = true;
@@ -2059,7 +2046,7 @@ void datanode_instance_arbitrate_for_psd(
                         XLogRecPtrIsInvalid(peer_last_xlog_location),
                         XLByteLE(peer_last_xlog_location, local_last_xlog_location));
 
-                    send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+                    send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
                     goto process_finish;
                 } else {
                     write_runlog(LOG,
@@ -2080,8 +2067,8 @@ void datanode_instance_arbitrate_for_psd(
             int bestPrimaryIndex = find_candiate_primary_node_in_instance_role_group(group_index, member_index);
             uint32 tmpDelayTime = instance_heartbeat_timeout;
             if (g_instance_group_report_status_ptr[group_index]
-                    .instance_status.command_member[other_member_index]
-                    .heat_beat < static_cast<int>(instance_heartbeat_timeout)) {
+                .instance_status.command_member[other_member_index]
+                .heat_beat < static_cast<int>(instance_heartbeat_timeout)) {
                 tmpDelayTime = instance_heartbeat_timeout;
                 ret = instance_delay_arbitrate_time_out(local_dynamic_role, peer_dynamic_role, group_index,
                     member_index, static_cast<int>(tmpDelayTime));
@@ -2092,7 +2079,7 @@ void datanode_instance_arbitrate_for_psd(
                 (peer_db_state == INSTANCE_HA_STATE_UNKONWN || peer_db_state == INSTANCE_HA_STATE_MANUAL_STOPPED ||
                 peer_db_state == INSTANCE_HA_STATE_PORT_USED || peer_db_state == INSTANCE_HA_STATE_DISK_DAMAGED));
             if (cdt) {
-                send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_STANDBY);
                 write_runlog(LOG, "notify local datanode to standby.\n");
 
                 goto process_finish;
@@ -2104,7 +2091,7 @@ void datanode_instance_arbitrate_for_psd(
             cdt = (peer_db_state == INSTANCE_HA_STATE_BUILD_FAILED && (bestPrimaryIndex == member_index) &&
                 !check_datanode_arbitrate_status(group_index, member_index));
             if (cdt) {
-                send_arbitration_command(con, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
+                send_arbitration_command(recvMsgInfo, MSG_CM_AGENT_NOTIFY, node, instanceId, INSTANCE_ROLE_PRIMARY);
                 g_instance_group_report_status_ptr[group_index]
                     .instance_status.data_node_member[member_index].arbitrateFlag = true;
                 cm_pending_notify_broadcast_msg(group_index, instanceId);

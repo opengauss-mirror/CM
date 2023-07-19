@@ -18,9 +18,6 @@
 #ifndef LIBPQ_FE_H
 #define LIBPQ_FE_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 #ifndef WIN32
 #include <stdbool.h>
 #endif
@@ -33,6 +30,11 @@ extern "C" {
  */
 #include "postgres_ext.h"
 #include "gs_thread.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifdef HAVE_CE
 class ICachedRec;
 #endif
@@ -270,15 +272,15 @@ extern char* PQbuildPGconn(const char* conninfo, PGconn** connPtr, int* packetle
 /* make a new client connection to the backend */
 /* Asynchronous (non-blocking) */
 extern PGconn* PQconnectStart(const char* conninfo);
-extern PGconn* PQconnectStartParams(const char* const* keywords, const char* const* values, int expand_dbname);
+extern PGconn *PQconnectStartParams(const char *const *keywords, const char *const *values, int expand_dbname);
 extern PostgresPollingStatusType PQconnectPoll(PGconn* conn);
 
 /* Synchronous (blocking) */
 extern PGconn* PQconnectdb(const char* conninfo);
 /* connect parallel (no blocking) */
-extern int PQconnectdbParallel(char const* const* conninfo, int count, PGconn* conn[], Oid* nodeid);
+extern int PQconnectdbParallel(char const *const *conninfo, int count, PGconn *conn[], Oid *nodeid);
 
-extern PGconn* PQconnectdbParams(const char* const* keywords, const char* const* values, int expand_dbname);
+extern PGconn *PQconnectdbParams(const char *const *keywords, const char *const *values, int expand_dbname);
 extern PGconn* PQsetdbLogin(const char* pghost, const char* pgport, const char* pgoptions, const char* pgtty,
     const char* dbName, const char* login, const char* pwd);
 
@@ -394,31 +396,31 @@ extern pgthreadlock_t PQregisterThreadLock(pgthreadlock_t newhandler);
 
 /* Simple synchronous query */
 extern PGresult* PQexec(PGconn* conn, const char* query);
-extern PGresult* PQexecParams(PGconn* conn, const char* command, int nParams, const Oid* paramTypes,
-    const char* const* paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+extern PGresult *PQexecParams(PGconn *conn, const char *command, int nParams, const Oid *paramTypes,
+    const char *const *paramValues, const int *paramLengths, const int *paramFormats, int resultFormat);
 extern PGresult* PQexecParamsBatch(PGconn* conn, const char* command, int nParams, int nBatch, const Oid* paramTypes,
-    const char* const* paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+    const char *const *paramValues, const int *paramLengths, const int *paramFormats, int resultFormat);
 
 extern PGresult* PQprepare(PGconn* conn, const char* stmtName, const char* query, int nParams, const Oid* paramTypes);
-extern PGresult* PQexecPrepared(PGconn* conn, const char* stmtName, int nParams, const char* const* paramValues,
-    const int* paramLengths, const int* paramFormats, int resultFormat);
+extern PGresult *PQexecPrepared(PGconn *conn, const char *stmtName, int nParams, const char *const *paramValues,
+    const int *paramLengths, const int *paramFormats, int resultFormat);
 extern PGresult* PQexecPreparedBatch(PGconn* conn, const char* stmtName, int nParams, int nBatchCount,
-    const char* const* paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+    const char *const *paramValues, const int *paramLengths, const int *paramFormats, int resultFormat);
 
 /* Interface for multiple-result or asynchronous queries */
 extern int PQsendQuery(PGconn* conn, const char* query);
 extern int PqSendQueryCheckConnValid(Oid nod_oid, PGconn* conn, const char* query);
 extern int PQsendQueryPoolerStatelessReuse(PGconn* conn, const char* query);
 extern int PQsendQueryParams(PGconn* conn, const char* command, int nParams, const Oid* paramTypes,
-    const char* const* paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+    const char *const *paramValues, const int *paramLengths, const int *paramFormats, int resultFormat);
 extern int PQsendQueryParamsBatch(PGconn* conn, const char* command, int nParams, int nBatch, const Oid* paramTypes,
-    const char* const* paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+    const char *const *paramValues, const int *paramLengths, const int *paramFormats, int resultFormat);
 
 extern int PQsendPrepare(PGconn* conn, const char* stmtName, const char* query, int nParams, const Oid* paramTypes);
-extern int PQsendQueryPrepared(PGconn* conn, const char* stmtName, int nParams, const char* const* paramValues,
-    const int* paramLengths, const int* paramFormats, int resultFormat);
+extern int PQsendQueryPrepared(PGconn *conn, const char *stmtName, int nParams, const char *const *paramValues,
+    const int *paramLengths, const int *paramFormats, int resultFormat);
 extern int PQsendQueryPreparedBatch(PGconn* conn, const char* stmtName, int nParams, int nBatchCount,
-    const char* const* paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+    const char *const *paramValues, const int *paramLengths, const int *paramFormats, int resultFormat);
 
 extern int PQsetSingleRowMode(PGconn* conn);
 extern PGresult* PQgetResult(PGconn* conn);
@@ -447,7 +449,7 @@ extern int PQsetnonblocking(PGconn* conn, int arg);
 extern int PQisnonblocking(const PGconn* conn);
 extern int PQisthreadsafe(void);
 extern PGPing PQping(const char* conninfo);
-extern PGPing PQpingParams(const char* const* keywords, const char* const* values, int expand_dbname);
+extern PGPing PQpingParams(const char *const *keywords, const char *const *values, int expand_dbname);
 
 /* Force the write buffer to be written (or at least try) */
 extern int PQflush(PGconn* conn);

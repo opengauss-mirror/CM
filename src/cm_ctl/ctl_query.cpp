@@ -23,12 +23,11 @@
  * -------------------------------------------------------------------------
  */
 #include <signal.h>
-#include "common/config/cm_config.h"
+#include <sys/time.h>
 #include "cm/libpq-fe.h"
 #include "cm/cm_misc.h"
 #include "ctl_common.h"
 #include "cm/cm_msg.h"
-#include <sys/time.h>
 #include "ctl_query_base.h"
 
 static void query_cmserver_and_etcd_status(void);
@@ -39,13 +38,11 @@ static void do_query_cmserver(uint32 node_id, const char* state);
 static const char* query_cm_server(uint32 node_id);
 static const char* query_cm_server_directory(uint32 node_id);
 static status_t PrintResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
-static void PrintParallelRedoResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
+static void PrintParallelRedoResult(cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
 static void PrintSimpleResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
 static void print_simple_DN_result(uint32 node_index, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
-static void QueryResourceStatus(int *clusterState);
-static void GetResourceStatusInfo(int *clusterState);
+static status_t QueryResourceStatus(CM_Conn *pCmsCon);
 
-static bool hasFindCmSP = false;
 static bool hasFindEtcdL = false;
 extern bool g_detailQuery;
 extern bool g_coupleQuery;
@@ -58,11 +55,8 @@ extern bool g_dataPathQuery;
 extern bool g_availabilityZoneCommand;
 extern bool g_ipQuery;
 extern int g_fencedUdfQuery;
-extern bool g_nodeIdSet;
 extern int g_waitSeconds;
 extern uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM];
-extern bool g_commandRelationship;
-extern char g_cmData[CM_PATH_LENGTH];
 extern const char* g_cmServerState[CM_PRIMARY_STANDBY_NUM + 1];
 extern uint32 g_commandOperationNodeId;
 extern char* g_logFile;
@@ -71,21 +65,21 @@ extern CM_Conn* CmServer_conn1;
 extern CM_Conn* CmServer_conn2;
 extern bool g_logFileSet;
 extern char* g_commandMinortityAzName;
-extern uint32 maxResNameLen;
 
 
 extern bool g_gtmBalance;
 extern bool g_datanodesBalance;
 extern cm_to_ctl_central_node_status g_centralNode;
 extern FILE* g_logFilePtr;
+bool g_isPauseArbitration = false;
+extern char manualPauseFile[MAXPGPATH];
 
 int do_global_barrier_query(void)
 {
     ctl_to_cm_global_barrier_query cm_ctl_cm_query_content;
     GetUpgradeVersionFromCmaConfig();
-    cm_ctl_cm_query_content.msg_type = MSG_CTL_CM_GLOBAL_BARRIER_QUERY;
+    cm_ctl_cm_query_content.msg_type = (int)MSG_CTL_CM_GLOBAL_BARRIER_QUERY;
     cm_to_ctl_cluster_global_barrier_info *global_barrier_info;
-    char *receiveMsg = NULL;
     int ret;
     bool success = false;
     if (g_logFileSet) {
@@ -114,15 +108,16 @@ int do_global_barrier_query(void)
             "Maybe cm_server is not running, or timeout expired. Please try again.\n");
         return -1;
     }
-    ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&cm_ctl_cm_query_content, sizeof(ctl_to_cm_global_barrier_query));
+    ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&cm_ctl_cm_query_content,
+        sizeof(ctl_to_cm_global_barrier_query));
     if (ret != 0) {
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
         return -1;
     }
     CmSleep(1);
-    int wait_time = GLOBAL_BARRIER_WAIT_SECONDS*1000;
-    while(wait_time > 0) {
+    int wait_time = GLOBAL_BARRIER_WAIT_SECONDS * 1000;
+    while (wait_time > 0) {
         ret = cm_client_flush_msg(CmServer_conn);
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
             CMPQfinish(CmServer_conn);
@@ -130,38 +125,40 @@ int do_global_barrier_query(void)
             return -1;
         }
 
-        receiveMsg = recv_cm_server_cmd(CmServer_conn);
+        char *receiveMsg = recv_cm_server_cmd(CmServer_conn);
         if (receiveMsg != NULL) {
             global_barrier_info = (cm_to_ctl_cluster_global_barrier_info*) receiveMsg;
             switch (global_barrier_info->msg_type) {
-                case MSG_CM_CTL_GLOBAL_BARRIER_DATA_BEGIN:
-                    fprintf(g_logFilePtr, "Global_target_barrierId: %s\n",
-                        global_barrier_info->globalRecoveryBarrierId);
-                    fprintf(g_logFilePtr, "Global_query_barrierId: %s\n",
-                        global_barrier_info->global_barrierId);
+                case MSG_CM_CTL_GLOBAL_BARRIER_DATA_BEGIN: {
+                    (void)fprintf(
+                        g_logFilePtr, "Global_target_barrierId: %s\n", global_barrier_info->globalRecoveryBarrierId);
+                    (void)fprintf(g_logFilePtr, "Global_query_barrierId: %s\n", global_barrier_info->global_barrierId);
                     break;
-                case MSG_CM_CTL_GLOBAL_BARRIER_DATA:
-                    cm_to_ctl_instance_barrier_info *instance_barrier_info;
-                    instance_barrier_info = (cm_to_ctl_instance_barrier_info *)receiveMsg;
-                    fprintf(g_logFilePtr, "instanceId: %u\n", instance_barrier_info->instanceId);
-                    fprintf(g_logFilePtr, "instance_type: %s\n",
-                        type_int_to_string(instance_barrier_info->instance_type));
-                    fprintf(g_logFilePtr, "barrierID: %s\n", instance_barrier_info->barrierID);
+                }
+                case MSG_CM_CTL_GLOBAL_BARRIER_DATA: {
+                    cm_to_ctl_instance_barrier_info *instance_barrier_info =
+                        (cm_to_ctl_instance_barrier_info *)receiveMsg;
+                    (void)fprintf(g_logFilePtr, "instanceId: %u\n", instance_barrier_info->instanceId);
+                    (void)fprintf(
+                        g_logFilePtr, "instance_type: %s\n", type_int_to_string(instance_barrier_info->instance_type));
+                    (void)fprintf(g_logFilePtr, "barrierID: %s\n", instance_barrier_info->barrierID);
                     break;
-                case MSG_CM_CTL_BARRIER_DATA_END:
-                    fprintf(g_logFilePtr, "end\n");
+                }
+                case MSG_CM_CTL_BARRIER_DATA_END: {
+                    (void)fprintf(g_logFilePtr, "end\n");
                     success = true;
                     break;
+                }
                 default:
                     write_runlog(ERROR, "unknown the msg type is %d.\n", global_barrier_info->msg_type);
                     break;
             }
-            if (success == true) {
+            if (success) {
                 return 0;
             }
         }
         CmSleep(1);
-        wait_time --;
+        wait_time--;
     }
     return 0;
 }
@@ -202,8 +199,8 @@ status_t QueryEtcdAndCms(void)
     }
     
     if (g_coupleQuery && g_detailQuery && (!g_balanceQuery || g_abnormalQuery) && !g_startStatusQuery) {
-        (void)query_cmserver_and_etcd_status();
-        (void)query_kerberos();
+        query_cmserver_and_etcd_status();
+        query_kerberos();
     }
     if (!g_coupleQuery && g_detailQuery && !g_balanceQuery && !g_startStatusQuery) {
         for (uint32 kk = 0; kk < g_cm_server_num; kk++) {
@@ -213,34 +210,36 @@ status_t QueryEtcdAndCms(void)
     return CM_SUCCESS;
 }
 
-int DoProcessQueryMsg(char *receiveMsg, bool *recDataEnd, int clusterState)
+int DoProcessQueryMsg(char *receiveMsg, bool *recDataEnd)
 {
-    cm_msg_type *cm_msg_type_ptr = NULL;
-    cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr = NULL;
     uint32 pre_node = INVALID_NODE_NUM;
     int ret = 0;
 
-    cm_msg_type_ptr = (cm_msg_type *)receiveMsg;
+    cm_msg_type *cm_msg_type_ptr = (cm_msg_type *)receiveMsg;
     switch (cm_msg_type_ptr->msg_type) {
-        case MSG_CM_CTL_DATA_BEGIN:
-            ret = ProcessDataBeginMsg((const char *)receiveMsg, clusterState, recDataEnd);
+        case MSG_CM_CTL_DATA_BEGIN: {
+            ret = ProcessDataBeginMsg((const char *)receiveMsg, recDataEnd);
             break;
-        case MSG_CM_CTL_DATA:
-            cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status *)receiveMsg;
+        }
+        case MSG_CM_CTL_DATA: {
+            cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status *)receiveMsg;
             if (g_coupleQuery) {
                 PrintSimpleResult(&pre_node, cm_to_ctl_instance_status_ptr);
             } else if (g_paralleRedoState) {
-                PrintParallelRedoResult(&pre_node, cm_to_ctl_instance_status_ptr);
+                PrintParallelRedoResult(cm_to_ctl_instance_status_ptr);
             } else {
-                ret = PrintResult(&pre_node, cm_to_ctl_instance_status_ptr);
+                ret = (int)PrintResult(&pre_node, cm_to_ctl_instance_status_ptr);
             }
             break;
-        case MSG_CM_CTL_NODE_END:
+        }
+        case MSG_CM_CTL_NODE_END: {
             DoProcessNodeEndMsg((const char *)receiveMsg);
             break;
-        case MSG_CM_CTL_DATA_END:
+        }
+        case MSG_CM_CTL_DATA_END: {
             *recDataEnd = true;
             break;
+        }
         default:
             write_runlog(ERROR, "unknown the msg type is %d.\n", cm_msg_type_ptr->msg_type);
             break;
@@ -248,24 +247,28 @@ int DoProcessQueryMsg(char *receiveMsg, bool *recDataEnd, int clusterState)
     return ret;
 }
 
-status_t ProcessMsgAndPrintStatus(char *receiveMsg, int clusterState)
+status_t ProcessMsgAndPrintStatus(CM_Conn *pCmsCon)
 {
     int wait_time;
     int ret;
 
+    if (access(manualPauseFile, F_OK) == 0) {
+        g_isPauseArbitration = true;
+    } else {
+        g_isPauseArbitration = false;
+    }
+
     wait_time = g_waitSeconds * 1000;
     bool recDataEnd = false;
     for (; wait_time > 0;) {
-        ret = cm_client_flush_msg(CmServer_conn);
+        ret = cm_client_flush_msg(pCmsCon);
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
-            CMPQfinish(CmServer_conn);
-            CmServer_conn = NULL;
             return CM_ERROR;
         }
 
-        receiveMsg = recv_cm_server_cmd(CmServer_conn);
+        char *receiveMsg = recv_cm_server_cmd(pCmsCon);
         while (receiveMsg != NULL) {
-            ret = DoProcessQueryMsg(receiveMsg, &recDataEnd, clusterState);
+            ret = DoProcessQueryMsg(receiveMsg, &recDataEnd);
             if (ret != 0) {
                 if (ret == CYCLE_BREAK) {
                     break;
@@ -274,7 +277,7 @@ status_t ProcessMsgAndPrintStatus(char *receiveMsg, int clusterState)
                 }
                 return CM_ERROR;
             }
-            receiveMsg = recv_cm_server_cmd(CmServer_conn);
+            receiveMsg = recv_cm_server_cmd(pCmsCon);
         }
         if (recDataEnd) {
             break;
@@ -288,57 +291,56 @@ status_t ProcessMsgAndPrintStatus(char *receiveMsg, int clusterState)
     }
 
     if (wait_time <= 0) {
-        CMPQfinish(CmServer_conn);
-        CmServer_conn = NULL;
         write_runlog(ERROR, "send query msg to cm_server failed.\n");
         return CM_ERROR;
     }
     return CM_SUCCESS;
 }
 
-int do_query(void)
+static status_t QueryConnectCmsPrimary()
 {
-    char* receiveMsg = NULL;
-    int clusterState;
-    ctl_to_cm_query queryContent;
-    int ret;
-
-    CM_RETURN_IFERR(SetQueryLogHander());
-    CM_RETURN_IFERR(QueryEtcdAndCms());
-    if (HAS_RES_DEFINED) {
-        QueryResourceStatus(&clusterState);
-    }
-
-    CM_RETURN_IFERR(SetCmQueryContent(&queryContent));
-
     /* return conn to cm_server */
     do_conn_cmserver(false, 0);
     if (CmServer_conn == NULL) {
         write_runlog(ERROR,
             "can't connect to cm_server.\n"
             "Maybe cm_server is not running, or timeout expired. Please try again.\n");
-         return CM_ERROR;
+        return CM_ERROR;
     }
+    return CM_SUCCESS;
+}
 
-    ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&queryContent, sizeof(queryContent));
-    if (ret != 0) {
-        CMPQfinish(CmServer_conn);
-        CmServer_conn = NULL;
+static status_t SendCmQueryContent(CM_Conn *pCmsCon, const ctl_to_cm_query *queryContent)
+{
+    if (cm_client_send_msg(pCmsCon, 'C', (char*)queryContent, sizeof(ctl_to_cm_query)) != 0) {
+        write_runlog(DEBUG1, "cm_ctl send query msg to cm_server failed.\n");
         return CM_ERROR;
     }
     CmSleep(1);
-
-    CM_RETURN_IFERR(ProcessMsgAndPrintStatus(receiveMsg, clusterState));
-
-    CMPQfinish(CmServer_conn);
-    CmServer_conn = NULL;
     return CM_SUCCESS;
+}
+
+int do_query(void)
+{
+    CM_RETURN_IFERR(SetQueryLogHander());
+    CM_RETURN_IFERR(QueryEtcdAndCms());
+
+    CM_RETURN_IFERR(QueryConnectCmsPrimary());
+    CM_RETURN_IFERR_EX(QueryResourceStatus(CmServer_conn), FINISH_CONNECTION2(CmServer_conn));
+
+    ctl_to_cm_query queryContent = {0};
+    CM_RETURN_IFERR_EX(SetCmQueryContent(&queryContent), FINISH_CONNECTION2(CmServer_conn));
+    CM_RETURN_IFERR_EX(SendCmQueryContent(CmServer_conn, &queryContent), FINISH_CONNECTION2(CmServer_conn));
+    CM_RETURN_IFERR_EX(ProcessMsgAndPrintStatus(CmServer_conn), FINISH_CONNECTION2(CmServer_conn));
+
+    FINISH_CONNECTION2(CmServer_conn);
+    return 0;
 }
 
 static void query_cmserver_and_etcd_status(void)
 {
-    uint32 i = 0;
-    uint32 etcd_index = 0;
+    uint32 i;
+    uint32 etcd_index;
     /* query cm_server */
     uint32 node_len = MAX_NODE_ID_LEN + SPACE_LEN + max_node_name_len + SPACE_LEN;
     uint32 instance_len = INSTANCE_ID_LEN + SPACE_LEN + (g_dataPathQuery ? (max_cmpath_len + 11) : 4);
@@ -348,9 +350,9 @@ static void query_cmserver_and_etcd_status(void)
         node_len += max_az_name_len + SPACE_LEN;
     }
 
-    fprintf(g_logFilePtr, "[  CMServer State   ]\n\n");
+    (void)fprintf(g_logFilePtr, "[  CMServer State   ]\n\n");
     if (g_ipQuery) {
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "%-*s%-*s%-*s%s\n",
             node_len,
             "node",
@@ -360,19 +362,19 @@ static void query_cmserver_and_etcd_status(void)
             "instance",
             "state");
     } else {
-        fprintf(g_logFilePtr, "%-*s%-*s%s\n", node_len, "node", instance_len, "instance", "state");
+        (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", node_len, "node", instance_len, "instance", "state");
     }
     for (i = 0; i < node_len + instance_len + INSTANCE_DYNAMIC_ROLE_LEN + (g_ipQuery ? (MAX_IP_LEN + 1) : 0); i++) {
-        fprintf(g_logFilePtr, "-");
+        (void)fprintf(g_logFilePtr, "-");
     }
-    fprintf(g_logFilePtr, "\n");
+    (void)fprintf(g_logFilePtr, "\n");
 
     if (g_cm_server_num > CM_PRIMARY_STANDBY_NUM) {
         write_runlog(ERROR, "the number of cm_server is bigger than %d.\n", CM_PRIMARY_STANDBY_NUM);
         exit(1);
     }
 
-    if (0 == g_commandOperationNodeId) {
+    if (g_commandOperationNodeId == 0) {
         query_cmserver = true;
     } else {
         for (uint32 kk = 0; kk < g_cm_server_num; kk++) {
@@ -393,13 +395,13 @@ static void query_cmserver_and_etcd_status(void)
                 write_runlog(ERROR, "unexpected cmserver state.\n");
                 exit(1);
             }
-            if (g_abnormalQuery && strcmp("Primary", g_cmServerState[kk]) != 0 && 
+            if (g_abnormalQuery && strcmp("Primary", g_cmServerState[kk]) != 0 &&
                 strcmp("Standby", g_cmServerState[kk]) != 0) {
                 findAbnormal = true;
             }
         }
 
-        if (findAbnormal == true || g_abnormalQuery == false) {
+        if (findAbnormal || !g_abnormalQuery) {
             for (uint32 kk = 0; kk < g_cm_server_num; kk++) {
                 uint32 cm_server_node_index = g_nodeIndexForCmServer[kk];
                 do_query_cmserver(cm_server_node_index, g_cmServerState[kk]);
@@ -407,15 +409,15 @@ static void query_cmserver_and_etcd_status(void)
         }
     }
 
-    fprintf(g_logFilePtr, "\n");
+    (void)fprintf(g_logFilePtr, "\n");
 
     /* query etcd */
     if (g_etcd_num > 0) {
         instance_len = INSTANCE_ID_LEN + SPACE_LEN + (g_dataPathQuery ? (max_etcdpath_len + 1) : 4);
 
-        fprintf(g_logFilePtr, "[    ETCD State     ]\n\n");
+        (void)fprintf(g_logFilePtr, "[    ETCD State     ]\n\n");
         if (g_ipQuery) {
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "%-*s%-*s%-*s%s\n",
                 node_len,
                 "node",
@@ -425,12 +427,12 @@ static void query_cmserver_and_etcd_status(void)
                 "instance",
                 "state");
         } else {
-            fprintf(g_logFilePtr, "%-*s%-*s%s\n", node_len, "node", instance_len, "instance", "state");
+            (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", node_len, "node", instance_len, "instance", "state");
         }
         for (i = 0; i < node_len + instance_len + ETCD_DYNAMIC_ROLE_LEN + (g_ipQuery ? (MAX_IP_LEN + 1) : 0); i++) {
-            fprintf(g_logFilePtr, "-");
+            (void)fprintf(g_logFilePtr, "-");
         }
-        fprintf(g_logFilePtr, "\n");
+        (void)fprintf(g_logFilePtr, "\n");
     }
 
     for (etcd_index = 0; etcd_index < g_node_num; etcd_index++) {
@@ -439,7 +441,7 @@ static void query_cmserver_and_etcd_status(void)
         }
     }
 
-    if (0 == g_commandOperationNodeId || etcd_index != g_node_num) {
+    if (g_commandOperationNodeId == 0 || etcd_index != g_node_num) {
         const char* state[CM_PRIMARY_STANDBY_NUM] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
         bool findAbnormal = false;
         int state_index = 0;
@@ -452,35 +454,36 @@ static void query_cmserver_and_etcd_status(void)
                 state[state_index] = query_etcd(etcd_index);
                 if (g_abnormalQuery &&
                     ((state[state_index] != NULL && strcmp("StateFollower", state[state_index]) != 0 &&
-                         strcmp("StateLeader", state[state_index]) != 0) ||
-                        (state[state_index] == NULL))) {
+                         strcmp("StateLeader", state[state_index]) != 0) || (state[state_index] == NULL))) {
                     findAbnormal = true;
                 }
                 state_index++;
             }
         }
 
-        if (findAbnormal == true || g_abnormalQuery == false) {
+        if (findAbnormal || !g_abnormalQuery) {
             state_index = 0;
             for (etcd_index = 0; etcd_index < g_node_num; etcd_index++) {
                 if (g_node[etcd_index].etcd) {
                     if (g_availabilityZoneCommand) {
-                        fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[etcd_index].azName);
+                        (void)fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[etcd_index].azName);
                     }
-                    fprintf(g_logFilePtr, "%-2u ", g_node[etcd_index].node);
-                    fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[etcd_index].nodeName);
-                    if (g_ipQuery)
-                        fprintf(g_logFilePtr, "%-15s ", g_node[etcd_index].etcdClientListenIPs[0]);
-                    fprintf(g_logFilePtr, "%u ", g_node[etcd_index].etcdId);
-                    if (g_dataPathQuery)
-                        fprintf(g_logFilePtr, "%-*s ", max_etcdpath_len, g_node[etcd_index].etcdDataPath);
-                    else
-                        fprintf(g_logFilePtr, "    ");
+                    (void)fprintf(g_logFilePtr, "%-2u ", g_node[etcd_index].node);
+                    (void)fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[etcd_index].nodeName);
+                    if (g_ipQuery) {
+                        (void)fprintf(g_logFilePtr, "%-15s ", g_node[etcd_index].etcdClientListenIPs[0]);
+                    }
+                    (void)fprintf(g_logFilePtr, "%u ", g_node[etcd_index].etcdId);
+                    if (g_dataPathQuery) {
+                        (void)fprintf(g_logFilePtr, "%-*s ", max_etcdpath_len, g_node[etcd_index].etcdDataPath);
+                    } else {
+                        (void)fprintf(g_logFilePtr, "    ");
+                    }
 
                     if (state[state_index] != NULL) {
-                        fprintf(g_logFilePtr, "%s\n", state[state_index]);
+                        (void)fprintf(g_logFilePtr, "%s\n", state[state_index]);
                     } else {
-                        fprintf(g_logFilePtr, "Down\n");
+                        (void)fprintf(g_logFilePtr, "Down\n");
                     }
                     if (state[state_index] != NULL && strcmp("StateFollower", state[state_index]) != 0 &&
                         strcmp("StateLeader", state[state_index]) != 0) {
@@ -497,7 +500,7 @@ static void query_cmserver_and_etcd_status(void)
     }
 
     if (g_etcd_num > 0) {
-        fprintf(g_logFilePtr, "\n");
+        (void)fprintf(g_logFilePtr, "\n");
     }
 }
 
@@ -522,16 +525,18 @@ const char* query_etcd(uint32 node_id)
     ServerSocket server[serverLen] = {{0}};
     SetServerSocketWithEtcdInfo(&server[0], &(g_node[node_id]));
     server[1].host = NULL;
-    status_t st = CM_SUCCESS;
-    DdbInitConfig config = {DB_ETCD};
+    DdbInitConfig config;
+    config.type = DB_ETCD;
     GetDdbCfgApi(&config.drvApiInfo, server, serverLen);
     DdbNodeState nodeState = {DDB_STATE_UNKOWN, DDB_ROLE_UNKNOWN};
-    DdbConn dbCon = {0};
+    DdbConn dbCon;
+    errno_t rc = memset_s(&dbCon, sizeof(DdbConn), 0, sizeof(DdbConn));
+    securec_check_errno(rc, (void)rc);
     if (g_commandMinortityAzName != NULL && g_commandMinortityAzName[0] != '0') {
         return (strcmp(g_node[node_id].azName, g_commandMinortityAzName) != 0) ? "Skip" : "Down";
     }
 
-    st = InitDdbConn(&dbCon, &config);
+    status_t st = InitDdbConn(&dbCon, &config);
     if (st != CM_SUCCESS) {
         write_runlog(ERROR, "etcd open failed: %s.\n", DdbGetLastError(&dbCon));
         exit(1);
@@ -562,7 +567,7 @@ const char* query_etcd(uint32 node_id)
     int ret;
     int doSendTryTime = 3;
 
-    cm_query_instance_status_content.msg_type = MSG_CM_QUERY_INSTANCE_STATUS;
+    cm_query_instance_status_content.msg_type = (int)MSG_CM_QUERY_INSTANCE_STATUS;
     cm_query_instance_status_content.nodeId = g_node[node_id].node;
     cm_query_instance_status_content.instanceType = PROCESS_ETCD;
     cm_query_instance_status_content.msg_step = QUERY_STATUS_CMSERVER_STEP;
@@ -604,7 +609,7 @@ const char* query_etcd(uint32 node_id)
             if (receive_msg != NULL) {
                 cm_msg_type_ptr = (cm_msg_type*)receive_msg;
                 if (cm_msg_type_ptr->msg_type == MSG_CM_QUERY_INSTANCE_STATUS) {
-                    int local_role = 0;
+                    int local_role;
                     cm_query_instance_status_ptr = (cm_query_instance_status*)receive_msg;
                     if (cm_query_instance_status_ptr->msg_step != QUERY_STATUS_CMSERVER_STEP) {
                         CmSleep(1);
@@ -639,159 +644,171 @@ const char* query_etcd(uint32 node_id)
     return etcd_role_to_string(CM_ETCD_DOWN);
 }
 
-static void QueryResourceStatus(int *clusterState)
+static uint32 GetResNameMaxLen()
 {
-    uint32 node_len = MAX_NODE_ID_LEN + SPACE_LEN + max_node_name_len + SPACE_LEN;
-    int instance_len = INSTANCE_ID_LEN + SPACE_LEN + 4;
-    /* There are three states of resources: OnLine, OffLine, Unknown. */
-    const int maxResStateLen = strlen("OffLine");
-
-    fprintf(g_logFilePtr, "\n[ Defined Resource State ]\n\n");
-    fprintf(
-        g_logFilePtr, "%-*s%-*s%-*s%-s\n", node_len, "node", maxResNameLen + SPACE_LEN, "res_name", instance_len, "instance", "state");
-    uint32 lineLen = node_len + maxResNameLen + SPACE_LEN + instance_len + maxResStateLen;
-    for (uint32 i = 0; i < lineLen; i++) {
-        fprintf(g_logFilePtr, "-");
+    uint32 minLen = (uint32)strlen("res_name") + SPACE_LEN;
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+        uint32 curNameLen = (uint32)strlen(g_resStatus[i].status.resName) + SPACE_LEN;
+        minLen = (minLen > curNameLen) ? minLen : curNameLen;
+        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
     }
-    fprintf(g_logFilePtr, "\n");
-
-    GetResourceStatusInfo(clusterState);
+    return minLen;
 }
 
-static int GetStatusFromMsg(uint32 instanceId, const OneNodeResourceStatus *nodeStatus)
+static inline void PrintResHeaderLine(uint32 nodeLen, uint32 resLen, uint32 instLen, uint32 statLen)
 {
-    for (uint32 i = 0; i < CM_MAX_RES_NODE_COUNT; i++) {
-        if (nodeStatus[i].count == 0) {
+    (void)fprintf(g_logFilePtr, "\n[ Defined Resource State ]\n\n");
+    if (g_ipQuery) {
+        (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s%-*s\n",
+            nodeLen, "node", MAX_IP_LEN + 1, "node_ip", resLen, "res_name", instLen, "instance", statLen, "state");
+    } else {
+        (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s\n",
+            nodeLen, "node", resLen, "res_name", instLen, "instance", statLen, "state");
+    }
+
+    uint32 tmp = nodeLen + resLen + instLen + statLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0);
+    for (uint32 i = 0; i < tmp; i++) {
+        (void)fprintf(g_logFilePtr, "-");
+    }
+    (void)fprintf(g_logFilePtr, "\n");
+}
+
+static status_t SendResQueryMsgToCms(CM_Conn *pCmsCon)
+{
+    CmsToCtlGroupResStatus queryMsg = {0};
+    queryMsg.msgType = (int)MSG_CTL_CM_RESOURCE_STATUS;
+    queryMsg.msgStep = QUERY_RES_STATUS_STEP;
+    if (cm_client_send_msg(pCmsCon, 'C', (char*)&queryMsg, sizeof(CmsToCtlGroupResStatus)) != 0) {
+        write_runlog(ERROR, "cm_ctl send query resource status msg to cm_server failed.\n");
+        return CM_ERROR;
+    }
+    CmSleep(1);
+    return CM_SUCCESS;
+}
+
+static const char *ResStatIntToStr(uint32 status, uint32 isWork)
+{
+    if (isWork == RES_INST_WORK_STATUS_UNAVAIL) {
+        return "Deleted";
+    }
+    if (status == (uint32)CM_RES_STAT_ONLINE) {
+        return "OnLine";
+    }
+    if (status == (uint32)CM_RES_STAT_OFFLINE) {
+        return "OffLine";
+    }
+    return "Unknown";
+}
+
+static void PrintOneResLine(const OneResStatList *stat, uint32 resLen, uint32 instLen, uint32 statLen)
+{
+    for (uint32 i = 0; i < stat->instanceCount; ++i) {
+        const char *status = ResStatIntToStr(stat->resStat[i].status, stat->resStat[i].isWorkMember);
+        uint32 resIndex = get_node_index(stat->resStat[i].nodeId);
+        if (resIndex == INVALID_NODE_NUM) {
+            write_runlog(DEBUG1, "cm_ctl recv unknown resource info, nodeId=%u.\n", stat->resStat[i].nodeId);
+            return;
+        }
+        if (g_abnormalQuery && (strcmp(status, "OnLine") == 0)) {
             continue;
         }
-        if (nodeStatus[i].node == 0) {
-            continue;
+        if (g_availabilityZoneCommand) {
+            (void)fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[resIndex].azName);
         }
-        for (uint32 j = 0; j < nodeStatus[i].count; j++) {
-            if (instanceId == nodeStatus[i].status[j].cmInstanceId) {
-                return nodeStatus[i].status[j].status;
-            }
+        if (g_ipQuery) {
+            (void)fprintf(g_logFilePtr, "%-*u%-*s%-*s%-*s%-*u%-*s\n",
+                (MAX_NODE_ID_LEN + SPACE_LEN), stat->resStat[i].nodeId,
+                (max_node_name_len + SPACE_LEN), g_node[resIndex].nodeName,
+                MAX_IP_LEN + 1, g_node[resIndex].sshChannel[0],
+                resLen, stat->resName,
+                instLen, stat->resStat[i].cmInstanceId,
+                statLen, status);
+        } else {
+            (void)fprintf(g_logFilePtr, "%-*u%-*s%-*s%-*u%-*s\n",
+                (MAX_NODE_ID_LEN + SPACE_LEN), stat->resStat[i].nodeId,
+                (max_node_name_len + SPACE_LEN), g_node[resIndex].nodeName,
+                resLen, stat->resName,
+                instLen, stat->resStat[i].cmInstanceId,
+                statLen, status);
         }
     }
+}
+
+static int ProcessResQueryMsgCore(char *recvMsg, uint32 nodeLen, uint32 resLen, uint32 instLen, uint32 statLen)
+{
+    cm_msg_type *msgTypePtr = (cm_msg_type *)recvMsg;
+    if (msgTypePtr->msg_type != (int)MSG_CM_QUERY_INSTANCE_STATUS) {
+        return 0;
+    }
+
+    static bool isFirstPrint = true;
+    CmsToCtlGroupResStatus *queryMsg = (CmsToCtlGroupResStatus *)recvMsg;
+    switch (queryMsg->msgStep) {
+        case QUERY_RES_STATUS_STEP_ACK:
+            if (isFirstPrint) {
+                PrintResHeaderLine(nodeLen, resLen, instLen, statLen);
+                isFirstPrint = false;
+            }
+            PrintOneResLine(&queryMsg->oneResStat, resLen, instLen, statLen);
+            break;
+        case QUERY_RES_STATUS_STEP_ACK_END:
+            return CYCLE_RETURN;
+        default:
+            write_runlog(DEBUG1, "unknown query resource msg step %d.\n", queryMsg->msgStep);
+            break;
+    }
+
     return 0;
 }
 
-static void PrintResStatusLine(const OneNodeResourceStatus *nodeStatus, int *clusterState)
+static status_t ProcessQueryResMsg(CM_Conn *pCmsCon, uint32 nodeLen, uint32 resLen, uint32 instLen, uint32 statLen)
 {
-    const char *status;
-
-    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
-        (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
-        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
-            uint32 ret = GetStatusFromMsg(g_resStatus[i].status.resStat[j].cmInstanceId, nodeStatus);
-            if (ret == 1) {
-                status = "OnLine";
-            } else if (ret == 2) {
-                status = "OffLine";
-                *clusterState = CM_STATUS_NEED_REPAIR;
-            } else {
-                status = "Unknown";
-                *clusterState = CM_STATUS_NEED_REPAIR;
-            }
-            fprintf(g_logFilePtr, "%-2u ", g_resStatus[i].status.resStat[j].nodeId);
-            fprintf(g_logFilePtr, "%-*s ", max_node_name_len,
-                g_node[g_resStatus[i].status.resStat[j].nodeId - 1].nodeName);
-            fprintf(g_logFilePtr, "%-*s ", maxResNameLen, g_resStatus[i].status.resName);
-            fprintf(g_logFilePtr, "%-8u ", g_resStatus[i].status.resStat[j].cmInstanceId);
-            fprintf(g_logFilePtr, "%s\n", status);
+    const int tryTimeOut = 10;
+    int tryTimes = 0;
+    while (tryTimes++ < tryTimeOut) {
+        if (cm_client_flush_msg(pCmsCon) == TCP_SOCKET_ERROR_EPIPE) {
+            write_runlog(DEBUG1, "ProcessQueryResMsg, flush msg failed.\n");
+            return CM_ERROR;
         }
-        (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+        char *recvMsg = recv_cm_server_cmd(pCmsCon);
+        while (recvMsg != NULL) {
+            if (ProcessResQueryMsgCore(recvMsg, nodeLen, resLen, instLen, statLen) == CYCLE_RETURN) {
+                (void)fprintf(g_logFilePtr, "\n");
+                return CM_SUCCESS;
+            }
+            recvMsg = recv_cm_server_cmd(pCmsCon);
+        }
+        cm_sleep(1);
     }
-    fprintf(g_logFilePtr, "\n");
-    return;
+
+    write_runlog(ERROR, "receive resource query msg from cm_server failed.\n");
+    return CM_ERROR;
 }
 
-static int ProcessResourceStatusInfo()
+static status_t QueryResourceStatus(CM_Conn *pCmsCon)
 {
-    CmsToCtlGroupResStatus *cm_query_instance_status_ptr = NULL;
-    cm_msg_type *cm_msg_type_ptr = NULL;
-    char* receiveMsg = NULL;
-    OneNodeResourceStatus *group_status;
-    int doSendTryTime = 3;
-    int clusterState = CM_STATUS_NORMAL;
-    int ret = -1;
+    CtlGetCmJsonConf();
+    if (!IsCusResExist() || !g_coupleQuery || g_startStatusQuery || g_balanceQuery) {
+        return CM_SUCCESS;
+    }
 
-    do {
-        int doGetAckTryTime = 10;
-        if (CmServer_conn == NULL) {
-            do_conn_cmserver(false, 0);
-            if (CmServer_conn == NULL) {
-                doSendTryTime--;
-                continue;
-            }
-        }
+    uint32 nodeLen = MAX_NODE_ID_LEN + SPACE_LEN + max_node_name_len + SPACE_LEN +
+        (g_availabilityZoneCommand ? (max_az_name_len + SPACE_LEN) : 0);
+    uint32 resLen = GetResNameMaxLen();
+    uint32 instLen = (uint32)sizeof("instance") + SPACE_LEN;
+    uint32 statLen = INSTANCE_DYNAMIC_ROLE_LEN;
 
-        do {
-            ret = cm_client_flush_msg(CmServer_conn);
-            if (ret == TCP_SOCKET_ERROR_EPIPE) {
-                doGetAckTryTime--;
-                continue;
-            }
+    CM_RETURN_IFERR(SendResQueryMsgToCms(pCmsCon));
+    CM_RETURN_IFERR(ProcessQueryResMsg(pCmsCon, nodeLen, resLen, instLen, statLen));
 
-            CmSleep(1);
-            receiveMsg = recv_cm_server_cmd(CmServer_conn);
-            if (receiveMsg != NULL) {
-                cm_msg_type_ptr = (cm_msg_type*)receiveMsg;
-                if (cm_msg_type_ptr->msg_type == MSG_CM_QUERY_INSTANCE_STATUS) {
-                    cm_query_instance_status_ptr = (CmsToCtlGroupResStatus*)receiveMsg;
-                    if (cm_query_instance_status_ptr->msg_step != QUERY_STATUS_CMSERVER_STEP) {
-                        CmSleep(1);
-                        doGetAckTryTime--;
-                        continue;
-                    }
-                    group_status = cm_query_instance_status_ptr->group_status;
-                    PrintResStatusLine(group_status, &clusterState);
-                    break;
-                }
-            }
-            doGetAckTryTime--;
-            CmSleep(1);
-        } while (doGetAckTryTime > 0);
-        doSendTryTime--;
-    } while (doSendTryTime > 0);
-
-    return clusterState;
+    return CM_SUCCESS;
 }
-
-static void GetResourceStatusInfo(int *clusterState)
-{
-    if (g_resStatus.empty()) {
-        return;
-    }
-
-    CmsToCtlGroupResStatus queryMsg = {0};
-    queryMsg.msg_type = MSG_CTL_CM_RESOURCE_STATUS;
-    queryMsg.msg_step = QUERY_STATUS_CMSERVER_STEP;
-    queryMsg.instance_type = PROCESS_RESOURCE;
-
-    if (CmServer_conn == NULL) {
-        do_conn_cmserver(false, 0);
-        if (CmServer_conn == NULL) {
-            write_runlog(DEBUG1, "failed to build cmserver connection in query_etcd.\n");
-            exit(0);
-        }
-    }
-
-    if (cm_client_send_msg(CmServer_conn, 'C', (char*)&queryMsg, sizeof(CmsToCtlGroupResStatus)) != 0) {
-        CMPQfinish(CmServer_conn);
-        CmServer_conn = NULL;
-        exit(0);
-    }
-    CmSleep(1);
-
-    *clusterState = ProcessResourceStatusInfo();
-}
-
 
 static void query_kerberos(void)
 {
-    char kerberos_config_path[MAX_PATH_LEN] = {0}; 
-    int isKerberos = cmctl_getenv("MPPDB_KRB5_FILE_PATH", kerberos_config_path, sizeof(kerberos_config_path)); 
+    char kerberos_config_path[MAX_PATH_LEN] = {0};
+    int isKerberos = cmctl_getenv("MPPDB_KRB5_FILE_PATH", kerberos_config_path, sizeof(kerberos_config_path));
     if (isKerberos != EOK) {
         write_runlog(DEBUG1, "query_kerberos: MPPDB_KRB5_FILE_PATH get fail.\n");
         return;
@@ -806,13 +823,13 @@ static void query_kerberos(void)
     if (g_availabilityZoneCommand) {
         node_len += (int)(max_az_name_len + SPACE_LEN);
     }
-    fprintf(g_logFilePtr, "[  Kerberos State  ]\n\n");
-    fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s\n", node_len, "node", MAX_IP_LEN + 1,
+    (void)fprintf(g_logFilePtr, "[  Kerberos State  ]\n\n");
+    (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s\n", node_len, "node", MAX_IP_LEN + 1,
         "kerberos_ip", kerberos_len, "port", kerberos_len, "state");
     for (int i = 0; i < MAX_IP_LEN + kerberos_len + kerberos_len + node_len; i++) {
-        fprintf(g_logFilePtr, "-");
+        (void)fprintf(g_logFilePtr, "-");
     }
-    fprintf(g_logFilePtr, "\n");
+    (void)fprintf(g_logFilePtr, "\n");
     query_kerberos_status();
     return;
 }
@@ -836,7 +853,7 @@ static void query_kerberos_status()
             "send kerberos query msg to cm_server, connect fail! \n");
         return;
     }
-    cm_ctl_query_kerberos.msg_type = MSG_CTL_CM_QUERY_KERBEROS;
+    cm_ctl_query_kerberos.msg_type = (int)MSG_CTL_CM_QUERY_KERBEROS;
     ret = cm_client_send_msg(
         CmServer_conn, 'C', (char*)&cm_ctl_query_kerberos, sizeof(cm_ctl_query_kerberos));
     if (ret != 0) {
@@ -868,19 +885,19 @@ static void query_kerberos_status()
                     }
                     rc = strncpy_s(state,
                         MAXLEN,
-                        kerberos_status_to_string(kerberos_status_ptr->status[node_index]),
-                        strlen(kerberos_status_to_string(kerberos_status_ptr->status[node_index])));
+                        kerberos_status_to_string((int)kerberos_status_ptr->status[node_index]),
+                        strlen(kerberos_status_to_string((int)kerberos_status_ptr->status[node_index])));
                     securec_check_errno(rc, (void)rc);
                     if (g_availabilityZoneCommand) {
-                        fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[node_index].azName);
+                        (void)fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[node_index].azName);
                     }
-                    fprintf(g_logFilePtr, "%-2u ", kerberos_status_ptr->node[node_index]);
-                    fprintf(g_logFilePtr, "%-*s ", max_node_name_len, kerberos_status_ptr->nodeName[node_index]);
-                    fprintf(g_logFilePtr, "%-15s ", kerberos_status_ptr->kerberos_ip[node_index]);
-                    fprintf(g_logFilePtr, "%-9u ", kerberos_status_ptr->port[node_index]);
-                    fprintf(g_logFilePtr, "%-7s\n", state);
+                    (void)fprintf(g_logFilePtr, "%-2u ", kerberos_status_ptr->node[node_index]);
+                    (void)fprintf(g_logFilePtr, "%-*s ", max_node_name_len, kerberos_status_ptr->nodeName[node_index]);
+                    (void)fprintf(g_logFilePtr, "%-15s ", kerberos_status_ptr->kerberos_ip[node_index]);
+                    (void)fprintf(g_logFilePtr, "%-9u ", kerberos_status_ptr->port[node_index]);
+                    (void)fprintf(g_logFilePtr, "%-7s\n", state);
                 }
-                fprintf(g_logFilePtr, "\n");
+                (void)fprintf(g_logFilePtr, "\n");
                 CMPQfinish(CmServer_conn);
                 CmServer_conn = NULL;
                 return;
@@ -895,7 +912,7 @@ static void query_kerberos_status()
  * @in node_id:node id of cm_server
  *
  * @out: state of cm_server
- * 
+ *
  * @Description: print the state info of cm_server specified by node id.
  */
 static void do_query_cmserver(uint32 node_id, const char *state)
@@ -904,22 +921,23 @@ static void do_query_cmserver(uint32 node_id, const char *state)
     char data_path[MAXPGPATH] = {0};
 
     if (g_availabilityZoneCommand) {
-        fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[node_id].azName);
+        (void)fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[node_id].azName);
     }
-    fprintf(g_logFilePtr, "%-2u ", g_node[node_id].node);
-    fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[node_id].nodeName);
-    if (g_ipQuery)
-        fprintf(g_logFilePtr, "%-15s ", g_node[node_id].cmServer[0]);
-    fprintf(g_logFilePtr, "%-4u ", g_node[node_id].cmServerId);
+    (void)fprintf(g_logFilePtr, "%-2u ", g_node[node_id].node);
+    (void)fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[node_id].nodeName);
+    if (g_ipQuery) {
+        (void)fprintf(g_logFilePtr, "%-15s ", g_node[node_id].cmServer[0]);
+    }
+    (void)fprintf(g_logFilePtr, "%-4u ", g_node[node_id].cmServerId);
     if (g_dataPathQuery) {
         ret = snprintf_s(data_path, MAXPGPATH, MAXPGPATH - 1, "%s/cm_server", g_node[node_id].cmDataPath);
         securec_check_intval(ret, (void)ret);
-        fprintf(g_logFilePtr, "%-*s ", max_cmpath_len + 10, data_path);
+        (void)fprintf(g_logFilePtr, "%-*s ", max_cmpath_len + 10, data_path);
     } else {
-        fprintf(g_logFilePtr, "    ");
+        (void)fprintf(g_logFilePtr, "    ");
     }
 
-    fprintf(g_logFilePtr, "%s\n", state);
+    (void)fprintf(g_logFilePtr, "%s\n", state);
     if (strcmp("Primary", state) != 0 && strcmp("Standby", state) != 0) {
         write_runlog(DEBUG1, "CMServer State: node=%u nodeName=%s ip=%s instanceId=%u DataPath=%s state=%s\n",
             g_node[node_id].node, g_node[node_id].nodeName, g_node[node_id].cmServer[0], g_node[node_id].cmServerId,
@@ -948,12 +966,12 @@ static const char* query_cm_server_directory(uint32 node_id)
 
     do_conn_cmserver(true, node_id);
     if (CmServer_conn1 == NULL) {
-        write_runlog(DEBUG1, "can't connect to cm_server node %u node_name %s\n", 
+        write_runlog(DEBUG1, "can't connect to cm_server node %u node_name %s\n",
             g_node[node_id].node, g_node[node_id].nodeName);
         return "Down";
     }
 
-    cm_ctl_cm_query_cmserver_content.msg_type = MSG_CTL_CM_QUERY_CMSERVER;
+    cm_ctl_cm_query_cmserver_content.msg_type = (int)MSG_CTL_CM_QUERY_CMSERVER;
     ret = cm_client_send_msg(
         CmServer_conn1, 'C', (char*)&cm_ctl_cm_query_cmserver_content, sizeof(cm_ctl_cm_query_cmserver_content));
     if (ret != 0) {
@@ -972,14 +990,11 @@ static const char* query_cm_server_directory(uint32 node_id)
         if (receive_msg != NULL) {
             cm_msg_type_ptr = (cm_msg_type*)receive_msg;
             if (cm_msg_type_ptr->msg_type == MSG_CM_CTL_CMSERVER) {
-                int local_role = 0;
+                int local_role;
                 cm_to_ctl_cmserver_status_ptr = (cm_to_ctl_cmserver_status*)receive_msg;
                 local_role = cm_to_ctl_cmserver_status_ptr->local_role;
                 CMPQfinish(CmServer_conn1);
                 CmServer_conn1 = NULL;
-                if (hasFindCmSP && local_role == CM_SERVER_PRIMARY) {
-                    local_role = CM_SERVER_STANDBY;
-                }
                 return server_role_to_string(local_role);
             }
         }
@@ -997,7 +1012,7 @@ static void GetEstTimeStr(int32 estTime, char *estTimeStr, uint32 maxLen)
     const int32 sec2hour = 60 * 60;
     const int32 sec2min = 60;
 
-    error_t rc = 0;
+    error_t rc;
     if (estTime == -1) {
         rc = strncpy_s(estTimeStr, maxLen, "--:--:--", maxLen - 1);
         securec_check_errno(rc, (void)rc);
@@ -1041,6 +1056,8 @@ static void GetCnStatus(char *cnStatus, size_t len, const cm_to_ctl_instance_sta
     if (undocumentedVersion == 0 || undocumentedVersion >= 92515) {
         int dbState = cmToCtlInstanceStatusPtr->data_node_member.local_status.db_state;
         int buildReason = cmToCtlInstanceStatusPtr->data_node_member.local_status.buildReason;
+        write_runlog(DEBUG1, "[GetCnStatus] undocumentedVersion=%u, status=%d, dbState=%d, buildReason=%d\n",
+            undocumentedVersion, status, dbState, buildReason);
         if (status == INSTANCE_ROLE_NORMAL && dbState != INSTANCE_HA_STATE_NORMAL) {
             if (dbState == INSTANCE_HA_STATE_WAITING) {
                 rc = strcpy_s(cnStatus, len, "Waiting");
@@ -1095,89 +1112,87 @@ static status_t PrintResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_c
 
     /* Set the central node information, including: node index, instance id, and node status */
     if (cm_to_ctl_instance_status_ptr->is_central) {
-        g_centralNode.node_index = node_index;
+        g_centralNode.node_index = (int)node_index;
         g_centralNode.instanceId = cm_to_ctl_instance_status_ptr->instanceId;
         g_centralNode.status = cm_to_ctl_instance_status_ptr->coordinatemember.status;
     }
 
     if ((g_detailQuery && (cm_to_ctl_instance_status_ptr->node != *pre_node)) || g_coupleQuery) {
-        fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
-        fprintf(g_logFilePtr, "node_name                 : %s\n\n", g_node[node_index].nodeName);
+        (void)fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
+        (void)fprintf(g_logFilePtr, "node_name                 : %s\n\n", g_node[node_index].nodeName);
         *pre_node = cm_to_ctl_instance_status_ptr->node;
 
         if (g_node[node_index].cmServerLevel) {
-            fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
-            fprintf(g_logFilePtr, "instance_id               : %u\n", g_node[node_index].cmServerId);
-            fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].cmServer[0]);
-            fprintf(g_logFilePtr, "data_path                 : %s/cm_server\n", g_node[node_index].cmDataPath);
-            fprintf(g_logFilePtr, "type                      : CMServer\n");
+            (void)fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
+            (void)fprintf(g_logFilePtr, "instance_id               : %u\n", g_node[node_index].cmServerId);
+            (void)fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].cmServer[0]);
+            (void)fprintf(g_logFilePtr, "data_path                 : %s/cm_server\n", g_node[node_index].cmDataPath);
+            (void)fprintf(g_logFilePtr, "type                      : CMServer\n");
             for (uint32 k = 0; k < g_cm_server_num; k++) {
                 if (g_nodeIndexForCmServer[k] == node_index) {
                     cm_server_index = k;
                     break;
                 }
             }
-            fprintf(g_logFilePtr, "instance_state            : %s\n\n", g_cmServerState[cm_server_index]);
+            (void)fprintf(g_logFilePtr, "instance_state            : %s\n\n", g_cmServerState[cm_server_index]);
         }
 
         if (g_node[node_index].etcd) {
-            const char* etcd_state = NULL;
-
-            fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
-            fprintf(g_logFilePtr, "instance_id               : %u\n", g_node[node_index].etcdId);
-            fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].etcdClientListenIPs[0]);
-            fprintf(g_logFilePtr, "data_path                 : %s\n", g_node[node_index].etcdDataPath);
-            fprintf(g_logFilePtr, "type                      : ETCD\n");
-            etcd_state = query_etcd(node_index);
+            (void)fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
+            (void)fprintf(g_logFilePtr, "instance_id               : %u\n", g_node[node_index].etcdId);
+            (void)fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].etcdClientListenIPs[0]);
+            (void)fprintf(g_logFilePtr, "data_path                 : %s\n", g_node[node_index].etcdDataPath);
+            (void)fprintf(g_logFilePtr, "type                      : ETCD\n");
+            const char *etcd_state = query_etcd(node_index);
             if (etcd_state != NULL) {
-                fprintf(g_logFilePtr, "state                     : %s\n\n", etcd_state);
+                (void)fprintf(g_logFilePtr, "state                     : %s\n\n", etcd_state);
             } else {
-                fprintf(g_logFilePtr, "state                     : Down\n\n");
+                (void)fprintf(g_logFilePtr, "state                     : Down\n\n");
             }
         }
     }
 
     if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_COORDINATE) {
-        fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
-        fprintf(g_logFilePtr, "instance_id               : %u\n", cm_to_ctl_instance_status_ptr->instanceId);
-        fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].coordinateListenIP[0]);
-        fprintf(g_logFilePtr, "data_path                 : %s\n", g_node[node_index].DataPath);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
+        (void)fprintf(g_logFilePtr, "instance_id               : %u\n", cm_to_ctl_instance_status_ptr->instanceId);
+        (void)fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].coordinateListenIP[0]);
+        (void)fprintf(g_logFilePtr, "data_path                 : %s\n", g_node[node_index].DataPath);
+        (void)fprintf(g_logFilePtr,
             "type                      : %s\n",
             type_int_to_string(cm_to_ctl_instance_status_ptr->instance_type));
         char cnStatus[MAXPGPATH] = {0};
         GetCnStatus(cnStatus, sizeof(cnStatus), cm_to_ctl_instance_status_ptr);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "state                     : %s\n\n", cnStatus);
     }
 
     if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_GTM) {
-        fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
-        fprintf(g_logFilePtr, "instance_id               : %u\n", cm_to_ctl_instance_status_ptr->instanceId);
-        fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].gtmLocalListenIP[0]);
-        fprintf(g_logFilePtr, "data_path                 : %s\n", g_node[node_index].gtmLocalDataPath);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
+        (void)fprintf(g_logFilePtr, "instance_id               : %u\n", cm_to_ctl_instance_status_ptr->instanceId);
+        (void)fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].gtmLocalListenIP[0]);
+        (void)fprintf(g_logFilePtr, "data_path                 : %s\n", g_node[node_index].gtmLocalDataPath);
+        (void)fprintf(g_logFilePtr,
             "type                      : %s\n",
             type_int_to_string(cm_to_ctl_instance_status_ptr->instance_type));
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "instance_state            : %s\n",
             datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->gtm_member.local_status.local_role));
         if (!g_single_node_cluster) {
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "con_state                 : %s\n",
                 gtm_con_int_to_string(cm_to_ctl_instance_status_ptr->gtm_member.local_status.connect_status));
         }
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "transaction_id            : %lu\n",
             cm_to_ctl_instance_status_ptr->gtm_member.local_status.xid);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "send_count                : %llu\n",
             (long long unsigned int)(cm_to_ctl_instance_status_ptr->gtm_member.local_status.send_msg_count));
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "receive_count             : %llu\n",
             (long long unsigned int)(cm_to_ctl_instance_status_ptr->gtm_member.local_status.receive_msg_count));
         if (!g_single_node_cluster) {
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sync_state                : %s\n\n",
                 datanode_wal_sync_state_int_to_string(
                     cm_to_ctl_instance_status_ptr->gtm_member.local_status.sync_mode));
@@ -1193,232 +1208,236 @@ static status_t PrintResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_c
         }
 
         if (j >= g_node[node_index].datanodeCount) {
-            write_runlog(ERROR, "can't find the instance(%d).", cm_to_ctl_instance_status_ptr->instanceId);
+            write_runlog(ERROR, "can't find the instance(%u).", cm_to_ctl_instance_status_ptr->instanceId);
             return CM_ERROR;
         }
 
-        fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
-        fprintf(g_logFilePtr, "instance_id               : %u\n", cm_to_ctl_instance_status_ptr->instanceId);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
+        (void)fprintf(g_logFilePtr, "instance_id               : %u\n", cm_to_ctl_instance_status_ptr->instanceId);
+        (void)fprintf(g_logFilePtr,
             "node_ip                   : %s\n",
             g_node[node_index].datanode[instance_index].datanodeListenIP[0]);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "data_path                 : %s\n",
             g_node[node_index].datanode[instance_index].datanodeLocalDataPath);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "type                      : %s\n",
             type_int_to_string(cm_to_ctl_instance_status_ptr->instance_type));
-        fprintf(g_logFilePtr,
+        if ((undocumentedVersion != 0 && undocumentedVersion < DORADO_UPGRADE_VERSION) &&
+            IsCmSharedStorageMode() && IsNodeOfflineFromEtcd(node_index, CM_CTL)) {
+            cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role = INSTANCE_ROLE_OFFLINE;
+        }
+        (void)fprintf(g_logFilePtr,
             "instance_state            : %s\n",
             datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role));
         if (cm_to_ctl_instance_status_ptr->data_node_member.receive_status.local_role != 0) {
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "dcf_role                  : %s\n",
                 DcfRoleToString(cm_to_ctl_instance_status_ptr->data_node_member.receive_status.local_role));
         }
         if (g_node[node_index].datanode[instance_index].datanodeRole == DUMMY_STANDBY_DN) {
-            fprintf(g_logFilePtr, "\n");
+            (void)fprintf(g_logFilePtr, "\n");
             return CM_SUCCESS;
         }
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "static_connections        : %d\n",
             cm_to_ctl_instance_status_ptr->data_node_member.local_status.static_connections);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "HA_state                  : %s\n",
             datanode_dbstate_int_to_string(cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state));
 
         if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state == INSTANCE_HA_STATE_BUILDING) {
-            fprintf(g_logFilePtr, "sync_state                : %s\n",
-                    datanode_wal_sync_state_int_to_string(INSTANCE_DATA_REPLICATION_ASYNC));
+            (void)fprintf(g_logFilePtr, "sync_state                : %s\n",
+                datanode_wal_sync_state_int_to_string(INSTANCE_DATA_REPLICATION_ASYNC));
             if (cm_to_ctl_instance_status_ptr->data_node_member.build_info.build_mode == FULL_BUILD) {
-                fprintf(g_logFilePtr, "build_mode                : Full\n");
+                (void)fprintf(g_logFilePtr, "build_mode                : Full\n");
             } else if (cm_to_ctl_instance_status_ptr->data_node_member.build_info.build_mode == INC_BUILD) {
-                fprintf(g_logFilePtr, "build_mode                : Incremental\n");
+                (void)fprintf(g_logFilePtr, "build_mode                : Incremental\n");
             }
 
             char bytesStr[MAXPGPATH] = {0};
             GetBytesStr(cm_to_ctl_instance_status_ptr->data_node_member.build_info.total_done, bytesStr, MAXPGPATH);
-            fprintf(g_logFilePtr, "data_synchronized         : %s\n", bytesStr);
+            (void)fprintf(g_logFilePtr, "data_synchronized         : %s\n", bytesStr);
             GetBytesStr(cm_to_ctl_instance_status_ptr->data_node_member.build_info.total_size, bytesStr, MAXPGPATH);
-            fprintf(g_logFilePtr, "estimated_total_data      : %s\n", bytesStr);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr, "estimated_total_data      : %s\n", bytesStr);
+            (void)fprintf(g_logFilePtr,
                 "process_schedule          : %d%%\n",
                 cm_to_ctl_instance_status_ptr->data_node_member.build_info.process_schedule);
             char estTimeStr[timeMaxLen] = {0};
             GetEstTimeStr(
                 cm_to_ctl_instance_status_ptr->data_node_member.build_info.estimated_time, estTimeStr, timeMaxLen);
-            fprintf(g_logFilePtr, "estimated_remaining_time  : %s\n\n", estTimeStr);
+            (void)fprintf(g_logFilePtr, "estimated_remaining_time  : %s\n\n", estTimeStr);
             return CM_SUCCESS;
         }
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "reason                    : %s\n",
             datanode_rebuild_reason_int_to_string(
                 cm_to_ctl_instance_status_ptr->data_node_member.local_status.buildReason));
 
         if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role == INSTANCE_ROLE_PRIMARY) {
-            if (STANDBY_DN == g_node[node_index].datanode[instance_index].datanodePeerRole ||
-                PRIMARY_DN == g_node[node_index].datanode[instance_index].datanodePeerRole) {
-                fprintf(g_logFilePtr,
+            if (g_node[node_index].datanode[instance_index].datanodePeerRole == STANDBY_DN ||
+                g_node[node_index].datanode[instance_index].datanodePeerRole == PRIMARY_DN) {
+                (void)fprintf(g_logFilePtr,
                     "standby_node              : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeerHAIP[0]);
-                fprintf(g_logFilePtr,
+                (void)fprintf(g_logFilePtr,
                     "standby_data_path         : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeerDataPath);
             }
-            if (STANDBY_DN == g_node[node_index].datanode[instance_index].datanodePeer2Role ||
-                PRIMARY_DN == g_node[node_index].datanode[instance_index].datanodePeer2Role) {
-                fprintf(g_logFilePtr,
+            if (g_node[node_index].datanode[instance_index].datanodePeer2Role == STANDBY_DN ||
+                g_node[node_index].datanode[instance_index].datanodePeer2Role == PRIMARY_DN) {
+                (void)fprintf(g_logFilePtr,
                     "standby_node              : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeer2HAIP[0]);
-                fprintf(g_logFilePtr,
+                (void)fprintf(g_logFilePtr,
                     "standby_data_path         : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeer2DataPath);
             }
 
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "standby_state             : %s\n",
                 datanode_role_int_to_string(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].peer_role));
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_sent_location      : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_sent_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_sent_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_write_location     : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_write_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_write_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_flush_location     : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_flush_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_flush_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_replay_location    : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_replay_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_replay_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_received_location: %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_received_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_received_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_write_location   : %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_write_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_write_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_flush_location   : %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_flush_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_flush_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_replay_location  : %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_replay_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_replay_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sync_state                : %s\n",
                 datanode_wal_sync_state_int_to_string(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sync_state));
-            if (DUMMY_STANDBY_DN == g_node[node_index].datanode[instance_index].datanodePeerRole) {
-                fprintf(g_logFilePtr,
+            if (g_node[node_index].datanode[instance_index].datanodePeerRole == DUMMY_STANDBY_DN) {
+                (void)fprintf(g_logFilePtr,
                     "secondary_node            : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeerHAIP[0]);
-                fprintf(g_logFilePtr,
+                (void)fprintf(g_logFilePtr,
                     "secondary_data_path       : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeerDataPath);
             }
-            if (DUMMY_STANDBY_DN == g_node[node_index].datanode[instance_index].datanodePeer2Role) {
-                fprintf(g_logFilePtr,
+            if (g_node[node_index].datanode[instance_index].datanodePeer2Role == DUMMY_STANDBY_DN) {
+                (void)fprintf(g_logFilePtr,
                     "secondary_node            : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeer2HAIP[0]);
-                fprintf(g_logFilePtr,
+                (void)fprintf(g_logFilePtr,
                     "secondary_data_path       : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeer2DataPath);
             }
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "secondary_state           : %s\n",
                 datanode_role_int_to_string(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].peer_role));
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_sent_location      : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_sent_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_sent_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_write_location     : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_write_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_write_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_flush_location     : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_flush_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_flush_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_replay_location    : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_replay_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_replay_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_received_location: %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_received_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_received_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_write_location   : %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_write_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_write_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_flush_location   : %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_flush_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_flush_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_replay_location  : %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_replay_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_replay_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sync_state                : %s\n\n",
                 datanode_wal_sync_state_int_to_string(
                     cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sync_state));
         } else {
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_sent_location      : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_sent_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_sent_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_write_location     : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_write_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_write_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_flush_location     : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_flush_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_flush_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sender_replay_location    : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_replay_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_replay_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_received_location: %X/%X\n",
                 (uint32)(
                     cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_received_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_received_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_write_location   : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_write_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_write_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_flush_location   : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_flush_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_flush_location);
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "receiver_replay_location  : %X/%X\n",
                 (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_replay_location >> 32),
                 (uint32)cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_replay_location);
             if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role == INSTANCE_ROLE_STANDBY) {
-                fprintf(g_logFilePtr,
+                (void)fprintf(g_logFilePtr,
                     "sync_state                : %s\n\n",
                     datanode_wal_sync_state_int_to_string(INSTANCE_DATA_REPLICATION_ASYNC));
             } else {
-                fprintf(g_logFilePtr,
+                (void)fprintf(g_logFilePtr,
                     "sync_state                : %s\n\n",
                     datanode_wal_sync_state_int_to_string(INSTANCE_DATA_REPLICATION_UNKONWN));
             }
@@ -1426,26 +1445,72 @@ static status_t PrintResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_c
     }
 
     if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_FENCED_UDF) {
-        fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
-        fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].sshChannel[0]);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr, "node                      : %u\n", g_node[node_index].node);
+        (void)fprintf(g_logFilePtr, "node_ip                   : %s\n", g_node[node_index].sshChannel[0]);
+        (void)fprintf(g_logFilePtr,
             "type                      : %s\n",
             type_int_to_string(cm_to_ctl_instance_status_ptr->instance_type));
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "state                     : %s\n\n",
             datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->fenced_UDF_status));
     }
     return CM_SUCCESS;
 }
 
-static void PrintParallelRedoResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr)
+static int64 CalculateTheDelay(const cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr)
+{
+    int64 delay = 0;
+    bool isByQuery = (cm_to_ctl_instance_status_ptr->data_node_member.local_redo_stats.is_by_query == 1);
+    cm_local_replconninfo localStatus = cm_to_ctl_instance_status_ptr->data_node_member.local_status;
+    cm_receiver_replconninfo receiveStatus = cm_to_ctl_instance_status_ptr->data_node_member.receive_status;
+    XLogRecPtr primary_flush_location = receiveStatus.sender_flush_location;
+    XLogRecPtr standby_replay_location = receiveStatus.receiver_replay_location;
+    XLogRecPtr standby_received_location = receiveStatus.receiver_received_location;
+    RedoStatsData parallel_redo_status = cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status;
+    uint64 speed = parallel_redo_status.speed_according_seg;
+    XLogRecPtr local_max_lsn = parallel_redo_status.local_max_lsn;
+    XLogRecPtr last = parallel_redo_status.last_replayed_read_ptr;
+    XLogRecPtr min_point = parallel_redo_status.min_recovery_point;
+    const uint32 fourBytes = 32;
+
+    if (isByQuery && localStatus.local_role == INSTANCE_ROLE_STANDBY) {
+        (void)fprintf(g_logFilePtr, "primary_flush_location         : %08X/%08X\n",
+            (uint32)(primary_flush_location >> fourBytes), (uint32)primary_flush_location);
+        (void)fprintf(g_logFilePtr, "standby_received_location      : %08X/%08X\n",
+            (uint32)(standby_received_location >> fourBytes), (uint32)standby_received_location);
+        (void)fprintf(g_logFilePtr, "standby_replay_location        : %08X/%08X\n",
+            (uint32)(standby_replay_location >> fourBytes), (uint32)standby_replay_location);
+        if (speed > 0) {
+            if (localStatus.db_state == INSTANCE_HA_STATE_NORMAL) {
+                delay = (int64)(primary_flush_location - standby_replay_location);
+            } else {
+                delay = (local_max_lsn != 0) ? (int64)(local_max_lsn - last) : -1;
+            }
+        } else {
+            delay = (localStatus.db_state == INSTANCE_HA_STATE_NORMAL &&
+            (primary_flush_location < (standby_replay_location + DELAY_THRESHOLD))) ? 0 : -1;
+        }
+    } else {
+        if (speed > 0) {
+            if (!isByQuery) {
+                delay = (int64)(min_point - last);
+            } else if (localStatus.db_state != INSTANCE_HA_STATE_NORMAL) {
+                delay = (local_max_lsn != 0) ? (int64)(local_max_lsn - last) : -1;
+            }
+        } else {
+            delay = (local_max_lsn == last) ? 0 : -1;
+        }
+    }
+    return delay > 0 ? (delay / (int64)speed) : delay;
+}
+
+static void PrintParallelRedoResult(cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr)
 {
     uint32 i;
     uint32 j;
     uint32 node_index = 0;
     uint32 instance_index = 0;
-    uint64 speed = 0;
-    int64 delay = 0;
+
     for (i = 0; i < g_node_num; i++) {
         if (g_node[i].node == cm_to_ctl_instance_status_ptr->node) {
             node_index = i;
@@ -1475,111 +1540,56 @@ static void PrintParallelRedoResult(uint32 *pre_node, cm_to_ctl_instance_status 
         }
 
         if (j >= g_node[node_index].datanodeCount) {
-            write_runlog(DEBUG1, "can't find the instance(%d).", cm_to_ctl_instance_status_ptr->instanceId);
+            write_runlog(DEBUG1, "can't find the instance(%u).", cm_to_ctl_instance_status_ptr->instanceId);
             return;
         }
 
-        fprintf(g_logFilePtr, "node                           : %u\n", g_node[node_index].node);
-        fprintf(g_logFilePtr, "instance_id                    : %u\n", cm_to_ctl_instance_status_ptr->instanceId);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr, "node                           : %u\n", g_node[node_index].node);
+        (void)fprintf(g_logFilePtr, "instance_id                    : %u\n", cm_to_ctl_instance_status_ptr->instanceId);
+        (void)fprintf(g_logFilePtr,
             "node_ip                        : %s\n",
             g_node[node_index].datanode[instance_index].datanodeListenIP[0]);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "data_path                      : %s\n",
             g_node[node_index].datanode[instance_index].datanodeLocalDataPath);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "type                           : %s\n",
             type_int_to_string(cm_to_ctl_instance_status_ptr->instance_type));
-        fprintf(g_logFilePtr,
+        if ((undocumentedVersion != 0 && undocumentedVersion < DORADO_UPGRADE_VERSION) &&
+            IsCmSharedStorageMode() && IsNodeOfflineFromEtcd(node_index, CM_CTL)) {
+            cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role = INSTANCE_ROLE_OFFLINE;
+        }
+        (void)fprintf(g_logFilePtr,
             "instance_state                 : %s\n",
             datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role));
         if (cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.curr_time == 0) {
-            fprintf(g_logFilePtr, "\n");
+            (void)fprintf(g_logFilePtr, "\n");
             return;
         }
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "is_by_query                    : %d\n",
             cm_to_ctl_instance_status_ptr->data_node_member.local_redo_stats.is_by_query);
 
-        XLogRecPtr primary_flush_location =
-            cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sender_flush_location;
-        XLogRecPtr standby_replay_location =
-            cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_replay_location;
-        XLogRecPtr standby_received_location =
-            cm_to_ctl_instance_status_ptr->data_node_member.receive_status.receiver_received_location;
         XLogRecPtr last = cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.last_replayed_read_ptr;
         XLogRecPtr min_point = cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.min_recovery_point;
-        XLogRecPtr local_max_lsn = cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.local_max_lsn;
-        speed = cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.speed_according_seg;
 
-        if (cm_to_ctl_instance_status_ptr->data_node_member.local_redo_stats.is_by_query &&
-            cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role == INSTANCE_ROLE_STANDBY) {
-            fprintf(g_logFilePtr,
-                "primary_flush_location         : %08X/%08X\n",
-                (uint32)(primary_flush_location >> 32),
-                (uint32)primary_flush_location);
-            fprintf(g_logFilePtr,
-                "standby_received_location      : %08X/%08X\n",
-                (uint32)(standby_received_location >> 32),
-                (uint32)standby_received_location);
-            fprintf(g_logFilePtr,
-                "standby_replay_location        : %08X/%08X\n",
-                (uint32)(standby_replay_location >> 32),
-                (uint32)standby_replay_location);
-            if (speed > 0) {
-                if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state == 
-                    INSTANCE_HA_STATE_NORMAL) {
-                    delay = (primary_flush_location - standby_replay_location) / speed;
-                } else {
-                    if (local_max_lsn != 0)
-                        delay = (local_max_lsn - last) / speed;
-                    else
-                        delay = -1;
-                }
-            } else {
-                if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state == 
-                    INSTANCE_HA_STATE_NORMAL) {
-                    (primary_flush_location < (standby_replay_location + DELAY_THRESHOLD)) ? 
-                        (delay = 0) : (delay = -1);
-                } else {
-                    delay = -1;
-                }
-            }
-        } else {
-            if (speed > 0) {
-                if (cm_to_ctl_instance_status_ptr->data_node_member.local_redo_stats.is_by_query == 0) {
-                    delay = (int64)((min_point - last) / speed);
-                } else if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state != 
-                    INSTANCE_HA_STATE_NORMAL) {
-                    if (local_max_lsn != 0)
-                        delay = (int64)((local_max_lsn - last) / speed);
-                    else
-                        delay = -1;
-                }
-            } else {
-                if (local_max_lsn == last) {
-                    delay = 0;
-                } else {
-                    delay = -1;
-                }
-            }
-        }
+        int64 delay = CalculateTheDelay(cm_to_ctl_instance_status_ptr);
 
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "static_connections             : %d\n",
             cm_to_ctl_instance_status_ptr->data_node_member.local_status.static_connections);
-        fprintf(g_logFilePtr,
+        (void)fprintf(g_logFilePtr,
             "HA_state                       : %s\n",
             datanode_dbstate_int_to_string(cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state));
 
         if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state == INSTANCE_HA_STATE_BUILDING) {
-            fprintf(g_logFilePtr,
+            (void)fprintf(g_logFilePtr,
                 "sync_state                     : %s\n",
                 datanode_wal_sync_state_int_to_string(INSTANCE_DATA_REPLICATION_ASYNC));
             if (cm_to_ctl_instance_status_ptr->data_node_member.build_info.build_mode == FULL_BUILD) {
-                fprintf(g_logFilePtr, "build_mode                     : Full\n");
+                (void)fprintf(g_logFilePtr, "build_mode                     : Full\n");
             } else if (cm_to_ctl_instance_status_ptr->data_node_member.build_info.build_mode == INC_BUILD) {
-                fprintf(g_logFilePtr, "build_mode                     : Incremental\n");
+                (void)fprintf(g_logFilePtr, "build_mode                     : Incremental\n");
             }
 
             char bytesStr[MAXPGPATH] = {0};
@@ -1598,89 +1608,91 @@ static void PrintParallelRedoResult(uint32 *pre_node, cm_to_ctl_instance_status 
             return;
         }
         int reason = cm_to_ctl_instance_status_ptr->data_node_member.local_status.buildReason;
-        fprintf(g_logFilePtr, "reason                         : %s\n", datanode_rebuild_reason_int_to_string(reason));
-
-        fprintf(g_logFilePtr, "redo_start_location            : %08X/%08X\n",
+        (void)fprintf(g_logFilePtr, "reason                         : %s\n",
+            datanode_rebuild_reason_int_to_string(reason));
+        (void)fprintf(g_logFilePtr, "redo_start_location            : %08X/%08X\n",
             (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.redo_start_ptr >> 32),
             (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.redo_start_ptr));
 
-        fprintf(g_logFilePtr, "min_recovery_location          : %08X/%08X\n", (uint32)(min_point >> 32),
+        (void)fprintf(g_logFilePtr, "min_recovery_location          : %08X/%08X\n", (uint32)(min_point >> 32),
             (uint32)(min_point));
 
-        fprintf(g_logFilePtr, "read_location                  : %08X/%08X\n",
+        (void)fprintf(g_logFilePtr, "read_location                  : %08X/%08X\n",
             (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.read_ptr >> 32),
             (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.read_ptr));
 
-        fprintf(g_logFilePtr, "last_replayed_end_location     : %08X/%08X\n", (uint32)(last >> 32), (uint32)(last));
-
-        fprintf(g_logFilePtr, "recovery_done_location         : %08X/%08X\n",
+        (void)fprintf(g_logFilePtr, "last_replayed_end_location     : %08X/%08X\n",
+            (uint32)(last >> 32), (uint32)(last));
+        (void)fprintf(g_logFilePtr, "recovery_done_location         : %08X/%08X\n",
             (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.recovery_done_ptr >> 32),
             (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.recovery_done_ptr));
 
-        fprintf(g_logFilePtr, "local_max_lsn                  : %08X/%08X\n",
+        (void)fprintf(g_logFilePtr, "local_max_lsn                  : %08X/%08X\n",
             (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.local_max_lsn >> 32),
             (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.local_max_lsn));
 
-        fprintf(g_logFilePtr, "read_xlog_io_counter           : %ld\n",
+        (void)fprintf(g_logFilePtr, "read_xlog_io_counter           : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[0].counter);
 
-        fprintf(g_logFilePtr, "read_xlog_io_total_dur         : %ld\n",
+        (void)fprintf(g_logFilePtr, "read_xlog_io_total_dur         : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[0].total_duration);
 
-        fprintf(g_logFilePtr, "read_data_io_counter           : %ld\n",
+        (void)fprintf(g_logFilePtr, "read_data_io_counter           : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[1].counter);
 
-        fprintf(g_logFilePtr, "read_data_io_total_dur         : %ld\n",
+        (void)fprintf(g_logFilePtr, "read_data_io_total_dur         : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[1].total_duration);
 
-        fprintf(g_logFilePtr, "write_data_io_counter          : %ld\n",
+        (void)fprintf(g_logFilePtr, "write_data_io_counter          : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[2].counter);
 
-        fprintf(g_logFilePtr, "write_data_io_total_dur        : %ld\n",
+        (void)fprintf(g_logFilePtr, "write_data_io_total_dur        : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[2].total_duration);
 
-        fprintf(g_logFilePtr, "process_pending_counter        : %ld\n",
+        (void)fprintf(g_logFilePtr, "process_pending_counter        : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[3].counter);
 
-        fprintf(g_logFilePtr, "process_pending_total_dur      : %ld\n",
+        (void)fprintf(g_logFilePtr, "process_pending_total_dur      : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[3].total_duration);
 
-        fprintf(g_logFilePtr, "apply_counter                  : %ld\n",
+        (void)fprintf(g_logFilePtr, "apply_counter                  : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[4].counter);
 
-        fprintf(g_logFilePtr, "apply_total_dur                : %ld\n",
+        (void)fprintf(g_logFilePtr, "apply_total_dur                : %ld\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.wait_info[4].total_duration);
 
-        fprintf(g_logFilePtr, "speed(est.)                    : %u KB/s\n",
+        (void)fprintf(g_logFilePtr, "speed(est.)                    : %u KB/s\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.speed_according_seg / 1024);
 
         if (cm_to_ctl_instance_status_ptr->data_node_member.local_redo_stats.is_by_query == 1) {
             if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
                 if (delay >= 0) {
-                    fprintf(g_logFilePtr, "delay(est.)                    : %ld s\n", delay);
+                    (void)fprintf(g_logFilePtr, "delay(est.)                    : %ld s\n", delay);
                 } else {
-                    fprintf(g_logFilePtr, "delay(est.)                    : unknown\n");
+                    (void)fprintf(g_logFilePtr, "delay(est.)                    : unknown\n");
                 }
             } else {
-                if (delay >= 0)
-                    fprintf(g_logFilePtr, "local_replay_remain_time(est.) : %ld s\n", delay);
-                else
-                    fprintf(g_logFilePtr, "local_replay_remain_time(est.) : unknown\n");
+                if (delay >= 0) {
+                    (void)fprintf(g_logFilePtr, "local_replay_remain_time(est.) : %ld s\n", delay);
+                } else {
+                    (void)fprintf(g_logFilePtr, "local_replay_remain_time(est.) : unknown\n");
+                }
             }
         } else if (cm_to_ctl_instance_status_ptr->data_node_member.local_redo_stats.is_by_query == 0) {
-            if (delay >= 0)
-                fprintf(g_logFilePtr, "min_recovery_point_delay(est.) : %ld s\n", delay);
-            else
-                fprintf(g_logFilePtr, "min_recovery_point_delay(est.) : unknown\n");
+            if (delay >= 0) {
+                (void)fprintf(g_logFilePtr, "min_recovery_point_delay(est.) : %ld s\n", delay);
+            } else {
+                (void)fprintf(g_logFilePtr, "min_recovery_point_delay(est.) : unknown\n");
+            }
         }
 
         // redo percent, it's usefull when need change qurom
-        fprintf(g_logFilePtr, "senderPercent                  : %d%%\n",
+        (void)fprintf(g_logFilePtr, "senderPercent                  : %d%%\n",
             cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sync_percent);
-        fprintf(g_logFilePtr, "receiverPercent                : %d%%\n",
+        (void)fprintf(g_logFilePtr, "receiverPercent                : %d%%\n",
             cm_to_ctl_instance_status_ptr->data_node_member.receive_status.sync_percent);
 
-        fprintf(g_logFilePtr, "worker_info                    : \n%s\n\n",
+        (void)fprintf(g_logFilePtr, "worker_info                    : \n%s\n\n",
             cm_to_ctl_instance_status_ptr->data_node_member.parallel_redo_status.worker_info);
     }
 }
@@ -1689,26 +1701,26 @@ static void PrintSimpleCnResult(uint32 nodeIndex, const cm_to_ctl_instance_statu
 {
     int status = cmToCtlInstanceStatusPtr->coordinatemember.status;
     if (g_availabilityZoneCommand) {
-        fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[nodeIndex].azName);
+        (void)fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[nodeIndex].azName);
     }
-    fprintf(g_logFilePtr, "%-2u ", g_node[nodeIndex].node);
-    fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[nodeIndex].nodeName);
+    (void)fprintf(g_logFilePtr, "%-2u ", g_node[nodeIndex].node);
+    (void)fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[nodeIndex].nodeName);
     if (g_ipQuery) {
-        fprintf(g_logFilePtr, "%-15s ", g_node[nodeIndex].coordinateListenIP[0]);
+        (void)fprintf(g_logFilePtr, "%-15s ", g_node[nodeIndex].coordinateListenIP[0]);
     }
-    fprintf(g_logFilePtr, "%u ", cmToCtlInstanceStatusPtr->instanceId);
+    (void)fprintf(g_logFilePtr, "%u ", cmToCtlInstanceStatusPtr->instanceId);
     if (g_portQuery) {
-        fprintf(g_logFilePtr, "%-*u ", 6, g_node[nodeIndex].coordinatePort);
+        (void)fprintf(g_logFilePtr, "%-*u ", 6, g_node[nodeIndex].coordinatePort);
     }
     if (g_dataPathQuery) {
-        fprintf(g_logFilePtr, "%-*s ", max_cnpath_len, g_node[nodeIndex].DataPath);
+        (void)fprintf(g_logFilePtr, "%-*s ", max_cnpath_len, g_node[nodeIndex].DataPath);
     } else {
-        fprintf(g_logFilePtr, "    ");
+        (void)fprintf(g_logFilePtr, "    ");
     }
     char cnStatus[MAXPGPATH] = {0};
     GetCnStatus(cnStatus, sizeof(cnStatus), cmToCtlInstanceStatusPtr);
-    fprintf(g_logFilePtr, "%s", cnStatus);
-    fprintf(g_logFilePtr, "\n");
+    (void)fprintf(g_logFilePtr, "%s", cnStatus);
+    (void)fprintf(g_logFilePtr, "\n");
     if (status != INSTANCE_ROLE_NORMAL) {
         InstanceInformationRecord(nodeIndex, cmToCtlInstanceStatusPtr);
     }
@@ -1744,67 +1756,70 @@ static void PrintSimpleResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to
 
     if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_COORDINATE &&
         (!g_balanceQuery || g_abnormalQuery)) {
-        if (g_abnormalQuery == true &&
-            (0 == strcmp(
-                      datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->coordinatemember.status), "Normal"))) {
+        const char *dnRole = datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->coordinatemember.status);
+        if (g_abnormalQuery && (strcmp(dnRole, "Normal") == 0)) {
             return;
         }
         PrintSimpleCnResult(node_index, cm_to_ctl_instance_status_ptr);
     }
 
     if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_GTM && !g_startStatusQuery) {
-        if (g_single_node_cluster && (PRIMARY_GTM != g_node[node_index].gtmRole)) {
+        if (g_single_node_cluster && (g_node[node_index].gtmRole != PRIMARY_GTM)) {
             return;
         }
         // end.
         g_gtmBalance = false;
 
         if (g_availabilityZoneCommand) {
-            fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[node_index].azName);
+            (void)fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[node_index].azName);
         }
 
-        fprintf(g_logFilePtr, "%-2u ", g_node[node_index].node);
-        fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[node_index].nodeName);
-        if (g_ipQuery)
-            fprintf(g_logFilePtr, "%-15s ", g_node[node_index].gtmLocalListenIP[0]);
-        fprintf(g_logFilePtr, "%u ", cm_to_ctl_instance_status_ptr->instanceId);
-        if (g_dataPathQuery)
-            fprintf(g_logFilePtr, "%-*s ", max_gtmpath_len, g_node[node_index].gtmLocalDataPath);
-        else
-            fprintf(g_logFilePtr, "    ");
-        fprintf(g_logFilePtr, "%s ", datanode_static_role_int_to_string(g_node[node_index].gtmRole));
-        fprintf(g_logFilePtr, "%-7s ",
+        (void)fprintf(g_logFilePtr, "%-2u ", g_node[node_index].node);
+        (void)fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[node_index].nodeName);
+        if (g_ipQuery) {
+            (void)fprintf(g_logFilePtr, "%-15s ", g_node[node_index].gtmLocalListenIP[0]);
+        }
+        (void)fprintf(g_logFilePtr, "%u ", cm_to_ctl_instance_status_ptr->instanceId);
+        if (g_dataPathQuery) {
+            (void)fprintf(g_logFilePtr, "%-*s ", max_gtmpath_len, g_node[node_index].gtmLocalDataPath);
+        } else {
+            (void)fprintf(g_logFilePtr, "    ");
+        }
+        (void)fprintf(g_logFilePtr, "%s ", datanode_static_role_int_to_string(g_node[node_index].gtmRole));
+        (void)fprintf(g_logFilePtr, "%-7s ",
             datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->gtm_member.local_status.local_role));
         if ((cm_to_ctl_instance_status_ptr->gtm_member.local_status.local_role != INSTANCE_ROLE_PRIMARY) &&
             (cm_to_ctl_instance_status_ptr->gtm_member.local_status.local_role != INSTANCE_ROLE_STANDBY)) {
             InstanceInformationRecord(node_index, cm_to_ctl_instance_status_ptr);
         }
         if (!g_single_node_cluster) {
-            fprintf(g_logFilePtr, "%-14s ",
+            (void)fprintf(g_logFilePtr, "%-14s ",
                 gtm_con_int_to_string(cm_to_ctl_instance_status_ptr->gtm_member.local_status.connect_status));
-            fprintf(g_logFilePtr, "%s\n",
+            (void)fprintf(g_logFilePtr, "%s\n",
                 datanode_wal_sync_state_int_to_string(
                     cm_to_ctl_instance_status_ptr->gtm_member.local_status.sync_mode));
         }
     }
 
     if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_DATANODE && !g_startStatusQuery) {
-        (void)print_simple_DN_result(node_index, cm_to_ctl_instance_status_ptr);
+        print_simple_DN_result(node_index, cm_to_ctl_instance_status_ptr);
     }
 
     if (g_fencedUdfQuery && cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_FENCED_UDF &&
         !g_balanceQuery) {
-        fprintf(g_logFilePtr, "%-2u ", g_node[node_index].node);
-        fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[node_index].nodeName);
-        if (g_ipQuery)
-            fprintf(g_logFilePtr, "%-15s ", g_node[node_index].sshChannel[0]);
-        fprintf(g_logFilePtr, "%s\n", datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->fenced_UDF_status));
+        (void)fprintf(g_logFilePtr, "%-2u ", g_node[node_index].node);
+        (void)fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[node_index].nodeName);
+        if (g_ipQuery) {
+            (void)fprintf(g_logFilePtr, "%-15s ", g_node[node_index].sshChannel[0]);
+        }
+        (void)fprintf(g_logFilePtr, "%s\n",
+            datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->fenced_UDF_status));
     }
 }
 
 static void print_simple_DN_result(uint32 node_index, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr)
 {
-    uint32 j = 0;
+    uint32 j;
     uint32 instance_index = 0;
 
     for (j = 0; j < g_node[node_index].datanodeCount; j++) {
@@ -1815,11 +1830,11 @@ static void print_simple_DN_result(uint32 node_index, cm_to_ctl_instance_status 
     }
 
     if (j >= g_node[node_index].datanodeCount) {
-        write_runlog(DEBUG1, "can't find the instance(%d).", cm_to_ctl_instance_status_ptr->instanceId);
+        write_runlog(DEBUG1, "can't find the instance(%u).", cm_to_ctl_instance_status_ptr->instanceId);
         return;
     }
 
-    if (g_single_node_cluster && (PRIMARY_DN != g_node[node_index].datanode[instance_index].datanodeRole)) {
+    if (g_single_node_cluster && (g_node[node_index].datanode[instance_index].datanodeRole != PRIMARY_DN)) {
         return;
     }
 
@@ -1830,58 +1845,65 @@ static void print_simple_DN_result(uint32 node_index, cm_to_ctl_instance_status 
 
     if (logic_cluster_query) {
         if (!g_single_node_cluster && (cm_to_ctl_instance_status_ptr->member_index == 0)) {
-            fprintf(g_logFilePtr, "%-*s ",
+            (void)fprintf(g_logFilePtr, "%-*s ",
                 max_logic_cluster_name_len,
                 g_node[node_index].datanode[instance_index].LogicClusterName);
-            fprintf(g_logFilePtr, " | ");
+            (void)fprintf(g_logFilePtr, " | ");
         }
     }
 
     if (g_availabilityZoneCommand) {
-        fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[node_index].azName);
+        (void)fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[node_index].azName);
     }
 
-    fprintf(g_logFilePtr, "%-2u ", g_node[node_index].node);
-    fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[node_index].nodeName);
-    if (g_ipQuery)
-        fprintf(g_logFilePtr, "%-15s ", g_node[node_index].datanode[instance_index].datanodeListenIP[0]);
-    fprintf(g_logFilePtr, "%u ", cm_to_ctl_instance_status_ptr->instanceId);
-    if (g_portQuery && g_node[node_index].datanode[instance_index].datanodeRole != DUMMY_STANDBY_DN) {
-        fprintf(g_logFilePtr, "%-*u ", 6, g_node[node_index].datanode[instance_index].datanodePort);
+    (void)fprintf(g_logFilePtr, "%-2u ", g_node[node_index].node);
+    (void)fprintf(g_logFilePtr, "%-*s ", max_node_name_len, g_node[node_index].nodeName);
+    if (g_ipQuery) {
+        (void)fprintf(g_logFilePtr, "%-15s ", g_node[node_index].datanode[instance_index].datanodeListenIP[0]);
     }
-    if (g_dataPathQuery)
-        fprintf(g_logFilePtr, "%-*s ", max_datapath_len, 
-            g_node[node_index].datanode[instance_index].datanodeLocalDataPath);
-    else
-        fprintf(g_logFilePtr, "    ");
-    fprintf(g_logFilePtr, "%s ",
+    (void)fprintf(g_logFilePtr, "%u ", cm_to_ctl_instance_status_ptr->instanceId);
+    if (g_portQuery && g_node[node_index].datanode[instance_index].datanodeRole != DUMMY_STANDBY_DN) {
+        (void)fprintf(g_logFilePtr, "%-*u ", 6, g_node[node_index].datanode[instance_index].datanodePort);
+    }
+    if (g_dataPathQuery) {
+        (void)fprintf(
+            g_logFilePtr, "%-*s ", max_datapath_len, g_node[node_index].datanode[instance_index].datanodeLocalDataPath);
+    } else {
+        (void)fprintf(g_logFilePtr, "    ");
+    }
+    (void)fprintf(g_logFilePtr, "%s ",
         datanode_static_role_int_to_string(g_node[node_index].datanode[instance_index].datanodeRole));
-    fprintf(g_logFilePtr, "%-7s",
+    if ((undocumentedVersion != 0 && undocumentedVersion < DORADO_UPGRADE_VERSION) &&
+        IsCmSharedStorageMode() && IsNodeOfflineFromEtcd(node_index, CM_CTL)) {
+        cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role = INSTANCE_ROLE_OFFLINE;
+    }
+    (void)fprintf(g_logFilePtr, "%-7s",
         datanode_role_int_to_string(cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role));
-    fprintf(g_logFilePtr, " %s",
+    (void)fprintf(g_logFilePtr, " %s",
         datanode_dbstate_int_to_string(cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state));
     if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state != INSTANCE_HA_STATE_NORMAL) {
         InstanceInformationRecord(node_index, cm_to_ctl_instance_status_ptr);
     }
     if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state == INSTANCE_HA_STATE_BUILDING) {
-        fprintf(g_logFilePtr, "(%d%%)", cm_to_ctl_instance_status_ptr->data_node_member.build_info.process_schedule);
+        (void)fprintf(g_logFilePtr, "(%d%%)",
+            cm_to_ctl_instance_status_ptr->data_node_member.build_info.process_schedule);
     }
 
     if ((cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role == INSTANCE_ROLE_STANDBY ||
         cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role == INSTANCE_ROLE_MAIN_STANDBY ||
         cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role == INSTANCE_ROLE_CASCADE_STANDBY) &&
         cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state == INSTANCE_HA_STATE_NEED_REPAIR) {
-        fprintf(g_logFilePtr, "(%s)",
+        (void)fprintf(g_logFilePtr, "(%s)",
             datanode_rebuild_reason_int_to_string(
                 cm_to_ctl_instance_status_ptr->data_node_member.local_status.buildReason));
     }
 
     if (g_multi_az_cluster && ((uint32)cm_to_ctl_instance_status_ptr->member_index < (g_dn_replication_num - 1))) {
-        fprintf(g_logFilePtr, " | ");
+        (void)fprintf(g_logFilePtr, " | ");
     } else if (!g_single_node_cluster && !g_multi_az_cluster &&
         (cm_to_ctl_instance_status_ptr->member_index == 0 || cm_to_ctl_instance_status_ptr->member_index == 1)) {
-        fprintf(g_logFilePtr, " | ");
+        (void)fprintf(g_logFilePtr, " | ");
     } else {
-        fprintf(g_logFilePtr, "\n");
+        (void)fprintf(g_logFilePtr, "\n");
     }
 }

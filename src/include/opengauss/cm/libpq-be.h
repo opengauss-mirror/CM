@@ -113,7 +113,7 @@ extern int StreamServerPort(int family, char* hostName, unsigned short portNumbe
 extern int StreamConnection(int server_fd, Port* port);
 extern void StreamClose(int sock);
 extern int pq_getbyte(Port* myport);
-extern int pq_getmessage(Port* myport, CM_StringInfo s, int maxlen);
+extern int pq_getmessage(Port* myport, CM_StringInfo s, int maxlen, bool isReEntry);
 extern int pq_putmessage(Port* myport, char msgtype, const char* s, size_t len);
 extern int pq_flush(Port* myport);
 extern int SetSocketNoBlock(int isocketId);

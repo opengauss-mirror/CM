@@ -35,8 +35,6 @@
 #endif
 #include <stdlib.h>
 #include "c.h"
-#include "cipher.h"
-#include "utils/palloc.h"
 
 #ifdef USE_SSL
 #include "openssl/err.h"
@@ -104,7 +102,7 @@
 #define ECOMMTCPREMOETECLOSE 1049
 #define ECOMMTCPAPPCLOSE 1050
 #define ECOMMTCPLOCALCLOSEPOLL 1051
-#define ECOMMTCPPEERCLOSEPOLL 1052 
+#define ECOMMTCPPEERCLOSEPOLL 1052
 #define ECOMMTCPCONNFAIL 1054
 #define ECOMMTCPSTREAMCONNFAIL 1055
 #define ECOMMTCPREJECTSTREAM 1056
@@ -118,17 +116,18 @@
 
 // Structure definitions.
 // Stream key is using to associate producers and consumers
-//
 #define HOST_ADDRSTRLEN INET6_ADDRSTRLEN
 #define HOST_LEN_OF_HTAB 64
 #define NAMEDATALEN 64
 #define MSG_TIME_LEN 30
 #define MAX_DN_NODE_NUM 8192
 #define MAX_CN_NODE_NUM 1024
-#define MAX_CN_DN_NODE_NUM (MAX_DN_NODE_NUM + MAX_CN_NODE_NUM)  //(MaxCoords+MaxDataNodes)
-#define MIN_CN_DN_NODE_NUM (1 + 1)                              //(1 CN + 1 DN)
+#define MAX_CN_DN_NODE_NUM (MAX_DN_NODE_NUM + MAX_CN_NODE_NUM)  // (MaxCoords+MaxDataNodes)
+#define MIN_CN_DN_NODE_NUM (1 + 1)                              // (1 CN + 1 DN)
 
 #define SEC_TO_MICRO_SEC 1000
+
+#define CIPHER_LEN 16
 
 typedef enum {
     LIBCOMM_NONE,
@@ -139,8 +138,7 @@ typedef enum {
 } LibcommThreadTypeDef;
 
 /* send and recv message type */
-typedef enum
-{
+typedef enum {
     SEND_SOME = 0,
     SECURE_READ,
     SECURE_WRITE,
@@ -148,8 +146,7 @@ typedef enum
     READ_DATA_FROM_LOGIC
 } CommMsgOper;
 
-typedef enum
-{
+typedef enum {
     POSTMASTER = 0,
     GS_SEND_flow,
     GS_RECV_FLOW,
@@ -178,7 +175,6 @@ typedef struct {
 struct StreamConnInfo;
 
 // statistic structure
-//
 typedef struct {
     char remote_node[NAMEDATALEN];
     char remote_host[HOST_ADDRSTRLEN];
@@ -275,7 +271,6 @@ typedef struct {
     unsigned char cipher_passwd[CIPHER_LEN + 1];
 } LibCommConn;
 // sctp address infomation
-//
 typedef struct libcommaddrinfo {
     char* host;                       // host ip
     char nodename[NAMEDATALEN];       // datanode name
@@ -293,8 +288,7 @@ typedef struct libcommaddrinfo {
 } libcomm_addrinfo;
 
 /* cn and dn send and recv message log */
-typedef struct MessageIpcLog
-{
+typedef struct MessageIpcLog {
     char type;              /* the incomplete message type parsed last time */
     int msg_cursor;
     int msg_len;            /* When the message parsed last time is incomplete, record the true length of the message */
@@ -302,18 +296,18 @@ typedef struct MessageIpcLog
     int len_cursor;         /* When msglen is parsed to be less than 4 bytes, the received bytes count are recorded */
     uint32 len_cache;
 
-    /* For consecutive parses to the same message, record the msgtype, length, and last parsed time and same message count. */
+    // For consecutive parses to the same message, record the msgtype,
+    // length, and last parsed time and same message count.
     char last_msg_type;     /* the type of the previous message */
     int last_msg_len;       /* the message of the previous message */
     int last_msg_count;     /* same message count */
     char last_msg_time[MSG_TIME_LEN]; // the time of the previous message
-}MessageIpcLog;
+} MessageIpcLog;
 
-typedef struct MessageCommLog
-{
+typedef struct MessageCommLog {
     MessageIpcLog recv_ipc_log;
     MessageIpcLog send_ipc_log;
-}MessageCommLog;
+} MessageCommLog;
 
 typedef enum {
     GSOCK_INVALID,
@@ -333,22 +327,18 @@ void mc_elog(int elevel, const char* fmt, ...) __attribute__((format(printf, 2, 
     } while (0)
 
 // the role of current node
-//
 typedef enum { ROLE_PRODUCER, ROLE_CONSUMER, ROLE_MAX_TYPE } SctpNodeRole;
 
 // the connection state of IP+PORT
-//
 typedef enum { CONNSTATEFAIL, CONNSTATECONNECTING, CONNSTATESUCCEED } ConnectionState;
 
 // the channel type
-//
 typedef enum { DATA_CHANNEL, CTRL_CHANNEL } ChannelType;
 
 typedef bool (*wakeup_hook_type)(TcpStreamKey key, StreamConnInfo connInfo);
 
 // Set basic initialization information for communication,
 // calling by each datanode for initializing the communication layer
-//
 extern int gs_set_basic_info(const char* local_host,  // local ip of the datanode, it can be used "localhost" for simple
     const char* local_node_name,                      // local node name of the datanode, like PGXCNodeName
     int node_num,      // total number of datanodes, maximum value is 1024, it could be set in postgresql.conf with
@@ -357,9 +347,7 @@ extern int gs_set_basic_info(const char* local_host,  // local ip of the datanod
 
 // Connect to destination datanode, and get the sctp stream index for sending
 // called by Sender
-//
 // return: stream index
-//
 extern int gs_connect(libcommaddrinfo** sctp_addrinfo,  // destination address
     int addr_num,                                       // connection number
     int timeout                                         // timeout threshold, default is 10 min
@@ -367,14 +355,11 @@ extern int gs_connect(libcommaddrinfo** sctp_addrinfo,  // destination address
 
 // Regist call back function of receiver for waking up Consumer in executor,
 // if a sender connect successfully to receiver, wake up the consumer once
-//
 extern void gs_connect_regist_callback(wakeup_hook_type wakeup_callback);
 
 // Send message through sctp channel using a sctp stream
 // called by Sender
-//
 // return: transmitted data size
-//
 extern int gs_send(gsocket* gs_sock,  // destination address
     char* message,                    // message to send
     int m_len,                        // message length
@@ -387,9 +372,7 @@ extern int gs_broadcast_send(struct libcommaddrinfo* sctp_addrinfo, char* messag
 // Receive message from an array of sctp channels,
 // however, we will get message data from just one channel,
 // and copy the data into buffer.
-//
 // return: received data size
-//
 extern int gs_recv(
     gsocket* gs_sock,  // array of node index, which labeled the datanodes will send data to this datanode
     void* buff,        // buffer to copy data message, allocated by caller
@@ -398,9 +381,7 @@ extern int gs_recv(
 
 // Simulate linux poll interface,
 // to notify the Consumer thread data have been received into the inner buffer, you can come to take it
-//
 // return: the number of mailbox which has data
-//
 extern int gs_wait_poll(gsocket* gs_sock_array,  // array of producers node index
     int nproducer,                               // number of producers
     int* producer,                               // producers number triggers poll
@@ -420,7 +401,6 @@ extern MessageCommLog* gs_comm_ipc_performance(MessageCommLog *msgLog,
     CommMsgOper logType);
 
 // Receiver close sctp stream
-//
 extern int gs_r_close_stream(int sctp_idx,  // node index
     int sctp_sid,                           // stream index
     int version  // stream key(the plan id and plan node id), associated the pair of  Consumer and Producer
@@ -429,7 +409,6 @@ extern int gs_r_close_stream(int sctp_idx,  // node index
 extern int gs_r_close_stream(gsocket* gsock);
 
 // Sender close sctp stream
-//
 extern int gs_s_close_stream(int sctp_idx,  // node index
     int sctp_sid,                           // node index
     int version  // stream key(the plan id and plan node id), associated the pair of  Consumer and Producer
@@ -450,46 +429,36 @@ extern int gs_close_all_stream_by_debug_id(uint64 query_id);
 extern bool gs_stop_query(gsocket* gsock, uint32 remote_pid);
 
 // Shudown the communication layer
-//
 extern void gs_shutdown_comm();
 
 // Do internal cancel when cancelling is requested
-//
 extern void gs_r_cancel();
 
 // set t_thrd proc workingVersionNum
 extern void gs_set_working_version_num(int num);
 
 // export communication layer status
-//
 extern void gs_log_comm_status();
 
 // check if the kernel version is reliable
-//
 extern int gs_check_SLESSP2_version();
 
 // get the assigned stream number
-//
 extern int gs_get_stream_num();
 
 // get the error information
-//
 const char* gs_comm_strerror();
 
 // get communication layer stream status at receiver as a tuple for pg_comm_recv_stream
-//
 extern bool get_next_recv_stream_status(CommRecvStreamStatus* stream_status);
 
 // get communication layer stream status at sender as a tuple for pg_comm_send_stream
-//
 extern bool get_next_send_stream_status(CommSendStreamStatus* stream_status);
 
 // get communication layer stream status as a tuple for pg_comm_status
-//
 extern bool gs_get_comm_stat(CommStat* comm_stat);
 
 // get communication layer sctp delay infomation as a tuple for pg_comm_delay
-//
 extern bool get_next_comm_delay_info(CommDelayInfo* delay_info);
 
 extern void gs_set_debug_mode(bool mod);
@@ -510,7 +479,6 @@ extern void init_libcomm_cpu_rate();
 extern void gs_set_working_version_num(int num);
 
 // get availabe memory of communication layer
-//
 extern long gs_get_comm_used_memory(void);
 
 extern long gs_get_comm_peak_memory(void);
@@ -671,7 +639,7 @@ extern void gs_set_test_recv_sleep(int newval);
 extern void gs_set_test_recv_once(int newval);
 #endif
 
-/*Libcomm fault injection Framework
+/* Libcomm fault injection Framework
  * Before start: 1, enable LIBCOMM_FAULT_INJECTION_ENABLE.
  *               2, add new guc params to $GAUSSHOME/bin/cluster_guc.conf
  * Start: Use gs_guc reload to set FI num.
@@ -719,4 +687,4 @@ extern void set_comm_fault_injection(int type);
 extern bool is_comm_fault_injection(LibcommFaultInjection type);
 #endif
 
-#endif  //_GS_LIBCOMM_H_
+#endif  // _GS_LIBCOMM_H_

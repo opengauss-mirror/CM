@@ -42,7 +42,7 @@
 #define CHECK_DUMMY_STATE_TIMES 3
 #define PERCENT (100)
 
-typedef struct IoStat {
+typedef struct {
     uint64 idle;
     uint64 tot_ticks;
     uint64 uptime;
@@ -52,18 +52,23 @@ void DatanodeStatusReport(void);
 void fenced_UDF_status_check_and_report(void);
 void etcd_status_check_and_report(void);
 void kerberos_status_check_and_report();
-void CheckDiskForDNDataPathAndReport(int logLevel);
+void SendResStatReportMsg();
+void SendResIsregReportMsg();
+void InitIsregCheckVar();
+void UpdateIsregCheckList(const uint32 *newCheckList, uint32 newCheckCount);
 
 void* ETCDStatusCheckMain(void* arg);
-void* ETCDConnectionStatusCheckMain(void * const arg);
-void* DNStatusCheckMain(void * const arg);
-void* DNConnectionStatusCheckMain(void * const arg);
+void* ETCDConnectionStatusCheckMain(void *arg);
+void* DNStatusCheckMain(void *arg);
+void* DNConnectionStatusCheckMain(void *arg);
 
-void* KerberosStatusCheckMain(void * const arg);
-void InitResourceGlobalVal(void);
-void *ResourceStatusCheckMain(void * const arg);
+void* KerberosStatusCheckMain(void *arg);
+void *ResourceStatusCheckMain(void *arg);
+void *ResourceIsregCheckMain(void *arg);
 void CheckResourceState(OneNodeResourceStatus *nodeStat);
+void InitResStatCommInfo(OneNodeResourceStatus *nodeStat);
 
 int CreateCheckNodeStatusThread(void);
+void *VotingDiskMain(void *arg);
 
 #endif

@@ -49,8 +49,9 @@ extern EtcdTlsAuthPath g_etcdTlsPath;
 extern int32 g_timeOut;
 
 DdbDriver *DrvEtcdGet(void);
-status_t CreateEtcdSession(DrvCon_t etcdSession, const DrvApiInfo *apiInfo);
-status_t DrvEtcdGetAllKV(DrvCon_t session, DrvText *key, DrvKeyValue *keyValue, uint32 length, DrvGetOption *option);
+status_t CreateEtcdSession(EtcdSession *session, const DrvApiInfo *apiInfo);
+status_t DrvEtcdGetAllKV(
+    const DrvCon_t session, DrvText *key, DrvKeyValue *keyValue, uint32 length, const DrvGetOption *option);
 status_t DrvEtcdSaveAllKV(const DrvCon_t session, const DrvText *key, DrvSaveOption *option);
 status_t CreateEtcdThread(const DrvApiInfo *apiInfo);
 void DrvNotifyEtcd(DDB_ROLE dbRole);

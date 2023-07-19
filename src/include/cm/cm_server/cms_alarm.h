@@ -26,40 +26,30 @@
 
 #include "alarm/alarm.h"
 
-typedef enum CM_DiskPreAlarmType {
-    PRE_ALARM_LOG = 0,
-    PRE_ALARM_CN = 1,
-    PRE_ALARM_DN = 2
-} CM_DiskPreAlarmType;
-
-typedef struct instance_phony_dead_alarm {
+typedef struct InstancePhonyDeadAlarmT {
     uint32 instanceId;
     Alarm PhonyDeadAlarmItem[1];
-} instance_phony_dead_alarm;
+} InstancePhonyDeadAlarm;
 
-typedef struct InstanceAlarm {
+typedef struct InstanceAlarmT {
     uint32 instanceId;
-    Alarm instanceAlarmItem[1];
+    Alarm instanceAlarmItem;
 } InstanceAlarm;
 
-extern void StorageThresholdPreAlarmItemInitialize(void);
-extern void ReportStorageThresholdPreAlarm(
-    AlarmType alarmType,
-    const char* instanceName,
-    CM_DiskPreAlarmType alarmNode,
-    uint32 alarmIndex);
 extern void ReadOnlyAlarmItemInitialize(void);
-extern void ReportReadOnlyAlarm(AlarmType alarmType, const char* instanceName, uint32 alarmIndex);
+extern void ReportReadOnlyAlarm(AlarmType alarmType, const char* instanceName, uint32 instanceid);
 extern void InstanceAlarmItemInitialize(void);
 extern void report_phony_dead_alarm(AlarmType alarmType, const char* instanceName, uint32 instanceid);
 extern void report_unbalanced_alarm(AlarmType alarmType);
-
-
+extern void ReportClusterDoublePrimaryAlarm(
+    AlarmType alarmType, AlarmId alarmId, uint32 instanceId, const char* serviceType);
 extern void UnbalanceAlarmItemInitialize(void);
 extern void ServerSwitchAlarmItemInitialize(void);
 extern void report_server_switch_alarm(AlarmType alarmType, const char* instanceName);
 void report_ddb_fail_alarm(AlarmType alarmType, const char* instanceName, int alarmIndex);
 extern void ReportIncreaseOrReduceAlarm(AlarmType alarmType, uint32 instanceId, bool isIncrease);
 void UpdatePhonyDeadAlarm();
+void ReportLogStorageAlarm(AlarmType alarmType, const char* instanceName, uint32 alarmIndex);
+void ReportReadOnlyPreAlarm(AlarmType alarmType, const char* instanceName, uint32 instanceid);
 
 #endif

@@ -24,9 +24,10 @@
 #ifndef CM_MISC_H
 #define CM_MISC_H
 
-#include "common/config/cm_config.h"
 #include <vector>
+#include "common/config/cm_config.h"
 #include "cm_misc_base.h"
+#include "cm_misc_res.h"
 #include "c.h"
 #include "cm_defs.h"
 #include "cm/cs_ssl.h"
@@ -39,27 +40,13 @@ using namespace std;
 extern "C" {
 #endif
 
-typedef struct ResStatusCheckInfoSt {
-    long checkTime;
-    long startTime;
-    uint32 startCount;
-
-    uint32 checkInterval;
-    uint32 timeOut;
-    uint32 restartDelay;
-    uint32 restartPeriod;
-    uint32 restartTimes;
-} ResStatusCheckInfo;
-
-typedef struct CmResConfListSt {
-    char resName[CM_MAX_RES_NAME];
-    char script[MAX_PATH_LEN];
-    uint32 nodeId;
-    uint32 cmInstanceId;
-    uint32 resInstanceId;
-    uint32 isWorkMember;
-    ResStatusCheckInfo checkInfo;
-} CmResConfList;
+// two nodes arch usage
+typedef struct st_arbitrate_params_on2nodes {
+    char thirdPartyGatewayIp[CM_IP_LENGTH];
+    bool cmsEnableFailoverOn2Nodes;
+    bool cmsEnableDbCrashRecovery;
+    uint32 cmsNetworkIsolationTimeout;
+} ArbitrateParamsOn2Nodes;
 
 typedef struct st_conn_option {
     int connect_timeout; /* ms */
@@ -70,67 +57,62 @@ typedef struct st_conn_option {
     uint32 expire_time;
 } conn_option_t;
 
-typedef struct instance_not_exist_reason_string {
+typedef struct instance_not_exist_reason_string_st {
     const char* level_string;
     int level_val;
 } instance_not_exist_reason_string;
 
-typedef struct log_level_string {
-    const char* level_string;
-    int level_val;
-} log_level_string;
-
-typedef struct instance_datanode_build_reason_string {
+typedef struct instance_datanode_build_reason_string_st {
     const char* reason_string;
     int reason_val;
 } instance_datanode_build_reason_string;
 
-typedef struct instacne_type_string {
+typedef struct instacne_type_string_st {
     const char* type_string;
     int type_val;
 } instacne_type_string;
 
-typedef struct gtm_con_string {
+typedef struct gtm_con_string_st {
     const char* con_string;
     int con_val;
 } gtm_con_string;
 
-typedef struct instance_coordinator_active_status_string {
+typedef struct instance_coordinator_active_status_string_st {
     const char* active_status_string;
     int active_status_val;
 } instance_coordinator_active_status_string;
 
-typedef struct instance_datanode_lockmode_string {
+typedef struct instance_datanode_lockmode_string_st {
     const char* lockmode_string;
     uint32 lockmode_val;
 } instance_datanode_lockmode_string;
 
-typedef struct instacne_datanode_role_string {
+typedef struct instacne_datanode_role_string_st {
     const char* role_string;
     uint32 role_val;
 } instacne_datanode_role_string;
 
-typedef struct instacne_datanode_dbstate_string {
+typedef struct instacne_datanode_dbstate_string_st {
     const char* dbstate_string;
     int dbstate_val;
 } instacne_datanode_dbstate_string;
 
-typedef struct instacne_datanode_wal_send_state_string {
+typedef struct instacne_datanode_wal_send_state_string_st {
     const char* wal_send_state_string;
     int wal_send_state_val;
 } instacne_datanode_wal_send_state_string;
 
-typedef struct instacne_datanode_sync_state_string {
+typedef struct instacne_datanode_sync_state_string_st {
     const char* wal_sync_state_string;
     int wal_sync_state_val;
 } instacne_datanode_sync_state_string;
 
-typedef struct cluster_state_string {
+typedef struct cluster_state_string_st {
     const char* cluster_state_string;
     int cluster_state_val;
 } cluster_state_string;
 
-typedef struct cluster_msg_string {
+typedef struct cluster_msg_string_st {
     const char* cluster_msg_str;
     int cluster_msg_val;
 } cluster_msg_string;
@@ -140,7 +122,7 @@ typedef struct ObsBackupStatusMapString_t {
     int backupStatus;
 } ObsBackupStatusMapString;
 
-typedef struct server_role_string {
+typedef struct server_role_string_st {
     int role_val;
     const char* role_string;
 } server_role_string;
@@ -149,21 +131,6 @@ typedef struct DbStateRoleString_t {
     int roleVal;
     char roleString;
 } DbStateRoleString;
-
-typedef enum {
-    CM_CLUSTER_UNKNOWN = 0,
-    CM_INNER_CENTRALIZE = 1,
-    CM_INNER_DISTRIBUTE = 2,
-    CM_SELF_DEFINED_ONLY = 4,
-    CM_INNER_CENTRALIZE_AND_DEFINED = 5,
-    CM_INNER_DISTRIBUTE_AND_DEFINED = 6
-} CmClusterWorkMode;
-
-extern CmClusterWorkMode g_cluster_work_mode;
-
-#define HAS_RES_DEFINED (g_cluster_work_mode >= 4)
-#define HAS_RES_DEFINED_ONLY (g_cluster_work_mode == 4)
-#define HAS_RES_DN (g_cluster_work_mode != CM_SELF_DEFINED_ONLY)
 
 #define LOCK_FILE_LINE_PID 1
 #define LOCK_FILE_LINE_DATA_DIR 2
@@ -177,15 +144,31 @@ extern CmClusterWorkMode g_cluster_work_mode;
 #define ERROR_LIMIT_LEN 256
 #endif
 
-typedef struct ResourceListInfo {
-    char resName[NAMEDATALEN];
+typedef struct ResStatusCheckInfoSt {
+    long checkTime;
+    long startTime;
+    long brokeTime;
+    int startCount;
+    int onlineTimes;
+    long abnormalTime;
+
+    int checkInterval;
+    int timeOut;
+    int restartDelay;
+    int restartPeriod;
+    int restartTimes;
+    int abnormalTimeout;
+} ResStatusCheckInfo;
+
+typedef struct CmResConfListSt {
+    char resName[CM_MAX_RES_NAME];
+    char script[MAX_PATH_LEN];
+    char arg[MAX_PATH_LEN];
     uint32 nodeId;
     uint32 cmInstanceId;
     uint32 resInstanceId;
-    char scriptPath[MAX_PATH_LEN];
-    uint32 checkInterval;
-    uint32 timeOut;
-} ResourceListInfo;
+    ResStatusCheckInfo checkInfo;
+} CmResConfList;
 
 // instance type before INST_TYPE_UNKNOWN shouldn't be change
 typedef enum {
@@ -197,8 +180,14 @@ typedef enum {
     INST_TYPE_FENCED_UDF = 5,
 } InstanceType;
 
+typedef struct NodeInstBaseInfoT {
+    uint32 nodeIdx;
+    uint32 instIdx;
+} NodeInstBaseInfo;
+
 typedef struct Instance_t {
     uint32 node;
+    NodeInstBaseInfo baseInfo;
     InstanceType instType;
     union {
         dataNodeInfo *dnInst;
@@ -206,9 +195,10 @@ typedef struct Instance_t {
     };
 } Instance;
 
-extern vector<CmResStatList> g_resStatus;
-extern vector<CmResConfList> g_resConf;
 extern conn_option_t g_sslOption;
+
+/* two nodes arch usage */
+extern ArbitrateParamsOn2Nodes g_paramsOn2Nodes;
 
 /**
  * @def SHELL_RETURN_CODE
@@ -224,7 +214,7 @@ extern int log_level_string_to_int(const char* log_level);
 extern int datanode_rebuild_reason_string_to_int(const char* reason);
 extern const char* DcfRoleToString(int role);
 extern const char* instance_not_exist_reason_to_string(int reason);
-extern int datanode_lockmode_string_to_int(const char* lockmode);
+extern uint32 datanode_lockmode_string_to_int(const char* lockmode);
 extern int datanode_role_string_to_int(const char* role);
 extern int datanode_dbstate_string_to_int(const char* dbstate);
 extern int datanode_wal_send_state_string_to_int(const char* dbstate);
@@ -288,29 +278,29 @@ extern void delete_lock_file(const char *filename);
 
 extern void cm_pthread_rw_lock(pthread_rwlock_t* rwlock);
 extern void cm_pthread_rw_unlock(pthread_rwlock_t* rwlock);
-extern status_t ReadResourceDefConfig(bool isAgent);
 extern int CmSSlConfigInit(bool is_client);
 void GetRealFile(char *realFile, uint32 fileLen, const char *path);
 #ifdef __cplusplus
 }
 #endif
-status_t GetGlobalResStatusIndex(const char *resName, uint32 &index);
+void *CmMalloc(size_t size);
 void GetAlarmConfig(const char *confDir);
 int32 GetDbStaticRoleInt(char c);
 char GetDbStaticRoleStr(int32 role);
-status_t GetAllResConf(const char *confData, const char *confDir, bool isAgent);
-
-#define RANDOM_LEN 16
-
-#define SERVER_KEY_RAND_FILE       "server.key.rand"
-#define SERVER_KEY_CIPHER_FILE     "server.key.cipher"
-#define CLIENT_KEY_RAND_FILE       "client.key.rand"
-#define CLIENT_KEY_CIPHER_FILE     "client.key.cipher"
-#define HADR_KEY_RAND_FILE       "hadr.key.rand"
-#define HADR_KEY_CIPHER_FILE     "hadr.key.cipher"
 
 int CmAtoi(const char *str, int defaultValue);
 bool CmAtoBool(const char *str);
 long CmAtol(const char *str, int defaultValue);
 
+bool IsNodeOfflineFromEtcd(uint32 nodeIndex, int instanceType);
+
+void listen_ip_merge(uint32 ipCnt, const char (*ipListen)[CM_IP_LENGTH], char *retIpMerge, uint32 ipMergeLength);
+bool IsNodeIdValid(int nodeId);
+
+void FreeSslOpton();
+
+status_t IsReachableIP(char *ip);
+bool IsIPAddrValid(const char *ipAddr);
+
+bool IsNeedCheckFloatIp();
 #endif

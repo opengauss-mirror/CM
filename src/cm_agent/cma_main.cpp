@@ -29,7 +29,7 @@
 #endif
 #include "alarm/alarm_log.h"
 #include "cm/pqsignal.h"
-
+#include "cm_json_config.h"
 #include "cma_global_params.h"
 #include "cma_common.h"
 #include "cma_threads.h"
@@ -37,14 +37,17 @@
 #include "cma_datanode_scaling.h"
 #include "cma_log_management.h"
 #include "cma_instance_management.h"
+#include "cma_instance_management_res.h"
 #include "config.h"
 #include "cma_process_messages.h"
 #include "cm_util.h"
+#include "cma_connect.h"
+#include "cma_status_check.h"
+#include "cma_mes.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_gtm.h"
 #include "cma_coordinator.h"
 #include "cma_cn_gtm_work_threads_mgr.h"
-#include "cma_status_check.h"
 #include "cma_instance_check.h"
 #endif
 
@@ -56,7 +59,7 @@ cm_instance_central_node_msg g_ccnNotify;
 
 char g_agentDataDir[CM_PATH_LENGTH] = {0};
 
-static volatile sig_atomic_t g_gotParameterReload = false;
+static volatile sig_atomic_t g_gotParameterReload = 0;
 
 int g_tcpKeepalivesIdle = 30;
 int g_tcpKeepalivesInterval = 30;
@@ -81,11 +84,14 @@ bool g_poolerPingEndRequest = false;
 int g_gtmConnFailTimes = 0;
 int g_cnConnFailTimes = 0;
 int g_dnConnFailTimes[CM_MAX_DATANODE_PER_NODE] = {0};
+char *g_eventTriggers[EVENT_COUNT] = {NULL};
+
+static const uint32 MAX_MSG_BUF_POOL_SIZE = 102400;
+static const uint32 MAX_MSG_BUF_POOL_COUNT = 200;
 
 /* unify log style */
 void create_system_call_log(void);
-bool isDisconnectTimeout(struct timespec last, int timeout);
-int check_one_instance_status(const char *processName, const char *cmd_line, int *isPhonyDead);
+int check_one_instance_status(const char *processName, const char *cmdLine, int *isPhonyDead);
 int get_agent_global_params_from_configfile();
 
 void stop_flag(void)
@@ -157,33 +163,39 @@ void report_conn_fail_alarm(AlarmType alarmType, InstanceTypes instance_type, ui
 
     AlarmAdditionalParam tempAdditionalParam;
     /* fill the alarm message. */
-    WriteAlarmAdditionalInfo(
-        &tempAdditionalParam, instanceName, "", "", &(g_abnormalCmaConnAlarmList[alarmIndex]), alarmType, instanceName);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "", &(g_abnormalCmaConnAlarmList[alarmIndex]),
+        alarmType, instanceName);
     /* report the alarm. */
     AlarmReporter(&(g_abnormalCmaConnAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
 }
 
+uint32 GetThreadDeadEffectiveTime(size_t threadIdx)
+{
+    const int specialEffectiveTime = 10;
+    if (g_threadName[threadIdx] != NULL && strcmp(g_threadName[threadIdx], "SendCmsMsg") == 0) {
+        return specialEffectiveTime;
+    }
+    return g_threadDeadEffectiveTime;
+}
+
 void check_thread_state()
 {
-    size_t i = 0;
     size_t length = sizeof(g_threadId) / sizeof(g_threadId[0]);
     struct timespec now = {0};
 
     (void)clock_gettime(CLOCK_MONOTONIC, &now);
-    for (i = 0; i < length; i++) {
+    for (size_t i = 0; i < length; i++) {
         if (g_threadId[i] == 0) {
             continue;
         }
-        if ((now.tv_sec - g_thread_state[i] < 0) || (now.tv_sec - g_thread_state[i] > 4 * g_threadDeadEffectiveTime)) {
+        uint32 threadDeadEffectiveTime = GetThreadDeadEffectiveTime(i);
+        if ((now.tv_sec - g_thread_state[i] < 0) || (now.tv_sec - g_thread_state[i] > 4 * threadDeadEffectiveTime)) {
             g_thread_state[i] = now.tv_sec;
             continue;
         }
-        if ((now.tv_sec - g_thread_state[i] > g_threadDeadEffectiveTime) && g_thread_state[i] != 0) {
-            write_runlog(WARNING,
-                "the thread(%ld) is not execing for a long time(%ld).\n",
-                g_threadId[i],
-                now.tv_sec - g_thread_state[i]);
-            cm_sleep(5);
+        if ((now.tv_sec - g_thread_state[i] > threadDeadEffectiveTime) && g_thread_state[i] != 0) {
+            write_runlog(FATAL, "the thread(%lu) is not execing for a long time(%ld).\n",
+                g_threadId[i], now.tv_sec - g_thread_state[i]);
             /* progress abort */
             exit(-1);
         }
@@ -192,7 +204,12 @@ void check_thread_state()
 
 void reload_cmagent_parameters(int arg)
 {
-    g_gotParameterReload = true;
+    g_gotParameterReload = 1;
+}
+
+void RecvSigusrSingle(int arg)
+{
+    return;
 }
 
 #ifdef ENABLE_MULTIPLE_NODES
@@ -236,8 +253,8 @@ void GetCmdlineOpt(int argc, char *argv[])
 /* unify log style */
 void create_system_call_log(void)
 {
-    DIR *dir = NULL;
-    struct dirent *de = NULL;
+    DIR *dir;
+    struct dirent *de;
     bool is_exist = false;
 
     /* check validity of current log file name */
@@ -291,32 +308,32 @@ void create_system_call_log(void)
 status_t CreateSysLogFile(void)
 {
     if (syslogFile != NULL) {
-        fclose(syslogFile);
+        (void)fclose(syslogFile);
         syslogFile = NULL;
     }
     syslogFile = logfile_open(sys_log_path, "a");
     if (syslogFile == NULL) {
-        fprintf(stderr, "cma_main, open log file failed\n");
+        (void)fprintf(stderr, "cma_main, open log file failed\n");
     }
 
     int fd = open("/dev/null", O_RDWR);
     if (fd < 0) {
-        (void)fprintf(stderr, "cma_main, open /dev/null failed, cma will exit.\n");
+        (void)fprintf(stderr, "FATAL cma_main, open /dev/null failed, cma will exit.\n");
         return CM_ERROR;
     }
     /* Redirect the handle to /dev/null, which is inherited from the om_monitor. */
-    dup2(fd, STDOUT_FILENO);
-    dup2(fd, STDERR_FILENO);
+    (void)dup2(fd, STDOUT_FILENO);
+    (void)dup2(fd, STDERR_FILENO);
     if (fd > STDERR_FILENO) {
-        close(fd);
+        (void)close(fd);
     }
     return CM_SUCCESS;
 }
 
 static void InitClientCrt(const char *appPath)
 {
-    errno_t rcs = 0;
-    rcs = snprintf_s(g_tlsPath.caFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/share/sslcert/etcd/etcdca.crt", appPath);
+    errno_t rcs =
+        snprintf_s(g_tlsPath.caFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/share/sslcert/etcd/etcdca.crt", appPath);
     securec_check_intval(rcs, (void)rcs);
     rcs = snprintf_s(
         g_tlsPath.crtFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/share/sslcert/etcd/client.crt", appPath);
@@ -326,7 +343,7 @@ static void InitClientCrt(const char *appPath)
     securec_check_intval(rcs, (void)rcs);
 }
 
-int get_prog_path(int argc, char **argv)
+int get_prog_path()
 {
     char exec_path[MAX_PATH_LEN] = {0};
     errno_t rc;
@@ -362,8 +379,10 @@ int get_prog_path(int argc, char **argv)
 #endif
     rc = memset_s(g_autoRepairPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_cmManualPausePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
     if (GetHomePath(exec_path, sizeof(exec_path)) != 0) {
-        fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
+        (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
     } else {
         check_input_for_security(exec_path);
@@ -411,6 +430,9 @@ int get_prog_path(int argc, char **argv)
 #endif
         rcs = snprintf_s(g_autoRepairPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/stop_auto_repair", exec_path);
         securec_check_intval(rcs, (void)rcs);
+        rcs = snprintf_s(
+            g_cmManualPausePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, CM_CLUSTER_MANUAL_PAUSE);
+        securec_check_intval(rcs, (void)rcs);
         InitClientCrt(exec_path);
     }
 
@@ -432,8 +454,7 @@ static void initialize_cm_server_node_index(void)
 {
     uint32 i = 0;
     uint32 j = 0;
-    uint32 k = 0;
-    char cmServerIndxStr[MAX_PATH_LEN] = {0};
+    char cmServerIdxStr[MAX_PATH_LEN] = {0};
     uint32 cm_instance_id[CM_PRIMARY_STANDBY_NUM] = {0};
     uint32 cmServerNum = 0;
     /* get cmserver instance id */
@@ -448,36 +469,36 @@ static void initialize_cm_server_node_index(void)
     qsort(cm_instance_id, cmServerNum, sizeof(uint32), node_index_Comparator);
 
     j = 0;
-    for (k = 0; k < cmServerNum; k++) {
+    for (uint32 k = 0; k < cmServerNum; k++) {
         for (i = 0; i < g_node_num; i++) {
             if (cm_instance_id[k] != g_node[i].cmServerId) {
                 continue;
             }
             g_nodeIndexForCmServer[j] = i;
-            SetCmsIndexStr(cmServerIndxStr, MAX_PATH_LEN, j, i);
+            SetCmsIndexStr(cmServerIdxStr, MAX_PATH_LEN, j, i);
             j++;
             break;
         }
     }
-    fprintf(stderr, "[%s]: cmserverNum is %u, and cmserver info is %s.\n", g_progname, cmServerNum, cmServerIndxStr);
+    (void)fprintf(stderr, "[%s]: cmserverNum is %u, and cmserver info is %s.\n",
+        g_progname, cmServerNum, cmServerIdxStr);
 }
 
 int countCnAndDn()
 {
-    uint32 i = 0;
     uint32 j = 0;
     uint32 cn = 0;
     uint32 dnPairs = 0;
 
-    for (i = 0; i < g_node_num; i++) {
-        if (1 == g_node[i].coordinate) {
+    for (uint32 i = 0; i < g_node_num; i++) {
+        if (g_node[i].coordinate == 1) {
             cn++;
         }
         if (g_multi_az_cluster) {
             dnPairs = dnPairs + g_node[i].datanodeCount;
         } else {
             for (j = 0; j < g_node[i].datanodeCount; j++) {
-                if (PRIMARY_DN == g_node[i].datanode[j].datanodeRole) {
+                if (g_node[i].datanode[j].datanodeRole == PRIMARY_DN) {
                     dnPairs++;
                 }
             }
@@ -493,14 +514,14 @@ int read_config_file_check(void)
     int err_no = 0;
     int rc;
 
-    if ((g_cmAgentFirstStart == false) && (g_node != NULL)) {
+    if (!g_cmAgentFirstStart && (g_node != NULL)) {
         return 0;
     }
 
     status = read_config_file(g_cmStaticConfigurePath, &err_no);
     if (status == 0) {
         if (g_nodeHeader.node == 0) {
-            fprintf(stderr, "current node self is invalid  node =%u\n", g_nodeHeader.node);
+            (void)fprintf(stderr, "current node self is invalid  node =%u\n", g_nodeHeader.node);
             return -1;
         }
 
@@ -508,13 +529,13 @@ int read_config_file_check(void)
 
         rc = find_node_index_by_nodeid(g_nodeHeader.node, &g_nodeId);
         if (rc != 0) {
-            fprintf(stderr, "find_node_index_by_nodeid failed, nodeId=%u.\n", g_nodeHeader.node);
+            (void)fprintf(stderr, "find_node_index_by_nodeid failed, nodeId=%u.\n", g_nodeHeader.node);
             return -1;
         }
 
-        rc = find_current_node_by_nodeid(g_nodeHeader.node);
+        rc = find_current_node_by_nodeid();
         if (rc != 0) {
-            fprintf(stderr, "find_current_node_by_nodeid failed, nodeId=%u.\n", g_nodeHeader.node);
+            (void)fprintf(stderr, "find_current_node_by_nodeid failed, nodeId=%u.\n", g_nodeHeader.node);
             return -1;
         }
 
@@ -534,7 +555,7 @@ int read_config_file_check(void)
 
         g_datanodesFailover = (datanode_failover *)malloc(sizeof(datanode_failover) * g_node_num);
         if (g_datanodesFailover == NULL) {
-            fprintf(stderr, "g_datanodesFailover: out of memory\n");
+            (void)fprintf(stderr, "g_datanodesFailover: out of memory\n");
             return -1;
         }
 
@@ -544,7 +565,7 @@ int read_config_file_check(void)
 
         g_gtmsFailover = (gtm_failover *)malloc(sizeof(gtm_failover) * g_node_num);
         if (g_gtmsFailover == NULL) {
-            fprintf(stderr, "g_gtmsFailover: out of memory\n");
+            (void)fprintf(stderr, "g_gtmsFailover: out of memory\n");
             return -1;
         }
 
@@ -553,7 +574,7 @@ int read_config_file_check(void)
 
         g_coordinatorsDrop = (bool *)malloc(sizeof(bool) * g_node_num);
         if (g_coordinatorsDrop == NULL) {
-            fprintf(stderr, "g_coordinatorsDrop: out of memory\n");
+            (void)fprintf(stderr, "g_coordinatorsDrop: out of memory\n");
             return -1;
         }
 
@@ -562,7 +583,7 @@ int read_config_file_check(void)
 
         g_droppedCoordinatorId = (uint32 *)malloc(sizeof(uint32) * g_node_num);
         if (g_droppedCoordinatorId == NULL) {
-            fprintf(stderr, "g_droppedCoordinatorId: out of memory\n");
+            (void)fprintf(stderr, "g_droppedCoordinatorId: out of memory\n");
             return -1;
         }
 
@@ -571,7 +592,7 @@ int read_config_file_check(void)
 
         g_cnStatus = (coordinator_status *)malloc(sizeof(coordinator_status) * g_node_num);
         if (g_cnStatus == NULL) {
-            fprintf(stderr, "g_droppedCoordinatorId: out of memory\n");
+            (void)fprintf(stderr, "g_droppedCoordinatorId: out of memory\n");
             return -1;
         }
         rc = memset_s(g_cnStatus, sizeof(coordinator_status) * g_node_num, 0, sizeof(coordinator_status) * g_node_num);
@@ -582,10 +603,10 @@ int read_config_file_check(void)
         (void)pthread_rwlock_init(&g_coordinatorsCancelLock, NULL);
         (void)pthread_rwlock_init(&g_gtmsFailoverLock, NULL);
     } else if (status == OUT_OF_MEMORY) {
-        fprintf(stderr, "read staticNodeConfig failed! out of memory\n");
+        (void)fprintf(stderr, "read staticNodeConfig failed! out of memory\n");
         return -1;
     } else {
-        fprintf(stderr, "read staticNodeConfig failed! errno = %d\n", err_no);
+        (void)fprintf(stderr, "read staticNodeConfig failed! errno = %d\n", err_no);
         return -1;
     }
 
@@ -594,7 +615,7 @@ int read_config_file_check(void)
         char errBuffer[ERROR_LIMIT_LEN] = {0};
         switch (status) {
             case OPEN_FILE_ERROR: {
-                write_runlog(ERROR,
+                write_runlog(FATAL,
                     "%s: could not open the logic cluster static config file: %s\n",
                     g_progname,
                     strerror_r(err_no, errBuffer, ERROR_LIMIT_LEN));
@@ -602,14 +623,14 @@ int read_config_file_check(void)
             }
             case READ_FILE_ERROR: {
                 char errBuff[ERROR_LIMIT_LEN];
-                write_runlog(ERROR,
+                write_runlog(FATAL,
                     "%s: could not read logic cluster static config files: %s\n",
                     g_progname,
                     strerror_r(err_no, errBuff, ERROR_LIMIT_LEN));
                 exit(1);
             }
             case OUT_OF_MEMORY:
-                write_runlog(ERROR, "%s: out of memory\n", g_progname);
+                write_runlog(FATAL, "%s: out of memory\n", g_progname);
                 exit(1);
             default:
                 break;
@@ -630,12 +651,12 @@ int node_match_find(const char *node_type, const char *node_port, const char *no
 
     if (*node_type == 'C') {
         for (i = 0; i < g_node_num; i++) {
-            if (1 == g_node[i].coordinate) {
+            if (g_node[i].coordinate == 1) {
                 if ((g_node[i].coordinatePort == (uint32)strtol(node_port, NULL, 10)) &&
                     (strncmp(g_node[i].coordinateListenIP[0], node_host, CM_IP_ALL_NUM_LENGTH) == 0)) {
                     *inode_type = CM_COORDINATENODE;
-                    *node_index = i;
-                    *instance_index = j;
+                    *node_index = (int)i;
+                    *instance_index = (int)j;
                     return 0;
                 }
             }
@@ -646,8 +667,8 @@ int node_match_find(const char *node_type, const char *node_port, const char *no
                 if ((g_node[i].datanode[j].datanodePort == (uint32)strtol(node_port, NULL, 10)) &&
                     (strncmp(g_node[i].datanode[j].datanodeListenIP[0], node_host, CM_IP_ALL_NUM_LENGTH) == 0)) {
                     *inode_type = CM_DATANODE;
-                    *node_index = i;
-                    *instance_index = j;
+                    *node_index = (int)i;
+                    *instance_index = (int)j;
                     return 0;
                 }
             }
@@ -712,7 +733,7 @@ static bool ModifyDatanodePort(const char *Keywords, uint32 value, const char *f
         }
 
         /* check modify is really effective */
-        if (ExecuteCmdWithResult(check_cmd, result, NAMEDATALEN) == false) {
+        if (!ExecuteCmdWithResult(check_cmd, result, NAMEDATALEN)) {
             write_runlog(ERROR, "check %s failed, command:%s, errno[%d].\n", Keywords, check_cmd, errno);
             retry++;
             continue;
@@ -755,7 +776,7 @@ static bool UpdateLibcommPort(const char *file_path, const char *port_name, uint
     ret =
         snprintf_s(cmd_buf, sizeof(cmd_buf), MAXPGPATH * 2 - 1, "grep \"%s\" %s/postgresql.conf", port_name, file_path);
     securec_check_intval(ret, (void)ret);
-    if (ExecuteCmdWithResult(cmd_buf, result, NAMEDATALEN) == false) {
+    if (!ExecuteCmdWithResult(cmd_buf, result, NAMEDATALEN)) {
         write_runlog(ERROR, "update failed, command: %s, errno[%d].\n", cmd_buf, errno);
         return false;
     }
@@ -765,7 +786,7 @@ static bool UpdateLibcommPort(const char *file_path, const char *port_name, uint
     ret = snprintf_s(
         cmd_buf, sizeof(cmd_buf), MAXPGPATH * 2 - 1, "grep \"#%s\" %s/postgresql.conf|wc -l", port_name, file_path);
     securec_check_intval(ret, (void)ret);
-    if (ExecuteCmdWithResult(cmd_buf, result, NAMEDATALEN) == false) {
+    if (!ExecuteCmdWithResult(cmd_buf, result, NAMEDATALEN)) {
         write_runlog(ERROR, "update failed, command: %s, errno[%d].\n", cmd_buf, errno);
         return false;
     }
@@ -791,12 +812,12 @@ bool UpdateLibcommConfig(void)
     if (g_currentNode->coordinate == 1) {
         libcomm_sctp_port = GetLibcommPort(g_currentNode->DataPath, g_currentNode->coordinatePort, COMM_PORT_TYPE_DATA);
         re = UpdateLibcommPort(g_currentNode->DataPath, "comm_sctp_port", libcomm_sctp_port);
-        if (re == false) {
+        if (!re) {
             result = false;
         }
         libcomm_ctrl_port = GetLibcommPort(g_currentNode->DataPath, g_currentNode->coordinatePort, COMM_PORT_TYPE_CTRL);
         re = UpdateLibcommPort(g_currentNode->DataPath, "comm_control_port", libcomm_ctrl_port);
-        if (re == false) {
+        if (!re) {
             result = false;
         }
     }
@@ -818,12 +839,14 @@ bool UpdateLibcommConfig(void)
         }
 
         re = UpdateLibcommPort(g_currentNode->datanode[j].datanodeLocalDataPath, "comm_sctp_port", libcomm_sctp_port);
-        if (re == false)
+        if (!re) {
             result = false;
+        }
         re =
             UpdateLibcommPort(g_currentNode->datanode[j].datanodeLocalDataPath, "comm_control_port", libcomm_ctrl_port);
-        if (re == false)
+        if (!re) {
             result = false;
+        }
     }
 
     return result;
@@ -849,10 +872,9 @@ bool Is_cn_replacing()
 
 uint32 cm_get_first_cn_node()
 {
-    int nodeidx = 0;
     /* get update SQL */
-    for (nodeidx = 0; nodeidx < (int)g_node_num; nodeidx++) {
-        if (1 == g_node[nodeidx].coordinate) {
+    for (int32 nodeidx = 0; nodeidx < (int)g_node_num; nodeidx++) {
+        if (g_node[nodeidx].coordinate == 1) {
             return g_node[nodeidx].node;
         }
     }
@@ -864,7 +886,6 @@ uint32 cm_get_first_cn_node()
  * @Description: process bind cpu
  * @IN: instance_index, primary_dn_index, pid
  * @Return: void
- * @See also:
  */
 void process_bind_cpu(uint32 instance_index, uint32 primary_dn_index, pgpid_t pid)
 {
@@ -948,14 +969,12 @@ void switch_system_call_log(const char *file_name)
 
     Assert(file_name != NULL);
 
-    long filesize = 0;
+    long filesize;
     struct stat statbuff;
-    int ret = 0;
-    int rcs = 0;
 
-    ret = stat(file_name, &statbuff);
+    int ret = stat(file_name, &statbuff);
     if (ret == -1) {
-        write_runlog(WARNING, "stat system call log error, ret=%d, errno=%d.", ret, errno);
+        write_runlog(WARNING, "stat system call log error, ret=%d, errno=%d.\n", ret, errno);
         return;
     } else {
         filesize = statbuff.st_size;
@@ -964,21 +983,21 @@ void switch_system_call_log(const char *file_name)
     if (filesize > MAX_SYSTEM_CALL_LOG_SIZE) {
         current_time = time(NULL);
         systm = localtime(&current_time);
-        if (NULL != systm) {
+        if (systm != NULL) {
             (void)strftime(currentTime, LOG_MAX_TIMELEN, "-%Y-%m-%d_%H%M%S", systm);
         } else {
             write_runlog(WARNING, "switch_system_call_log get localtime failed.");
         }
-        rcs = snprintf_s(logFileBuff, MAXPGPATH, MAXPGPATH - 1, "%s%s.log", SYSTEM_CALL_LOG, currentTime);
-        securec_check_intval(rcs, );
+        int rcs = snprintf_s(logFileBuff, MAXPGPATH, MAXPGPATH - 1, "%s%s.log", SYSTEM_CALL_LOG, currentTime);
+        securec_check_intval(rcs, (void)rcs);
 
         rcs = snprintf_s(historyLogName, MAXPGPATH, MAXPGPATH - 1, "%s/%s", sys_log_path, logFileBuff);
-        securec_check_intval(rcs, );
+        securec_check_intval(rcs, (void)rcs);
 
         /* copy current to history and clean current file. (sed -c -i not supported on some systems) */
         rcs = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
             "cp %s %s;> %s", system_call_log, historyLogName, system_call_log);
-        securec_check_intval(rcs, );
+        securec_check_intval(rcs, (void)rcs);
 
         rcs = system(command);
         if (rcs != 0) {
@@ -988,6 +1007,7 @@ void switch_system_call_log(const char *file_name)
             write_runlog(LOG, "switch system_call logfile successfully. cmd:%s.\n", command);
         }
     }
+    (void)chmod(file_name, S_IRUSR | S_IWUSR);
     return;
 }
 
@@ -997,23 +1017,40 @@ void server_loop(void)
     int pstat;
     int rc;
     uint32 recv_count = 0;
+    uint32 msgPoolCount = 0;
     timespec startTime = {0, 0};
     timespec endTime = {0, 0};
     struct stat statbuf = {0};
+    const int msgPoolInfoPrintTime = 60 * 1000 * 1000;
 
     /* unify log style */
     thread_name = "main";
     (void)clock_gettime(CLOCK_MONOTONIC, &startTime);
     (void)clock_gettime(CLOCK_MONOTONIC, &g_disconnectTime);
 
+    const int pauseLogInterval = 5;
+    int pauseLogTimes = 0;
     for (;;) {
         if (g_shutdownRequest) {
             cm_sleep(5);
             continue;
         }
 
+        if (access(g_cmManualPausePath, F_OK) == 0) {
+            g_isPauseArbitration = true;
+            // avoid log swiping
+            if (pauseLogTimes == 0) {
+                write_runlog(LOG, "The cluster has been paused.\n");
+            }
+            ++pauseLogTimes;
+            pauseLogTimes = pauseLogTimes % pauseLogInterval;
+        } else {
+            g_isPauseArbitration = false;
+            pauseLogTimes = 0;
+        }
+
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);
-        if (g_isStart == true) {
+        if (g_isStart) {
             g_suppressAlarm = true;
             if (endTime.tv_sec - startTime.tv_sec >= 300) {
                 g_suppressAlarm = false;
@@ -1035,7 +1072,7 @@ void server_loop(void)
             /* undocumentedVersion > 0 means the cluster is upgrading, upgrade will change
             the directory $GAUSSHOME/bin, the g_cmagentLockfile will lost, agent should not exit */
             if ((stat(g_cmagentLockfile, &statbuf) != 0) && (undocumentedVersion == 0)) {
-                write_runlog(LOG, "lock file doesn't exist.\n");
+                write_runlog(FATAL, "lock file doesn't exist.\n");
                 exit(1);
             }
 
@@ -1051,43 +1088,49 @@ void server_loop(void)
             recv_count = 0;
         }
 
+        if (msgPoolCount > (msgPoolInfoPrintTime / AGENT_RECV_CYCLE)) {
+            PrintMsgBufPoolUsage(LOG);
+            msgPoolCount = 0;
+        }
+
         check_thread_state();
 
-        if (g_gotParameterReload) {
+        if (g_gotParameterReload == 1) {
             ReloadParametersFromConfigfile();
-            g_gotParameterReload = false;
+            g_gotParameterReload = 0;
         }
-        cm_usleep(AGENT_RECV_CYCLE);
+        CmUsleep(AGENT_RECV_CYCLE);
         recv_count++;
+        msgPoolCount++;
     }
 }
 
 static void DoHelp(void)
 {
-    printf(_("%s is a utility to monitor an instance.\n\n"), g_progname);
+    (void)printf(_("%s is a utility to monitor an instance.\n\n"), g_progname);
 
-    printf(_("Usage:\n"));
-    printf(_("  %s\n"), g_progname);
-    printf(_("  %s 0\n"), g_progname);
-    printf(_("  %s 1\n"), g_progname);
-    printf(_("  %s 2\n"), g_progname);
-    printf(_("  %s 3\n"), g_progname);
-    printf(_("  %s normal\n"), g_progname);
-    printf(_("  %s abnormal\n"), g_progname);
+    (void)printf(_("Usage:\n"));
+    (void)printf(_("  %s\n"), g_progname);
+    (void)printf(_("  %s 0\n"), g_progname);
+    (void)printf(_("  %s 1\n"), g_progname);
+    (void)printf(_("  %s 2\n"), g_progname);
+    (void)printf(_("  %s 3\n"), g_progname);
+    (void)printf(_("  %s normal\n"), g_progname);
+    (void)printf(_("  %s abnormal\n"), g_progname);
 
-    printf(_("\nCommon options:\n"));
-    printf(_("  -?, -h, --help         show this help, then exit\n"));
-    printf(_("  -V, --version          output version information, then exit\n"));
+    (void)printf(_("\nCommon options:\n"));
+    (void)printf(_("  -?, -h, --help         show this help, then exit\n"));
+    (void)printf(_("  -V, --version          output version information, then exit\n"));
 
-    printf(_("\nlocation of the log information options:\n"));
-    printf(_("  0                      LOG_DESTION_FILE\n"));
-    printf(_("  1                      LOG_DESTION_SYSLOG\n"));
-    printf(_("  2                      LOG_DESTION_FILE\n"));
-    printf(_("  3                      LOG_DESTION_DEV_NULL\n"));
+    (void)printf(_("\nlocation of the log information options:\n"));
+    (void)printf(_("  0                      LOG_DESTION_FILE\n"));
+    (void)printf(_("  1                      LOG_DESTION_SYSLOG\n"));
+    (void)printf(_("  2                      LOG_DESTION_FILE\n"));
+    (void)printf(_("  3                      LOG_DESTION_DEV_NULL\n"));
 
-    printf(_("\nstarted mode options:\n"));
-    printf(_("  normal                 cm_agent is started normally\n"));
-    printf(_("  abnormal               cm_agent is started by killed\n"));
+    (void)printf(_("\nstarted mode options:\n"));
+    (void)printf(_("  normal                 cm_agent is started normally\n"));
+    (void)printf(_("  abnormal               cm_agent is started by killed\n"));
 }
 
 /*
@@ -1095,7 +1138,6 @@ static void DoHelp(void)
  */
 int replaceStr(char *sSrc, const char *sMatchStr, const char *sReplaceStr)
 {
-    int StringLen;
     char caNewString[MAX_PATH_LEN];
     errno_t rc;
     if (sMatchStr == NULL) {
@@ -1109,8 +1151,8 @@ int replaceStr(char *sSrc, const char *sMatchStr, const char *sReplaceStr)
     while (FindPos != NULL) {
         rc = memset_s(caNewString, MAX_PATH_LEN, 0, MAX_PATH_LEN);
         securec_check_errno(rc, (void)rc);
-        StringLen = FindPos - sSrc;
-        rc = strncpy_s(caNewString, MAX_PATH_LEN, sSrc, StringLen);
+        long StringLen = FindPos - sSrc;
+        rc = strncpy_s(caNewString, MAX_PATH_LEN, sSrc, (size_t)StringLen);
         securec_check_errno(rc, (void)rc);
         rc = strcat_s(caNewString, MAX_PATH_LEN, sReplaceStr);
         securec_check_errno(rc, (void)rc);
@@ -1132,21 +1174,19 @@ int replaceStr(char *sSrc, const char *sMatchStr, const char *sReplaceStr)
 void cutTimeFromFileLog(const char *fileName, char *pattern, uint32 patternLen, char *strTime)
 {
     errno_t rc;
-    char *subStr = NULL;
     char subStr2[MAX_PATH_LEN] = {'\0'};
     char subStr5[MAX_PATH_LEN] = {'\0'};
     char *saveStr = NULL;
     char *saveStr2 = NULL;
     char subStr3[MAX_PATH_LEN] = {'\0'};
-    char *subStr4 = NULL;
     char tempTimeStamp[MAX_TIME_LEN] = {'\0'};
     /* Copy file name avoid modifying the value */
     rc = memcpy_s(subStr2, MAX_PATH_LEN, fileName, strlen(fileName) + 1);
     securec_check_errno(rc, (void)rc);
     rc = memcpy_s(subStr5, MAX_PATH_LEN, fileName, strlen(fileName) + 1);
     securec_check_errno(rc, (void)rc);
-    subStr4 = strstr(subStr5, "-");
-    subStr = strtok_r(subStr2, "-", &saveStr);
+    char *subStr4 = strstr(subStr5, "-");
+    char *subStr = strtok_r(subStr2, "-", &saveStr);
     if (subStr == NULL) {
         write_runlog(ERROR, "file path name get failed.\n");
         return;
@@ -1156,9 +1196,9 @@ void cutTimeFromFileLog(const char *fileName, char *pattern, uint32 patternLen, 
     rc = memcpy_s(pattern, patternLen, subStr3, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
 
-    /* etcd and system_call use a special way to create log file, since the current log filename doesn't
-    contain timestamp. So, we assign a date to it. */
-    if (strstr(fileName, "etcd-current") != NULL || strstr(fileName, "system_call-current") != NULL) {
+    // assin a biggest data to current log in order to avoid compressing current log file when time changed
+    // also for etcd and system_call current log filename doesn't contain timestamp. So, we assign a date to it
+    if (strstr(fileName, "-current.log") != NULL) {
         rc = snprintf_s(tempTimeStamp, MAX_TIME_LEN, MAX_TIME_LEN - 1, "%s", MAX_LOGFILE_TIMESTAMP);
         securec_check_intval(rc, (void)rc);
         rc = memcpy_s(strTime, MAX_TIME_LEN, tempTimeStamp, MAX_TIME_LEN);
@@ -1193,7 +1233,7 @@ void cutTimeFromFileLog(const char *fileName, char *pattern, uint32 patternLen, 
 int readFileList(const char *basePath, LogFile *logFile, uint32 *count, int64 *totalSize, uint32 maxCount)
 {
     errno_t rc;
-    DIR *dir = NULL;
+    DIR *dir;
     struct dirent *ptr = NULL;
     char base[MAX_PATH_LEN] = {'\0'};
     char path[MAX_PATH_LEN] = {'\0'};
@@ -1208,8 +1248,9 @@ int readFileList(const char *basePath, LogFile *logFile, uint32 *count, int64 *t
     while (*count < maxCount && (ptr = readdir(dir)) != NULL) {
         struct stat stat_buf;
         /* Filter current directory and parent directory */
-        if (strcmp(ptr->d_name, ".") == 0 || strcmp(ptr->d_name, "..") == 0)
+        if (strcmp(ptr->d_name, ".") == 0 || strcmp(ptr->d_name, "..") == 0) {
             continue;
+        }
 
         rc = snprintf_s(path, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s", basePath, ptr->d_name);
         securec_check_intval(rc, (void)rc);
@@ -1259,7 +1300,7 @@ static int cmagent_unlock(void)
 {
     int ret = flock(fileno(g_lockfile), LOCK_UN);
     if (g_lockfile != NULL) {
-        fclose(g_lockfile);
+        (void)fclose(g_lockfile);
         g_lockfile = NULL;
     }
     return ret;
@@ -1275,28 +1316,31 @@ static int cmagent_lock(void)
         char content[MAX_PATH_LEN] = {0};
         g_lockfile = fopen(g_cmagentLockfile, PG_BINARY_W);
         if (g_lockfile == NULL) {
-            fprintf(stderr, "%s: can't open lock file \"%s\" : %s\n", g_progname, g_cmagentLockfile, strerror(errno));
+            (void)fprintf(stderr, "FATAL %s: can't open lock file \"%s\" : %s\n",
+                g_progname, g_cmagentLockfile, strerror(errno));
             exit(1);
         }
         (void)chmod(g_cmagentLockfile, S_IRUSR | S_IWUSR);
         if (fwrite(content, MAX_PATH_LEN, 1, g_lockfile) != 1) {
-            fclose(g_lockfile);
+            (void)fclose(g_lockfile);
             g_lockfile = NULL;
-            fprintf(
-                stderr, "%s: can't write lock file \"%s\" : %s\n", g_progname, g_cmagentLockfile, strerror(errno));
+            (void)fprintf(stderr,
+                "FATAL %s: can't write lock file \"%s\" : %s\n",
+                g_progname, g_cmagentLockfile, strerror(errno));
             exit(1);
         }
-        fclose(g_lockfile);
+        (void)fclose(g_lockfile);
         g_lockfile = NULL;
         (void)chmod(g_cmagentLockfile, S_IRUSR | S_IWUSR);
     }
     if ((g_lockfile = fopen(g_cmagentLockfile, PG_BINARY_W)) == NULL) {
-        fprintf(stderr, "%s: could not open lock file \"%s\" : %s\n", g_progname, g_cmagentLockfile, strerror(errno));
+        (void)fprintf(stderr, "FATAL %s: could not open lock file \"%s\" : %s\n",
+            g_progname, g_cmagentLockfile, strerror(errno));
         exit(1);
     }
 
     if (SetFdCloseExecFlag(g_lockfile) < 0) {
-        fprintf(stderr, "%s: can't set file flag\"%s\" : %s\n", g_progname, g_cmagentLockfile, strerror(errno));
+        (void)fprintf(stderr, "%s: can't set file flag\"%s\" : %s\n", g_progname, g_cmagentLockfile, strerror(errno));
     }
 
     ret = flock(fileno(g_lockfile), LOCK_EX | LOCK_NB);
@@ -1308,34 +1352,54 @@ void GetAgentConfigEx()
 {
     /* Create thread of compressed and remove task. */
     if (get_config_param(configDir, "enable_cn_auto_repair", g_enableCnAutoRepair, sizeof(g_enableCnAutoRepair)) < 0) {
-        fprintf(stderr, "get_config_param() get enable_cn_auto_repair fail.\n");
+        (void)fprintf(stderr, "get_config_param() get enable_cn_auto_repair fail.\n");
     }
 
     if (get_config_param(configDir, "enable_log_compress", g_enableLogCompress, sizeof(g_enableLogCompress)) < 0) {
-        fprintf(stderr, "get_config_param() get enable_log_compress fail.\n");
+        (void)fprintf(stderr, "get_config_param() get enable_log_compress fail.\n");
+    }
+
+    if (get_config_param(configDir, "enable_ssl", g_enableMesSsl, sizeof(g_enableMesSsl)) < 0) {
+        (void)fprintf(stderr, "get_config_param() get enable_ssl fail.\n");
     }
 
     if (get_config_param(configDir, "security_mode", g_enableOnlineOrOffline, sizeof(g_enableOnlineOrOffline)) < 0) {
-        fprintf(stderr, "get_config_param() get security_mode fail.\n");
+        (void)fprintf(stderr, "get_config_param() get security_mode fail.\n");
     }
 
     if (get_config_param(configDir, "unix_socket_directory", g_unixSocketDirectory, sizeof(g_unixSocketDirectory)) <
         0) {
-        fprintf(stderr, "get_config_param() get unix_socket_directory fail.\n");
+        (void)fprintf(stderr, "get_config_param() get unix_socket_directory fail.\n");
     } else {
         check_input_for_security(g_unixSocketDirectory);
     }
-
+    if (get_config_param(configDir, "voting_disk_path", g_votingDiskPath, sizeof(g_votingDiskPath)) < 0) {
+        (void)fprintf(stderr, "get_config_param() get voting_disk_path fail.\n");
+    }
+    canonicalize_path(g_votingDiskPath);
+    g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
     log_max_size = get_int_value_from_config(configDir, "log_max_size", 10240);
     log_saved_days = get_uint32_value_from_config(configDir, "log_saved_days", 90);
     log_max_count = get_uint32_value_from_config(configDir, "log_max_count", 10000);
+
+    g_cmaRhbItvl = get_uint32_value_from_config(configDir, "agent_rhb_interval", 1000);
+
+    g_sslOption.expire_time = get_uint32_value_from_config(configDir, "ssl_cert_expire_alert_threshold",
+        CM_DEFAULT_SSL_EXPIRE_THRESHOLD);
+    g_sslCertExpireCheckInterval = get_uint32_value_from_config(configDir, "ssl_cert_expire_check_interval",
+        SECONDS_PER_DAY);
+    if (g_sslOption.expire_time < CM_MIN_SSL_EXPIRE_THRESHOLD ||
+        g_sslOption.expire_time > CM_MAX_SSL_EXPIRE_THRESHOLD) {
+        write_runlog(ERROR, "invalid ssl expire alert threshold %u, must between %u and %u\n",
+            g_sslOption.expire_time, CM_MIN_SSL_EXPIRE_THRESHOLD, CM_MAX_SSL_EXPIRE_THRESHOLD);
+    }
 }
 
 static void GetAlarmConf()
 {
     char alarmPath[MAX_PATH_LEN] = {0};
     int rcs = GetHomePath(alarmPath, sizeof(alarmPath));
-    if (EOK != rcs) {
+    if (rcs != EOK) {
         write_runlog(ERROR, "Get GAUSSHOME failed, please check.\n");
         return;
     }
@@ -1358,11 +1422,20 @@ int get_agent_global_params_from_configfile()
     }
     GetAlarmConf();
     get_log_paramter(configDir);
+    GetStringFromConf(configDir, sys_log_path, sizeof(sys_log_path), "log_dir");
     check_input_for_security(sys_log_path);
     get_build_mode(configDir);
     get_start_mode(configDir);
     get_connection_mode(configDir);
     GetStringFromConf(configDir, g_environmentThreshold, sizeof(g_environmentThreshold), "environment_threshold");
+    
+    GetStringFromConf(configDir, g_dbServiceVip, sizeof(g_dbServiceVip), "db_service_vip");
+    if (g_dbServiceVip[0] == '\0') {
+        write_runlog(LOG, "parameter \"db_service_vip\" is not provided, please check!\n");
+    } else if (!IsIPAddrValid(g_dbServiceVip)) {
+        write_runlog(ERROR, "value of parameter \"db_service_vip\" is invalid, please check!\n");
+        return -1;
+    }
     agent_report_interval = get_uint32_value_from_config(configDir, "agent_report_interval", 1);
     agent_heartbeat_timeout = get_uint32_value_from_config(configDir, "agent_heartbeat_timeout", 8);
     agent_connect_timeout = get_uint32_value_from_config(configDir, "agent_connect_timeout", 1);
@@ -1382,24 +1455,26 @@ int get_agent_global_params_from_configfile()
     undocumentedVersion = get_uint32_value_from_config(configDir, "upgrade_from", 0);
     dilatation_shard_count_for_disk_capacity_alarm = get_uint32_value_from_config(
         configDir, "dilatation_shard_count_for_disk_capacity_alarm", dilatation_shard_count_for_disk_capacity_alarm);
-    if (get_config_param(configDir, "enable_dcf", g_agentEnableDcf, sizeof(g_agentEnableDcf)) < 0)
+    if (get_config_param(configDir, "enable_dcf", g_agentEnableDcf, sizeof(g_agentEnableDcf)) < 0) {
         write_runlog(ERROR, "get_config_param() get enable_dcf fail.\n");
+    }
 
-#ifndef ENABLE_PRIVATEGAUSS
+#ifndef ENABLE_MULTIPLE_NODES
     if (get_config_param(configDir, "enable_fence_dn", g_enableFenceDn, sizeof(g_enableFenceDn)) < 0)
         write_runlog(ERROR, "get_config_param() get enable_fence_dn fail.\n");
 #endif
+    GetEventTrigger();
 
 #ifdef __aarch64__
     agent_process_cpu_affinity = get_uint32_value_from_config(configDir, "process_cpu_affinity", 0);
     if (agent_process_cpu_affinity > CPU_AFFINITY_MAX) {
-        fprintf(stderr, "CM parameter 'process_cpu_affinity':%d is bigger than limit:%d\n",
+        (void)fprintf(stderr, "CM parameter 'process_cpu_affinity':%d is bigger than limit:%d\n",
             agent_process_cpu_affinity, CPU_AFFINITY_MAX);
         agent_process_cpu_affinity = 0;
     }
 
     total_cpu_core_num = get_nprocs();
-    fprintf(stdout, "total_cpu_core_num is %d, agent_process_cpu_affinity is %d\n",
+    (void)fprintf(stdout, "total_cpu_core_num is %d, agent_process_cpu_affinity is %d\n",
         total_cpu_core_num, agent_process_cpu_affinity);
 #endif
     GetAgentConfigEx();
@@ -1444,9 +1519,47 @@ static void InitNeedInfoRes()
     size_t doWriteLen = sizeof(CmDoWriteOper) * CM_MAX_DATANODE_PER_NODE;
     rc = memset_s(g_cmDoWriteOper, doWriteLen, 0, doWriteLen);
     securec_check_errno(rc, (void)rc);
-    size_t cascadeLen = sizeof(bool) * CM_MAX_DATANODE_PER_NODE;
-    rc = memset_s(g_dnCascade, cascadeLen, 0, cascadeLen);
+}
+
+static inline void InitResReportMsg()
+{
+    errno_t rc = memset_s(&g_resReportMsg, sizeof(OneNodeResStatusInfo), 0, sizeof(OneNodeResStatusInfo));
     securec_check_errno(rc, (void)rc);
+    InitResStatCommInfo(&g_resReportMsg.resStat);
+    (void)pthread_rwlock_init(&(g_resReportMsg.rwlock), NULL);
+}
+
+static void CreateCusResThread()
+{
+    if (IsCusResExistLocal()) {
+        CreateRecvClientMessageThread();
+        CreateSendMessageToClientThread();
+        CreateProcessMessageThread();
+        InitResReportMsg();
+        CreateDefResStatusCheckThread();
+        CreateCusResIsregCheckThread();
+    } else {
+        write_runlog(LOG, "[CLIENT] no resource, start client thread is unnecessary.\n");
+    }
+}
+
+static status_t CmaReadCusResConf()
+{
+    int ret = ReadCmConfJson((void*)write_runlog);
+    if (!IsReadConfJsonSuccess(ret)) {
+        write_runlog(FATAL, "read cm conf json failed, ret=%d, reason=\"%s\".\n", ret, ReadConfJsonFailStr(ret));
+        return CM_ERROR;
+    }
+    if (InitAllResStat() != CM_SUCCESS) {
+        write_runlog(FATAL, "init res status failed.\n");
+        return CM_ERROR;
+    }
+    if (InitLocalResConf() != CM_SUCCESS) {
+        write_runlog(FATAL, "init local res conf failed.\n");
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
 }
 
 int main(int argc, char** argv)
@@ -1459,14 +1572,14 @@ int main(int argc, char** argv)
 
     int status;
     uint32 i;
-    uint32 lenth = 0;
+    size_t lenth = 0;
     int *thread_index = NULL;
     errno_t rc;
     const int maxArgcNum = 2;
     bool &isSharedStorageMode = GetIsSharedStorageMode();
 
     if (argc > maxArgcNum) {
-        printf(_("the argv is error, try cm_agent -h for more information!\n"));
+        (void)printf(_("the argv is error, try cm_agent -h for more information!\n"));
         return -1;
     }
 
@@ -1479,14 +1592,14 @@ int main(int argc, char** argv)
             DoHelp();
             exit(0);
         } else if (strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0) {
-            puts("cm_agent " DEF_CM_VERSION);
+            (void)puts("cm_agent " DEF_CM_VERSION);
             exit(0);
-        } else if (0 == strcmp("normal", argv[1])) {
+        } else if (strcmp("normal", argv[1]) == 0) {
             g_isStart = true;
             lenth = strlen(argv[1]);
             rc = memset_s(argv[1], lenth, 0, lenth);
             securec_check_errno(rc, (void)rc);
-        } else if (0 == strcmp("abnormal", argv[1])) {
+        } else if (strcmp("abnormal", argv[1]) == 0) {
             g_isStart = false;
             lenth = strlen(argv[1]);
             rc = memset_s(argv[1], lenth, 0, lenth);
@@ -1499,22 +1612,23 @@ int main(int argc, char** argv)
     init_signal_mask();
     (void)sigprocmask(SIG_SETMASK, &block_sig, NULL);
     setup_signal_handle(SIGHUP, reload_cmagent_parameters);
+    setup_signal_handle(SIGUSR1, RecvSigusrSingle);
 #ifdef ENABLE_MULTIPLE_NODES
     setup_signal_handle(SIGUSR2, SetFlagToUpdatePortForCnDn);
 #endif
-    status = get_prog_path(argc, argv);
+    status = get_prog_path();
     if (status < 0) {
-        fprintf(stderr, "get_prog_path  failed!\n");
+        (void)fprintf(stderr, "get_prog_path  failed!\n");
         return -1;
     }
 
     pw = getpwuid(getuid());
     if (pw == NULL || pw->pw_name == NULL) {
-        fprintf(stderr, "can not get current user name.\n");
+        (void)fprintf(stderr, "can not get current user name.\n");
         return -1;
     }
 
-    status = CmSSlConfigInit(CM_TRUE);
+    status = CmSSlConfigInit(true);
     if (status < 0) {
         (void)fprintf(stderr, "read ssl cerfication files when start!\n");
         return -1;
@@ -1522,18 +1636,17 @@ int main(int argc, char** argv)
 
     status = read_config_file_check();
     if (status < 0) {
-        fprintf(stderr, "read_config_file_check failed when start!\n");
+        (void)fprintf(stderr, "read_config_file_check failed when start!\n");
         return -1;
     }
 
-    ReadResourceDefConfig(1);
     max_logic_cluster_name_len = (max_logic_cluster_name_len < strlen("logiccluster_name"))
                                      ? (uint32)strlen("logiccluster_name")
                                      : max_logic_cluster_name_len;
 
     (void)logfile_init();
     if (get_agent_global_params_from_configfile() == -1) {
-        fprintf(stderr, "Another cm_agent command is still running, start failed !\n");
+        (void)fprintf(stderr, "Another cm_agent command is still running, start failed !\n");
         return -1;
     }
     /* deal sys_log_path is null.save log to cmData dir. */
@@ -1580,13 +1693,8 @@ int main(int argc, char** argv)
 
     print_environ();
 
-    if (ReadResourceDefConfig(true) != CM_SUCCESS) {
-        (void)fprintf(stderr, "read cm_resource.json fail, exit!\n");
-        return -1;
-    }
-
     if (g_currentNode->datanodeCount > CM_MAX_DATANODE_PER_NODE) {
-        write_runlog(ERROR,
+        write_runlog(FATAL,
             "%u datanodes deployed on this node more than limit(%d)\n",
             g_currentNode->datanodeCount,
             CM_MAX_DATANODE_PER_NODE);
@@ -1600,8 +1708,15 @@ int main(int argc, char** argv)
 
     (void)atexit(stop_flag);
 
-    CmServerCmdProcessorInit();
+    if (CmaReadCusResConf() != CM_SUCCESS) {
+        exit(-1);
+    }
 
+    CmServerCmdProcessorInit();
+    status = CreateCheckNetworkThread();
+    if (status != 0) {
+        exit(status);
+    }
 #ifdef ENABLE_MULTIPLE_NODES
     if (g_currentNode->gtm == 1) {
         (void)pthread_rwlock_init(&(g_gtmReportMsg.lk_lock), NULL);
@@ -1620,12 +1735,12 @@ int main(int argc, char** argv)
     if (g_currentNode->datanodeCount > 0) {
         thread_index = (int *)malloc(sizeof(int) * g_currentNode->datanodeCount);
         if (thread_index == NULL) {
-            write_runlog(ERROR, "out of memory\n");
+            write_runlog(FATAL, "out of memory\n");
             exit(1);
         }
 
         for (i = 0; i < g_currentNode->datanodeCount; i++) {
-            thread_index[i] = i;
+            thread_index[i] = (int)i;
 #ifdef __aarch64__
             /* Get the initial primary datanode number */
             g_datanode_primary_num += (PRIMARY_DN == g_currentNode->datanode[i].datanodeRole) ? 1 : 0;
@@ -1651,22 +1766,18 @@ int main(int argc, char** argv)
     /* Get log path that is used in start&stop thread and log compress&remove thread. */
     status = cmagent_getenv("GAUSSLOG", g_logBasePath, sizeof(g_logBasePath));
     if (status != EOK) {
-        write_runlog(LOG, "get env GAUSSLOG fail.\n");
+        write_runlog(FATAL, "get env GAUSSLOG fail.\n");
         exit(status);
     }
     isSharedStorageMode = IsSharedStorageMode();
 
+    AllocCmaMsgQueueMemory();
+    AllQueueInit();
+    MsgPoolInit(MAX_MSG_BUF_POOL_SIZE, MAX_MSG_BUF_POOL_COUNT);
     st = InitSendDdbOperRes();
     if (st != CM_SUCCESS) {
-        write_runlog(ERROR, "failed to InitSendDdbOperRes.\n");
+        write_runlog(FATAL, "failed to InitSendDdbOperRes.\n");
         exit(-1);
-    }
-    if (!g_resConf.empty()) {
-        CreateRecvClientMessageThread();
-        CreateSendMessageToClientThread();
-        CreateProcessMessageThread();
-    } else {
-        write_runlog(LOG, "[CLIENT] no resource, start client thread is unnecessary.\n");
     }
     check_input_for_security(g_logBasePath);
     CreatePhonyDeadCheckThread();
@@ -1674,20 +1785,36 @@ int main(int argc, char** argv)
     CreateFaultDetectThread();
     CreateConnCmsPThread();
     CreateCheckUpgradeModeThread();
-    CreateSendCmsMsgThread();
+    CreateVotingDiskThread();
+    CreateCusResThread();
+    int err = CreateSendAndRecvCmsMsgThread();
+    if (err != 0) {
+        write_runlog(FATAL, "Failed to create send and recv thread: error %d\n", err);
+        exit(err);
+    }
+    err = CreateProcessSendCmsMsgThread();  // inst status report thread
+    if (err != 0) {
+        write_runlog(FATAL, "Failed to create send msg thread: error %d\n", err);
+        exit(err);
+    }
+    err = CreateProcessRecvCmsMsgThread();
+    if (err != 0) {
+        write_runlog(FATAL, "Failed to create process recv msg thread: error %d\n", err);
+        exit(err);
+    }
     CreateKerberosStatusCheckThread();
-    CreateDefResStatusCheckThread();
+    CreateDiskUsageCheckThread();
 
 #ifdef ENABLE_MULTIPLE_NODES
-    int err = CreateCheckNodeStatusThread();
+    err = CreateCheckNodeStatusThread();
     if (err != 0) {
-        write_runlog(ERROR, "Failed to create check node status thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create check node status thread: error %d\n", err);
         exit(err);
     }
     if (g_currentNode->coordinate > 0) {
         err = CreateCnDnConnectCheckThread();
         if (err != 0) {
-            write_runlog(ERROR, "Failed to create check conn status thread: error %d\n", err);
+            write_runlog(FATAL, "Failed to create check conn status thread: error %d\n", err);
             exit(err);
         }
         CreatePgxcNodeCheckThread();
@@ -1706,7 +1833,12 @@ int main(int argc, char** argv)
     }
 
     /* Parameter is on then start compress thread */
-    CreateLogFileCompressAndRemoveThread();
+    if (CreateLogFileCompressAndRemoveThread() != 0) {
+        write_runlog(FATAL, "CreateLogFileCompressAndRemoveThread failed!\n");
+        exit(-1);
+    }
+
+    CreateRhbCheckThreads();
 
     server_loop();
     (void)cmagent_unlock();
@@ -1723,24 +1855,24 @@ uint32 GetLibcommDefaultPort(uint32 base_port, int port_type)
 {
     /* DWS: default port, other: cn_port +2 */
     if (port_type == COMM_PORT_TYPE_DATA) {
-        if (security_mode == true)
+        if (security_mode) {
             return COMM_DATA_DFLT_PORT;
-        else
+        } else {
             return (base_port + 2);
+        }
     } else {
         /* DWS: default port, other: cn_port +3 */
-        if (security_mode == true)
+        if (security_mode) {
             return COMM_CTRL_DFLT_PORT;
-        else
+        } else {
             return (base_port + 3);
+        }
     }
 }
 
 bool ExecuteCmdWithResult(char *cmd, char *result, int resultLen)
 {
-    FILE *cmd_fd = NULL;
-
-    cmd_fd = popen(cmd, "r");
+    FILE *cmd_fd = popen(cmd, "r");
     if (cmd_fd == NULL) {
         write_runlog(ERROR, "popen %s failed, errno[%d].\n", cmd, errno);
         return false;
@@ -1763,7 +1895,7 @@ uint32 GetLibcommPort(const char *file_path, uint32 base_port, int port_type)
     char result[NAMEDATALEN] = {0};
     int retry_cnt = 0;
     uint32 port = 0;
-    char *Keywords = NULL;
+    const char *Keywords = NULL;
 
     if (port_type == COMM_PORT_TYPE_DATA) {
         Keywords = "comm_sctp_port";
@@ -1781,7 +1913,7 @@ uint32 GetLibcommPort(const char *file_path, uint32 base_port, int port_type)
     securec_check_intval(ret, (void)ret);
 
     while (retry_cnt < MAX_RETRY_TIME) {
-        if (ExecuteCmdWithResult(get_cmd, result, NAMEDATALEN) == false) {
+        if (!ExecuteCmdWithResult(get_cmd, result, NAMEDATALEN)) {
             retry_cnt++;
             continue;
         }
@@ -1802,4 +1934,182 @@ uint32 GetLibcommPort(const char *file_path, uint32 base_port, int port_type)
     port = GetLibcommDefaultPort(base_port, port_type);
     write_runlog(LOG, "No custom %s found, use the default:%u.\n", Keywords, port);
     return port;
+}
+
+static EventTriggerType GetTriggerTypeFromStr(const char *typeStr)
+{
+    for (int i = EVENT_START; i < EVENT_COUNT; ++i) {
+        if (strcmp(typeStr, triggerTypeStringMap[i].typeStr) == 0) {
+            return triggerTypeStringMap[i].type;
+        }
+    }
+    write_runlog(ERROR, "Event trigger type %s is not supported.\n", typeStr);
+    return EVENT_UNKNOWN;
+}
+
+/*
+ * check trigger item, key and value can't be empty and must be string,
+ * value must be shell script file, current user has right permission.
+ */
+static status_t CheckEventTriggersItem(const cJSON *item)
+{
+    if (!cJSON_IsString(item)) {
+        write_runlog(ERROR, "The trigger value must be string.\n");
+        return CM_ERROR;
+    }
+
+    char *valuePtr = item->valuestring;
+    if (valuePtr == NULL || strlen(valuePtr) == 0) {
+        write_runlog(ERROR, "The trigger value can't be empty.\n");
+        return CM_ERROR;
+    }
+
+    if (valuePtr[0] != '/') {
+        write_runlog(ERROR, "The trigger script path must be absolute path.\n");
+        return CM_ERROR;
+    }
+
+    const char *extention = ".sh";
+    const size_t shExtLen = strlen(extention);
+    size_t pathLen = strlen(valuePtr);
+    if (pathLen < shExtLen ||
+        strncmp((valuePtr + (pathLen - shExtLen)), extention, shExtLen) != 0) {
+        write_runlog(ERROR, "The trigger value %s is not shell script.\n", valuePtr);
+        return CM_ERROR;
+    }
+
+    if (access(valuePtr, F_OK) != 0) {
+        write_runlog(ERROR, "The trigger script %s is not a file or does not exist.\n", valuePtr);
+        return CM_ERROR;
+    }
+    if (access(valuePtr, R_OK | X_OK) != 0) {
+        write_runlog(ERROR, "Current user has no permission to access the "
+            "trigger script %s.\n", valuePtr);
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+/*
+ * event_triggers sample:
+ * {
+ *     "on_start": "/dir/on_start.sh",
+ *     "on_stop": "/dir/on_stop.sh",
+ *     "on_failover": "/dir/on_failover.sh",
+ *     "on_switchover": "/dir/on_switchover.sh"
+ * }
+ */
+static void ParseEventTriggers(const char *value)
+{
+    if (value == NULL || value[0] == 0) {
+        write_runlog(ERROR, "The value of event_triggers is empty.\n");
+        return;
+    }
+    if (strlen(value) > MAX_PATH_LEN) {
+        write_runlog(ERROR, "The string value \"%s\" is longer than 1024.\n", value);
+        return;
+    }
+
+    cJSON *root = NULL;
+    root = cJSON_Parse(value);
+    if (!root) {
+        write_runlog(ERROR, "The value of event_triggers is not a json.\n");
+        return;
+    }
+    if (cJSON_IsArray(root)) {
+        write_runlog(ERROR, "The value of event_triggers can't be a json item array.\n");
+        cJSON_Delete(root);
+        return;
+    }
+
+    int triggerNums[EVENT_COUNT] = {0};
+    cJSON *item = root->child;
+    /* when the new value is invalid, the old value should not be modify at all,
+     * so a temporary backup is needed, to avoid partial modifications
+     */
+    char *eventTriggers[EVENT_COUNT] = {NULL};
+    bool isValueInvalid = false;
+    while (item != NULL) {
+        if (CheckEventTriggersItem(item) == CM_ERROR) {
+            isValueInvalid = true;
+            break;
+        }
+
+        char *typeStr = item->string;
+        EventTriggerType type = GetTriggerTypeFromStr(typeStr);
+        if (type == EVENT_UNKNOWN) {
+            write_runlog(ERROR, "The trigger type %s does support.\n", typeStr);
+            isValueInvalid = true;
+            break;
+        }
+
+        char *valuePtr = item->valuestring;
+        ++triggerNums[type];
+        if (triggerNums[type] > 1) {
+            write_runlog(ERROR, "Duplicated trigger %s are supported.\n", typeStr);
+            isValueInvalid = true;
+            break;
+        }
+
+        eventTriggers[type] = (char*)CmMalloc(strlen(valuePtr));
+        int ret = snprintf_s(eventTriggers[type], MAX_PATH_LEN,
+            MAX_PATH_LEN - 1, "%s", valuePtr);
+        securec_check_intval(ret, (void)ret);
+        item = item->next;
+    }
+
+    if (isValueInvalid) {
+        for (int i = 0; i < EVENT_COUNT; ++i) {
+            if (eventTriggers[i] != NULL) {
+                FREE_AND_RESET(eventTriggers[i]);
+            }
+        }
+        cJSON_Delete(root);
+        return;
+    }
+
+    // copy the temporary backup to the global variable and clean up the temporary backup
+    for (int i = 0; i < EVENT_COUNT; ++i) {
+        if (eventTriggers[i] == NULL) {
+            if (g_eventTriggers[i] != NULL) {
+                FREE_AND_RESET(g_eventTriggers[i]);
+            }
+        } else {
+            if (g_eventTriggers[i] == NULL) {
+                g_eventTriggers[i] = (char*)CmMalloc(strlen(eventTriggers[i]));
+            }
+            int ret = snprintf_s(g_eventTriggers[i], MAX_PATH_LEN,
+                MAX_PATH_LEN - 1, "%s", eventTriggers[i]);
+            securec_check_intval(ret, (void)ret);
+            FREE_AND_RESET(eventTriggers[i]);
+            write_runlog(LOG, "Event trigger %s was added, script path = %s.\n",
+                triggerTypeStringMap[i].typeStr, g_eventTriggers[i]);
+        }
+    }
+    cJSON_Delete(root);
+}
+
+void GetEventTrigger()
+{
+    char eventTriggerString[MAX_PATH_LEN] = {0};
+    if (get_config_param(configDir, "event_triggers", eventTriggerString, MAX_PATH_LEN) < 0) {
+        write_runlog(ERROR, "get_config_param() get event_triggers fail.\n");
+        return;
+    }
+    ParseEventTriggers(eventTriggerString);
+}
+
+void ExecuteEventTrigger(const EventTriggerType triggerType)
+{
+    if (g_eventTriggers[triggerType] == NULL) {
+        return;
+    }
+    write_runlog(LOG, "Event trigger %s was triggered.\n", triggerTypeStringMap[triggerType].typeStr);
+    char execTriggerCmd[MAX_COMMAND_LEN] = {0};
+    int rc = snprintf_s(execTriggerCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
+        SYSTEMQUOTE "%s >> %s 2>&1 &" SYSTEMQUOTE, g_eventTriggers[triggerType], system_call_log);
+    securec_check_intval(rc, (void)rc);
+    write_runlog(LOG, "event trigger command: \"%s\".\n", execTriggerCmd);
+    RunCmd(execTriggerCmd);
 }

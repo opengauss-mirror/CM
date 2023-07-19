@@ -25,15 +25,22 @@
 #include "cms_alarm.h"
 #include "cms_ddb.h"
 #include "cms_common.h"
+#include "cms_common_res.h"
 #include "cms_global_params.h"
-#include "cms_monitor_main.h"
 #include "cms_process_messages.h"
 #include "cms_write_dynamic_config.h"
+#include "cms_arbitrate_cluster.h"
+#include "cjson/cJSON.h"
+#include "cms_monitor_main.h"
 
 /* cluster unbalance check interval */
 const int cluster_unbalance_check_interval = 10;
 static int g_cluster_unbalance_check_interval = cluster_unbalance_check_interval;
 static const uint32 CHECK_SLEEP_INTERVAL = 5;
+static const uint32 MAX_VOTE_NUM = 2;
+static const uint32 DDB_STATUS_CHECK_INTERVAL = 2;
+static const uint32 CMS_ID_INDEX_ONE = 1;
+static const uint32 CMS_ID_INDEX_TWO = 2;
 static void RmAllBlackFile(const char *blackFile);
 
 using MonitorContext = struct StMonitorContext {
@@ -44,7 +51,7 @@ using MonitorContext = struct StMonitorContext {
 static void coordinator_status_reset(int group_index, int member_index)
 {
     write_runlog(LOG,
-        "coordinator_status_reset: InstanceId[%d][%d]=%d.\n",
+        "coordinator_status_reset: InstanceId[%d][%d]=%u.\n",
         group_index,
         member_index,
         g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceId);
@@ -68,13 +75,13 @@ static void coordinator_status_reset(int group_index, int member_index)
         g_centralNode.node = 0;
         g_centralNode.recover = 1;
         write_runlog(LOG,
-            "clear ccn info, %d.\n",
+            "clear ccn info, %u.\n",
             g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceId);
     }
     (void)pthread_mutex_unlock(&g_centralNode.mt_lock);
 }
 
-static void gtm_status_reset(int group_index, int member_index, bool isNodeStop)
+static void gtm_status_reset(uint32 group_index, int member_index, bool isNodeStop)
 {
     cm_gtm_replconninfo *local_status =
         &g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[member_index].local_status;
@@ -83,7 +90,7 @@ static void gtm_status_reset(int group_index, int member_index, bool isNodeStop)
     }
     if (local_status->local_role != INSTANCE_ROLE_UNKNOWN) {
         write_runlog(LOG,
-            "gtm_status_reset: InstanceId[%d][%d]=%d.\n",
+            "gtm_status_reset: InstanceId[%u][%d]=%u.\n",
             group_index, member_index,
             g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceId);
         local_status->local_role = INSTANCE_ROLE_UNKNOWN;
@@ -101,7 +108,33 @@ static void gtm_status_reset(int group_index, int member_index, bool isNodeStop)
 }
 #endif
 
-static void datanode_status_reset(int group_index, int member_index, bool isNodeStop)
+static bool CheckRaiseArbitrateInterval(uint32 groupIdx)
+{
+    /* when dn is doing failover, or the group has primary dn, not need to raise arbitrate interval */
+    cm_instance_datanode_report_status *dnReport =
+        g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
+    for (int32 i = 0; i < g_instance_role_group_ptr[groupIdx].count; ++i) {
+        if (dnReport[i].arbitrateFlag) {
+            write_runlog(LOG, "instId(%u) is doing failover, cannot raise arbitrate interval.\n",
+                GetInstanceIdInGroup(groupIdx, i));
+            return false;
+        }
+        if (dnReport[i].local_status.db_state == INSTANCE_HA_STATE_PROMOTING) {
+            write_runlog(LOG, "instId(%u) is promoting, cannot raise arbitrate interval.\n",
+                GetInstanceIdInGroup(groupIdx, i));
+            return false;
+        }
+        if (dnReport[i].local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+            dnReport[i].local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
+            write_runlog(
+                DEBUG1, "instId(%u) is primary, cannot raise arbitrate interval.\n", GetInstanceIdInGroup(groupIdx, i));
+            return false;
+        }
+    }
+    return true;
+}
+
+static void datanode_status_reset(uint32 group_index, int member_index, bool isNodeStop)
 {
     if (g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceType != INSTANCE_TYPE_DATANODE) {
         return;
@@ -111,15 +144,14 @@ static void datanode_status_reset(int group_index, int member_index, bool isNode
     cm_instance_datanode_report_status *dnReportStatus =
         g_instance_group_report_status_ptr[group_index].instance_status.data_node_member;
     dnReportStatus[member_index].local_status.local_role = INSTANCE_ROLE_UNKNOWN;
-    int count = g_instance_role_group_ptr[group_index].count;
-    if (!g_clusterStarting) {
+    if (!g_clusterStarting && CheckRaiseArbitrateInterval(group_index)) {
         g_instance_group_report_status_ptr[group_index].instance_status.time += max_arbitrate_interval;
-        for (int i = 0; i < count; ++i) {
+        for (int32 i = 0; i < g_instance_role_group_ptr[group_index].count; ++i) {
             dnReportStatus[i].arbiTime += max_arbitrate_interval;
         }
     }
     write_runlog(LOG,
-        "datanode_status_reset, arbitrate time is : %u, InstanceId[%d][%d]=%u, local_arbitrate_time=%u.\n",
+        "datanode_status_reset, arbitrate time is : %u, InstanceId[%u][%d]=%u, local_arbitrate_time=%u.\n",
         g_instance_group_report_status_ptr[group_index].instance_status.time, group_index, member_index,
         g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceId,
         dnReportStatus[member_index].arbiTime);
@@ -130,6 +162,8 @@ static void datanode_status_reset(int group_index, int member_index, bool isNode
     g_instance_group_report_status_ptr[group_index]
         .instance_status.data_node_member[member_index]
         .local_status.buildReason = INSTANCE_HA_DATANODE_BUILD_REASON_UNKNOWN;
+
+    g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index].floatIp.count = 0;
 
     rc = memset_s(&g_instance_group_report_status_ptr[group_index]
         .instance_status.data_node_member[member_index] .sender_status[0].sender_sent_location,
@@ -173,15 +207,18 @@ static void FindParam(FILE *fd, char* buf, size_t maxLen, const char *srcParam, 
         buf[maxLen - 1] = 0;
 
         /* skip # comment of agent configure file */
-        if (is_comment_line(buf) == 1)
+        if (is_comment_line(buf) == 1) {
             continue;
+        }
 
         subStr = strstr(buf, srcParam);
-        if (subStr == NULL)
+        if (subStr == NULL) {
             continue;
+        }
         subStr = strtok_r(buf, "=", &saveptr1);
-        if (subStr == NULL)
+        if (subStr == NULL) {
             continue;
+        }
 
         if (strcmp(trim(subStr), srcParam) == 0) {
             return;
@@ -189,25 +226,22 @@ static void FindParam(FILE *fd, char* buf, size_t maxLen, const char *srcParam, 
     }
 }
 
-/*
- *	read parameter from server configure file
- */
 void get_config_param(const char *config_file, const char *srcParam, char *destParam, int destLen)
 {
     errno_t rc;
     char buf[MAXPGPATH];
-    FILE *fd = NULL;
     char *subStr = NULL;
     char *saveptr1 = NULL;
 
     if (config_file == NULL || srcParam == NULL || destParam == NULL) {
-        printf("Get parameter failed,confDir=%s,srcParam = %s, destParam=%s\n", config_file, srcParam, destParam);
+        (void)printf(
+            "FATAL Get parameter failed,confDir=%s,srcParam = %s, destParam=%s\n", config_file, srcParam, destParam);
         exit(1);
     }
 
-    fd = fopen(config_file, "r");
+    FILE *fd = fopen(config_file, "r");
     if (fd == NULL) {
-        printf("Open configure file failed \n");
+        (void)printf("FATAL Open configure file failed \n");
         exit(1);
     }
 
@@ -226,15 +260,16 @@ void get_config_param(const char *config_file, const char *srcParam, char *destP
         }
         if (subStr != NULL) {
             if (strlen(trim(subStr)) + 1 > (size_t)destLen) {
-                write_runlog(ERROR, "The value of parameter %s is invalid, subStr is %s.\n", srcParam, subStr);
+                write_runlog(FATAL, "The value of parameter %s is invalid, subStr is %s.\n", srcParam, subStr);
+                (void)fclose(fd);
                 exit(1);
             }
             rc = memcpy_s(destParam, strlen(trim(subStr)) + 1, trim(subStr), strlen(trim(subStr)) + 1);
-            securec_check_errno(rc, (void)rc);
+            securec_check_errno(rc, (void)fclose(fd));
         }
     }
 
-    fclose(fd);
+    (void)fclose(fd);
 }
 /**
  * @brief reload cm_server parameters from cm_server.conf without kill and restart the cm_server process
@@ -262,20 +297,22 @@ static void ReloadParametersFromConfigfile()
     cmserver_ha_connect_timeout = (uint32)get_int_value_from_config(configDir, "cmserver_ha_connect_timeout", 2);
     instance_failover_delay_timeout =
         (uint32)get_int_value_from_config(configDir, "instance_failover_delay_timeout", 0);
-    datastorage_threshold_check_interval = get_int_value_from_config(
-        configDir, "datastorage_threshold_check_interval", datastorage_threshold_check_interval);
+    datastorage_threshold_check_interval =
+        get_uint32_value_from_config(configDir, "datastorage_threshold_check_interval", 10);
+    g_readOnlyThreshold = get_uint32_value_from_config(configDir, "datastorage_threshold_value_check", 85);
     max_datastorage_threshold_check = get_int_value_from_config(configDir, "max_datastorage_threshold_check", 1800);
     az_switchover_threshold = get_int_value_from_config(configDir, "az_switchover_threshold", 100);
     az_check_and_arbitrate_interval = get_int_value_from_config(configDir, "az_check_and_arbitrate_interval", 2);
     az1_and_az2_connect_check_interval = get_int_value_from_config(configDir, "az_connect_check_interval", 60);
     az1_and_az2_connect_check_delay_time = get_int_value_from_config(configDir, "az_connect_check_delay_time", 150);
     phony_dead_effective_time = get_int_value_from_config(configDir, "phony_dead_effective_time", 5);
+    if (phony_dead_effective_time <= 0) {
+        phony_dead_effective_time = DEFAULT_PHONY_DEAD_EFFECTIVE_TIME;
+    }
     instance_phony_dead_restart_interval =
         get_int_value_from_config(configDir, "instance_phony_dead_restart_interval", 21600);
     enable_az_auto_switchover = get_int_value_from_config(configDir, "enable_az_auto_switchover", 1);
-    if (instance_phony_dead_restart_interval < HALF_HOUR) {
-        instance_phony_dead_restart_interval = HALF_HOUR;
-    }
+
     cmserver_demote_delay_on_etcd_fault =
         get_int_value_from_config(configDir, "cmserver_demote_delay_on_etcd_fault", 8);
     cm_auth_method = get_authentication_type(configDir);
@@ -284,9 +321,7 @@ static void ReloadParametersFromConfigfile()
     if (switch_rto < min_switch_rto) {
         switch_rto = min_switch_rto;
     }
-    GetBackupOpenConfig();
-    g_clusterInstallType = (ClusterInstallType)get_int_value_from_config(configDir, "install_type",
-        (int)INSTALL_TYPE_DEFAULT);
+
     g_clusterStartingArbitDelay =
         (uint32)get_int_value_from_config(configDir, "cluster_starting_aribt_delay", CLUSTER_STARTING_ARBIT_DELAY);
 
@@ -302,70 +337,54 @@ static void ReloadParametersFromConfigfile()
         securec_check_errno(rcs, (void)rcs);
         write_runlog(FATAL, "invalid value for parameter \" enable_transaction_read_only \" in %s.\n", configDir);
     }
-    get_config_param(configDir,
-        "datastorage_threshold_value_check",
-        g_enableSetReadOnlyThreshold,
-        sizeof(g_enableSetReadOnlyThreshold));
-    if (strtol(g_enableSetReadOnlyThreshold, NULL, 10) == 0) {
-        rcs = strcpy_s(g_enableSetReadOnlyThreshold, sizeof(g_enableSetReadOnlyThreshold), "85");
-        securec_check_errno(rcs, (void)rcs);
-        write_runlog(FATAL, "invalid value for parameter \" datastorage_threshold_value_check \" in %s.\n", configDir);
-    }
-    get_config_param(configDir, "enable_dcf", g_enableDcf, sizeof(g_enableDcf));
     GetDdbArbiCfg(RELOAD_PARAMTER);
     GetDelayArbitTimeFromConf();
+    GetDelayArbitClusterTimeFromConf();
+    g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
+    g_agentNetworkTimeout = get_uint32_value_from_config(configDir, "agent_network_timeout", 6);
+    GetDnArbitrateMode();
+
+    if (g_cm_server_num == CMS_ONE_PRIMARY_ONE_STANDBY) {
+        GetTwoNodesArbitrateParams();
+    }
 
 #ifdef ENABLE_MULTIPLE_NODES
     write_runlog(LOG,
         "reload cm_server parameters:\n"
         "  log_min_messages=%d, maxLogFileSize=%d, sys_log_path=%s, \n  alarm_component=%s, "
         "alarm_report_interval=%d, \n"
-        "  instance_heartbeat_timeout=%d, coordinator_heartbeat_timeout=%d, "
-        "cmserver_ha_heartbeat_timeout=%d, cmserver_self_vote_timeout=%d,\n"
-        "  cmserver_ha_status_interval=%d, cmserver_ha_connect_timeout=%d, "
-        "instance_failover_delay_timeout=%d, datastorage_threshold_check_interval=%d,\n"
-        "  max_datastorage_threshold_check=%d, enableSetReadOnly=%s, enableSetReadOnlyThreshold=%s, "
-        "switch_rto=%d, force_promote=%d, backup_open=%d, cluster_starting_aribt_delay=%u, "
-        "enable_e2e_rto=%u, g_clusterInstallType=%d, g_delayArbiTime=%u.\n",
+        "  instance_heartbeat_timeout=%u, coordinator_heartbeat_timeout=%u, "
+        "cmserver_ha_heartbeat_timeout=%u, cmserver_self_vote_timeout=%u,\n"
+        "  cmserver_ha_status_interval=%u, cmserver_ha_connect_timeout=%u, "
+        "instance_failover_delay_timeout=%u, datastorage_threshold_check_interval=%d,\n"
+        "  max_datastorage_threshold_check=%d, enableSetReadOnly=%s, enableSetReadOnlyThreshold=%u, "
+        "switch_rto=%d, force_promote=%d, cluster_starting_aribt_delay=%u, "
+        "enable_e2e_rto=%u, g_delayArbiTime=%u, g_clusterArbiTime=%d.\n",
         log_min_messages, maxLogFileSize, sys_log_path, g_alarmComponentPath, g_alarmReportInterval,
         instance_heartbeat_timeout, coordinator_heartbeat_timeout, g_ddbArbicfg.haHeartBeatTimeOut,
         cmserver_self_vote_timeout, g_ddbArbicfg.haStatusInterval, cmserver_ha_connect_timeout,
         instance_failover_delay_timeout, datastorage_threshold_check_interval,
-        max_datastorage_threshold_check, g_enableSetReadOnly, g_enableSetReadOnlyThreshold,
-        switch_rto, force_promote, backup_open, g_clusterStartingArbitDelay,
-        g_enableE2ERto, (int)g_clusterInstallType, g_delayArbiTime);
+        max_datastorage_threshold_check, g_enableSetReadOnly, g_readOnlyThreshold,
+        switch_rto, force_promote, g_clusterStartingArbitDelay,
+        g_enableE2ERto, g_delayArbiTime, g_clusterArbiTime);
 #else
     write_runlog(LOG,
         "reload cm_server parameters:\n"
         "  log_min_messages=%d, maxLogFileSize=%d, sys_log_path=%s, \n  alarm_component=%s, "
         "alarm_report_interval=%d, \n"
-        "  instance_heartbeat_timeout=%d, cmserver_ha_heartbeat_timeout=%d, "
-        "cmserver_self_vote_timeout=%d,\n"
-        "  cmserver_ha_status_interval=%d, cmserver_ha_connect_timeout=%d, instance_failover_delay_timeout=%d, "
+        "  instance_heartbeat_timeout=%u, cmserver_ha_heartbeat_timeout=%u, "
+        "cmserver_self_vote_timeout=%u,\n"
+        "  cmserver_ha_status_interval=%u, cmserver_ha_connect_timeout=%u, instance_failover_delay_timeout=%u, "
         "datastorage_threshold_check_interval=%d,\n"
-        "  max_datastorage_threshold_check=%d, enableSetReadOnly=%s, enableSetReadOnlyThreshold=%s, "
-        "switch_rto=%d, force_promote=%d, backup_open=%d, cluster_starting_aribt_delay=%u, enable_e2e_rto=%u, "
-        "g_clusterInstallType=%d, g_delayArbiTime=%u.\n",
-        log_min_messages,
-        maxLogFileSize,
-        sys_log_path,
-        g_alarmComponentPath,
-        g_alarmReportInterval,
-        instance_heartbeat_timeout,
-        g_ddbArbicfg.haHeartBeatTimeOut,
-        cmserver_self_vote_timeout,
-        g_ddbArbicfg.haStatusInterval,
-        cmserver_ha_connect_timeout,
-        instance_failover_delay_timeout,
-        datastorage_threshold_check_interval,
-        max_datastorage_threshold_check,
-        g_enableSetReadOnly,
-        g_enableSetReadOnlyThreshold,
-        switch_rto,
-        force_promote,
-        backup_open,
-        g_clusterStartingArbitDelay,
-        g_enableE2ERto, (int)g_clusterInstallType, g_delayArbiTime);
+        "  max_datastorage_threshold_check=%d, enableSetReadOnly=%s, enableSetReadOnlyThreshold=%u, "
+        "switch_rto=%d, force_promote=%d, cluster_starting_aribt_delay=%u, enable_e2e_rto=%u, "
+        "g_delayArbiTime=%u, g_clusterArbiTime=%d.\n",
+        log_min_messages, maxLogFileSize, sys_log_path, g_alarmComponentPath, g_alarmReportInterval,
+        instance_heartbeat_timeout, g_ddbArbicfg.haHeartBeatTimeOut, cmserver_self_vote_timeout,
+        g_ddbArbicfg.haStatusInterval, cmserver_ha_connect_timeout, instance_failover_delay_timeout,
+        datastorage_threshold_check_interval, max_datastorage_threshold_check, g_enableSetReadOnly,
+        g_readOnlyThreshold, switch_rto, force_promote, g_clusterStartingArbitDelay,
+        g_enableE2ERto, g_delayArbiTime, g_clusterArbiTime);
 #endif
 }
 
@@ -491,6 +510,15 @@ static void CheckHB()
     }
 }
 
+static inline void CheckDdbClusterStatusOn2Nodes()
+{
+    if (g_ddbNetworkIsolationTimeout > 0) {
+        g_ddbNetworkIsolationTimeout--;
+    } else {
+        g_ddbNetworkIsolationTimeout = 0;
+    }
+}
+
 #ifdef ENABLE_MULTIPLE_NODES
 static void DoCNTimeout(uint32 groupIdx, int memIdx)
 {
@@ -499,7 +527,7 @@ static void DoCNTimeout(uint32 groupIdx, int memIdx)
     cm_instance_role_status *instanceRoleStatus = &g_instance_role_group_ptr[groupIdx].instanceMember[memIdx];
 
     if (instanceReportStatus->coordinatemember.status.status != INSTANCE_ROLE_UNKNOWN) {
-        coordinator_status_reset(groupIdx, memIdx);
+        coordinator_status_reset((int)groupIdx, memIdx);
     }
 
     if (((coordinator_heartbeat_timeout == 0 && g_cmd_disable_coordinatorId == instanceRoleStatus->instanceId) ||
@@ -508,13 +536,13 @@ static void DoCNTimeout(uint32 groupIdx, int memIdx)
         (instanceReportStatus->coordinatemember.status.status == INSTANCE_ROLE_UNKNOWN) &&
         (instanceReportStatus->coordinatemember.status.db_state == INSTANCE_HA_STATE_STARTING)) {
         write_runlog(LOG,
-            "CN heartbeat timeout, reset CN. InstanceId[%d][%d]=%d, heat_beat=%d, "
-            "coordinator_heartbeat_timeout=%d, status=%d, db_state=%d\n",
+            "CN heartbeat timeout, reset CN. InstanceId[%u][%d]=%u, heat_beat=%d, "
+            "coordinator_heartbeat_timeout=%u, status=%d, db_state=%d\n",
             groupIdx, memIdx, instanceRoleStatus->instanceId, instanceCommandStatus->heat_beat,
             coordinator_heartbeat_timeout, instanceReportStatus->coordinatemember.status.status,
             instanceReportStatus->coordinatemember.status.db_state);
 
-        coordinator_status_reset(groupIdx, memIdx);
+        coordinator_status_reset((int)groupIdx, memIdx);
     }
 }
 #endif
@@ -527,7 +555,7 @@ static void DoCommandTimeout(uint32 i, int j)
 
     if ((instanceCommandStatus->heat_beat - (int)instance_heartbeat_timeout) % 5 == 0) {
         write_runlog(LOG,
-            "instance(%d) heartbeat timeout, heartbeat:%d, threshold:%d\n",
+            "instance(%u) heartbeat timeout, heartbeat:%d, threshold:%u\n",
             instanceRoleStatus->instanceId,
             instanceCommandStatus->heat_beat,
             instance_heartbeat_timeout);
@@ -536,7 +564,7 @@ static void DoCommandTimeout(uint32 i, int j)
     uint32 checkNode = instanceRoleStatus->node;
     g_stopNodeIter = g_stopNodes.find(checkNode);
     if (g_stopNodeIter != g_stopNodes.end()) {
-        write_runlog(LOG, "node(%d) is stopped.\n", checkNode);
+        write_runlog(LOG, "node(%u) is stopped.\n", checkNode);
         datanode_status_reset(i, j, true);
 #ifdef ENABLE_MULTIPLE_NODES
         gtm_status_reset(i, j, true);
@@ -571,7 +599,7 @@ static void DoInstancePromote(uint32 i, int j)
         if (dataNodeMember->local_status.local_role == INSTANCE_ROLE_PRIMARY &&
             dataNodeMember->local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
             instanceArbitrateAtatus->promoting_timeout = 0;
-            write_runlog(LOG, "instance %d failover successful.\n", instanceRoleStatus->instanceId);
+            write_runlog(LOG, "instance %u failover successful.\n", instanceRoleStatus->instanceId);
         } else if (instanceArbitrateAtatus->promoting_timeout == 1) {
             if (dataNodeMember->local_status.db_state == INSTANCE_HA_STATE_NEED_REPAIR) {
                 instanceArbitrateAtatus->promoting_timeout = 0;
@@ -580,7 +608,7 @@ static void DoInstancePromote(uint32 i, int j)
                 instanceCommandStatus->role_changed = INSTANCE_ROLE_CHANGED;
                 (void)WriteDynamicConfigFile(false);
                 write_runlog(LOG,
-                    "instance role is changed, instance %d is standby, instance %d is primary.\n",
+                    "instance role is changed, instance %u is standby, instance %u is primary.\n",
                     instanceRoleStatus->instanceId,
                     g_instance_role_group_ptr[i].instanceMember[other_member_index].instanceId);
             } else if (dataNodeMember->local_status.db_state != INSTANCE_HA_STATE_PROMOTING) {
@@ -599,7 +627,7 @@ static void UpdateCommandStatus(uint32 i, int j)
     cm_instance_role_status *instanceRoleStatus = &g_instance_role_group_ptr[i].instanceMember[j];
 
     instanceCommandStatus->heat_beat++;
-    write_runlog(DEBUG5, "instance(%u) heartbeat is %d monitor count is %d!\n",
+    write_runlog(DEBUG5, "instance(%u) heartbeat is %d monitor count is %u!\n",
         instanceRoleStatus->instanceId,
         instanceCommandStatus->heat_beat,
         instance_heartbeat_timeout);
@@ -685,7 +713,7 @@ static void CheckOneMember(uint32 i, int j)
 
 #ifdef ENABLE_MULTIPLE_NODES
     if (instanceCommandStatus->time_out <= 0) {
-        if (instanceCommandStatus->pengding_command != MSG_CM_AGENT_NOTIFY_CN) {
+        if (instanceCommandStatus->pengding_command != (int)MSG_CM_AGENT_NOTIFY_CN) {
             CleanCommand(i, j);
         }
     }
@@ -712,8 +740,9 @@ static void CheckOneInstanceGroup(uint32 i)
         instanceReportStatus->coordinatemember.auto_delete_delay_time++;
         instanceReportStatus->coordinatemember.cma_fault_timeout_to_killcn++;
 
-        if (instanceReportStatus->coordinatemember.disable_time_out > 0)
+        if (instanceReportStatus->coordinatemember.disable_time_out > 0) {
             instanceReportStatus->coordinatemember.disable_time_out--;
+        }
     }
 
     for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
@@ -736,14 +765,14 @@ static void CheckAllUDF()
         (void)pthread_rwlock_wrlock(&(g_fenced_UDF_report_status_ptr[i].lk_lock));
         g_fenced_UDF_report_status_ptr[i].heart_beat++;
         write_runlog(DEBUG5,
-            "fenced UDF(%u) heartbeat is %d monitor count is %d!\n",
+            "fenced UDF(%u) heartbeat is %d monitor count is %u!\n",
             i,
             g_fenced_UDF_report_status_ptr[i].heart_beat,
             instance_heartbeat_timeout);
 
         if (g_fenced_UDF_report_status_ptr[i].heart_beat > (int)instance_heartbeat_timeout) {
             write_runlog(DEBUG1,
-                "fenced UDF(%u) heartbeat timeout, heartbeat:%d, threshold:%d.\n",
+                "fenced UDF(%u) heartbeat timeout, heartbeat:%d, threshold:%u.\n",
                 i,
                 g_fenced_UDF_report_status_ptr[i].heart_beat,
                 instance_heartbeat_timeout);
@@ -791,16 +820,16 @@ static void UpdateCheckInterval(MonitorContext *ctx)
 
 static void SetResStatUnknown(uint32 nodeId)
 {
-    for (uint32 i = 0; i < (uint32)g_resStatus.size(); ++i) {
+    write_runlog(LOG, "nodeId(%u) report res stat heartbeat abnormal, set res status CM_RES_STAT_UNKNOWN.\n", nodeId);
+    for (uint32 i = 0; i < CusResCount(); ++i) {
         (void)pthread_rwlock_wrlock(&g_resStatus[i].rwlock);
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if ((g_resStatus[i].status.resStat[j].nodeId == nodeId) &&
                 (g_resStatus[i].status.resStat[j].status != (uint32)CM_RES_STAT_UNKNOWN)) {
-                write_runlog(LOG, "res(%s) inst(%u) heartbeat abnormal, set status CM_RES_STAT_UNKNOWN.\n",
-                             g_resStatus[i].status.resName, g_resStatus[i].status.resStat[j].cmInstanceId);
                 g_resStatus[i].status.resStat[j].status = (uint32)CM_RES_STAT_UNKNOWN;
                 ++g_resStatus[i].status.version;
                 ProcessReportResChangedMsg(false, g_resStatus[i].status);
+                SaveOneResStatusToDdb(&g_resStatus[i].status);
             }
         }
         (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
@@ -809,15 +838,331 @@ static void SetResStatUnknown(uint32 nodeId)
 
 static void CheckAllResReportByNode()
 {
-    static const uint32 resNormalTimeout = 5;
     for (uint32 i = 0; i < g_node_num; ++i) {
         uint32 inter = GetResStatReportInter(g_node[i].node);
-        if (inter > resNormalTimeout) {
+        if (inter > g_agentNetworkTimeout) {
             SetResStatUnknown(g_node[i].node);
         } else {
             SetResStatReportInter(g_node[i].node);
         }
     }
+}
+
+static void CheckAllIsregByNode()
+{
+    UpdateCheckListAfterTimeout();
+    UpdateReportInter();
+}
+
+static void CheckMaxCluster()
+{
+    SetDelayArbiClusterTime();
+    CheckMaxClusterHeartbeartValue();
+}
+
+static status_t IsPeerCmsReachableOn2Nodes()
+{
+    if (!ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes)) {
+        write_runlog(ERROR, "should be called by two node cluster with enabling auto failover only.\n");
+        return CM_ERROR;
+    }
+
+    // create socket
+    int socketFd = socket(AF_INET, SOCK_STREAM, 0);
+    if (socketFd == -1) {
+        write_runlog(ERROR, "could not create socket.\n");
+        return CM_ERROR;
+    }
+
+    struct timeval tv = { 0, 0 };
+    tv.tv_sec = CM_TCP_TIMEOUT;
+    (void)setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+    (void)setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
+
+    struct sockaddr_in sockAddr;
+    status_t ret = CM_SUCCESS;
+    for (uint32 i = 0; i < g_cm_server_num; i++) {
+        if (g_node[i].cmServerId == g_currentNode->cmServerId) {
+            continue;
+        }
+
+        // got peer cms info
+        sockAddr.sin_addr.s_addr = inet_addr(g_node[i].cmServerLocalHAIP[0]);
+        sockAddr.sin_family = AF_INET;
+        sockAddr.sin_port = htons(g_node[i].cmServerLocalHAPort);
+
+        // Connect to peer cms dcc ip:port
+        if (connect(socketFd , (struct sockaddr *)&sockAddr , sizeof(sockAddr)) < 0) {
+            write_runlog(LOG, "could not connect to peer cms %s:%d.\n",
+                g_node[i].cmServerLocalHAIP[0], g_node[i].cmServerLocalHAPort);
+            ret = CM_ERROR;
+        } else {
+            write_runlog(DEBUG1, "connect to peer cms %s:%d successfuly.\n",
+                g_node[i].cmServerLocalHAIP[0], g_node[i].cmServerLocalHAPort);
+            ret = CM_SUCCESS;
+        }
+
+        break;
+    }
+
+    close(socketFd);
+    return ret;
+}
+
+static status_t GetClusterInfoFromDDb(char *info, int outLen)
+{
+    if (g_inMaintainMode) {
+        write_runlog(LOG, "in maintain mode, can't do ddb cmd.\n");
+        return CM_SUCCESS;
+    }
+
+    char cmd[DCC_CMD_MAX_LEN] = {0};
+    char errMsg[ERR_MSG_LENGTH] = {0};
+    status_t ret = CM_SUCCESS;
+
+    errno_t rc = snprintf_s(cmd, DCC_CMD_MAX_LEN, DCC_CMD_MAX_LEN - 1, " %s", CM_DDB_CLUSTER_INFO_CMD);
+    securec_check_intval(rc, (void)rc);
+    ret = DoDdbExecCmd(cmd, info, &outLen, errMsg, DCC_CMD_MAX_OUTPUT_LEN);
+    if (ret != CM_SUCCESS) {
+        write_runlog(ERROR, "get ddb cluster info failed. error: %s\n", errMsg);
+    }
+
+    return ret;
+}
+
+static status_t IsPeerApplyIndexChanged(cJSON *nodes)
+{
+    static int peerApplyIndex = 0;
+    int prevPeerApplyIndex = peerApplyIndex;
+    cJSON *applyIndex = NULL;
+
+    if (g_currentNode->cmServerId == CMS_ID_INDEX_ONE) {
+        applyIndex = cJSON_GetObjectItem(cJSON_GetArrayItem(nodes, 1), "apply_index");
+    } else if (g_currentNode->cmServerId == CMS_ID_INDEX_TWO) {
+        applyIndex = cJSON_GetObjectItem(cJSON_GetArrayItem(nodes, 0), "apply_index");
+    } else {
+        write_runlog(ERROR, "wrong cm server id: %d\n", g_currentNode->cmServerId);
+        exit(1);
+    }
+
+    if (applyIndex == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {apply_index}.\n");
+        return CM_ERROR;
+    }
+    peerApplyIndex = applyIndex->valueint;
+    write_runlog(DEBUG5, "prevPeerApplyIndex: %d peerApplyIndex: %d g_ddbNetworkIsolationTimeout: %d\n",
+        prevPeerApplyIndex, peerApplyIndex, g_ddbNetworkIsolationTimeout);
+
+    if (peerApplyIndex == prevPeerApplyIndex) {
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+static status_t IsPeerCmsRolePrimary(cJSON *nodes)
+{
+    int peerCmserverRole = -1;
+    cJSON *role = NULL;
+
+    if (g_currentNode->cmServerId == CMS_ID_INDEX_ONE) {
+        role = cJSON_GetObjectItem(cJSON_GetArrayItem(nodes, 1), "role");
+    } else if (g_currentNode->cmServerId == CMS_ID_INDEX_TWO) {
+        role = cJSON_GetObjectItem(cJSON_GetArrayItem(nodes, 0), "role");
+    }
+
+    if (role == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {role}.\n");
+        return CM_ERROR;
+    }
+    peerCmserverRole = strcmp(cJSON_GetStringValue(role), "LEADER") == 0 ? CM_SERVER_PRIMARY : CM_SERVER_STANDBY;
+    write_runlog(DEBUG5, "peerCmserverRole: %s g_ddbNetworkIsolationTimeout: %d\n",
+        peerCmserverRole == CM_SERVER_PRIMARY ? "Primary" : "Standby", g_ddbNetworkIsolationTimeout);
+
+    if (peerCmserverRole != CM_SERVER_PRIMARY) {
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
+}
+
+static status_t IsDdbLogSyncOn2Nodes(char * info)
+{
+    if (info == NULL) {
+        return CM_ERROR;
+    }
+
+    write_runlog(DEBUG5, "ddb cluster info: %s\n", info);
+    cJSON *root = cJSON_Parse(info);
+    if (root == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {root}.\n");
+        return CM_ERROR;
+    }
+
+    cJSON *stream = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "stream_list"), 0);
+    if (stream == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {stream_list}.\n");
+	cJSON_Delete(root);
+        return CM_ERROR;
+    }
+
+    cJSON *nodes = cJSON_GetObjectItem(stream, "nodes");
+    if (nodes == NULL) {
+        write_runlog(ERROR, "cannot parse ddb cluster info {nodes}.\n");
+	cJSON_Delete(root);
+        return CM_ERROR;
+    }
+
+    switch (g_HA_status->local_role) {
+        case CM_SERVER_PRIMARY:
+            return IsPeerApplyIndexChanged(nodes);
+        case CM_SERVER_STANDBY:
+            return IsPeerCmsRolePrimary(nodes);
+        default:
+            write_runlog(ERROR, "unexpected local_role: %d\n", g_HA_status->local_role);
+            return CM_ERROR;
+    }
+    
+    cJSON_Delete(root);
+    return CM_SUCCESS;
+}
+
+static inline void DdbSetDdbWorkMode(ddb_work_mode workMode, unsigned int voteNum, uint32 isBigVoteNum)
+{
+    if (SetDdbWorkMode(workMode, voteNum) != CM_SUCCESS) {
+        write_runlog(ERROR, "setting work mode: %d failed with minVoteNum: %d isBigVoteNum: %d\n",
+            workMode, voteNum, isBigVoteNum);
+        return;
+    }
+    g_ddbWorkMode = workMode;
+    if (workMode == DDB_WORK_MODE_MINORITY) {
+        g_bigVoteNumInMinorityMode = isBigVoteNum;
+    }
+}
+
+static void DdbMinorityWorkModeSetInMajority()
+{
+    uint32 minVoteNum = 1;
+    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS) {
+        // third party gateway is reachable, setting a small vote num to make sure current node works as primary.
+        write_runlog(LOG, "promote node to primary\n");
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
+    } else {
+        // third party gateway is not reachable, setting a big vote num to make sure current node works as standby.
+        minVoteNum += MAX_VOTE_NUM;
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 1);
+
+        if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
+            // primary node need to demote to standby
+            write_runlog(LOG, "demote node to standby\n");
+            if (DemoteDdbRole2Standby() != CM_SUCCESS) {
+                write_runlog(ERROR, "demote node to standby failed\n");
+                return;
+            }
+        }
+    }
+
+    write_runlog(LOG, "go into minority work mode with minVoteNum: %d g_bigVoteNumInMinorityMode: %d.\n",
+        minVoteNum, g_bigVoteNumInMinorityMode);
+    (void)pthread_rwlock_wrlock(&term_update_rwlock);
+    IncrementTermToDdb(CM_INCREMENT_BIG_TERM_VALUE);
+    (void)pthread_rwlock_unlock(&term_update_rwlock);
+}
+
+static void DdbMinorityWorkModeSetInMinority()
+{
+    uint32 minVoteNum = 1;
+    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS && g_bigVoteNumInMinorityMode == 1) {
+        write_runlog(LOG, "reset minority work mode and become primary.\n");
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
+    } else if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) != CM_SUCCESS && g_bigVoteNumInMinorityMode == 0) {
+        minVoteNum += MAX_VOTE_NUM;
+        write_runlog(LOG, "reset minority work mode and become standby.\n");
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 1);
+
+        if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
+            write_runlog(LOG, "demote node to standby\n");
+            if (DemoteDdbRole2Standby() != CM_SUCCESS) {
+                write_runlog(ERROR, "demote node to standby failed\n");
+            }
+        }
+    }
+}
+
+static void DdbMinorityWorkModeSetInStartup()
+{
+    uint32 minVoteNum = 1;
+    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS) {
+        write_runlog(LOG, "start up with minority work mode and minVoteNum: %d.\n", minVoteNum);
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
+    } else {
+        minVoteNum += MAX_VOTE_NUM;
+        write_runlog(LOG, "start up with minority work mode and minVoteNum: %d.\n", minVoteNum);
+        DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 1);
+        DemoteDdbRole2Standby();
+    }
+
+}
+
+static int DdbStatusCheck() {
+    /*
+    * start to do dcc cluster status check.
+    */
+    char info[DCC_CMD_MAX_OUTPUT_LEN] = {0};
+    if (IsPeerCmsReachableOn2Nodes() == CM_SUCCESS ||
+        (GetClusterInfoFromDDb(info, DCC_CMD_MAX_OUTPUT_LEN) == CM_SUCCESS
+        && IsDdbLogSyncOn2Nodes(info) == CM_SUCCESS)) {
+        /*
+        * network are good between two nodes. reset g_ddbNetworkIsolationTimeout.
+        */
+        g_ddbNetworkIsolationTimeout = g_paramsOn2Nodes.cmsNetworkIsolationTimeout;
+        return CM_SUCCESS;
+    }
+
+    return CM_ERROR;
+}
+
+static void DoDdbStatusCheckAndSet()
+{
+    /*
+     * if the cluster are not two nodes cluster, or don't enable auto failover, skip check.
+     */
+    if (!ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes)) {
+        cm_sleep(DDB_STATUS_CHECK_INTERVAL);
+        return;
+    }
+
+    if (DdbStatusCheck() == CM_SUCCESS) {
+        if (g_ddbWorkMode != DDB_WORK_MODE_MAJORITY) {
+            write_runlog(LOG, "go into majority work mode.\n");
+            DdbSetDdbWorkMode(DDB_WORK_MODE_MAJORITY, 0, 0);
+        }
+        cm_sleep(DDB_STATUS_CHECK_INTERVAL);
+        return;
+    }
+
+    if (g_ddbNetworkIsolationTimeout != 0) {
+        cm_sleep(DDB_STATUS_CHECK_INTERVAL);
+        return;
+    }
+
+    /*
+    * go into minority work mode, because:
+    * 1. we cannot get ddb cluster info sync within g_cms_ddb_log_sync_timeout
+    * 2. we cannot reach peer node dcc ip:port
+    */
+    switch (g_ddbWorkMode) {
+        case DDB_WORK_MODE_MAJORITY:
+            DdbMinorityWorkModeSetInMajority();
+            break;
+        case DDB_WORK_MODE_MINORITY:
+            DdbMinorityWorkModeSetInMinority();
+            break;
+        default:
+            DdbMinorityWorkModeSetInStartup();
+    }
+    cm_sleep(DDB_STATUS_CHECK_INTERVAL);
+    return;
 }
 
 static void DoMonitor(MonitorContext *ctx)
@@ -833,6 +1178,18 @@ static void DoMonitor(MonitorContext *ctx)
 #endif
 
     CheckHB();
+
+    if (g_dbType == DB_DCC &&
+        ENABLED_AUTO_FAILOVER_ON2NODES(g_cm_server_num, g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes)) {
+        /*
+         * two nodes cluster and enable auto failover.
+         * when network isolation happened, cms choice a node as new primary if
+         * the node can reach the third party gateway.
+         */
+        CheckDdbClusterStatusOn2Nodes();
+    }
+
+    CheckMaxCluster();
 
     CheckRoleChange();
 
@@ -850,9 +1207,9 @@ static void DoMonitor(MonitorContext *ctx)
         ResetInstanceStatus();
     }
 
-    if (g_gotParameterReload) {
+    if (g_gotParameterReload == 1) {
         ReloadParametersFromConfigfile();
-        g_gotParameterReload = false;
+        g_gotParameterReload = 0;
     }
 
     if (cmserver_switchover_timeout == 0) {
@@ -874,8 +1231,9 @@ static void DoMonitor(MonitorContext *ctx)
         check_cluster_balance_status();
     }
 
-    if (!g_resStatus.empty()) {
+    if (IsCusResExist() && (g_HA_status->local_role == CM_SERVER_PRIMARY)) {
         CheckAllResReportByNode();
+        CheckAllIsregByNode();
     }
 
     cm_sleep(1);
@@ -904,6 +1262,22 @@ void *CM_ThreadMonitorMain(void *argp)
     return NULL;
 }
 
+void *CM_ThreadDdbStatusCheckAndSetMain(void *argp)
+{
+    CM_DdbStatusCheckAndSetThread *pCheckThread = (CM_DdbStatusCheckAndSetThread *)argp;
+    /* unify log style */
+    thread_name = "DdbStatusCheck";
+
+    write_runlog(LOG, "Starting Ddb Status Check thread\n");
+
+    pCheckThread->thread.type = THREAD_TYPE_DDB_STATUS_CHECKER;
+
+    for (;;) {
+        DoDdbStatusCheckAndSet();
+    }
+    return NULL;
+}
+
 static void GetStopNodes(char *stopAzNodes, size_t len)
 {
     if (stopAzNodes == NULL || len == 0) {
@@ -916,7 +1290,7 @@ static void GetStopNodes(char *stopAzNodes, size_t len)
     char *saveptr = NULL;
     char *subStr = strtok_r(stopAzNodes, ",", &saveptr);
     while (subStr) {
-        g_stopNodes.insert(strtol(subStr, NULL, 10));
+        (void)g_stopNodes.insert(strtol(subStr, NULL, 10));
         subStr = strtok_r(NULL, ",", &saveptr);
     }
 }
@@ -1004,27 +1378,26 @@ static void FindAndSetIgnoreNodeToDdb(const char *blackFile)
     char nodeName[CM_NODE_NAME];
     uint32 nodeNamenums = 1;
     char nodeNamenumValue[MAX_PATH_LEN] = {0};
-    int rc = 0;
-    FILE *fp = NULL;
-    fp = fopen(blackFile, "r");
+
+    FILE *fp = fopen(blackFile, "r");
     if (fp == NULL) {
         write_runlog(ERROR, "%d: failed to open file %s\n", __LINE__, blackFile);
         return;
     }
-    rc = memset_s(nodeName, CM_NODE_NAME, 0, CM_NODE_NAME);
+    int rc = memset_s(nodeName, CM_NODE_NAME, 0, CM_NODE_NAME);
     securec_check_errno(rc, (void)fclose(fp));
     while (!feof(fp)) {
         if (fgets(nodeName, CM_NODE_NAME, fp) == NULL) {
             write_runlog(ERROR, "%d: failed to get nodename\n", __LINE__);
             continue;
         }
-        trim(nodeName);
+        (void)trim(nodeName);
         rc = snprintf_s(ignoreNodeKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/ignorenode/%u", pw->pw_name, nodeNamenums);
         securec_check_intval(rc, (void)fclose(fp));
         SetIgnoreNodeToDdb(ignoreNodeKey, MAX_PATH_LEN, nodeName, CM_NODE_NAME);
         nodeNamenums++;
     }
-    fclose(fp);
+    (void)fclose(fp);
     fp = NULL;
     nodeNamenums--;
     rc = snprintf_s(ignoreNodeNumKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/ignoreNodeNumKey", pw->pw_name);
@@ -1049,12 +1422,11 @@ static bool CheckIgnoreNode()
     char getIgnoreNodeValue[MAX_PATH_LEN] = {0};
     char ignoreNodeNumKey[MAX_PATH_LEN] = {0};
     char getignoreNodeNumValue[MAX_PATH_LEN] = {0};
-    uint32 ignoreNum = 0;
-    errno_t rc = 0;
-    rc = snprintf_s(ignoreNodeNumKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/ignoreNodeNumKey", pw->pw_name);
+
+    errno_t rc = snprintf_s(ignoreNodeNumKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/ignoreNodeNumKey", pw->pw_name);
     securec_check_intval(rc, (void)rc);
     DdbGetIgnoreNode(ignoreNodeNumKey, getignoreNodeNumValue, MAX_PATH_LEN);
-    ignoreNum = strtoul(getignoreNodeNumValue, NULL, 0);
+    uint32 ignoreNum = (uint32)strtoul(getignoreNodeNumValue, NULL, 0);
     if (ignoreNum == 0) {
         return false;
     }
@@ -1086,22 +1458,18 @@ static void StopIgnoreNode()
     if (rcs != 0) {
         write_runlog(ERROR, "cmd execute failed : %s, errno=%d.\n", stopCmd, errno);
     }
-    write_runlog(ERROR, "The current node(%d) has been ignored.\n", g_currentNode->node);
+    write_runlog(FATAL, "The current node(%u) has been ignored.\n", g_currentNode->node);
     FreeNotifyMsg();
     exit(1);
 }
-/**
- * @brief remove black file on the node which has cm_server process.
- *
- * @param  blackFile
- */
+
 static void RmAllBlackFile(const char *blackFile)
 {
     int ret;
     char rmCmd[MAXPGPATH] = {0};
     for (uint32 i = 0; i < g_node_num; i++) {
         /* cmServerLevel used to check if the node has cm_server */
-        if (g_node[i].cmServerLevel != 1 || g_node[i].sshCount <= 0) {
+        if (g_node[i].cmServerLevel != 1 || g_node[i].sshCount == 0) {
             continue;
         }
 
@@ -1127,12 +1495,11 @@ static void DeleteIgnoreNodeFromDdb()
     char ignoreNodeKey[MAX_PATH_LEN] = {0};
     char getIgnoreNodeValue[MAX_PATH_LEN] = {0};
     char getignoreNodeNumValue[MAX_PATH_LEN] = {0};
-    errno_t rc = 0;
-    uint32 ignoreNum = 0;
-    rc = snprintf_s(ignoreNodeNumKey1, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/ignoreNodeNumKey", pw->pw_name);
+
+    errno_t rc = snprintf_s(ignoreNodeNumKey1, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/ignoreNodeNumKey", pw->pw_name);
     securec_check_intval(rc, (void)rc);
     DdbGetIgnoreNode(ignoreNodeNumKey1, getignoreNodeNumValue, MAX_PATH_LEN);
-    ignoreNum = strtoul(getignoreNodeNumValue, NULL, 0);
+    uint32 ignoreNum = (uint32)strtoul(getignoreNodeNumValue, NULL, 0);
     if (ignoreNum == 0) {
         return;
     }
@@ -1201,23 +1568,20 @@ static void CheckOneIP(char *ip, uint32 ipLen, bool *isIncluster)
 static void CheckBlackFile(const char* blackFile)
 {
     char ip[CM_IP_LENGTH];
-    FILE *fp = NULL;
-    int ret;
-
-    ret = memset_s(ip, CM_IP_LENGTH, 0, CM_IP_LENGTH);
+    int ret = memset_s(ip, CM_IP_LENGTH, 0, CM_IP_LENGTH);
     securec_check_errno(ret, (void)ret);
 
-    fp = fopen(blackFile, "r");
+    FILE *fp = fopen(blackFile, "r");
     if (fp != NULL) {
         bool isIncluster = false;
         while (!feof(fp)) {
             if (fgets(ip, CM_NODE_NAME, fp) != NULL) {
-                trim(ip);
+                (void)trim(ip);
                 CheckOneIP(ip, CM_IP_LENGTH, &isIncluster);
             }
         }
-        fclose(fp);
-        if (isIncluster == false) {
+        (void)fclose(fp);
+        if (!isIncluster) {
             RmAllBlackFile(blackFile);
         }
     }
@@ -1293,7 +1657,8 @@ void *CheckBlackList(void *arg)
     check_input_for_security(blackFile);
     canonicalize_path(blackFile);
     for (;;) {
-        if (got_stop) {
+        if (got_stop == 1) {
+            write_runlog(LOG, "receive exit request in CheckBlackList.\n");
             break;
         }
         CheckIgnoreFile(&beforeStat, blackFile, &firstGetIgnore);
@@ -1334,14 +1699,14 @@ void *CheckGtmModMain(void *arg)
     thread_name = "CheckGtmMod";
     write_runlog(LOG, "Starting check gtm mod thread.\n");
     for (;;) {
-        if (got_stop) {
+        if (got_stop == 1) {
             write_runlog(LOG, "receive exit request in CheckGtmModMain.\n");
             cm_sleep(sleepInterval);
             continue;
         }
         /* gtm_mode can not change after cluster install in actual situation, this guc param will set in install guc */
         if (GetGtmMode() == 0) {
-            write_runlog(LOG, "success get gtm mod (%d), and CheckGtmModMain will exit.\n", g_gtm_free_mode);
+            write_runlog(LOG, "success get gtm mod (%d), and CheckGtmModMain will exit.\n", (int)g_gtm_free_mode);
             break;
         }
         cm_sleep(sleepInterval);
@@ -1349,3 +1714,4 @@ void *CheckGtmModMain(void *arg)
     return NULL;
 }
 #endif
+

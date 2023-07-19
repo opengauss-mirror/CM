@@ -25,7 +25,10 @@
 #ifndef CMA_COMMON_H
 #define CMA_COMMON_H
 
+#include "cm_misc.h"
 #include "cma_main.h"
+#include "cm_msg_buf_pool.h"
+#include "cma_msg_queue.h"
 
 #ifndef CM_IP_LENGTH
 #define CM_IP_LENGTH 128
@@ -33,12 +36,16 @@
 #define CM_EXECUTE_CMD_TIME_OUT 2
 
 const int max_instance_start = 3;
-typedef enum CM_ResStatus {
+typedef enum {
     CM_RES_UNKNOWN = 0,
     CM_RES_ONLINE  = 1,
     CM_RES_OFFLINE = 2,
     CM_RES_CORPSE = 3,
 } CM_ResStatus;
+
+const int ERROR_EXECUTE_CMD = -2;
+const int FAILED_EXECUTE_CMD = -1;
+const int SUCCESS_EXECUTE_CMD = 0;
 
 void save_thread_id(pthread_t thrId);
 void set_thread_state(pthread_t thrId);
@@ -46,11 +53,9 @@ void immediate_stop_one_instance(const char* instance_data_path, InstanceTypes i
 
 const char *GetDnProcessName(void);
 const char* type_int_to_str_binname(InstanceTypes ins_type);
-char* type_int_to_str_name(InstanceTypes ins_type);
+const char* type_int_to_str_name(InstanceTypes ins_type);
 int ExecuteCmd(const char* command, struct timeval timeout);
 int cmagent_getenv(const char* env_var, char* output_env_value, uint32 env_value_len);
-
-void listen_ip_merge(uint32 ip_count, char ip_listen[][CM_IP_LENGTH], char* ret_ip_merge, uint32 ipMergeLength);
 
 void ReloadParametersFromConfigfile();
 int ReadDBStateFile(GaussState *state, const char *statePath);
@@ -70,10 +75,9 @@ int search_HA_node(uint32 localPort, uint32 LocalHAListenCount, char LocalHAIP[]
     uint32 PeerHAListenCount, char PeerHAIP[][CM_IP_LENGTH], uint32* node_index, uint32* instance_index,
     uint32 loal_role);
 int agentCheckPort(uint32 port);
-bool getnicstatus(uint32 listen_ip_count, char ips[][CM_IP_LENGTH]);
 uint32 CheckDiskForLogPath(void);
 uint32 GetDiskUsageForPath(const char *pathName);
-int ExecuteSystemCmd(const char *cmd);
+int ExecuteSystemCmd(const char *cmd, int32 logLevel = ERROR, int32 *errCode = NULL);
 void CheckDnNicDown(uint32 index);
 void CheckDnDiskDamage(uint32 index);
 bool IsDirectoryDestoryed(const char *path);
@@ -84,7 +88,10 @@ bool CheckStartDN(void);
 int ProcessDnBarrierInfoResp(const cm_to_agent_barrier_info *barrierRespMsg);
 int ProcessGsGucDnCommand(const CmToAgentGsGucSyncList *msgTypeDoGsGuc);
 void ExecuteCrossClusterCnBuildCommand(const char *dataDir, char *userInfo);
-void PushMsgToClientSendQue(char *msgPtr, uint32 msgLen, uint32 conId);
-void PushMsgToClientRecvQue(char *msgPtr, uint32 msgLen);
-void CleanClientMsgQueue(uint32 conId);
+void PrintInstanceStack(const char* dataPath, bool isPrintedOnce);
+void *DiskUsageCheckMain(void *arg);
+void CheckDiskForCNDataPath();
+void CheckDiskForDNDataPath();
+bool FindDnIdxInCurNode(uint32 instId, uint32 *dnIdx, const char *str);
+CmResConfList *CmaGetResConfByResName(const char *resName);
 #endif

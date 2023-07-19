@@ -66,7 +66,7 @@ int cmpqGetc(char* result, CM_Conn* conn)
     *result = conn->inBuffer[conn->inCursor++];
 
     if (conn->Pfdebug != NULL) {
-        fprintf(conn->Pfdebug, "From backend> %c\n", *result);
+        (void)fprintf(conn->Pfdebug, "From backend> %c\n", *result);
     }
 
     return 0;
@@ -101,13 +101,13 @@ static int cmpqGets_internal(PQExpBuffer buf, CM_Conn* conn, bool resetbuffer)
         resetCMPQExpBuffer(buf);
     }
 
-    appendBinaryCMPQExpBuffer(buf, inBuffer + conn->inCursor, slen);
+    appendBinaryCMPQExpBuffer(buf, inBuffer + conn->inCursor, (size_t)slen);
 
     inCursor++;
     conn->inCursor = inCursor;
 
     if (conn->Pfdebug != NULL) {
-        fprintf(conn->Pfdebug, "From backend> \"%s\"\n", buf->data);
+        (void)fprintf(conn->Pfdebug, "From backend> \"%s\"\n", buf->data);
     }
 
     return 0;
@@ -134,7 +134,7 @@ int cmpqPutnchar(const char* s, size_t len, CM_Conn* conn)
     }
 
     if (conn->Pfdebug != NULL) {
-        fprintf(conn->Pfdebug, "To backend> %.*s\n", (int)len, s);
+        (void)fprintf(conn->Pfdebug, "To backend> %.*s\n", (int)len, s);
     }
 
     return 0;
@@ -146,19 +146,18 @@ int cmpqPutnchar(const char* s, size_t len, CM_Conn* conn)
  */
 int cmpqGetnchar(char* s, size_t len, CM_Conn* conn)
 {
-    errno_t rc = EOK;
     if (len > (size_t)(conn->inEnd - conn->inCursor)) {
         return EOF;
     }
 
-    rc = memcpy_s(s, len, conn->inBuffer + conn->inCursor, len);
+    errno_t rc = memcpy_s(s, len, conn->inBuffer + conn->inCursor, len);
     securec_check_errno(rc, (void)rc);
     /* no terminating null */
 
-    conn->inCursor += len;
+    conn->inCursor += (int)len;
 
     if (conn->Pfdebug != NULL) {
-        fprintf(conn->Pfdebug, "From backend (%lu)> %.*s\n", (unsigned long)len, (int)len, s);
+        (void)fprintf(conn->Pfdebug, "From backend (%lu)> %.*s\n", (unsigned long)len, (int)len, s);
     }
 
     return 0;
@@ -196,13 +195,13 @@ int cmpqGetInt(int* result, size_t bytes, CM_Conn* conn)
             break;
         default:
             if (conn->Pfdebug != NULL) {
-                fprintf(conn->Pfdebug, "Integer size of (%lu) bytes not supported", bytes);
+                (void)fprintf(conn->Pfdebug, "Integer size of (%lu) bytes not supported", bytes);
             }
             return EOF;
     }
 
     if (conn->Pfdebug != NULL) {
-        fprintf(conn->Pfdebug, "From backend (#%lu)> %d\n", (unsigned long)bytes, *result);
+        (void)fprintf(conn->Pfdebug, "From backend (#%lu)> %d\n", (unsigned long)bytes, *result);
     }
 
     return 0;
@@ -226,12 +225,11 @@ bool cmConnSetting(CM_Conn* conn, size_t bytes_needed, bool multi)
     }
 
     if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-        newbuf = (char*)malloc(newsize);
+        newbuf = (char*)malloc((size_t)newsize);
         if (newbuf != NULL) {
             /* realloc succeeded */
             if (conn->outBuffer != NULL) {
-                errno_t rc;
-                rc = memcpy_s(newbuf, newsize, conn->outBuffer, conn->outBufSize);
+                errno_t rc = memcpy_s(newbuf, (size_t)newsize, conn->outBuffer, (size_t)conn->outBufSize);
                 securec_check_errno(rc, (void)rc);
                 FREE_AND_RESET(conn->outBuffer);
             }
@@ -292,12 +290,11 @@ int cmpqCheckInBufferSpace(size_t bytes_needed, CM_Conn* conn)
     } while (newsize > 0 && bytes_needed > (size_t)newsize);
 
     if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-        newbuf = (char*)malloc(newsize);
+        newbuf = (char*)malloc((size_t)newsize);
         if (newbuf != NULL) {
             /* realloc succeeded */
             if (conn->inBuffer != NULL) {
-                errno_t rc;
-                rc = memcpy_s(newbuf, newsize, conn->inBuffer, conn->inBufSize);
+                errno_t rc = memcpy_s(newbuf, (size_t)newsize, conn->inBuffer, (size_t)conn->inBufSize);
                 securec_check_errno(rc, (void)rc);
                 FREE_AND_RESET(conn->inBuffer);
             }
@@ -313,12 +310,11 @@ int cmpqCheckInBufferSpace(size_t bytes_needed, CM_Conn* conn)
     } while (newsize > 0 && bytes_needed > (size_t)newsize);
 
     if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-        newbuf = (char*)malloc(newsize);
+        newbuf = (char*)malloc((size_t)newsize);
         if (newbuf != NULL) {
             /* realloc succeeded */
             if (conn->inBuffer != NULL) {
-                errno_t rc;
-                rc = memcpy_s(newbuf, newsize, conn->inBuffer, conn->inBufSize);
+                errno_t rc = memcpy_s(newbuf, (size_t)newsize, conn->inBuffer, (size_t)conn->inBufSize);
                 securec_check_errno(rc, (void)rc);
                 FREE_AND_RESET(conn->inBuffer);
             }
@@ -391,7 +387,7 @@ int cmpqPutMsgStart(char msg_type, bool force_len, CM_Conn* conn)
     /* length word, if needed, will be filled in by cmpqPutMsgEnd */
 
     if (conn->Pfdebug != NULL) {
-        fprintf(conn->Pfdebug, "To backend> Msg %c\n", msg_type ? msg_type : ' ');
+        (void)fprintf(conn->Pfdebug, "To backend> Msg %c\n", msg_type ? msg_type : ' ');
     }
 
     return 0;
@@ -411,9 +407,9 @@ static int cmpqPutMsgBytes(const void* buf, size_t len, CM_Conn* conn)
         return EOF;
     }
     /* okay, save the data */
-    rc = memcpy_s(conn->outBuffer + conn->outMsgEnd, conn->outBufSize - conn->outMsgEnd, buf, len);
+    rc = memcpy_s(conn->outBuffer + conn->outMsgEnd, (size_t)(conn->outBufSize - conn->outMsgEnd), buf, len);
     securec_check_errno(rc, (void)rc);
-    conn->outMsgEnd += len;
+    conn->outMsgEnd += (int)len;
     /* no Pfdebug call here, caller should do it */
     return 0;
 }
@@ -431,16 +427,15 @@ static int cmpqPutMsgBytes(const void* buf, size_t len, CM_Conn* conn)
 int cmpqPutMsgEnd(CM_Conn* conn)
 {
     if (conn->Pfdebug != NULL) {
-        fprintf(conn->Pfdebug, "To backend> Msg complete, length %d\n", conn->outMsgEnd - conn->outCount);
+        (void)fprintf(conn->Pfdebug, "To backend> Msg complete, length %d\n", conn->outMsgEnd - conn->outCount);
     }
 
     /* Fill in length word if needed */
     if (conn->outMsgStart >= 0) {
-        uint32 msgLen = conn->outMsgEnd - conn->outMsgStart;
-        errno_t rc;
-
+        uint32 msgLen = (uint32)(conn->outMsgEnd - conn->outMsgStart);
         msgLen = htonl(msgLen);
-        rc = memcpy_s(conn->outBuffer + conn->outMsgStart, conn->outBufSize - conn->outMsgStart, &msgLen, 4);
+        errno_t rc = memcpy_s(conn->outBuffer + conn->outMsgStart, (size_t)(conn->outBufSize - conn->outMsgStart),
+            &msgLen, sizeof(uint32));
         securec_check_errno(rc, (void)rc);
     }
 
@@ -485,8 +480,8 @@ int cmpqReadData(CM_Conn* conn)
         if (conn->inStart > 0) {
             errno_t rc;
 
-            rc =
-                memmove_s(conn->inBuffer, conn->inBufSize, conn->inBuffer + conn->inStart, conn->inEnd - conn->inStart);
+            rc = memmove_s(conn->inBuffer, (size_t)conn->inBufSize, conn->inBuffer + conn->inStart,
+                (size_t)(conn->inEnd - conn->inStart));
             securec_check_errno(rc, (void)rc);
             conn->inEnd -= conn->inStart;
             conn->inCursor -= conn->inStart;
@@ -506,12 +501,13 @@ int cmpqReadData(CM_Conn* conn)
      * buffer size, so...
      */
     if (conn->inBufSize - conn->inEnd < 8192) {
-        if (cmpqCheckInBufferSpace(conn->inEnd + (size_t)8192, conn)) {
+        if (cmpqCheckInBufferSpace((size_t)(conn->inEnd + 8192), conn)) {
             /*
              * We don't insist that the enlarge worked, but we need some room
              */
-            if (conn->inBufSize - conn->inEnd < 100)
+            if (conn->inBufSize - conn->inEnd < 100) {
                 return TCP_SOCKET_ERROR_EPIPE; /* errorMessage already set */
+            }
         }
     }
 
@@ -520,25 +516,26 @@ retry3:
     if (conn->pipe.type == CS_TYPE_SSL) {
         // todo: need give real recv size
         uint32 event = 0;
-        status_t ret = cm_cs_ssl_recv(
-            &conn->pipe.link.ssl, conn->inBuffer + conn->inEnd, conn->inBufSize - conn->inEnd, &nread, &event);
+        status_t ret = cm_cs_ssl_recv(&conn->pipe.link.ssl, conn->inBuffer + conn->inEnd,
+            (uint32)(conn->inBufSize - conn->inEnd), &nread, &event);
         if (ret != CM_SUCCESS) {
             printfCMPQExpBuffer(&conn->errorMessage, "cm_cs_ssl_recv error, time is %ld.\n", time(NULL));
             return -1;
         }
         conn->last_errno = 0;
         conn->inEnd += nread;
-        conn->last_call = CM_LastCall_RECV;
+        conn->last_call = (int)CM_LastCall_RECV;
         if (nread == 0) {
             return 0;
         } else {
             return 1;
         }
     } else {
-        nread = recv(conn->sock, conn->inBuffer + conn->inEnd, conn->inBufSize - conn->inEnd, MSG_DONTWAIT);
+        nread = (int)recv(conn->sock, conn->inBuffer + conn->inEnd, (size_t)(conn->inBufSize - conn->inEnd),
+            (int)MSG_DONTWAIT);
     }
 
-    conn->last_call = CM_LastCall_RECV;
+    conn->last_call = (int)CM_LastCall_RECV;
     if (nread < 0) {
         conn->last_errno = SOCK_ERRNO;
 
@@ -630,21 +627,22 @@ retry4:
     if (conn->pipe.type == CS_TYPE_SSL) {
         // todo: need give real recv size
         uint32 event = 0;
-        status_t ret = cm_cs_ssl_recv(
-            &conn->pipe.link.ssl, conn->inBuffer + conn->inEnd, conn->inBufSize - conn->inEnd, &nread, &event);
+        status_t ret = cm_cs_ssl_recv(&conn->pipe.link.ssl, conn->inBuffer + conn->inEnd,
+            (uint32)(conn->inBufSize - conn->inEnd), &nread, &event);
         if (ret != CM_SUCCESS) {
             printfCMPQExpBuffer(&conn->errorMessage, "cm_cs_ssl_recv error, time is %ld.\n", time(NULL));
             return -1;
         }
         conn->last_errno = 0;
         conn->inEnd += nread;
-        conn->last_call = CM_LastCall_RECV;
+        conn->last_call = (int)CM_LastCall_RECV;
         return 1;
     } else {
-        nread = recv(conn->sock, conn->inBuffer + conn->inEnd, conn->inBufSize - conn->inEnd, MSG_DONTWAIT);
+        nread = (int)recv(conn->sock, conn->inBuffer + conn->inEnd, (size_t)(conn->inBufSize - conn->inEnd),
+            (int)MSG_DONTWAIT);
     }
 
-    conn->last_call = CM_LastCall_RECV;
+    conn->last_call = (int)CM_LastCall_RECV;
     if (nread < 0) {
         conn->last_errno = SOCK_ERRNO;
         if (SOCK_ERRNO == EINTR) {
@@ -687,7 +685,7 @@ definitelyFailed:
         "\tThis probably means the server terminated abnormally\n"
         "\tbefore or while processing the request.\n");
     conn->status = CONNECTION_BAD; /* No more connection to backend */
-    close(conn->sock);
+    (void)close(conn->sock);
     conn->sock = -1;
 
     return TCP_SOCKET_ERROR_EPIPE;
@@ -717,20 +715,20 @@ static int cmpqSendSome(CM_Conn* conn, int len)
     while (len > 0) {
         int sent;
         if (conn->pipe.type == CS_TYPE_SSL) {
-            status_t ret = cm_cs_ssl_send_timed(&conn->pipe.link.ssl, ptr, len, CM_NETWORK_IO_TIMEOUT);
+            status_t ret = cm_cs_ssl_send_timed(&conn->pipe.link.ssl, ptr, (uint32)len, CM_NETWORK_SEND_TIMEOUT);
             if (ret != CM_SUCCESS) {
                 printfCMPQExpBuffer(&conn->errorMessage, "cm_cs_ssl_send_timed error, time is %ld.\n", time(NULL));
                 return -1;
             }
             conn->outCount = 0;
             conn->last_errno = 0;
-            conn->last_call = CM_LastCall_SEND;
+            conn->last_call = (int)CM_LastCall_SEND;
             return 0;
         } else {
-            sent = send(conn->sock, ptr, len, MSG_DONTWAIT);
+            sent = (int)send(conn->sock, ptr, (size_t)len, (int)MSG_DONTWAIT);
         }
         
-        conn->last_call = CM_LastCall_SEND;
+        conn->last_call = (int)CM_LastCall_SEND;
 
         if (sent < 0) {
             conn->last_errno = SOCK_ERRNO;
@@ -799,9 +797,7 @@ static int cmpqSendSome(CM_Conn* conn, int len)
 
     /* shift the remaining contents of the buffer */
     if (remaining > 0) {
-        errno_t rc;
-
-        rc = memmove_s(conn->outBuffer, conn->outBufSize, ptr, remaining);
+        errno_t rc = memmove_s(conn->outBuffer, (size_t)conn->outBufSize, ptr, (size_t)remaining);
         securec_check_errno(rc, (void)rc);
     }
     conn->outCount = remaining;
@@ -818,7 +814,7 @@ static int cmpqSendSome(CM_Conn* conn, int len)
 int cmpqFlush(CM_Conn* conn)
 {
     if (conn->Pfdebug != NULL) {
-        fflush(conn->Pfdebug);
+        (void)fflush(conn->Pfdebug);
     }
 
     if (conn->outCount > 0) {
@@ -853,14 +849,10 @@ int cmpqWait(int forRead, int forWrite, CM_Conn* conn)
  */
 int cmpqWaitTimed(int forRead, int forWrite, CM_Conn* conn, time_t finish_time)
 {
-    int result;
-
-    result = cmpqSocketCheck(conn, forRead, forWrite, finish_time);
-
+    int result = cmpqSocketCheck(conn, forRead, forWrite, finish_time);
     if (result < 0) {
         return EOF; /* errorMessage is already set */
     }
-
     if (result == 0) {
         printfCMPQExpBuffer(&conn->errorMessage, "timeout expired\n");
         return EOF;
@@ -899,9 +891,9 @@ static int cmpqSocketCheck(CM_Conn* conn, int forRead, int forWrite, time_t end_
     }
 
     /* We will retry as long as we get EINTR */
-    do
+    do {
         result = cmpqSocketPoll(conn->sock, forRead, forWrite, end_time);
-    while (result < 0 && SOCK_ERRNO == EINTR);
+    } while (result < 0 && SOCK_ERRNO == EINTR);
 
     if (result < 0) {
         printfCMPQExpBuffer(&conn->errorMessage, "select() failed: \n");
@@ -921,7 +913,6 @@ static int cmpqSocketCheck(CM_Conn* conn, int forRead, int forWrite, time_t end_
  */
 static int cmpqSocketPoll(int sock, int forRead, int forWrite, time_t end_time)
 {
-
     /* We use poll(2) if available, otherwise select(2) */
 #ifdef HAVE_POLL
     struct pollfd input_fd;
@@ -947,9 +938,8 @@ static int cmpqSocketPoll(int sock, int forRead, int forWrite, time_t end_time)
         timeout_ms = -1;
     } else {
         time_t now = time(NULL);
-
         if (end_time > now) {
-            timeout_ms = (end_time - now) * 1000;
+            timeout_ms = (int)(end_time - now) * 1000;
         } else {
             timeout_ms = 0;
         }
@@ -982,7 +972,6 @@ static int cmpqSocketPoll(int sock, int forRead, int forWrite, time_t end_time)
         ptr_timeout = NULL;
     } else {
         time_t now = time(NULL);
-
         if (end_time > now) {
             timeout.tv_sec = end_time - now;
         } else {

@@ -24,19 +24,22 @@
 #ifndef CTL_COMMON_H
 #define CTL_COMMON_H
 
+#include "cjson/cJSON.h"
 #include "cm/cm_msg.h"
 #include "cm/cm_misc.h"
 #include "cm/cm_defs.h"
 #include "cm_ddb_adapter.h"
-#include "cipher.h"
+#include "cm_cipher.h"
+#include "ctl_global_params.h"
+#include "cm_json_config.h"
+#include "ctl_res.h"
 
 #define DEFAULT_WAIT 60
 #define DYNAMIC_PRIMARY 0
 #define DYNAMIC_STANDBY 1
 #define RELOAD_WAIT_TIME 60
+#define MAX_COMMAND_LEN 2048
 
-#define CM_SERVER_BIN_NAME "cm_server"
-#define CM_AGENT_BIN_NAME "cm_agent"
 #define ETCD_BIN_NAME "etcd"
 #ifndef ENABLE_MULTIPLE_NODES
 // add for libnet
@@ -64,13 +67,7 @@ const int PARALLELISM_MIN = 0;
 const int PARALLELISM_MAX = 16;
 const int SHARED_STORAGE_MODE_TIMEOUT = 120;
 
-/**
- * @def SHELL_RETURN_CODE
- * @brief Get the shell command return code.
- * @return Return the shell command return code.
- */
-#define SHELL_RETURN_CODE(systemReturn) \
-    ((systemReturn) > 0 ? static_cast<int>(static_cast<uint32>(systemReturn) >> 8) : (systemReturn))
+const int CTL_RECV_CYCLE = 200000;
 
 #define FINISH_CONNECTION()        \
     do {                           \
@@ -106,14 +103,6 @@ const int SHARED_STORAGE_MODE_TIMEOUT = 120;
         (conn) = NULL;           \
     } while (0)
 
-#define FREE_AND_RESET(ptr)  \
-    do {                     \
-        if (NULL != (ptr)) { \
-            free(ptr);       \
-            (ptr) = NULL;    \
-        }                    \
-    } while (0)
-
 typedef enum {
     NO_COMMAND = 0,
     RESTART_COMMAND,
@@ -140,7 +129,11 @@ typedef enum {
     CM_RELOAD_COMMAND,
     CM_LIST_COMMAND,
     CM_ENCRYPT_COMMAND,
-    CM_SWITCH_COMMAND
+    CM_SWITCH_COMMAND,
+    CM_RES_COMMAND,
+    CM_SHOW_COMMAND,
+    CM_PAUSE_COMMAND,
+    CM_RESUME_COMMAND
 } CtlCommand;
 
 
@@ -218,15 +211,15 @@ typedef struct CtlOptionSt {
     SwitchoverOption switchover;
     SwitchOption switchOption;
     DcfOption dcfOption;
+    ResOption resOpt;
 } CtlOption;
 
 extern bool g_isRestop;
-extern vector<ResourceListInfo> g_res_list;
 extern DdbConn *g_sess;
 extern TlsAuthPath g_tlsPath;
 
 status_t do_start(void);
-void do_stop(void);
+int DoStop(void);
 int do_query(void);
 int do_global_barrier_query(void);
 int DoSwitchover(const CtlOption *ctx);
@@ -252,6 +245,7 @@ void DoDccCmd(int argc, char **argv);
 int DoGuc(CtlOption *ctx);
 int DoEncrypt(const CtlOption *ctx);
 int DoSwitch(const CtlOption *ctx);
+int DoShowCommand();
 
 void stop_etcd_cluster(void);
 int stop_check_node(uint32 node_id_check);
@@ -264,13 +258,13 @@ uint32 get_node_index(uint32 node_id);
 bool isMajority(const char* cm_arbitration_mode);
 bool isMinority(const char* cm_arbitration_mode);
 int FindInstanceIdAndType(uint32 node, const char* dataPath, uint32* instanceId, int* instanceType);
-int ssh_exec(const staticNodeConfig* node, const char* cmd);
+int ssh_exec(const staticNodeConfig* node, const char* cmd, int32 logLevel = ERROR);
 int SshExec(const staticNodeConfig* node, const char* cmd);
 int RunEtcdCmd(const char* command, uint32 nodeIndex);
-void do_conn_cmserver(bool queryCmserver, uint32 nodeIndex, bool queryEtcd = false, CM_Conn **curConn = NULL);
-int cm_client_flush_msg(CM_Conn* conn);
-int cm_client_send_msg(CM_Conn* conn, char msgtype, const char* s, size_t len);
-char* recv_cm_server_cmd(CM_Conn* conn);
+void do_conn_cmserver(bool queryCmserver, uint32 nodeIndex, bool queryEtcd = false, struct cm_conn **curConn = NULL);
+int cm_client_flush_msg(struct cm_conn* conn);
+int cm_client_send_msg(struct cm_conn* conn, char msgtype, const char* s, size_t len);
+char* recv_cm_server_cmd(struct cm_conn* conn);
 void init_hosts();
 bool is_node_stopping(uint32 checkNode, uint32 currentNode, const char *manualStartFile, const char *resultFile,
                       const char *mppEnvSeperateFile);
@@ -310,9 +304,13 @@ status_t KillAllCms(bool isNeedKillPrimaryCms);
 uint32 *GetCmsNodeIndex(void);
 status_t CheckGucOptionValidate(const GucOption &gucCtx);
 void GetUpgradeVersionFromCmaConfig();
-bool SetOfflineNode(uint32 nodeIndex, CM_Conn *con);
-void ReleaseConn(CM_Conn *con);
+bool SetOfflineNode(uint32 nodeIndex, struct cm_conn *con);
+void ReleaseConn(struct cm_conn *con);
 bool IsCmSharedStorageMode();
-int GetAgentStatus();
+void CtlGetCmJsonConf();
+int DoRhbPrint();
+int DoPause();
+int DoResume();
+bool CheckTrustAndNet();
 
 #endif

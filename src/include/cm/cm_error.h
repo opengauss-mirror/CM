@@ -86,6 +86,19 @@ typedef enum en_cm_errno {
     ERR_PEER_CLOSED_REASON = 38,
     ERR_PEER_CLOSED = 39,
     ERR_TCP_TIMEOUT = 40,
+    ERR_DISKRW_KEY_NOTFOUND   = 41,
+    ERR_DISKRW_CHECK_HEADER   = 42,
+    ERR_DISKRW_GET_DATA       = 43,
+    ERR_DISKRW_UPDATE_DATA    = 44,
+    ERR_DISKRW_DELETE_DATA    = 45,
+    ERR_DISKRW_UPDATE_HEADER  = 46,
+    ERR_DISKRW_DISK_HEAD_FULL = 47,
+    ERR_DISKRW_WRITE_KEY      = 48,
+    ERR_DISKRW_INSERT_KEY     = 49,
+    ERR_DDB_CMD_INVALID       = 50,
+    ERR_DDB_CMD_UNKNOWN       = 51,
+    ERR_DDB_CMD_PREFIX_INVALID = 52,
+    ERR_DDB_CMD_ARG_INVALID   = 53,
     ERR_MAX_COUNT
 } cm_errno_t;
 
@@ -109,23 +122,32 @@ typedef struct st_error_info_t {
 #define EOK (0)
 #endif
 
-int cm_get_sock_error(void);
-void cm_set_sock_error(int32 e);
+int CmGetSockError(void);
+void CmSetSockError(int32 e);
 
-#define CM_THROW_ERROR(error_no, ...)                                                                      \
-    do {                                                                                                   \
-        cm_set_error((char *)__FILE__, (uint32)__LINE__, (cm_errno_t)error_no, g_error_desc[error_no], ##__VA_ARGS__); \
+#define CM_THROW_ERROR(error_no, ...)                                                                            \
+    do {                                                                                                         \
+        CmSetError(                                                                                              \
+            (char *)__FUNCTION__, (uint32)__LINE__, (cm_errno_t)error_no, g_errorDesc[error_no], ##__VA_ARGS__); \
     } while (0)
 
 #define CM_THROW_ERROR_EX(error_no, format, ...)                                              \
     do {                                                                                      \
-        cm_set_error_ex((char *)__FILE__, (uint32)__LINE__, (cm_errno_t)error_no, format, ##__VA_ARGS__); \
+        CmSetErrorEx((char *)__FUNCTION__, (uint32)__LINE__, (cm_errno_t)error_no, format, ##__VA_ARGS__); \
     } while (0)
 
-void cm_set_error(const char *file, uint32 line, cm_errno_t code, const char *format, ...) CM_CHECK_FMT(4, 5);
-void cm_set_error_ex(const char *file, uint32 line, cm_errno_t code, const char *format, ...) CM_CHECK_FMT(4, 5);
+void CmSetError(const char *file, uint32 line, cm_errno_t code, const char *format, ...) CM_CHECK_FMT(4, 5);
+void CmSetErrorEx(const char *file, uint32 line, cm_errno_t code, const char *format, ...) CM_CHECK_FMT(4, 5);
 
-extern const char *g_error_desc[ERR_MAX_COUNT];
+extern const char *g_errorDesc[ERR_MAX_COUNT];
+
+void SetDiskRwError(const char *format, ...);
+const char *GetDiskRwError();
+
+#define CM_SET_DISKRW_ERROR(error_no, ...)                    \
+    do {                                                      \
+        SetDiskRwError(g_errorDesc[error_no], ##__VA_ARGS__); \
+    } while (0)
 
 #ifdef __cplusplus
 }

@@ -88,7 +88,7 @@ static void send_finish_redo_check_msg(int* time_ptr, int* send_check_ptr)
 {
     if (CmServer_conn != NULL) {
         cm_msg_type msgFinishRedoCheck;
-        msgFinishRedoCheck.msg_type = MSG_CTL_CM_FINISH_REDO_CHECK;
+        msgFinishRedoCheck.msg_type = (int)MSG_CTL_CM_FINISH_REDO_CHECK;
         int rt = cm_client_send_msg(CmServer_conn, 'C', (char*)&msgFinishRedoCheck, sizeof(msgFinishRedoCheck));
         if (rt != 0) {
             CMPQfinish(CmServer_conn);
@@ -111,7 +111,7 @@ static int wait_finish_redo_handler(void)
     int get_check_ack_count = 0;
     int send_check_count = 0;
     int need_finish_redo = -1;
-    finish_redo_content.msg_type = MSG_CTL_CM_FINISH_REDO;
+    finish_redo_content.msg_type = (int)MSG_CTL_CM_FINISH_REDO;
     for (;;) {
         if ((send_check_count - get_check_ack_count > 3) && time_pass < FINISH_REDO_DEFAULT_WAIT) {
             CMPQfinish(CmServer_conn);
@@ -164,7 +164,7 @@ int do_finish_redo(void)
         return -1;
     }
 
-    finish_redo_content.msg_type = MSG_CTL_CM_FINISH_REDO;
+    finish_redo_content.msg_type = (int)MSG_CTL_CM_FINISH_REDO;
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&finish_redo_content, sizeof(finish_redo_content));
     if (ret != 0) {
         FINISH_CONNECTION();

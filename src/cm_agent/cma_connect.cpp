@@ -22,12 +22,16 @@
  * -------------------------------------------------------------------------
  */
 #include <time.h>
+#include <csignal>
 #include "cma_global_params.h"
-#include "cma_connect.h"
 #include "cm/cs_ssl.h"
+#include "cma_common.h"
+#include "cma_instance_check.h"
+#include "cma_instance_management_res.h"
+#include "cma_process_messages_client.h"
+#include "cma_connect.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
-#include "cma_coordinator_utils.h"
 #endif
 
 CM_Conn* agent_cm_server_connect = NULL;
@@ -35,16 +39,14 @@ CM_Conn* agent_cm_server_connect = NULL;
 int g_connCmServerTimes = 0;
 extern uint32 g_serverNodeId;
 
-status_t cm_client_send_msg(CM_Conn *conn, char msgtype, const char *s, size_t lenmsg)
+static status_t CmaSendMsg(CM_Conn *conn, char msgtype, const char *s, size_t lenmsg)
 {
-    int ret;
-
     if (conn == NULL) {
-        write_runlog(ERROR, "cm_client_send_msg, conn is null\n");
+        write_runlog(ERROR, "CmaSendMsg, conn is null\n");
         return CM_ERROR;
     }
 
-    ret = CMPQPacketSend(conn, msgtype, s, lenmsg);
+    int ret = CMPQPacketSend(conn, msgtype, s, lenmsg);
     if (ret != STATUS_OK) {
         write_runlog(LOG, "pqPacketSend failed! ret=%d, errmsg: %s\n", ret, conn->errorMessage.data);
         return CM_ERROR;
@@ -52,11 +54,21 @@ status_t cm_client_send_msg(CM_Conn *conn, char msgtype, const char *s, size_t l
     return CM_SUCCESS;
 }
 
+static status_t CmaFlushMsg(CM_Conn* conn)
+{
+    if (conn != NULL) {
+        int ret = cmpqFlush(conn);
+        if (ret != 0) {
+            write_runlog(LOG, "pq_flush return value is %d\n", ret);
+            return CM_ERROR;
+        }
+    }
+    return CM_SUCCESS;
+}
+
 static status_t GetSslRequestAck(char *receiveMsg, bool *enableSsl)
 {
-    cm_msg_type *cm_msg_type_ptr = NULL;
-
-    cm_msg_type_ptr = (cm_msg_type *)receiveMsg;
+    cm_msg_type *cm_msg_type_ptr = (cm_msg_type *)receiveMsg;
     if (cm_msg_type_ptr->msg_type != MSG_CM_SSL_CONN_ACK) {
         write_runlog(ERROR, "fail to get ssl ack msg_type=%d errno=%d.\n", cm_msg_type_ptr->msg_type, errno);
         return CM_ERROR;
@@ -75,7 +87,7 @@ static status_t GetSslRequestAck(char *receiveMsg, bool *enableSsl)
 
 static char* RecvSslRequestAck(CM_Conn* conn)
 {
-    CM_Result* res = NULL;
+    CM_Result *res;
 
     if (conn == NULL) {
         write_runlog(ERROR, "[RecvSslRequestAck] cma is not connect to the cm server \n");
@@ -100,28 +112,27 @@ static status_t conn_ssl_requst(CM_Conn *conn, int ssl_req, bool *enableSsl)
     const int waitAckTime = 20;
     int timeOut = waitAckTime;
 
-    if (cm_client_send_msg(conn, 'C', (const char *)&req_msg, sizeof(AgentToCmConnectRequest)) != 0) {
+    if (CmaSendMsg(conn, 'C', (const char *)&req_msg, sizeof(AgentToCmConnectRequest)) != CM_SUCCESS) {
         return CM_ERROR;
     }
 
-    char *receiveMsg = NULL;
     write_runlog(DEBUG5, "GetSslRequestAck start.\n");
     while (timeOut >= 0) {
-        if (cm_client_flush_msg(conn) != 0) {
+        if (CmaFlushMsg(conn) != CM_SUCCESS) {
             return CM_ERROR;
         }
 
-        receiveMsg = RecvSslRequestAck(conn);
+        char *receiveMsg = RecvSslRequestAck(conn);
         if (receiveMsg != NULL) {
             if (GetSslRequestAck(receiveMsg, enableSsl) != CM_SUCCESS) {
                 continue;
             }
-            write_runlog(DEBUG5, "GetSslRequestAck end %d\n", *enableSsl);
+            write_runlog(DEBUG5, "GetSslRequestAck end %d\n", (int32)*enableSsl);
             return CM_SUCCESS;
         }
 
         timeOut--;
-        cm_usleep(AGENT_RECV_CYCLE);
+        CmUsleep(AGENT_RECV_CYCLE);
     }
 
     return CM_ERROR;
@@ -129,7 +140,7 @@ static status_t conn_ssl_requst(CM_Conn *conn, int ssl_req, bool *enableSsl)
 
 static inline void cs_securec_clear(char *content, uint32 len)
 {
-    if (!CM_IS_EMPTY_STR(content)) {
+    if (content != NULL) {
         errno_t rc = memset_s(content, len, 0, len);
         securec_check_errno(rc, (void)rc);
     }
@@ -142,7 +153,7 @@ static status_t conn_ssl_establish(CM_Conn *conn, conn_option_t *option, bool *e
     char plain[plainLen] = {0};
 
     CM_RETURN_IFERR(conn_ssl_requst(conn, MSG_CM_SSL_CONN_REQUEST, enableSsl));
-    write_runlog(DEBUG5, "conn_ssl_requst %d\n", *enableSsl);
+    write_runlog(DEBUG5, "conn_ssl_requst %d\n", (int32)*enableSsl);
 
     if (*enableSsl == CM_FALSE) {
         return CM_SUCCESS;
@@ -151,9 +162,8 @@ static status_t conn_ssl_establish(CM_Conn *conn, conn_option_t *option, bool *e
     write_runlog(LOG, "begin to create ssl connection\n");
     CM_RETURN_IFERR(cm_verify_ssl_key_pwd(plain, plainLen, CLIENT_CIPHER));
     g_sslOption.ssl_para.key_password = plain;
-    g_sslOption.ssl_para.verify_peer = 1;
+    g_sslOption.ssl_para.verify_peer = true;
 
-    ssl_ctx_t *ssl_fd = NULL;
     /* check certificate file access permission */
     if (strlen(option->ssl_para.ca_file) > 0) {
         CM_RETURN_IFERR_EX(cm_ssl_verify_file_stat(option->ssl_para.ca_file),
@@ -168,13 +178,8 @@ static status_t conn_ssl_establish(CM_Conn *conn, conn_option_t *option, bool *e
             cs_securec_clear(plain, plainLen));
     }
 
-    if (!cm_file_exist((const char*)g_sslOption.ssl_para.crl_file)) {
-        free(g_sslOption.ssl_para.crl_file);
-        g_sslOption.ssl_para.crl_file = NULL;
-    }
-
     /* create the ssl connector - init ssl and load certs */
-    ssl_fd = cm_ssl_create_connector_fd(&option->ssl_para);
+    ssl_ctx_t *ssl_fd = cm_ssl_create_connector_fd(&option->ssl_para);
 
     /* erase key_password for security issue */
     cs_securec_clear(plain, plainLen);
@@ -191,7 +196,7 @@ static status_t conn_ssl_establish(CM_Conn *conn, conn_option_t *option, bool *e
         return CM_ERROR;
     }
 
-    conn->status= CONNECTION_OK;
+    conn->status = CONNECTION_OK;
     return CM_SUCCESS;
 }
 
@@ -211,7 +216,7 @@ status_t TryGetSslConnToCmserver(CM_Conn *conn, int timeOut)
     conn->pipe.l_linger = 1;
     conn->pipe.type = CS_TYPE_TCP;
     conn->status = CONNECTION_SSL_STARTUP;
-    bool enableSsl = CM_FALSE;
+    bool enableSsl = false;
     if (conn_ssl_establish(conn, &g_sslOption, &enableSsl) != CM_SUCCESS) {
         write_runlog(ERROR, "create ssl connection failed.\n");
         return CM_ERROR;
@@ -260,7 +265,7 @@ CM_Conn* GetConnToCmserver(uint32 nodeid)
     g_cmaConnectCmsInOtherNodeCount = 0;
     g_cmaConnectCmsPrimaryInLocalAzCount = 0;
 
-    for (int kk = (g_cm_server_num - 1); kk >= 0; kk--) {
+    for (int kk = (int)(g_cm_server_num - 1); kk >= 0; kk--) {
         uint32 cm_server_node_index = tmpCmserverIndex[kk];
 
         if (cm_server_node_index < g_node_num) {
@@ -274,7 +279,7 @@ CM_Conn* GetConnToCmserver(uint32 nodeid)
                 for (jj = 0; jj < g_currentNode->cmAgentListenCount; jj++) {
                     rc = memset_s(connstr[jj], CONNSTR_LEN, 0, CONNSTR_LEN);
                     securec_check_errno(rc, (void)rc);
-                    rcs = snprintf_s(connstr[jj], sizeof(connstr[jj]), sizeof(connstr[jj]) - 1,
+                    rcs = snprintf_s(connstr[jj], CONNSTR_LEN, CONNSTR_LEN - 1,
                         "host=%s port=%u localhost=%s connect_timeout=%d node_id=%u node_name=%s remote_type=%d",
                         g_node[cm_server_node_index].cmServer[ii],
                         g_node[cm_server_node_index].port,
@@ -299,15 +304,15 @@ CM_Conn* GetConnToCmserver(uint32 nodeid)
                                 LOG, "cm_agent connect to cm_server primary successfully: %s\n", connstr[jj]);
                             g_connCmServerTimes = 0;
                         }
-                        /* If cm_agent successfully connect to cm_server primary, we count the number 
-                         of connection according to whether the cm_server and cm_agent is in the same node */
+                        /* If cm_agent successfully connect to cm_server primary, we count the number
+                           of connection according to whether the cm_server and cm_agent is in the same node */
                         if (g_currentNode->node == g_node[cm_server_node_index].node) {
                             g_cmaConnectCmsPrimaryInLocalNodeCount++;
                         } else {
                             g_cmaConnectCmsInOtherNodeCount++;
                         }
-                        /* count the number of connection according to whether the cm_server and cm_agent 
-                            is in the same az */
+                        /* count the number of connection according to whether
+                           the cm_server and cm_agent is in the same az */
                         if (strcmp(g_currentNode->azName, g_node[cm_server_node_index].azName) == 0) {
                             g_cmaConnectCmsPrimaryInLocalAzCount++;
                         } else {
@@ -318,7 +323,7 @@ CM_Conn* GetConnToCmserver(uint32 nodeid)
                         return conn;
                     } else {
                         if (strcmp(CMPQerrorMessage(conn), "invalid host") == 0) {
-                            if (g_syncDroppedCoordinator == false) {
+                            if (!g_syncDroppedCoordinator) {
                                 write_runlog(LOG, "%d: sync_dropped_coordinator changes to true.\n", __LINE__);
                             }
                             g_syncDroppedCoordinator = true;
@@ -356,7 +361,7 @@ CM_Conn* GetConnToCmserver(uint32 nodeid)
     return NULL;
 }
 
-void CloseConnToCmserver(void)
+static void CloseConnToCmserver(void)
 {
     if (agent_cm_server_connect != NULL) {
         (void)clock_gettime(CLOCK_MONOTONIC, &g_disconnectTime);
@@ -364,41 +369,116 @@ void CloseConnToCmserver(void)
         agent_cm_server_connect = NULL;
         write_runlog(LOG, "close agent to cmserver connection.\n");
     }
+    CleanCmsMsgQueue();
+    if (IsCusResExistLocal()) {
+        NotifyClientConnectClose();
+    }
 }
 
-status_t cm_client_flush_msg(CM_Conn* conn)
+static status_t SendCmsMsgMain()
 {
-    int ret;
-    if (conn != NULL) {
-        ret = cmpqFlush(conn);
-        if (ret != 0) {
-            write_runlog(LOG, "pq_flush return value is %d\n", ret);
+    MsgQueue &sendQueue = GetCmsSendQueue();
+    (void)pthread_mutex_lock(&sendQueue.lock);
+    while (!sendQueue.msg.empty()) {
+        const AgentMsgPkg *pkgPtr = &sendQueue.msg.front();
+        if (CmaSendMsg(agent_cm_server_connect, 'C', pkgPtr->msgPtr, pkgPtr->msgLen) != CM_SUCCESS) {
+            write_runlog(ERROR, "SendCmsMsgMain send msg failed!\n");
+            (void)pthread_mutex_unlock(&sendQueue.lock);
             return CM_ERROR;
         }
+        FreeBufFromMsgPool(pkgPtr->msgPtr);
+        sendQueue.msg.pop();
     }
+    (void)pthread_mutex_unlock(&sendQueue.lock);
+    CM_RETURN_IFERR(CmaFlushMsg(agent_cm_server_connect));
     return CM_SUCCESS;
 }
 
-bool CmaSendMsgToCms(const void *reportMsg, size_t len, const char* msg)
+static void SelectServerConnect(const sigset_t &selectBlockSig)
 {
-    int ret = 0;
-    ret = cm_client_send_msg(agent_cm_server_connect, 'C', (char *)reportMsg, len);
-    if (ret != 0) {
-        write_runlog(ERROR, "cma fail to send %s to cms.\n", msg);
-        CloseConnToCmserver();
-        return false;
+    if (IsCmsSendQueueEmpty()) {
+        struct timespec timeout = {0, AGENT_RECV_CYCLE};
+        int listenFd = agent_cm_server_connect->sock;
+        fd_set inputMask;
+        FD_ZERO(&inputMask);
+        FD_SET(listenFd, &inputMask);
+        (void)pselect(1, &inputMask, NULL, NULL, &timeout, &selectBlockSig);
     }
-    return true;
 }
 
-bool CmaSendSslMsgToCms(CM_Conn *conn, const void *reportMsg, size_t len, const char* msg)
+static status_t RecvCmsMsgMain()
 {
-    int ret = 0;
-    ret = cm_client_send_msg(conn, 'C', (char *)reportMsg, len);
-    if (ret != 0) {
-        write_runlog(ERROR, "cma fail to send %s to cms.\n", msg);
-        CloseConnToCmserver();
-        return false;
+    int ret = cmpqReadData(agent_cm_server_connect);
+    if (ret < 0) {
+        write_runlog(ERROR, "cm_agent is not connect to the cm server ret=%d,errMsg:%s\n",
+            ret, agent_cm_server_connect->errorMessage.data);
+        return CM_ERROR;
     }
-    return true;
+    if (ret == 0) {
+        return CM_SUCCESS;
+    }
+
+    CM_Result *res = NULL;
+    do {
+        res = cmpqGetResult(agent_cm_server_connect);
+        if (res != NULL) {
+            PushMsgToCmsRecvQue(res->gr_resdata.packed.pad, (uint32)res->gr_msglen);
+        }
+    } while (res != NULL);
+
+    return CM_SUCCESS;
+}
+
+void *SendAndRecvCmsMsgMain(void *arg)
+{
+    sigset_t selectBlockSig;
+    (void)sigprocmask(SIG_SETMASK, NULL, &selectBlockSig);
+    int ret = sigismember(&selectBlockSig, SIGUSR1);
+    if (ret == 0) {
+        (void)sigaddset(&selectBlockSig, SIGUSR1);
+    } else if (ret == 1) {
+        write_runlog(LOG, "sendRecvThread block SIGUSR1 single, need clean it.\n");
+        sigset_t threadSig;
+        (void)sigemptyset(&threadSig);
+        (void)sigaddset(&threadSig, SIGUSR1);
+        (void)sigprocmask(SIG_UNBLOCK, &threadSig, NULL);
+    } else {
+        write_runlog(FATAL, "get block signal of sendRecvThread failed.\n");
+        exit(1);
+    }
+
+    thread_name = "RecvSendMsg";
+    write_runlog(LOG, "send and recv cms msg thread start, threadId: %lu.\n", (unsigned long)pthread_self());
+
+    for (;;) {
+        if (g_shutdownRequest || g_exitFlag) {
+            CloseConnToCmserver();
+            cm_sleep(SHUTDOWN_SLEEP_TIME);
+            continue;
+        }
+        if (agent_cm_server_connect == NULL) {
+            CloseConnToCmserver();
+            cm_sleep(1);
+            continue;
+        }
+        if (g_cmServerNeedReconnect || agent_cm_server_connect->status != CONNECTION_OK) {
+            write_runlog(ERROR, "reconnect:%d, connect_status:%d, close connect.\n",
+                g_cmServerNeedReconnect, (int)agent_cm_server_connect->status);
+            CloseConnToCmserver();
+            continue;
+        }
+        SelectServerConnect(selectBlockSig);
+        if (SendCmsMsgMain() != CM_SUCCESS) {
+            write_runlog(ERROR, "send msg to cms fail, close connect.\n");
+            CloseConnToCmserver();
+            continue;
+        }
+        if (RecvCmsMsgMain() != CM_SUCCESS) {
+            write_runlog(ERROR, "recv msg from cms fail, close connect.\n");
+            CloseConnToCmserver();
+            continue;
+        }
+    }
+
+    return NULL;
 }

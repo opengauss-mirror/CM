@@ -26,20 +26,20 @@
 #ifndef HOTPATCH_INNER_H
 #define HOTPATCH_INNER_H
 
-#define hp_check_intval(errno, express, file, line)  \
+#define hp_check_intval(errno, express, function, line)  \
     do {                                             \
         if (errno < 0) {                             \
-            fprintf(stderr,                          \
+            (void)fprintf(stderr,                    \
                 "%s:%d failed on calling "           \
                 "security function.errno is 0x%x\n", \
-                file,                                \
+                function,                                \
                 line,                                \
                 errno);                              \
             express;                                 \
         }                                            \
     } while (0)
 
-#define securec_check_hp(errno, express) hp_check_intval(errno, express, __FILE__, __LINE__)
+#define securec_check_hp(errno, express) hp_check_intval(errno, express, __FUNCTION__, __LINE__)
 
 typedef enum TIME_USAGE {
     TIME_STRING_FOR_FILE_NAME,

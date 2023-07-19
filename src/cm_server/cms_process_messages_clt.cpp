@@ -22,7 +22,6 @@
  * -------------------------------------------------------------------------
  */
 #include "cms_ddb.h"
-#include "cms_conn.h"
 #include "hotpatch/hotpatch.h"
 #include "cms_common.h"
 #include "cm_msg.h"
@@ -33,44 +32,14 @@
 
 const int KV_POS = 2;
 
-#define PROCESS_MSG_BY_TYPE(struct_name, strunct_ptr, function_name)                                     \
-    do {                                                                                                 \
-        (strunct_ptr) = reinterpret_cast<struct_name *>(                                                 \
-            reinterpret_cast<void *>(const_cast<char *>(CmGetmsgbytes(inBuffer, sizeof(struct_name))))); \
-        if ((strunct_ptr) != NULL) {                                                                     \
-            function_name(con, (strunct_ptr));                                                           \
-        } else {                                                                                         \
-            write_runlog(ERROR, "CmGetmsgbytes failed, msg_type=%d.\n", msgType);         \
-        }                                                                                                \
-    } while (0)
-
-#define PROCESS_MSG_BY_TYPE_WITHOUT_CONN(struct_name, strunct_ptr, function_name)                \
-    do {                                                                                         \
-        (strunct_ptr) = (struct_name *)CmGetmsgbytes(inBuffer, sizeof(struct_name));             \
-        if ((strunct_ptr) != NULL) {                                                             \
-            function_name((strunct_ptr));                                                        \
-        } else {                                                                                 \
-            write_runlog(ERROR, "CmGetmsgbytes failed, msg_type=%d.\n", msgType); \
-        }                                                                                        \
-    } while (0)
-
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 const int SYNC_FINISH_PERCENT = 99;
 static int NeedDoGsGuc(uint32 groupIndex, int memberIndex);
-static bool CompareMemberWithExpectSyncList(uint32 groupIndex, int memberIndex);
+static bool CompareMemberWithExpectSyncList(uint32 groupIdx, int memIdx);
 static bool IsExpectSyncListInstanceNormal(uint32 groupIndex, uint32 instanceId, int *primaryCount);
 #endif
-static bool SwitchoverStatusCheck(int group_index, int member_index);
-void process_to_query_instance_status_msg(CM_Connection *con, const cm_query_instance_status *query_status_ptr);
-
-typedef struct _cmAgent_msg_ {
-    CM_Connection *con;
-    cm_instance_report_status *instStatus;
-    int i;
-    int j;
-    cm_msg_type *msg;
-    const cm_instance_role_status *instInfo;
-} cmExecMsg;
+static bool SwitchoverStatusCheck(uint32 group_index, int member_index);
+void process_to_query_instance_status_msg(MsgRecvInfo* recvMsgInfo, const cm_query_instance_status *query_status_ptr);
 
 int FinishRedoCheck(void)
 {
@@ -79,7 +48,7 @@ int FinishRedoCheck(void)
         (void)pthread_rwlock_rdlock(&(g_instance_group_report_status_ptr[i].lk_lock));
         if (g_instance_role_group_ptr[i].count > 0 &&
             g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_DATANODE &&
-            g_instance_group_report_status_ptr[i].instance_status.finish_redo == true) {
+            g_instance_group_report_status_ptr[i].instance_status.finish_redo) {
                 finish_redo_group++;
         }
         (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
@@ -133,7 +102,7 @@ static void GetSendCltDdbMsg(
     }
 }
 
-void ProcessCltSendOper(CM_Connection *con, CltSendDdbOper *ddbOper)
+void ProcessCltSendOper(MsgRecvInfo* recvMsgInfo, CltSendDdbOper *ddbOper)
 {
     if (ddbOper == NULL || ddbOper->dbOper == DDB_INIT_OPER) {
         write_runlog(ERROR, "ddbOper is NULL, or dbOper is DDB_INIT_OPER.\n");
@@ -161,10 +130,7 @@ void ProcessCltSendOper(CM_Connection *con, CltSendDdbOper *ddbOper)
         ddbOper->key,
         sendDdbRes.value,
         sendDdbRes.exeStatus);
-    int32 ret = cm_server_send_msg(con, 'S', (const char *)(&sendDdbRes), sizeof(CmSendDdbOperRes));
-    if (ret != 0) {
-        write_runlog(ERROR, "failed to send msg(%d) to client.\n", MSG_CM_CLIENT_DDB_OPER_ACK);
-    }
+        (void)RespondMsg(recvMsgInfo, 'S', (const char *)(&sendDdbRes), sizeof(CmSendDdbOperRes));
 }
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
 void FindInstanceInSyncList(uint32 groupIdx, int memIdx, bool *hasFound)
@@ -179,7 +145,7 @@ void FindInstanceInSyncList(uint32 groupIdx, int memIdx, bool *hasFound)
     }
 }
 
-bool CompareMemberWithExpectSyncList(uint32 groupIdx, int memIdx)
+static bool CompareMemberWithExpectSyncList(uint32 groupIdx, int memIdx)
 {
     DatanodeSyncList *expectSyncList = &(g_instance_group_report_status_ptr[groupIdx].instance_status.exceptSyncList);
     cm_instance_datanode_report_status *dnReport =
@@ -206,7 +172,7 @@ bool CompareMemberWithExpectSyncList(uint32 groupIdx, int memIdx)
     return true;
 }
 
-int NeedDoGsGuc(uint32 groupIndex, int memberIndex)
+static int NeedDoGsGuc(uint32 groupIndex, int memberIndex)
 {
     if (g_isEnableUpdateSyncList == CANNOT_START_SYNCLIST_THREADS) {
         return SEND_AZ_SYNC_LIST;
@@ -242,7 +208,7 @@ int NeedDoGsGuc(uint32 groupIndex, int memberIndex)
     return NEED_TO_SEND_SYNC_LIST;
 }
 
-bool isDnGroupAvailable(int groupId, int dnId)
+bool isDnGroupAvailable(uint32 groupId, int dnId)
 {
     synchronous_standby_mode currentMode =
         g_instance_group_report_status_ptr[groupId].instance_status.data_node_member[dnId].sync_standby_mode;
@@ -265,7 +231,7 @@ bool isDnGroupAvailable(int groupId, int dnId)
     return (availableNum * ONE_HUNDRED / g_instance_role_group_ptr[groupId].count) > percent_of_auto_gsguc;
 }
 
-bool IsExpectSyncListInstanceNormal(uint32 groupIndex, uint32 instanceId, int *primaryCount)
+static bool IsExpectSyncListInstanceNormal(uint32 groupIndex, uint32 instanceId, int *primaryCount)
 {
     for (int i = 0; i < g_instance_role_group_ptr[groupIndex].count; ++i) {
         if (instanceId != g_instance_role_group_ptr[groupIndex].instanceMember[i].instanceId) {
@@ -303,6 +269,14 @@ status_t GetSwitchOverMsg(uint32 i, int j, bool doSwitchoverFast, cm_to_agent_sw
     switchoverMsg->instance_type = instInfo->instanceType;
     switchoverMsg->wait_seconds = instStatus->command_member[j].time_out;
 
+    EnCheckSynclist echeck = CheckInstInSyncList(i, j, "[Send switchover]");
+    if (echeck != SYNCLIST_IS_FINISTH && (g_clusterType != V3SingleInstCluster)) {
+        write_runlog(LOG, "instId(%u) may be doing modify sync(%d), cannot do switchover.\n",
+            GetInstanceIdInGroup(i, j), (int32)echeck);
+        CleanCommand(i, j);
+        return CM_ERROR;
+    }
+
     cm_instance_command_status *cmd = &(instStatus->command_member[j]);
     if (cmd->cmdPur == INSTANCE_ROLE_STANDBY && cmd->cmdSour == INSTANCE_ROLE_CASCADE_STANDBY) {
         switchoverMsg->term = InvalidTerm;
@@ -311,14 +285,13 @@ status_t GetSwitchOverMsg(uint32 i, int j, bool doSwitchoverFast, cm_to_agent_sw
 
     if ((g_clusterType != V3SingleInstCluster) && ((term = ReadTermFromDdb(i)) == InvalidTerm)) {
         write_runlog(ERROR, "Term on Ddb has not been set yet, which should not happen.\n");
-        (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
         return CM_ERROR;
     }
     switchoverMsg->term = term;
     return CM_SUCCESS;
 }
 
-void ProcessSwitchOverMsg(CM_Connection *con, uint32 i, int j, const cm_to_agent_switchover *switchoverMsg)
+void ProcessSwitchOverMsg(MsgRecvInfo* recvMsgInfo, uint32 i, int j, const cm_to_agent_switchover *switchoverMsg)
 {
     cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
     const cm_instance_role_status *instInfo = &g_instance_role_group_ptr[i].instanceMember[j];
@@ -349,7 +322,7 @@ void ProcessSwitchOverMsg(CM_Connection *con, uint32 i, int j, const cm_to_agent
         "send switchover message, node=%u, instance=%u",
         g_instance_role_group_ptr[i].instanceMember[j].node,
         g_instance_role_group_ptr[i].instanceMember[j].instanceId);
-    if (cm_server_send_msg(con, 'S', (const char *)(switchoverMsg), sizeof(cm_to_agent_switchover)) == 0) {
+    if (RespondMsg(recvMsgInfo, 'S', (const char *)(switchoverMsg), sizeof(cm_to_agent_switchover)) == 0) {
         instStatus->command_member[j].command_status = INSTANCE_COMMAND_WAIT_EXEC_ACK;
     } else {
         instStatus->command_member[j].command_send_status = INSTANCE_COMMAND_SEND_STATUS_FAIL;
@@ -357,7 +330,7 @@ void ProcessSwitchOverMsg(CM_Connection *con, uint32 i, int j, const cm_to_agent
     return;
 }
 
-void ProcessBuildMsg(CM_Connection *con, uint32 i, int j)
+void ProcessBuildMsg(MsgRecvInfo* recvMsgInfo, uint32 i, int j)
 {
     cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
     const cm_instance_role_status *instInfo = &g_instance_role_group_ptr[i].instanceMember[j];
@@ -389,7 +362,7 @@ void ProcessBuildMsg(CM_Connection *con, uint32 i, int j)
     }
     instStatus->command_member[j].command_send_status = INSTANCE_COMMAND_SEND_STATUS_SENDING;
     instStatus->command_member[j].command_send_times = 0;
-    if (cm_server_send_msg(con, 'S', (char *)(&buildMsg), sizeof(buildMsg)) == 0) {
+    if (RespondMsg(recvMsgInfo, 'S', (char *)(&buildMsg), sizeof(buildMsg)) == 0) {
         instStatus->command_member[j].command_status = INSTANCE_COMMAND_WAIT_EXEC_ACK;
     } else {
         instStatus->command_member[j].command_send_status = INSTANCE_COMMAND_SEND_STATUS_FAIL;
@@ -399,18 +372,17 @@ void ProcessBuildMsg(CM_Connection *con, uint32 i, int j)
 
 void SaveNotifyMsg(uint32 i, int j, cm_to_agent_notify_cn *p_cm_to_agent_notify_cn)
 {
-    uint32 k = 0;
     int count = 0;
     cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
     cm_notify_msg_status *notify_msg = &instStatus->coordinatemember.notify_msg;
-    for (k = 0; k < g_datanode_instance_count; k++) {
+    for (uint32 k = 0; k < g_datanode_instance_count; k++) {
         if (notify_msg->notify_status != NULL && notify_msg->notify_status[k] &&
             notify_msg->datanode_instance != NULL) {
             p_cm_to_agent_notify_cn->datanodeId[count++] = notify_msg->datanode_instance[k];
         }
     }
     if (notify_msg->gtmIdBroadCast != 0) {
-        p_cm_to_agent_notify_cn->datanodeId[count++] = notify_msg->gtmIdBroadCast;
+        p_cm_to_agent_notify_cn->datanodeId[count] = notify_msg->gtmIdBroadCast;
     }
     p_cm_to_agent_notify_cn->coordinatorId = 0;
     instStatus->command_member[j].command_send_status = INSTANCE_COMMAND_SEND_STATUS_SENDING;
@@ -421,7 +393,6 @@ void SaveNotifyMsg(uint32 i, int j, cm_to_agent_notify_cn *p_cm_to_agent_notify_
 int GetNotifyCnCount(cm_instance_report_status *instStatus, const cm_instance_role_status *instInfo)
 {
     int count = 0;
-    uint32 k = 0;
     int gtmCount = 0;
     cm_notify_msg_status *notify_msg;
     /*
@@ -429,7 +400,7 @@ int GetNotifyCnCount(cm_instance_report_status *instStatus, const cm_instance_ro
      * actual scan result, put all the needed datanode instanceId into notify msg.
      */
     notify_msg = &instStatus->coordinatemember.notify_msg;
-    for (k = 0; k < g_datanode_instance_count; k++) {
+    for (uint32 k = 0; k < g_datanode_instance_count; k++) {
         if (notify_msg->notify_status != NULL && notify_msg->notify_status[k]) {
             Assert(notify_msg->datanode_instance[k] != 0);
             count++;
@@ -448,18 +419,19 @@ int GetNotifyCnCount(cm_instance_report_status *instStatus, const cm_instance_ro
     return count;
 }
 
-status_t ProcessNotifyMsg(CM_Connection *con, uint32 i, int j, int count)
+status_t ProcessNotifyMsg(MsgRecvInfo* recvMsgInfo, uint32 i, int j, int count)
 {
     cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
     const cm_instance_role_status *instInfo = &g_instance_role_group_ptr[i].instanceMember[j];
-    cm_to_agent_notify_cn *p_cm_to_agent_notify_cn = NULL;
-    size_t msg_len = 0;
+
     /* notify message init */
-    msg_len = offsetof(cm_to_agent_notify_cn, datanodeId) + (size_t)(count) * sizeof(uint32);
-    p_cm_to_agent_notify_cn = (cm_to_agent_notify_cn *)malloc(msg_len);
+    size_t msg_len = offsetof(cm_to_agent_notify_cn, datanodeId) + (uint32)(count) * sizeof(uint32);
+    if (msg_len == 0) {
+        return CM_ERROR;
+    }
+    cm_to_agent_notify_cn *p_cm_to_agent_notify_cn = (cm_to_agent_notify_cn *)malloc(msg_len);
     if (p_cm_to_agent_notify_cn == NULL) {
         write_runlog(ERROR, "out of memory! requested size: %lu.\n", msg_len);
-        (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
         return CM_ERROR;
     }
 
@@ -471,7 +443,7 @@ status_t ProcessNotifyMsg(CM_Connection *con, uint32 i, int j, int count)
 
     /* store the instanceId list into message */
     SaveNotifyMsg(i, j, p_cm_to_agent_notify_cn);
-    if (cm_server_send_msg(con, 'S', (char *)p_cm_to_agent_notify_cn, msg_len) == 0) {
+    if (RespondMsg(recvMsgInfo, 'S', (char *)p_cm_to_agent_notify_cn, msg_len) == 0) {
         /* set the command status to wait ack, clean up the status until feedback */
         instStatus->command_member[j].command_status = INSTANCE_COMMAND_WAIT_EXEC_ACK;
     } else {
@@ -510,17 +482,16 @@ status_t CheckDnSendRecv(uint32 i, int j, int needDoGsGuc, const cm_instance_rol
     return CM_SUCCESS;
 }
 
-void SendSyncListMsg(CM_Connection *con, int nodeId, uint32 i, const cm_instance_role_status *dnRole,
+void SendSyncListMsg(MsgRecvInfo* recvMsgInfo, uint32 nodeId, uint32 i, const cm_instance_role_status *dnRole,
     const DatanodeSyncList *exceptSyncList)
 {
-    error_t rc = 0;
     CmToAgentGsGucSyncList cmToAgentSyncListContent = {0};
-    cmToAgentSyncListContent.msgType = MSG_CM_AGENT_DN_SYNC_LIST;
+    cmToAgentSyncListContent.msgType = (int)MSG_CM_AGENT_DN_SYNC_LIST;
     cmToAgentSyncListContent.node = nodeId;
     cmToAgentSyncListContent.instanceId = dnRole->instanceId;
     cmToAgentSyncListContent.instanceNum = g_instance_role_group_ptr[i].count;
     cmToAgentSyncListContent.groupIndex = i;
-    rc = memcpy_s(
+    error_t rc = memcpy_s(
         &(cmToAgentSyncListContent.dnSyncList), sizeof(DatanodeSyncList), exceptSyncList, sizeof(DatanodeSyncList));
     securec_check_errno(rc, (void)rc);
     char dnSyncListStr[MAX_PATH_LEN] = {0};
@@ -528,12 +499,12 @@ void SendSyncListMsg(CM_Connection *con, int nodeId, uint32 i, const cm_instance
     WriteKeyEventLog(KEY_EVENT_RELOAD_GS_GUC, dnRole->instanceId,
         "send reload gs guc msg, instanceId is %u, msgtype is %d, SyncList is [%s]",
         dnRole->instanceId, cmToAgentSyncListContent.msgType, dnSyncListStr);
-    (void)cm_server_send_msg(con, 'S', (char *)(&cmToAgentSyncListContent), sizeof(CmToAgentGsGucSyncList));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&cmToAgentSyncListContent), sizeof(CmToAgentGsGucSyncList));
     return;
 }
 
-void PutGsGucContent(
-    CM_Connection *con, synchronous_standby_mode standbyMode, uint32 nodeId, const cm_instance_role_status *dnRole)
+void PutGsGucContent(MsgRecvInfo* recvMsgInfo, synchronous_standby_mode standbyMode, uint32 nodeId,
+    const cm_instance_role_status *dnRole)
 {
     cm_to_agent_gs_guc cm_to_agent_gs_guc_content;
     cm_to_agent_gs_guc_content.msg_type = MSG_CM_AGENT_GS_GUC;
@@ -541,31 +512,29 @@ void PutGsGucContent(
     cm_to_agent_gs_guc_content.node = nodeId;
     cm_to_agent_gs_guc_content.instanceId = dnRole->instanceId;
     WriteKeyEventLog(KEY_EVENT_RELOAD_GS_GUC, dnRole->instanceId,
-        "send reload gs guc msg, instanceId is %u, type is %d", dnRole->instanceId, cm_to_agent_gs_guc_content.type);
-    (void)cm_server_send_msg(
-        con, 'S', (char *)(&cm_to_agent_gs_guc_content), sizeof(cm_to_agent_gs_guc_content));
+        "send reload gs guc msg, instanceId is %u, type is %d", dnRole->instanceId,
+        (int)cm_to_agent_gs_guc_content.type);
+    (void)RespondMsg(recvMsgInfo,
+        'S', (char *)(&cm_to_agent_gs_guc_content), sizeof(cm_to_agent_gs_guc_content));
     return;
 }
 #endif
 
-void CmToAgentMsg(CM_Connection *con, int msgType, bool doSwitchoverFast)
+void CmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType, bool doSwitchoverFast)
 {
     uint32 i;
     int j;
     status_t ret = CM_SUCCESS;
 
-    if (con->fd == INVALIDFD || con->port->remote_type != CM_AGENT) {
+    if (recvMsgInfo->connID.remoteType != CM_AGENT) {
         return;
     }
 
-    if (con->notifyCn == WAIT_TO_NOTFY_CN) {
-        con->notifyCn = setNotifyCnFlagByNodeId(con->port->node_id);
-    }
     for (i = 0; i < g_dynamic_header->relationCount; i++) {
         cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
         for (j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             const cm_instance_role_status *instInfo = &g_instance_role_group_ptr[i].instanceMember[j];
-            if ((instInfo->node == con->port->node_id) &&
+            if ((instInfo->node == recvMsgInfo->connID.agentNodeId) &&
                 ((instStatus->command_member[j].command_status == INSTANCE_COMMAND_WAIT_EXEC) ||
                     !SwitchoverStatusCheck(i, j))) {
                 (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
@@ -574,18 +543,19 @@ void CmToAgentMsg(CM_Connection *con, int msgType, bool doSwitchoverFast)
                         cm_to_agent_switchover switchoverMsg;
                         ret = GetSwitchOverMsg(i, j, doSwitchoverFast, &switchoverMsg);
                         if (ret != CM_SUCCESS) {
-                            return;
+                            break;
                         }
-                        ProcessSwitchOverMsg(con, i, j, &switchoverMsg);
+                        ProcessSwitchOverMsg(recvMsgInfo, i, j, &switchoverMsg);
                         break;
                     case MSG_CM_AGENT_BUILD:
-                        ProcessBuildMsg(con, i, j);
+                        ProcessBuildMsg(recvMsgInfo, i, j);
                         break;
                     case MSG_CM_AGENT_NOTIFY_CN:
                         if (msgType == MSG_AGENT_CM_COORDINATE_INSTANCE_STATUS) {
                             int count = GetNotifyCnCount(instStatus, instInfo);
-                            ret = ProcessNotifyMsg(con, i, j, count);
+                            ret = ProcessNotifyMsg(recvMsgInfo, i, j, count);
                             if (ret != CM_SUCCESS) {
+                                (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
                                 return;
                             }
                             break;
@@ -600,10 +570,6 @@ void CmToAgentMsg(CM_Connection *con, int msgType, bool doSwitchoverFast)
                         return;
                 }
                 (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
-
-                if (con->fd == INVALIDFD) {
-                    return;
-                }
             }
         }
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
@@ -616,7 +582,7 @@ void CmToAgentMsg(CM_Connection *con, int msgType, bool doSwitchoverFast)
             for (j = 0; j < g_instance_role_group_ptr[i].count; j++) {
                 cm_instance_role_status *dnRole = &(g_instance_role_group_ptr[i].instanceMember[j]);
                 uint32 nodeId = dnRole->node;
-                if (nodeId != con->port->node_id) {
+                if (nodeId != recvMsgInfo->connID.agentNodeId) {
                     continue;
                 }
                 if (g_instance_role_group_ptr[i].instanceMember[0].instanceType != INSTANCE_TYPE_DATANODE) {
@@ -646,11 +612,11 @@ void CmToAgentMsg(CM_Connection *con, int msgType, bool doSwitchoverFast)
                         continue;
                     }
                     instStatus->data_node_member[j].send_gs_guc_time = 0;
-                    SendSyncListMsg(con, nodeId, i, dnRole, &exceptSyncList);
+                    SendSyncListMsg(recvMsgInfo, nodeId, i, dnRole, &exceptSyncList);
                     continue;
                 }
 
-                if (standbyMode != AnyFirstNo && (nodeId == con->port->node_id)) {
+                if (standbyMode != AnyFirstNo && (nodeId == recvMsgInfo->connID.agentNodeId)) {
                     bool dnGroupAvailable = isDnGroupAvailable(i, j);
                     if (!dnGroupAvailable) {
                         write_runlog(LOG,
@@ -663,7 +629,7 @@ void CmToAgentMsg(CM_Connection *con, int msgType, bool doSwitchoverFast)
                         continue;
                     }
                     instStatus->data_node_member[j].send_gs_guc_time = 0;
-                    PutGsGucContent(con, standbyMode, nodeId, dnRole);
+                    PutGsGucContent(recvMsgInfo, standbyMode, nodeId, dnRole);
                 }
             }
         }
@@ -671,7 +637,7 @@ void CmToAgentMsg(CM_Connection *con, int msgType, bool doSwitchoverFast)
     }
 }
 
-static bool SwitchoverStatusCheck(int group_index, int member_index)
+static bool SwitchoverStatusCheck(uint32 group_index, int member_index)
 {
     if (g_instance_group_report_status_ptr[group_index]
         .instance_status.command_member[member_index].command_send_times < 0) {
@@ -703,10 +669,9 @@ static bool SwitchoverStatusCheck(int group_index, int member_index)
 
 uint32 find_nodeindex_by_nodeid(uint32 nodeId, int instanceType)
 {
-    uint32 i = 0;
     uint32 index = 0;
     bool findIndex = false;
-    for (i = 0; i < g_node_num; i++) {
+    for (uint32 i = 0; i < g_node_num; i++) {
         if (instanceType == PROCESS_ETCD) {
             if (g_node[i].etcd && g_node[i].node == nodeId) {
                 findIndex = true;
@@ -734,7 +699,8 @@ uint32 find_nodeindex_by_nodeid(uint32 nodeId, int instanceType)
     return index;
 }
 
-void process_to_query_instance_status_msg(CM_Connection *con, const cm_query_instance_status *query_status_ptr)
+void process_to_query_instance_status_msg(
+    MsgRecvInfo* recvMsgInfo, const cm_query_instance_status *query_status_ptr)
 {
     cm_query_instance_status cm_query_instance_status_content;
     if (query_status_ptr->msg_step == QUERY_STATUS_CMSERVER_STEP) {
@@ -750,11 +716,14 @@ void process_to_query_instance_status_msg(CM_Connection *con, const cm_query_ins
             cm_query_instance_status_content.status = g_instance_status_for_cm_server[index];
             cm_query_instance_status_content.pending = g_instance_status_for_cm_server_pending[index];
         } else {
-            write_runlog(ERROR, "unknown instance type %d for query instance status.\n",
+            write_runlog(ERROR, "unknown instance type %u for query instance status.\n",
                 cm_query_instance_status_content.instanceType);
         }
-        (void)cm_server_send_msg(
-            con, 'S', (char *)&(cm_query_instance_status_content), sizeof(cm_query_instance_status_content), DEBUG5);
+        (void)RespondMsg(recvMsgInfo,
+            'S',
+            (char *)&(cm_query_instance_status_content),
+            sizeof(cm_query_instance_status_content),
+            DEBUG5);
     } else if (query_status_ptr->msg_step == QUERY_STATUS_CMAGENT_STEP) {
         (void)pthread_rwlock_wrlock(&instance_status_rwlock);
         if (query_status_ptr->instanceType == PROCESS_ETCD) {
@@ -780,13 +749,13 @@ void process_to_query_instance_status_msg(CM_Connection *con, const cm_query_ins
             g_instance_status_for_cm_server_timeout[index] = cmserver_and_etcd_instance_status_for_timeout;
         } else {
             write_runlog(
-                ERROR, "unknown instance type %d for query instance status.\n", query_status_ptr->instanceType);
+                ERROR, "unknown instance type %u for query instance status.\n", query_status_ptr->instanceType);
         }
         (void)pthread_rwlock_unlock(&instance_status_rwlock);
     }
 }
 
-void HotpatchInfoStateToString(unsigned int state, char *state_string, int length_state_string)
+void HotpatchInfoStateToString(unsigned int state, char *state_string, size_t length_state_string)
 {
     int ret;
 
@@ -817,110 +786,112 @@ void HotpatchInfoStateToString(unsigned int state, char *state_string, int lengt
 /* patch_info_all should free by caller */
 int HotpatchGetPatchInfo(const char *file_path, int *patch_number, PATCH_INFO_T **patch_info_all)
 {
-    int ret;
-    FILE *fp = NULL;
     int max_patch_number;
     char real_path[PATH_MAX] = {0};
     PATCH_INFO_HEADER_T hp_header = {0};
 
-    if (file_path == NULL)
+    if (file_path == NULL) {
         return HP_ERROR_FILE_PATH_ERROR;
+    }
 
-    if (realpath(file_path, real_path) == NULL)
+    if (realpath(file_path, real_path) == NULL) {
         return HP_ERROR_FILE_PATH_ERROR;
+    }
 
-    fp = fopen(real_path, "r");
-    if (fp == NULL)
+    FILE *fp = fopen(real_path, "r");
+    if (fp == NULL) {
         return HP_ERROR_FILE_OPEN_ERROR;
+    }
 
-    ret = (int)fread(&hp_header, sizeof(PATCH_INFO_HEADER_T), 1, fp);
+    size_t ret = fread(&hp_header, sizeof(PATCH_INFO_HEADER_T), 1, fp);
     if (ret != 1) {
-        fclose(fp);
+        (void)fclose(fp);
         fp = NULL;
         return HP_ERROR_FILE_READ_ERROR;
     }
 
     max_patch_number = hp_header.max_patch_number;
     if ((max_patch_number <= 0) || (max_patch_number > g_max_number_patch)) {
-        fclose(fp);
+        (void)fclose(fp);
         fp = NULL;
         return HP_ERROR_PATCH_NUMBER_ERROR;
     }
 
     *patch_info_all = (PATCH_INFO_T *)malloc((size_t)max_patch_number * sizeof(PATCH_INFO_T));
     if (*patch_info_all == NULL) {
-        fclose(fp);
+        (void)fclose(fp);
         fp = NULL;
         return HP_ERROR_SYSTEM_ERROR;
     }
 
     ret = fread(*patch_info_all, sizeof(PATCH_INFO_T), (size_t)max_patch_number, fp);
-    if (ret != max_patch_number) {
+    if ((int)ret != max_patch_number) {
         free(*patch_info_all);
         *patch_info_all = NULL;
-        fclose(fp);
+        (void)fclose(fp);
         fp = NULL;
         return HP_ERROR_PATCH_INFO_ERROR;
     }
     *patch_number = max_patch_number;
-    fclose(fp);
+    (void)fclose(fp);
     fp = NULL;
 
     return HP_OK;
 }
 
 #if defined (ENABLE_MULTIPLE_NODES) || defined (ENABLE_PRIVATEGAUSS)
-void HotpatchReturnError(CM_Connection *con, int err_code)
+void HotpatchReturnError(MsgRecvInfo* recvMsgInfo, int err_code)
 {
     char return_string[MAX_LENGTH_RETURN_STRING] = {0};
 
     patch_err_info_handler(err_code, return_string, MAX_LENGTH_RETURN_STRING);
-    (void)cm_server_send_msg(con, 'S', return_string, strlen(return_string), DEBUG5);
+    (void)RespondMsg(recvMsgInfo, 'S', return_string, strlen(return_string), DEBUG5);
 }
 
-void SendHotPatchMsg(CM_Connection *con, int patch_number, const PATCH_INFO_T *patch_info_all)
+void SendHotPatchMsg(MsgRecvInfo* recvMsgInfo, int patch_number, const PATCH_INFO_T *patch_info_all)
 {
     int ret;
     char *patch_name = NULL;
     char patch_state_string[g_length_statstr] = {0};
     int str_start = 0;
     int list_strlen;
-    char *return_string_list = NULL;
 
     list_strlen = patch_number * g_max_length_line;
-    return_string_list = (char *)malloc(list_strlen);
+    char *return_string_list = (char *)malloc(list_strlen);
     if (return_string_list == NULL) {
-        HotpatchReturnError(con, HP_ERROR_SYSTEM_ERROR);
+        HotpatchReturnError(recvMsgInfo, (int32)HP_ERROR_SYSTEM_ERROR);
         return;
     }
     for (int i = 0; i < patch_number; i++) {
-        HotpatchInfoStateToString(patch_info_all[i].patch_state, patch_state_string, sizeof(patch_state_string));
+        HotpatchInfoStateToString(patch_info_all[i].patch_state, patch_state_string,
+            sizeof(patch_state_string));
         patch_name = strip_path_from_pathname(patch_info_all[i].patch_name);
-        if (patch_name == NULL)
+        if (patch_name == NULL) {
             ret = snprintf_s(return_string_list + str_start,
                 list_strlen - str_start,
                 (list_strlen - str_start) - 1,
                 "PATCH: UNKNOW STATE: %s\n",
                 patch_state_string);
-        else
+        } else {
             ret = snprintf_s(return_string_list + str_start,
                 list_strlen - str_start,
                 (list_strlen - str_start) - 1,
                 "PATCH: %s STATE: %s\n",
                 patch_name,
                 patch_state_string);
+        }
         securec_check_intval(ret, (void)ret);
         str_start = str_start + ret;
     }
     ret = strcat_s(return_string_list, list_strlen, "[PATCH-SUCCESS] : LIST PATCH\n");
     securec_check_errno(ret, (void)ret);
 
-    (void)cm_server_send_msg(con, 'S', return_string_list, strlen(return_string_list), DEBUG5);
+    (void)RespondMsg(recvMsgInfo, 'S', return_string_list, strlen(return_string_list), DEBUG5);
     free(return_string_list);
     return;
 }
 
-void HotpatchReturnList(CM_Connection *con)
+void HotpatchReturnList(MsgRecvInfo* recvMsgInfo)
 {
     int ret;
     int patch_number;
@@ -928,7 +899,7 @@ void HotpatchReturnList(CM_Connection *con)
     PATCH_INFO_T *patch_info_all = NULL;
 
     if (cm_server_dataDir == NULL) {
-        HotpatchReturnError(con, HP_ERROR_CM_DATADIR_NULL);
+        HotpatchReturnError(recvMsgInfo, (int32)HP_ERROR_CM_DATADIR_NULL);
         return;
     }
 
@@ -937,18 +908,18 @@ void HotpatchReturnList(CM_Connection *con)
 
     ret = HotpatchGetPatchInfo(patch_dir, &patch_number, &patch_info_all);
     if (ret != HP_OK) {
-        HotpatchReturnError(con, ret);
+        HotpatchReturnError(recvMsgInfo, ret);
         return;
     }
 
-    SendHotPatchMsg(con, patch_number, patch_info_all);
+    SendHotPatchMsg(recvMsgInfo, patch_number, patch_info_all);
     free(patch_info_all);
     patch_info_all = NULL;
     return;
 }
 #endif
 
-void ProcessHotpatchMessage(CM_Connection *con, cm_hotpatch_msg *hotpatch_msg)
+void ProcessHotpatchMessage(MsgRecvInfo* recvMsgInfo, cm_hotpatch_msg *hotpatch_msg)
 {
 #if defined (ENABLE_MULTIPLE_NODES) || defined (ENABLE_PRIVATEGAUSS)
     int ret;
@@ -968,13 +939,13 @@ void ProcessHotpatchMessage(CM_Connection *con, cm_hotpatch_msg *hotpatch_msg)
     }
 
     if (is_list && (strncmp(return_string, "[PATCH-SUCCESS]", g_length_okstr) == 0)) {
-        HotpatchReturnList(con);
+        HotpatchReturnList(recvMsgInfo);
     } else if (is_list && (strstr(return_string, "No patch loaded now") != NULL)) {
         ret = strcpy_s(return_string, sizeof(return_string), "[PATCH-SUCCESS] LIST PATCH , NO PATCH LOAD!\n");
         securec_check_errno(ret, (void)ret);
-        (void)cm_server_send_msg(con, 'S', return_string, strlen(return_string), DEBUG5);
+        (void)RespondMsg(recvMsgInfo, 'S', return_string, strlen(return_string), DEBUG5);
     } else {
-        (void)cm_server_send_msg(con, 'S', return_string, strlen(return_string), DEBUG5);
+        (void)RespondMsg(recvMsgInfo, 'S', return_string, strlen(return_string), DEBUG5);
     }
 #endif
     return;
@@ -982,27 +953,27 @@ void ProcessHotpatchMessage(CM_Connection *con, cm_hotpatch_msg *hotpatch_msg)
 
 void ProcessStopArbitrationMessage(void)
 {
-    ctl_stop_cluster_server_halt_arbitration_timeout = ctl_stop_cluster_server_halt_arbitration_timeout_init;
+    ctl_stop_cluster_server_halt_arbitration_timeout = (uint32)ctl_stop_cluster_server_halt_arbitration_timeout_init;
     write_runlog(WARNING,
         "Received stop arbitration from cm_ctl, meaning that cm_ctl is about to running "
         "a full stop-cluster. stopping arbitration for %u\n",
         ctl_stop_cluster_server_halt_arbitration_timeout);
 }
 
-void process_finish_redo_check_message(CM_Connection *con)
+void process_finish_redo_check_message(MsgRecvInfo* recvMsgInfo)
 {
     cm_to_ctl_finish_redo_check_ack msg_finish_redo_check_ack;
     msg_finish_redo_check_ack.msg_type = MSG_CM_CTL_FINISH_REDO_CHECK_ACK;
     msg_finish_redo_check_ack.finish_redo_count = FinishRedoCheck();
-    (void)cm_server_send_msg(con, 'S', (char *)(&msg_finish_redo_check_ack), sizeof(msg_finish_redo_check_ack));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msg_finish_redo_check_ack), sizeof(msg_finish_redo_check_ack));
 }
 
-void process_finish_redo_message(CM_Connection *con)
+void process_finish_redo_message(MsgRecvInfo* recvMsgInfo)
 {
     cm_msg_type msgFinishRedoAck;
     if (backup_open != CLUSTER_PRIMARY) {
         msgFinishRedoAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)cm_server_send_msg(con, 'S', (char *)(&msgFinishRedoAck), sizeof(cm_msg_type));
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgFinishRedoAck), sizeof(cm_msg_type));
         return;
     }
 
@@ -1039,6 +1010,9 @@ void process_finish_redo_message(CM_Connection *con)
         (void)pthread_rwlock_unlock(&g_finish_redo_rwlock);
         write_runlog(LOG, "%d: Ddb set finish_redos flag success. key = %s,value = %s.\n", __LINE__, status_key, value);
     } else {
+        char statusValue[MAX_PATH_LEN] = {0};
+        errno_t rc = strcpy_s(statusValue, MAX_PATH_LEN, "true");
+        securec_check_errno(rc, (void)rc);
         for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
             (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
             if (g_instance_role_group_ptr[i].count > 0 &&
@@ -1048,11 +1022,11 @@ void process_finish_redo_message(CM_Connection *con)
             (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
 
             char status_key[MAX_PATH_LEN] = {0};
-            errno_t rc = snprintf_s(status_key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/finish_redo/%u", pw->pw_name, i);
+            rc = snprintf_s(status_key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/finish_redo/%u", pw->pw_name, i);
             securec_check_intval(rc, (void)rc);
 
             (void)pthread_rwlock_wrlock(&g_finish_redo_rwlock);
-            status_t st = SetKV2Ddb(status_key, MAX_PATH_LEN, "true", (uint32)strlen("true"), NULL);
+            status_t st = SetKV2Ddb(status_key, MAX_PATH_LEN, statusValue, (uint32)MAX_PATH_LEN, NULL);
             if (st != CM_SUCCESS) {
                 write_runlog(
                     ERROR, "%d: Ddb set finish redo flag failed, key = %s, value = true.\n", __LINE__, status_key);
@@ -1067,42 +1041,30 @@ void process_finish_redo_message(CM_Connection *con)
     write_runlog(LOG, "Finish redo flag has been set to true.\n");
 
     msgFinishRedoAck.msg_type = MSG_CM_CTL_FINISH_REDO_ACK;
-    (void)cm_server_send_msg(con, 'S', (char *)(&msgFinishRedoAck), sizeof(msgFinishRedoAck));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgFinishRedoAck), sizeof(msgFinishRedoAck));
 }
 
-void FlushCmToAgentMsg(CM_Connection *con, int msgType, const CmdMsgProc *msgProc)
+void FlushCmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType)
 {
-    CmToAgentMsg(con, msgType, msgProc->doSwitchover);
-
-    int32 ret = cm_server_flush_msg(con);
-    if (ret != 0) {
-        write_runlog(ERROR, "Flush msg error, command type is %d.\n", msgType);
-    } else {
-        write_runlog(DEBUG5, "Flush msg success, msg type is %d.\n", msgType);
-    }
-#ifdef ENABLE_MULTIPLE_NODES
-    SetCmdStautus(ret, msgProc);
-#endif
+    CmToAgentMsg(recvMsgInfo, msgType, ((recvMsgInfo->msgProcFlag & MPF_DO_SWITCHOVER) != 0));
 }
 
-void SetAgentDataReportMsg(CM_Connection *con, CM_StringInfo inBuffer)
+void SetAgentDataReportMsg(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer)
 {
-    agent_to_cm_datanode_status_report *agent_to_cm_datanode_status_ptr = NULL;
-    agent_to_cm_datanode_status_ptr =
-        (agent_to_cm_datanode_status_report *)CmGetmsgbytes(inBuffer, sizeof(agent_to_cm_datanode_status_report));
+    const agent_to_cm_datanode_status_report *agent_to_cm_datanode_status_ptr =
+        (const agent_to_cm_datanode_status_report *)CmGetmsgbytes(inBuffer, sizeof(agent_to_cm_datanode_status_report));
     if (agent_to_cm_datanode_status_ptr == NULL) {
         write_runlog(
             ERROR, "MSG_AGENT_CM_DATA_INSTANCE_REPORT_STATUS is null. inBuffer->qtype: %d \n", inBuffer->qtype);
-        return;
+            return;
     }
-
     if (!g_inReload) {
         if (agent_to_cm_datanode_status_ptr->instanceType != INSTANCE_TYPE_DATANODE) {
             write_runlog(ERROR,
                 "Instance type %d not equal INSTANCE_TYPE_DATANODE(%d) ! Maybe the msg_type send by remote "
                 "cm_agent not match with local cm_server."
-                "Check whether the version of cm_agent and cm_server on node %d is the same as localhost. "
-                "msg_type=%d, node=%d, instanceId=%d, instanceType=%d, connectStatus=%d, processStatus=%d \n",
+                "Check whether the version of cm_agent and cm_server on node %u is the same as localhost. "
+                "msg_type=%d, node=%u, instanceId=%u, instanceType=%d, connectStatus=%d, processStatus=%d \n",
                 agent_to_cm_datanode_status_ptr->instanceType,
                 INSTANCE_TYPE_DATANODE, agent_to_cm_datanode_status_ptr->node,
                 agent_to_cm_datanode_status_ptr->msg_type, agent_to_cm_datanode_status_ptr->node,
@@ -1113,17 +1075,17 @@ void SetAgentDataReportMsg(CM_Connection *con, CM_StringInfo inBuffer)
         g_loopState.execStatus[0] = 0;
         struct timeval checkBegin = {0, 0};
         struct timeval checkEnd = {0, 0};
-        gettimeofday(&checkBegin, NULL);
+        (void)gettimeofday(&checkBegin, NULL);
         if (g_single_node_cluster) {
-            datanode_instance_arbitrate_single(con, agent_to_cm_datanode_status_ptr);
+            datanode_instance_arbitrate_single(recvMsgInfo, agent_to_cm_datanode_status_ptr);
         } else if (g_multi_az_cluster) {
-            DatanodeInstanceArbitrate(con, agent_to_cm_datanode_status_ptr);
+            DatanodeInstanceArbitrate(recvMsgInfo, agent_to_cm_datanode_status_ptr);
         } else {
             /* datanode instances arbitrate for primary-standby-dummy cluster */
-            datanode_instance_arbitrate_for_psd(con, agent_to_cm_datanode_status_ptr);
+            datanode_instance_arbitrate_for_psd(recvMsgInfo, agent_to_cm_datanode_status_ptr);
         }
 
-        gettimeofday(&checkEnd, NULL);
+        (void)gettimeofday(&checkEnd, NULL);
         if ((checkEnd.tv_sec - checkBegin.tv_sec) >= 2) {
             write_runlog(LOG,
                 "it take %llu seconds for DN arbitrate.\n",
@@ -1136,8 +1098,7 @@ void SetAgentDataReportMsg(CM_Connection *con, CM_StringInfo inBuffer)
 
 static void DnBarrierReportRespToCm(cm_to_agent_barrier_info *barrierRespMsg)
 {
-    errno_t rc;
-    rc = memset_s(barrierRespMsg, sizeof(cm_to_agent_barrier_info), 0, sizeof(cm_to_agent_barrier_info));
+    errno_t rc = memset_s(barrierRespMsg, sizeof(cm_to_agent_barrier_info), 0, sizeof(cm_to_agent_barrier_info));
     securec_check_errno(rc, (void)rc);
     if (pw == NULL || pw->pw_name == NULL) {
         write_runlog(ERROR, "failed to get user name to make etcd key\n");
@@ -1177,10 +1138,10 @@ static void SetDatanodeBarrierInfo(const AgentToCmBarrierStatusReport* barrierIn
     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
 }
 
-void ProcessDnBarrierinfo(CM_Connection *con, CM_StringInfo inBuffer)
+void ProcessDnBarrierinfo(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer)
 {
-    AgentToCmBarrierStatusReport *barrierInfo = NULL;
-    barrierInfo = (AgentToCmBarrierStatusReport *)CmGetmsgbytes(inBuffer, sizeof(AgentToCmBarrierStatusReport));
+    AgentToCmBarrierStatusReport *barrierInfo =
+        (AgentToCmBarrierStatusReport *)CmGetmsgbytes(inBuffer, sizeof(AgentToCmBarrierStatusReport));
     if (barrierInfo == NULL) {
         write_runlog(ERROR, "MSG_AGENT_CM_DATA_INSTANCE_BARRIER is null. inBuffer->qtype: %d \n", inBuffer->qtype);
         return;
@@ -1193,25 +1154,22 @@ void ProcessDnBarrierinfo(CM_Connection *con, CM_StringInfo inBuffer)
     /* response to cm agent. */
     cm_to_agent_barrier_info barrierRespMsg;
     DnBarrierReportRespToCm(&barrierRespMsg);
-    barrierRespMsg.msg_type = MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER;
+    barrierRespMsg.msg_type = (int)MSG_CM_AGENT_DATANODE_INSTANCE_BARRIER;
     barrierRespMsg.instanceId = barrierInfo->instanceId;
     barrierRespMsg.node = barrierInfo->node;
-    (void)cm_server_send_msg(con, 'S', (char *)(&barrierRespMsg), sizeof(cm_to_agent_barrier_info), DEBUG5);
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&barrierRespMsg), sizeof(cm_to_agent_barrier_info), DEBUG5);
 
     return;
 }
 
 static status_t CheckDdbType(DDB_TYPE toDdbType)
 {
-    bool isEtcdToDcc = false;
-    bool isDccToEtcd = false;
-
     if (g_dbType == DB_UNKOWN) {
         write_runlog(LOG, "[switch] ddb type is unknown.\n");
         return CM_ERROR;
     }
-    isEtcdToDcc = (g_dbType == DB_ETCD) && (toDdbType == DB_DCC);
-    isDccToEtcd = (g_dbType == DB_DCC) && (toDdbType == DB_ETCD);
+    bool isEtcdToDcc = (g_dbType == DB_ETCD) && (toDdbType == DB_DCC);
+    bool isDccToEtcd = (g_dbType == DB_DCC) && (toDdbType == DB_ETCD);
     if (isEtcdToDcc || isDccToEtcd) {
         write_runlog(LOG, "[switch] can do switch ddb to %d.\n", (int)toDdbType);
         return CM_SUCCESS;
@@ -1223,10 +1181,9 @@ static status_t CheckDdbType(DDB_TYPE toDdbType)
 
 static status_t CreateMaintainPath(const char *maintainFile)
 {
-    FILE *fp;
     std::string ddbStr = to_string(static_cast<int>(g_dbType));
-
-    if ((fp = fopen(maintainFile, "w+")) == NULL) {
+    FILE *fp = fopen(maintainFile, "w+");
+    if (fp == NULL) {
         write_runlog(ERROR, "[switch] can't open file \"%s\", errno(%d).\n", maintainFile, errno);
         return CM_ERROR;
     }
@@ -1413,7 +1370,7 @@ static status_t SwitchSaveAllKVS()
 
     option.kvFile = kvFile;
     if (SaveAllKVFromDDb(&dbResult, &option) != CM_SUCCESS) {
-        write_runlog(ERROR, "[switch] can't save all KV, error msg is %d.\n", dbResult);
+        write_runlog(ERROR, "[switch] can't save all KV, error msg is %d.\n", (int)dbResult);
         return CM_ERROR;
     }
 
@@ -1512,8 +1469,7 @@ static status_t GetKVFile(char *kvFile, uint32 len)
 
 static inline void ModifierLine(char *line)
 {
-    char *find = NULL;
-    find = strchr(line, '\n');
+    char *find = strchr(line, '\n');
     if (find != NULL) {
         *find = '\0';
     }
@@ -1524,7 +1480,6 @@ static void ProcessSwitchDdb(CmsToCtlSwitchAck *ackMsg)
 {
     errno_t rc;
     DrvSetOption opt = {0};
-    char **lines = NULL;
     char kvFile[CM_PATH_LENGTH] = {0};
 
     if (GetKVFile(kvFile, CM_PATH_LENGTH) != CM_SUCCESS) {
@@ -1533,7 +1488,7 @@ static void ProcessSwitchDdb(CmsToCtlSwitchAck *ackMsg)
         securec_check_errno(rc, (void)rc);
         return;
     }
-    lines = CmReadfile(kvFile);
+    char **lines = CmReadfile(kvFile);
     if (lines == NULL) {
         write_runlog(ERROR, "read kv file failed, errno(%d).\n", errno);
         rc = strcpy_s(ackMsg->errMsg, CM_PATH_LENGTH, "read kv file failed.");
@@ -1542,6 +1497,7 @@ static void ProcessSwitchDdb(CmsToCtlSwitchAck *ackMsg)
     }
     int i = 0;
     opt.maintainCanSet = true;
+    opt.isSetBinary = false;
     while (lines[i] != NULL && lines[i + 1] != NULL) {
         ModifierLine(lines[i]);
         ModifierLine(lines[i + 1]);
@@ -1560,7 +1516,7 @@ static void ProcessSwitchDdb(CmsToCtlSwitchAck *ackMsg)
     return;
 }
 
-void ProcessCtlToCmsSwitchMsg(CM_Connection *con, CtlToCmsSwitch *switchMsg)
+void ProcessCtlToCmsSwitchMsg(MsgRecvInfo* recvMsgInfo, CtlToCmsSwitch *switchMsg)
 {
     CmsToCtlSwitchAck ackMsg;
 
@@ -1575,11 +1531,12 @@ void ProcessCtlToCmsSwitchMsg(CM_Connection *con, CtlToCmsSwitch *switchMsg)
         case SWITCH_DDB:
             ProcessSwitchDdb(&ackMsg);
             break;
+        case UNKNOWN_STEP:
         default:
             break;
     }
     ackMsg.msgType = (int)MSG_CMS_CTL_SWITCH_ACK;
-    (void)cm_server_send_msg(con, 'S', (char *)(&ackMsg), sizeof(ackMsg));
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
 
     return;
 }

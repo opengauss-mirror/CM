@@ -36,6 +36,7 @@
  *				Some routines use it to scan through a StringInfo.
  *-------------------------
  */
+#define MSG_READ_LEN (4)
 typedef struct CM_StringInfoData {
     char* data;
     int len;
@@ -43,6 +44,8 @@ typedef struct CM_StringInfoData {
     int cursor;
     int qtype;
     int msglen;
+    char msgReadData[MSG_READ_LEN];
+    int msgReadLen;
 } CM_StringInfoData;
 
 typedef CM_StringInfoData* CM_StringInfo;

@@ -29,14 +29,14 @@
 #include "cma_phony_dead_check.h"
 #include "cma_instance_management.h"
 #include "cma_process_messages.h"
+#include "cma_network_check.h"
 #include "cma_status_check.h"
-#include "cma_threads.h"
+#include "cma_connect.h"
 #include "cma_common.h"
 #include "cma_connect_client.h"
-#include "cma_datanode_scaling.h"
+#include "cma_threads.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_gtm.h"
-#include "cma_coordinator.h"
 #include "cma_cn_gtm_work_threads_mgr.h"
 #endif
 
@@ -46,7 +46,7 @@ void CreateETCDStatusCheckThread()
     pthread_t thr_id;
 
     if ((err = pthread_create(&thr_id, NULL, ETCDStatusCheckMain, NULL)) != 0) {
-        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
         exit(-1);
     }
 }
@@ -67,25 +67,40 @@ void CreatePhonyDeadCheckThread()
 #ifdef ENABLE_MULTIPLE_NODES
     if (g_currentNode->gtm == 1) {
         if ((err = pthread_create(&thr_id, NULL, GTMPhonyDeadStatusCheckMain, NULL)) != 0) {
-            write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+            write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
             exit(-1);
         }
     }
     if (g_currentNode->coordinate == 1) {
         if ((err = pthread_create(&thr_id, NULL, CNPhonyDeadStatusCheckMain, NULL)) != 0) {
-            write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+            write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
             exit(-1);
         }
     }
 #endif
     if (g_currentNode->datanodeCount > 0) {
         for (uint32 i = 0; i < g_currentNode->datanodeCount; i++) {
-            if ((err = pthread_create(
-                     &thr_id, NULL, DNPhonyDeadStatusCheckMain, &(g_currentNode->datanode[i].datanodeId))) != 0) {
-                write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+            err = pthread_create(&thr_id, NULL, DNPhonyDeadStatusCheckMain, &(g_currentNode->datanode[i].datanodeId));
+            if (err != 0) {
+                write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
+                exit(-1);
+            }
+            err = pthread_create(&thr_id, NULL, DNCoreDumpCheckMain, &(g_currentNode->datanode[i].datanodeId));
+            if (err != 0) {
+                write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
                 exit(-1);
             }
         }
+    }
+}
+
+void CreateDiskUsageCheckThread()
+{
+    int err;
+    pthread_t thr_id;
+    if ((err = pthread_create(&thr_id, NULL, DiskUsageCheckMain, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
+        exit(-1);
     }
 }
 
@@ -95,7 +110,7 @@ void CreateStartAndStopThread()
     pthread_t thr_id;
 
     if ((err = pthread_create(&thr_id, NULL, agentStartAndStopMain, NULL)) != 0) {
-        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
         exit(-1);
     }
 }
@@ -109,7 +124,7 @@ void CreateDNBackupStatusCheckThread(int* i)
         return;
     }
     if ((err = pthread_create(&thr_id, NULL, DNBackupStatusCheckMain, i)) != 0) {
-        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
         exit(-1);
     }
 }
@@ -120,7 +135,7 @@ void CreateDNStatusCheckThread(int* i)
     pthread_t thr_id;
 
     if ((err = pthread_create(&thr_id, NULL, DNStatusCheckMain, i)) != 0) {
-        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
         exit(-1);
     }
     save_thread_id(thr_id);
@@ -136,7 +151,7 @@ void CreateDNCheckSyncListThread(int *idx)
     int err;
     pthread_t thrId;
     if ((err = pthread_create(&thrId, NULL, DNSyncCheckMain, idx)) != 0) {
-        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
         exit(-1);
     }
 #endif
@@ -148,30 +163,38 @@ void CreateDNConnectionStatusCheckThread(int* i)
     pthread_t thr_id;
 
     if ((err = pthread_create(&thr_id, NULL, DNConnectionStatusCheckMain, i)) != 0) {
-        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
         exit(-1);
     }
 }
 
-
-/* create kerberos thread check */ 
 void CreateKerberosStatusCheckThread()
 {
     int err;
     pthread_t thr_id;
     if ((err = pthread_create(&thr_id, NULL, KerberosStatusCheckMain, NULL)) != 0) {
-        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
         exit(err);
     }
 }
 
-/* create kerberos thread check */ 
 void CreateDefResStatusCheckThread(void)
 {
     int err;
     pthread_t thr_id;
     if ((err = pthread_create(&thr_id, NULL, ResourceStatusCheckMain, NULL)) != 0) {
-        write_runlog(ERROR, "Failed to create a ResourceStatusCheckMain thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a ResourceStatusCheckMain thread: error %d\n", err);
+        exit(err);
+    }
+}
+
+void CreateCusResIsregCheckThread(void)
+{
+    int err;
+    pthread_t thr_id;
+    InitIsregCheckVar();
+    if ((err = pthread_create(&thr_id, NULL, ResourceIsregCheckMain, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create a ResourceIsregCheckMain thread: error %d\n", err);
         exit(err);
     }
 }
@@ -182,7 +205,7 @@ void CreateFaultDetectThread()
     pthread_t thr_id;
 
     if ((err = pthread_create(&thr_id, NULL, FaultDetectMain, NULL)) != 0) {
-        write_runlog(ERROR, "Failed to create a new thread: error %d\n", err);
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
         exit(-1);
     }
 }
@@ -192,44 +215,49 @@ void CreateConnCmsPThread()
     int err;
     pthread_t thr_id;
 
-    if ((err = pthread_create(&thr_id, NULL, ConnCmsPMain, NULL) != 0)) {
-        write_runlog(ERROR, "Failed to create new thread: error %d\n", err);
+    if ((err = pthread_create(&thr_id, NULL, ConnCmsPMain, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create new thread: error %d\n", err);
         exit(err);
     }
 }
 
-void CreateSendCmsMsgThread()
+int CreateSendAndRecvCmsMsgThread()
 {
-    int err;
+    pthread_t &thrId = GetSendRecvThreadId();
+    return pthread_create(&thrId, NULL, SendAndRecvCmsMsgMain, NULL);
+}
 
-    pthread_t thr_id;
-    if ((err = pthread_create(&thr_id, NULL, SendCmsMsgMain, NULL) != 0)) {
-        write_runlog(ERROR, "Failed to create new thread: error %d\n", err);
-        exit(err);
-    }
+int CreateProcessSendCmsMsgThread()
+{
+    pthread_t thrId;
+    return pthread_create(&thrId, NULL, ProcessSendCmsMsgMain, NULL);
+}
+
+int CreateProcessRecvCmsMsgThread()
+{
+    pthread_t thrId;
+    return pthread_create(&thrId, NULL, ProcessRecvCmsMsgMain, NULL);
 }
 
 /*
  * Create compress and remove thread for trace.
  * Use Thread for this task avoid taking too much starting time of cm server.
  */
-void CreateLogFileCompressAndRemoveThread()
+int CreateLogFileCompressAndRemoveThread()
 {
     int err;
     pthread_t thr_id;
 
-    if ('\0' != g_logBasePath[0] && IsBoolCmParamTrue(g_enableLogCompress)) {
+    if (g_logBasePath[0] != '\0' && IsBoolCmParamTrue(g_enableLogCompress)) {
         write_runlog(LOG, "Get GAUSSLOG from environment %s.\n", g_logBasePath);
-        g_logPattern = (LogPattern*)malloc(sizeof(LogPattern) * MAX_PATH_LEN);
-        if (g_logPattern == NULL) {
-            write_runlog(FATAL, "out of memory!\n");
-            exit(-1);
+        if (get_log_pattern() != 0) {
+            return -1;
         }
-        get_log_pattern();
         if ((err = pthread_create(&thr_id, NULL, CompressAndRemoveLogFile, NULL)) != 0) {
 #ifndef ENABLE_LLT
             write_runlog(ERROR, "Failed to create log file thread: error %d\n", err);
-            exit(-1);
+            FREE_AND_RESET(g_logPattern);
+            return -1;
 #endif
         }
     } else {
@@ -239,6 +267,7 @@ void CreateLogFileCompressAndRemoveThread()
             g_logBasePath,
             g_enableLogCompress);
     }
+    return 0;
 }
 
 void CreateCheckUpgradeModeThread()
@@ -246,8 +275,8 @@ void CreateCheckUpgradeModeThread()
     int err;
     pthread_t thrId;
 
-    if ((err = pthread_create(&thrId, NULL, CheckUpgradeMode, NULL) != 0)) {
-        write_runlog(ERROR, "Failed to create new thread: error %d\n", err);
+    if ((err = pthread_create(&thrId, NULL, CheckUpgradeMode, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create new thread: error %d\n", err);
         exit(err);
     }
 }
@@ -257,8 +286,8 @@ void CreateRecvClientMessageThread()
     int err;
     pthread_t thrId;
 
-    if ((err = pthread_create(&thrId, NULL, RecvClientEventsMain, NULL) != 0)) {
-        write_runlog(ERROR, "Failed to create new thread: error %d\n", err);
+    if ((err = pthread_create(&thrId, NULL, RecvClientEventsMain, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create new thread: error %d\n", err);
         exit(err);
     }
 }
@@ -268,8 +297,8 @@ void CreateSendMessageToClientThread()
     int err;
     pthread_t thrId;
 
-    if ((err = pthread_create(&thrId, NULL, SendMessageToClientMain, NULL) != 0)) {
-        write_runlog(ERROR, "Failed to create new thread: error %d\n", err);
+    if ((err = pthread_create(&thrId, NULL, SendMessageToClientMain, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create new thread: error %d\n", err);
         exit(err);
     }
 }
@@ -279,8 +308,39 @@ void CreateProcessMessageThread()
     int err;
     pthread_t thrId;
 
-    if ((err = pthread_create(&thrId, NULL, ProcessMessageMain, NULL) != 0)) {
-        write_runlog(ERROR, "Failed to create new thread: error %d\n", err);
+    if ((err = pthread_create(&thrId, NULL, ProcessMessageMain, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create new thread: error %d\n", err);
         exit(err);
     }
+}
+
+void CreateVotingDiskThread()
+{
+    int err;
+    pthread_t thrId;
+    if (g_votingDiskPath[0] == '\0' || (strcmp(g_votingDiskPath, "\'\'") == 0)) {
+        write_runlog(LOG, "Voting disk path is empty, disable the voting disk\n");
+        return;
+    }
+
+    if ((err = pthread_create(&thrId, NULL, VotingDiskMain, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create new thread: error %d\n", err);
+        exit(err);
+    }
+}
+
+int CreateCheckNetworkThread()
+{
+    status_t st = CreateNetworkResource();
+    if (st != CM_SUCCESS) {
+        return -1;
+    }
+    int err;
+    pthread_t thrId;
+
+    if ((err = pthread_create(&thrId, NULL, CmaCheckNetWorkMain, NULL)) != 0) {
+        write_runlog(ERROR, "Failed to create new thread: error %d\n", err);
+        return err;
+    }
+    return 0;
 }

@@ -24,17 +24,35 @@
 
 #ifndef CM_UTIL_H
 #define CM_UTIL_H
-/*
- * is_absolute_path
- *
- */
-#ifndef WIN32
-#define IS_DIR_SEP(ch) ((ch) == '/')
-#else
-#define IS_DIR_SEP(ch) ((ch) == '/' || (ch) == '\\')
-#endif
+
+#include <pthread.h>
+#include "c.h"
+
+const int CM_NSEC_COUNT_PER_MS  = 1000000;
+const int  CM_MS_COUNT_PER_SEC  = 1000;
 
 int CmMkdirP(char *path, unsigned int omode);
 char *gs_getenv_r(const char *name);
+uint64 GetMonotonicTimeMs();
+
+enum class CMFairMutexType {
+    CM_MUTEX_NODE,
+    CM_MUTEX_READ,
+    CM_MUTEX_WRITE,
+};
+ 
+using CMFairMutex = struct CMFairMutexSt {
+    pthread_mutex_t lock;
+    pthread_mutex_t innerLock;
+    pthread_cond_t cond;
+    uint32 readerCount;
+    uint32 writerCount;
+    CMFairMutexType curType;
+};
+ 
+void CMFairMutexInit(CMFairMutex &mutex);
+int CMFairMutexLock(CMFairMutex &mutex, CMFairMutexType type);
+void CMFairMutexUnLock(CMFairMutex &mutex);
+char *GetDynamicMem(char *dynamicPtr, size_t *curSize, size_t memSize);
 
 #endif  // CM_UTIL_H

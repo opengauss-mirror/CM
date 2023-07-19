@@ -26,11 +26,11 @@
 #include "cm/cm_elog.h"
 #include "cms_ddb.h"
 #include "cms_common.h"
-#include "cms_global_params.h"
 #include "cms_process_messages.h"
 #include "cms_alarm.h"
 #include "cms_write_dynamic_config.h"
 #include "cms_conn.h"
+#include "cms_global_params.h"
 
 const int HALF_HOUR = 1800;
 const int MINUS_ONE = -1;
@@ -44,16 +44,15 @@ azInfo g_azArray[CM_NODE_MAXNUM] = {{{0}}};
 uint32 g_azNum = 0;
 
 CM_Server_HA_Status g_HA_status_data = {0};
-CM_Server_HA_Status* g_HA_status = &g_HA_status_data;
+CM_Server_HA_Status *g_HA_status = &g_HA_status_data;
 CM_Server_HA_Status g_logic_HA_status[LOGIC_CLUSTER_NUMBER] = {{0}};
-cm_instance_role_group* g_instance_role_group_ptr = NULL;
+cm_instance_role_group *g_instance_role_group_ptr = NULL;
 uint32 g_termCache = 0;
-dynamicConfigHeader* g_dynamic_header = NULL;
-cm_instance_group_report_status* g_instance_group_report_status_ptr = NULL;
+dynamicConfigHeader *g_dynamic_header = NULL;
+cm_instance_group_report_status *g_instance_group_report_status_ptr = NULL;
 volatile arbitration_mode cm_arbitration_mode = MAJORITY_ARBITRATION;
 volatile PromoteMode g_cmsPromoteMode = PMODE_AUTO;
 char *g_minorityAzName = NULL;
-CM_Connections gConns = {0};
 cm_instance_central_node g_centralNode = {0};
 kerberos_group_report_status g_kerberos_group_report_status = {0};
 
@@ -64,24 +63,23 @@ CM_ConnDdbInfo *g_sess = NULL;
 DDB_TYPE g_dbType = DB_ETCD;
 DdbConn g_gtm2Etcd = {0};
 TlsAuthPath g_tlsPath = {{0}};
-struct passwd* pw = NULL;
+struct passwd *pw = NULL;
 DynamicNodeReadOnlyInfo *g_dynamicNodeReadOnlyInfo = NULL;
 global_barrier g_global_barrier_data = {0};
-global_barrier* g_global_barrier = &g_global_barrier_data;
+global_barrier *g_global_barrier = &g_global_barrier_data;
 ClusterRole backup_open = CLUSTER_PRIMARY;
 ClusterInstallType g_clusterInstallType = INSTALL_TYPE_DEFAULT;
 Alarm UnbalanceAlarmItem[1];
 Alarm ServerSwitchAlarmItem[1];
+Alarm DoublePrimaryAlarmItem[1];
 synchronous_standby_mode current_cluster_az_status = AnyFirstNo;
-volatile cm_start_mode cm_server_start_mode = MAJORITY_START;  /* cm_arbitration_mode needs to be deleted. */
+volatile cm_start_mode cm_server_start_mode = MAJORITY_START; /* cm_arbitration_mode needs to be deleted. */
 
 THR_LOCAL ProcessingMode Mode = NormalProcessing;
 
 int switch_rto = 600;
 int force_promote = 0;
 int cm_auth_method = CM_AUTH_TRUST;
-/* Interval of checking disk storage usage ratio */
-int datastorage_threshold_check_interval = 10;
 /* modify from read only to read write for recovery disk usage */
 int max_datastorage_threshold_check = 1800;
 /* the percent when bigger than it, will not do auto switchover az */
@@ -105,20 +103,19 @@ int cmserver_promote_delay_count = 3;
 int g_cmserver_promote_delay_count = 0;
 int g_cmserverDemoteDelayOnDdbFault = cmserver_demote_delay_on_etcd_fault;
 char g_enableDcf[10] = {0};
-const int majority_reelection_timeout_init = 10;
+char g_shareDiskPath[MAX_PATH_LEN] = {0};
+const uint32 majority_reelection_timeout_init = 10;
 #ifdef ENABLE_MULTIPLE_NODES
 const int coordinator_deletion_timeout_init = 45;
 #endif
 /* thread count of thread pool */
-unsigned int cm_thread_count = DEFAULT_THREAD_NUM;
+int cm_thread_count = DEFAULT_THREAD_NUM;
 /* ccn change delay */
 int ccn_change_delay_time = 10;
 
-char* cm_server_dataDir = NULL;
+char *cm_server_dataDir = NULL;
 /* Check support read only */
 char g_enableSetReadOnly[10] = {'\0'};
-/* Threshold of checking disk storage usage ratio */
-char g_enableSetReadOnlyThreshold[THREAHOLD_LEN] = {'\0'};
 /* Threshold of checking disk storage usage ratio for pre-alarm */
 char g_enableSetPreAlarmThreshold[THREAHOLD_LEN] = {'\0'};
 /* Check data disk storage usage ratio to set read-write mode */
@@ -139,7 +136,10 @@ CmAzInfo g_cmAzInfo[AZ_MEMBER_MAX_COUNT] = {{{0}}};
 char g_queryBarrier[BARRIERLEN] = {0};
 char g_targetBarrier[BARRIERLEN] = {0};
 char g_doradoIp[CM_IP_LENGTH] = {0};
+char g_votingDiskPath[MAX_PATH_LEN] = {0};
 
+uint32 g_readOnlyThreshold = 85;
+uint32 datastorage_threshold_check_interval = 10;
 uint32 ctl_stop_cluster_server_halt_arbitration_timeout = 0;
 uint32 arbitration_majority_reelection_timeout = majority_reelection_timeout_init;
 uint32 cn_delete_default_time = 25;
@@ -147,13 +147,18 @@ uint32 instance_heartbeat_timeout = 6;
 uint32 instance_failover_delay_timeout = 0;
 uint32 cmserver_ha_connect_timeout = 2;
 DdbArbiCfg g_ddbArbicfg;
-DdbPreAgentCon g_preAgentCon = {0};
 uint32 cmserver_self_vote_timeout = 6;
 uint32 instance_keep_heartbeat_timeout = 40;
 uint32 g_clusterStartingTimeout = 0;
 uint32 g_clusterStartingArbitDelay = CLUSTER_STARTING_ARBIT_DELAY;
 uint32 g_enableE2ERto = 0;
 uint32 g_sslCertExpireCheckInterval = SECONDS_PER_DAY;
+uint32 g_diskTimeout = 200;
+uint32 g_agentNetworkTimeout = 6;
+DnArbitrateMode g_dnArbitrateMode = QUORUM;
+uint32 g_ddbNetworkIsolationTimeout = 20;
+ddb_work_mode g_ddbWorkMode = DDB_WORK_MODE_NONE;
+uint32 g_bigVoteNumInMinorityMode = 0;
 #ifdef ENABLE_MULTIPLE_NODES
 uint32 coordinator_heartbeat_timeout = cn_delete_default_time;
 int32 g_cmAgentDeleteCn = 30;
@@ -199,12 +204,13 @@ bool g_instance_status_for_cm_server_pending[CM_PRIMARY_STANDBY_NUM] = {
 bool isNeedCancel = false;
 bool g_init_cluster_mode = false;
 bool g_open_new_logical = true;
-bool g_syncDNReadOnlyStatusFromDdb = false;
 bool g_getHistoryDnStatusFromDdb = false;
 bool g_getHistoryCnStatusFromDdb = false;
 bool g_needIncTermToDdbAgain = false;
 bool g_clusterStarting = false;
 bool g_isSharedStorageMode = false;
+volatile bool g_needReloadSyncStandbyMode = false;
+
 volatile uint32 g_refreshDynamicCfgNum = 0;
 
 bool g_elastic_exist_node = false;
@@ -213,7 +219,6 @@ bool g_elastic_exist_node = false;
 bool g_gtm_free_mode = false;
 
 ssl_ctx_t *g_ssl_acceptor_fd = NULL;
-
 
 volatile DDB_ROLE g_ddbRole = DDB_ROLE_UNKNOWN;
 
@@ -231,13 +236,11 @@ int g_init_cluster_delay_time = 0;
  * 3.After the large node arbitrate successfully, the large node sends the broadcast msg to the small node.
  * 4.The small node judge whether it is standby or primary by the role of the peer.
  */
-dynamic_cms_timeline* g_timeline = NULL;
-
+dynamic_cms_timeline *g_timeline = NULL;
 
 int g_tcpKeepalivesIdle = 5;
 int g_tcpKeepalivesInterval = 2;
 int g_tcpKeepalivesCount = 3;
-
 
 bool g_isStart = false;
 bool g_kerberos_check_cms_primary_standby = false;
@@ -245,16 +248,18 @@ bool g_syncDnFinishRedoFlagFromDdb = false;
 
 char g_cmStaticConfigurePath[MAX_PATH_LEN] = {0};
 
-cm_fenced_UDF_report_status* g_fenced_UDF_report_status_ptr = NULL;
-int* cn_dn_disconnect_times = NULL;
-int* g_lastCnDnDisconnectTimes = NULL;
+cm_fenced_UDF_report_status *g_fenced_UDF_report_status_ptr = NULL;
+int *cn_dn_disconnect_times = NULL;
+int *g_lastCnDnDisconnectTimes = NULL;
 
 volatile switchover_az_mode cm_switchover_az_mode = AUTOSWITCHOVER_AZ;
 volatile logic_cluster_restart_mode cm_logic_cluster_restart_mode = INITIAL_LOGIC_CLUSTER_RESTART;
 
-CM_Threads gThreads;
+CM_IOThreads gIOThreads;
+CM_WorkThreads gWorkThreads;
 CM_HAThreads gHAThreads;
 CM_MonitorThread gMonitorThread;
+CM_DdbStatusCheckAndSetThread gDdbCheckThread;
 CM_MonitorNodeStopThread gMonitorNodeStopThread;
 
 /*
@@ -320,6 +325,9 @@ volatile bool g_inMaintainMode = false;
 ThreadExecStatus g_loopState = {0};
 DdbArbiCon g_ddbArbiCon = {0};
 uint32 g_delayArbiTime = 0;
+int32 g_clusterArbiTime = 300;
+bool g_isPauseArbitration = false;
+char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 
 bool isLargerNode()
 {
@@ -335,14 +343,14 @@ void initazArray(char azArray[][CM_AZ_NAME])
     const uint32 numTwo = 2;
     uint32 azIndex = 0;
     for (uint32 i = 0; i < g_node_num; i++) {
-        if (strcmp(g_node[i].azName, "\0") == 0 || strlen(g_node[i].azName) == 0) {
+        if (strlen(g_node[i].azName) == 0) {
             write_runlog(WARNING, "current azName is invalid: %s.\n", g_node[i].azName);
             continue;
         }
 
         bool findAz = false;
         for (uint32 j = 0; j < AZ_MEMBER_MAX_COUNT; j++) {
-            if (0 == strcmp(g_node[i].azName, *(azArray + j))) {
+            if (strcmp(g_node[i].azName, *(azArray + j)) == 0) {
                 findAz = true;
                 break;
             }
@@ -354,7 +362,7 @@ void initazArray(char azArray[][CM_AZ_NAME])
 
         uint32 priority = g_node[i].azPriority;
         if (priority < g_az_master) {
-            write_runlog(ERROR, "az name is:%s, invalid priority=%u.\n", g_node[i].azName, g_node[i].azPriority);
+            write_runlog(FATAL, "az name is:%s, invalid priority=%u.\n", g_node[i].azName, g_node[i].azPriority);
             FreeNotifyMsg();
             exit(1);
         } else if (priority >= g_az_master && priority < g_az_slave) {
@@ -369,47 +377,6 @@ void initazArray(char azArray[][CM_AZ_NAME])
         securec_check_errno(rc, (void)rc);
         write_runlog(DEBUG1, "after init, the valid azName is: %s, index is: %u.\n", *(azArray + azIndex), azIndex);
     }
-}
-
-bool is_majority_reelection_exceptional_condition(synchronous_standby_mode current_datanode_sync_mode,
-    int dynamic_primary_count, int staticPrimaryIndex, bool static_primary_and_dynamic_primary_differs)
-{
-    /* 
-     * Skip majority re-election if we are in minority mode, 
-     * Skip majority re-election if we are not in a multi-active standby cluster
-     * Skip majority re-election if we are doing AZ auto-switchover
-     */
-    if (cm_arbitration_mode == MINORITY_ARBITRATION || !g_multi_az_cluster || switchoverAZInProgress) {
-        return true;
-    }
-
-    /* Skip majority re-election if we don't have all AZ's available to us */
-    if ((current_cluster_az_status >= AnyAz1 && current_cluster_az_status <= FirstAz2) ||
-        (current_datanode_sync_mode >= AnyAz1 && current_datanode_sync_mode <= FirstAz2)) {
-        return true;
-    }
-
-    /*
-     * Skip majority re-election if we are just promoted to CMS primary,
-     * as we attempt to keep the original configuration of datanode primary/standbys
-     * Skip majority re-election if we don't have a static primary, which should not happen
-     */
-    if (arbitration_majority_reelection_timeout > 0 || staticPrimaryIndex < 0) {
-        return true;
-    }
-
-    /*
-     * Currently we don't have interactive communication between CM server and datanodes,
-     * and we cannot failover to a datanode whose dynamic role is already a primary.
-     * Because of these constraint, we cannot deal with multiple-dynamic-primary scenarios correctly.
-     * Leave that to partition locking later on.
-     */
-    const int onePrimary = 1;
-    if (dynamic_primary_count > onePrimary || static_primary_and_dynamic_primary_differs) {
-        return true;
-    }
-
-    return false;
 }
 
 maintenance_mode getMaintenanceMode(const uint32 &group_index)
@@ -456,13 +423,13 @@ inline bool isDisableBuildDN(const maintenance_mode &mode)
 inline bool isDisableDropCN(const maintenance_mode &mode)
 {
     return (mode == MAINTENANCE_MODE_UPGRADE || mode == MAINTENANCE_MODE_UPGRADE_OBSERVATION ||
-        mode == MAINTENANCE_MODE_DILATATION);
+            mode == MAINTENANCE_MODE_DILATATION);
 }
 
 inline bool isDisablePhonyDeadCheck(const maintenance_mode &mode)
 {
     return (mode == MAINTENANCE_MODE_UPGRADE || mode == MAINTENANCE_MODE_UPGRADE_OBSERVATION ||
-        mode == MAINTENANCE_MODE_DILATATION);
+            mode == MAINTENANCE_MODE_DILATATION);
 }
 
 static bool RestCmaKillTimeOut(int32 *timeout, int32 staticRole, int32 dynamicRole)
@@ -495,11 +462,13 @@ static void DealGtmPrimaryDown(uint32 groupIdx)
         }
     }
     for (int32 i = 0; i < count; ++i) {
-        if (gtmRep[i].local_status.connect_status == CON_OK && instRep->cma_kill_instance_timeout < 1
-            && gtmRep[i].local_status.local_role == INSTANCE_ROLE_STANDBY) {
-            instRep->cma_kill_instance_timeout = (uint32)g_cm_agent_kill_instance_time;
-            write_runlog(LOG, "instance %u, dbstate is normal, will set kill instance timeout %u.\n",
-                instRole[i].instanceId, g_cm_agent_kill_instance_time);
+        if (gtmRep[i].local_status.connect_status == CON_OK && instRep->cma_kill_instance_timeout < 1 &&
+            gtmRep[i].local_status.local_role == INSTANCE_ROLE_STANDBY) {
+            instRep->cma_kill_instance_timeout = (int)g_cm_agent_kill_instance_time;
+            write_runlog(LOG,
+                "instance %u, dbstate is normal, will set kill instance timeout %u.\n",
+                instRole[i].instanceId,
+                g_cm_agent_kill_instance_time);
             return;
         }
         if (instRep->cma_kill_instance_timeout == 1 && instRole[i].role == INSTANCE_ROLE_PRIMARY &&
@@ -520,8 +489,10 @@ static void SendKillForAgentFault(uint32 groupIdx)
         if (dnRep[i].local_status.local_role == INSTANCE_ROLE_STANDBY &&
             dnRep[i].local_status.db_state == INSTANCE_HA_STATE_NORMAL && instRep->cma_kill_instance_timeout < 1) {
             instRep->cma_kill_instance_timeout = (int)g_cm_agent_kill_instance_time;
-            write_runlog(LOG, "instance %u, dbstate is normal, will set kill instance timeout %u.\n",
-                instRole[i].instanceId, g_cm_agent_kill_instance_time);
+            write_runlog(LOG,
+                "instance %u, dbstate is normal, will set kill instance timeout %d.\n",
+                instRole[i].instanceId,
+                (int)g_cm_agent_kill_instance_time);
         }
         if (instRep->cma_kill_instance_timeout == 1 && instRole[i].role == INSTANCE_ROLE_PRIMARY &&
             dnRep[i].local_status.local_role == INSTANCE_ROLE_UNKNOWN) {
@@ -539,8 +510,8 @@ static void DealDnPrimaryDown(uint32 groupIdx)
     cm_instance_role_status *instRole = g_instance_role_group_ptr[groupIdx].instanceMember;
     bool res = false;
     for (int32 i = 0; i < count; ++i) {
-        res = RestCmaKillTimeOut(&instRep->cma_kill_instance_timeout, instRole[i].role,
-            dnRep[i].local_status.local_role);
+        res =
+            RestCmaKillTimeOut(&instRep->cma_kill_instance_timeout, instRole[i].role, dnRep[i].local_status.local_role);
         if (res) {
             return;
         }
@@ -571,33 +542,32 @@ void DealDbstateNormalPrimaryDown(uint32 groupIdx, int32 instType)
 
 bool isMaintenanceInstance(const char *file_path, uint32 notify_instance_id)
 {
-    FILE *fd = NULL;
     char current[INSTANCE_ID_LEN] = {0};
     bool instanceMaintenance = false;
 
-    fd = fopen(file_path, "r");
+    FILE *fd = fopen(file_path, "r");
     if (fd == NULL) {
-        write_runlog(DEBUG1, "cann't open the  MaintenanceInstance file\n");
+        write_runlog(DEBUG1, "can't open the  MaintenanceInstance file\n");
         return instanceMaintenance;
     }
 
     while (!feof(fd)) {
         if (fscanf_s(fd, "%s\n", current, INSTANCE_ID_LEN) < 0) {
-            fclose(fd);
+            (void)fclose(fd);
             write_runlog(LOG, "get MaintenanceInstance content failed \n");
             return instanceMaintenance;
         }
         if ((strlen(current) != 0) && ((uint32)strtol(current, NULL, 10) == notify_instance_id)) {
-            write_runlog(LOG,
-                "get MaintenanceInstance successfully, the current datanodeId is %u\n", notify_instance_id);
+            write_runlog(
+                LOG, "get MaintenanceInstance successfully, the current datanodeId is %u\n", notify_instance_id);
             instanceMaintenance = true;
             break;
         }
     }
-    fclose(fd);
+    (void)fclose(fd);
     return instanceMaintenance;
 }
-int cmserver_getenv(const char* env_var, char* output_env_value, uint32 env_value_len, int elevel)
+int cmserver_getenv(const char *env_var, char *output_env_value, uint32 env_value_len, int elevel)
 {
     return cm_getenv(env_var, output_env_value, env_value_len, elevel);
 }
@@ -611,11 +581,10 @@ bool IsNodeInMinorityAz(uint32 groupIdx, int32 memIdx)
 bool existMaintenanceInstanceInGroup(uint32 group_index, int *init_primary_member_index)
 {
     bool instanceMaintenance = false;
-    int member_index = 0;
-    for (member_index = 0; member_index < g_instance_role_group_ptr[group_index].count; member_index++) {
+    for (int member_index = 0; member_index < g_instance_role_group_ptr[group_index].count; member_index++) {
         int instanceRoleInit = g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceRoleInit;
         if (instanceRoleInit == INSTANCE_ROLE_PRIMARY) {
-            instanceMaintenance = isMaintenanceInstance(instance_maintance_path, 
+            instanceMaintenance = isMaintenanceInstance(instance_maintance_path,
                 g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceId);
             if (init_primary_member_index != NULL) {
                 *init_primary_member_index = member_index;
@@ -631,8 +600,8 @@ int check_if_candidate_is_in_faulty_az(uint32 group_index, int candidate_member_
     if (candidate_member_index == MINUS_ONE) {
         return MINUS_ONE;
     }
-    cm_instance_role_group* role_group = &g_instance_role_group_ptr[group_index];
-    cm_instance_role_status* instanceMember = role_group->instanceMember;
+    cm_instance_role_group *role_group = &g_instance_role_group_ptr[group_index];
+    cm_instance_role_status *instanceMember = role_group->instanceMember;
     char azArray[AZ_MEMBER_MAX_COUNT][CM_AZ_NAME] = {{0}};
     initazArray(azArray);
     int faultyAZ;
@@ -647,9 +616,12 @@ int check_if_candidate_is_in_faulty_az(uint32 group_index, int candidate_member_
     }
 
     if (strcmp(azArray[faultyAZ], instanceMember[candidate_member_index].azName) == 0) {
-        write_runlog(WARNING, "Selected candidate dn %u is in a faulty AZ (%s). Current AZ status is %d."
-            "Invalid candidate primary.\n", instanceMember[candidate_member_index].instanceId,
-            azArray[faultyAZ], current_cluster_az_status);
+        write_runlog(WARNING,
+            "Selected candidate dn %u is in a faulty AZ (%s). Current AZ status is %d."
+            "Invalid candidate primary.\n",
+            instanceMember[candidate_member_index].instanceId,
+            azArray[faultyAZ],
+            (int)current_cluster_az_status);
         return -1;
     }
 
@@ -662,15 +634,15 @@ void cm_pending_notify_broadcast_msg(uint32 group_index, uint32 instanceId)
 {
     WITHOUT_CN_CLUSTER("notify cn");
 
-    cm_notify_msg_status* notify_msg = NULL;
-    uint32 i = 0;
+    cm_notify_msg_status *notify_msg = NULL;
+    uint32 i;
     uint32 notify_index = 0;
 
     write_runlog(LOG, "cm pending notify broadcast msg group %u, instanceId %u.\n", group_index, instanceId);
 
     /* find the datanode index in the coordinator notify msg map. */
     for (i = 0; i < g_dynamic_header->relationCount; i++) {
-        if (INSTANCE_TYPE_COORDINATE == g_instance_role_group_ptr[i].instanceMember[0].instanceType) {
+        if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE) {
             notify_msg = &g_instance_group_report_status_ptr[i].instance_status.coordinatemember.notify_msg;
             /* datanode_index may be null, and it could lead to coredump */
             if (notify_msg->datanode_index == NULL) {
@@ -682,7 +654,7 @@ void cm_pending_notify_broadcast_msg(uint32 group_index, uint32 instanceId)
     }
 
     if (notify_msg == NULL) {
-        write_runlog(ERROR, "cm_pending_notify_broadcast_msg:no coordinator configed in cluster.\n");
+        write_runlog(FATAL, "cm_pending_notify_broadcast_msg:no coordinator configed in cluster.\n");
         FreeNotifyMsg();
         exit(1);
     }
@@ -704,11 +676,14 @@ void cm_pending_notify_broadcast_msg(uint32 group_index, uint32 instanceId)
 
     /* update the notify instance status */
     for (i = 0; i < g_dynamic_header->relationCount; i++) {
-        if (INSTANCE_TYPE_COORDINATE == g_instance_role_group_ptr[i].instanceMember[0].instanceType) {
+        if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_COORDINATE) {
             (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
             notify_msg = &g_instance_group_report_status_ptr[i].instance_status.coordinatemember.notify_msg;
-            write_runlog(DEBUG1, "pending datanode %u to coordinator %u notify map index %u\n",
-                instanceId, g_instance_role_group_ptr[i].instanceMember[0].instanceId, notify_index);
+            write_runlog(DEBUG1,
+                "pending datanode %u to coordinator %u notify map index %u\n",
+                instanceId,
+                g_instance_role_group_ptr[i].instanceMember[0].instanceId,
+                notify_index);
             if (notify_msg->datanode_instance != NULL) {
                 notify_msg->datanode_instance[notify_index] = instanceId;
                 notify_msg->notify_status[notify_index] = true;
@@ -719,7 +694,7 @@ void cm_pending_notify_broadcast_msg(uint32 group_index, uint32 instanceId)
                 MSG_CM_AGENT_NOTIFY_CN;
             if (g_instance_group_report_status_ptr[i].instance_status.command_member[0].notifyCnCount >= 0 &&
                 g_instance_group_report_status_ptr[i].instance_status.command_member[0].notifyCnCount <
-                    MAX_COUNT_OF_NOTIFY_CN) {
+                MAX_COUNT_OF_NOTIFY_CN) {
                 g_instance_group_report_status_ptr[i].instance_status.command_member[0].notifyCnCount++;
             } else {
                 g_instance_group_report_status_ptr[i].instance_status.command_member[0].notifyCnCount = 0;
@@ -773,7 +748,8 @@ int find_other_member_index_for_DN_psd(uint32 group_index, int member_index)
 
     if (staticPrimaryIndex == -1) {
         XLogRecPtr last_lsn = 0;
-        write_runlog(LOG, "There is no static primary when finding the peer member of instance %u.\n",
+        write_runlog(LOG,
+            "There is no static primary when finding the peer member of instance %u.\n",
             instanceMember[member_index].instanceId);
         int onlineCount = 0;
         for (int i = 0; i < count; i++) {
@@ -794,14 +770,12 @@ int find_other_member_index_for_DN_psd(uint32 group_index, int member_index)
             change_primary_member_index(group_index, staticPrimaryIndex);
             (void)WriteDynamicConfigFile(false);
         }
-        
-        last_lsn = 0;
     }
 
     if (arbitration_majority_reelection_timeout > 0) {
         write_runlog(DEBUG1,
             "[arbitrator] The required condition for majority re-election is not met for primary/standby mode.\n");
-    } else {    
+    } else {
         if (g_instance_role_group_ptr[group_index].count >= 2) {
             if (member_index == 0) {
                 candiateMemberIndex = 1;
@@ -810,7 +784,7 @@ int find_other_member_index_for_DN_psd(uint32 group_index, int member_index)
             }
         }
     }
-    return candiateMemberIndex;	
+    return candiateMemberIndex;
 }
 
 /* When notify primary, cm set gtm ip and port to etcd */
@@ -831,8 +805,11 @@ int SetNotifyPrimaryInfoToEtcd(uint32 groupIndex, int memberIndex)
     uint32 primaryInstanceId = g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex].instanceId;
 
     if ((cm_arbitration_mode == MINORITY_ARBITRATION || cm_server_start_mode == MINORITY_START)) {
-        write_runlog(LOG, "%s: %d, instance(%u) MINORITY_ARBITRATION or MINORITY_START, do nothing.\n",
-            __FUNCTION__, __LINE__, primaryInstanceId);
+        write_runlog(LOG,
+            "%s: %d, instance(%u) MINORITY_ARBITRATION or MINORITY_START, do nothing.\n",
+            __FUNCTION__,
+            __LINE__,
+            primaryInstanceId);
         return 0;
     }
 
@@ -862,8 +839,8 @@ int SetNotifyPrimaryInfoToEtcd(uint32 groupIndex, int memberIndex)
         return -1;
     }
 
-    rcs = snprintf_s(gtmPrimaryInfo, sizeof(gtmPrimaryInfo), sizeof(gtmPrimaryInfo) - 1,
-        "/%s/primary_info", pw->pw_name);
+    rcs =
+        snprintf_s(gtmPrimaryInfo, sizeof(gtmPrimaryInfo), sizeof(gtmPrimaryInfo) - 1, "/%s/primary_info", pw->pw_name);
     securec_check_intval(rcs, (void)rcs);
     rcs = snprintf_s(gtmIpPort, sizeof(gtmIpPort), sizeof(gtmIpPort) - 1, "host=%s port=%u", primaryIp, primaryPort);
     securec_check_intval(rcs, (void)rcs);
@@ -871,12 +848,20 @@ int SetNotifyPrimaryInfoToEtcd(uint32 groupIndex, int memberIndex)
     /* set gtm ip and port to etcd */
     status_t st = SetKVWithConn(GetDdbConnFromGtm(), gtmPrimaryInfo, MAX_PATH_LEN, gtmIpPort, GTM_IP_PORT);
     if (st != CM_SUCCESS) {
-        write_runlog(ERROR, "%d: SetNotifyPrimaryInfoToEtcd, etcd set failed." 
-            "gtm_primary_info = %s, gtm_ip_port = %s.\n", __LINE__, gtmPrimaryInfo, gtmIpPort);
+        write_runlog(ERROR,
+            "%d: SetNotifyPrimaryInfoToEtcd, etcd set failed."
+            "gtm_primary_info = %s, gtm_ip_port = %s.\n",
+            __LINE__,
+            gtmPrimaryInfo,
+            gtmIpPort);
         return -1;
     } else {
-        write_runlog(LOG, "%d: SetNotifyPrimaryInfoToEtcd, set ip and port to etcd successful."
-            "gtm_primary_info = %s, gtm_ip_port = %s.\n", __LINE__, gtmPrimaryInfo, gtmIpPort);
+        write_runlog(LOG,
+            "%d: SetNotifyPrimaryInfoToEtcd, set ip and port to etcd successful."
+            "gtm_primary_info = %s, gtm_ip_port = %s.\n",
+            __LINE__,
+            gtmPrimaryInfo,
+            gtmIpPort);
     }
     return 0;
 }
@@ -895,8 +880,10 @@ static bool CheckInstPhonyDeadInterval(int32 phonyDealInterval, int32 phonyDeadT
     }
     const int32 printLogInterval = 5;
     if (phonyDeadTimes >= phony_dead_effective_time && (phonyDealInterval % printLogInterval == 0)) {
-        write_runlog(LOG, "the check for phony dead can't effective, instance is %u, check interval is %d.\n",
-            instd, phonyDealInterval);
+        write_runlog(LOG,
+            "the check for phony dead can't effective, instance is %u, check interval is %d.\n",
+            instd,
+            phonyDealInterval);
     }
     return false;
 }
@@ -924,8 +911,8 @@ static void GetOtherMemIdxInDnPhonyDead(int32 *otherMemIdx, uint32 groupIdx, int
             continue;
         }
         if ((XLByteLT_W_TERM(curRep->local_status.term, curRep->local_status.last_flush_lsn,
-            dnReport[i].local_status.term, dnReport[i].local_status.last_flush_lsn))
-            && dnReport[i].phony_dead_times == 0) {
+            dnReport[i].local_status.term, dnReport[i].local_status.last_flush_lsn)) &&
+            dnReport[i].phony_dead_times == 0) {
             *otherMemIdx = i;
             break;
         }
@@ -954,7 +941,8 @@ static void ReportInstPhonyDeadAlarm(uint32 instd, const char *typeName)
     report_phony_dead_alarm(ALM_AT_Fault, instanceName, instd);
 }
 
-static void ReportAlarmAndSendRestart(CM_Connection *con, uint32 groupIdx, int32 memIdx, int32 oMemIdx, int32 instType)
+static void ReportAlarmAndSendRestart(
+    MsgRecvInfo* recvMsgInfo, uint32 groupIdx, int32 memIdx, int32 oMemIdx, int32 instType)
 {
     uint32 curInstd = g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].instanceId;
     int32 curPhonyDeadTimes = -1;
@@ -991,15 +979,21 @@ static void ReportAlarmAndSendRestart(CM_Connection *con, uint32 groupIdx, int32
             write_runlog(WARNING, "undefined instType(%d), cannot report phony dead alarm.\n", instType);
             break;
     }
-    write_runlog(LOG, "phony dead times(%d:%d) already exceeded, will restart(%u)\n",
-        curPhonyDeadTimes, oPhonyDeadTimes, curInstd);
+    write_runlog(LOG,
+        "phony dead times(%d:%d) already exceeded, will restart(%u)\n",
+        curPhonyDeadTimes,
+        oPhonyDeadTimes,
+        curInstd);
     cm_to_agent_restart restartMsg = {0};
     restartMsg.msg_type = MSG_CM_AGENT_RESTART;
     restartMsg.node = g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].node;
     restartMsg.instanceId = curInstd;
-    WriteKeyEventLog(KEY_EVENT_RESTART, restartMsg.instanceId, "send restart message, node=%u, instanceId=%u",
-        restartMsg.node, restartMsg.instanceId);
-    (void)cm_server_send_msg(con, 'S', (const char*)&restartMsg, sizeof(cm_to_agent_restart));
+    WriteKeyEventLog(KEY_EVENT_RESTART,
+        restartMsg.instanceId,
+        "send restart message, node=%u, instanceId=%u",
+        restartMsg.node,
+        restartMsg.instanceId);
+    (void)RespondMsg(recvMsgInfo, 'S', (const char *)&restartMsg, sizeof(cm_to_agent_restart));
 }
 
 static void CheckLocalDnIsPrimaryAndChangePrimaryIdx(uint32 groupIdx, int32 memIdx, int32 oMemIdx)
@@ -1010,28 +1004,72 @@ static void CheckLocalDnIsPrimaryAndChangePrimaryIdx(uint32 groupIdx, int32 memI
     cm_instance_datanode_report_status *dnReport =
         g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
     cm_instance_datanode_report_status *curRep = &(dnReport[memIdx]);
-    if (curRep->local_status.local_role == INSTANCE_ROLE_PRIMARY
-        && g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].role == INSTANCE_ROLE_PRIMARY
-        && dnReport[oMemIdx].phony_dead_times == 0) {
-        if (!g_multi_az_cluster ||
-            (g_instance_group_report_status_ptr[groupIdx].instance_status.term <=
-            dnReport[oMemIdx].local_status.term)) {
-            change_primary_member_index(groupIdx, oMemIdx);
+    if (curRep->local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+        g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].role == INSTANCE_ROLE_PRIMARY &&
+        dnReport[oMemIdx].phony_dead_times == 0) {
+        if (!g_multi_az_cluster || (g_instance_group_report_status_ptr[groupIdx].instance_status.term <=
+                                       dnReport[oMemIdx].local_status.term)) {
+            ChangeDnPrimaryMemberIndex(groupIdx, oMemIdx);
         }
     }
 }
 
 static void RestInstDynamicRoleToUnkown(int32 *localRole, int32 phonyDeadTimes, uint32 instd, int32 instType)
 {
-    const int32 allPhonyDeadTimes = 2 * phony_dead_effective_time;
-    if (phonyDeadTimes > allPhonyDeadTimes && (*localRole == INSTANCE_ROLE_PRIMARY)) {
+    if (phonyDeadTimes >= phony_dead_effective_time && (*localRole == INSTANCE_ROLE_PRIMARY)) {
         write_runlog(LOG, "set %s(%u) role to unknown, it's phony dead is %d beyound to %d.\n",
-            type_int_to_string(instType), instd, phonyDeadTimes, allPhonyDeadTimes);
+            type_int_to_string(instType), instd, phonyDeadTimes, phony_dead_effective_time);
         *localRole = INSTANCE_ROLE_UNKNOWN;
     }
 }
 
-static void DealDnPhonyDead(CM_Connection *con, uint32 groupIdx, int32 memIdx)
+static status_t FindDoSwitchoverMemIdx(uint32 groupIdx, int32 *curMemIdx)
+{
+    cm_instance_command_status *cmd = g_instance_group_report_status_ptr[groupIdx].instance_status.command_member;
+    for (int32 i = 0; i < g_instance_role_group_ptr[groupIdx].count; ++i) {
+        if (cmd[i].pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER) {
+            *curMemIdx = i;
+            return CM_SUCCESS;
+        }
+    }
+    return CM_ERROR;
+}
+
+static void PrintNoRestartLog(uint32 groupIdx, int32 memIdx, uint32 instId)
+{
+    cm_instance_command_status *cmd = g_instance_group_report_status_ptr[groupIdx].instance_status.command_member;
+    cmTime_t curTime = {0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &curTime);
+    int32 logLevel = DEBUG1;
+    const uint32 logInterval = 10;
+    if (curTime.tv_sec - cmd[memIdx].cmTime.tv_sec > logInterval) {
+        (void)clock_gettime(CLOCK_MONOTONIC, &(cmd[memIdx].cmTime));
+        logLevel = LOG;
+    }
+    write_runlog(logLevel, "instId(%u) cannot send restart, because instId(%u) is doing switchover.\n",
+        GetInstanceIdInGroup(groupIdx, memIdx), instId);
+}
+
+static bool8 CanSendRestart(uint32 groupIdx, int32 memIdx)
+{
+    cm_instance_command_status *cmd = g_instance_group_report_status_ptr[groupIdx].instance_status.command_member;
+    if (cmd[memIdx].pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER) {
+        PrintNoRestartLog(groupIdx, memIdx, GetInstanceIdInGroup(groupIdx, memIdx));
+        return CM_FALSE;
+    }
+    int32 switchoverMemIdx = 0;
+    status_t st = FindDoSwitchoverMemIdx(groupIdx, &switchoverMemIdx);
+    if (st != CM_SUCCESS) {
+        return CM_TRUE;
+    }
+    if (cmd[switchoverMemIdx].peerInstId == GetInstanceIdInGroup(groupIdx, memIdx)) {
+        PrintNoRestartLog(groupIdx, memIdx, GetInstanceIdInGroup(groupIdx, switchoverMemIdx));
+        return CM_FALSE;
+    }
+    return CM_TRUE;
+}
+
+static void DealDnPhonyDead(MsgRecvInfo* recvMsgInfo, uint32 groupIdx, int32 memIdx)
 {
     if (g_enableE2ERto) {
         DealDNPhonyDeadStatusE2E(groupIdx, memIdx);
@@ -1045,6 +1083,8 @@ static void DealDnPhonyDead(CM_Connection *con, uint32 groupIdx, int32 memIdx)
     cm_instance_datanode_report_status *dnReport =
         g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
     cm_instance_datanode_report_status *curRep = &(dnReport[memIdx]);
+    RestInstDynamicRoleToUnkown(
+        &(curRep->local_status.local_role), curRep->phony_dead_times, curInstd, INSTANCE_TYPE_DATANODE);
     bool res = CheckInstPhonyDeadInterval(curRep->phony_dead_interval, curRep->phony_dead_times, curInstd);
     if (!res) {
         return;
@@ -1052,11 +1092,12 @@ static void DealDnPhonyDead(CM_Connection *con, uint32 groupIdx, int32 memIdx)
     int32 otherMemIdx = -1;
     GetOtherMemIdxInDnPhonyDead(&otherMemIdx, groupIdx, memIdx);
     if (curRep->phony_dead_times >= phony_dead_effective_time) {
-        ReportAlarmAndSendRestart(con, groupIdx, memIdx, otherMemIdx, INSTANCE_TYPE_DATANODE);
+        if (!CanSendRestart(groupIdx, memIdx)) {
+            return;
+        }
+        ReportAlarmAndSendRestart(recvMsgInfo, groupIdx, memIdx, otherMemIdx, INSTANCE_TYPE_DATANODE);
         CheckLocalDnIsPrimaryAndChangePrimaryIdx(groupIdx, memIdx, otherMemIdx);
     }
-    RestInstDynamicRoleToUnkown(&(curRep->local_status.local_role), curRep->phony_dead_times,
-        curInstd, INSTANCE_TYPE_DATANODE);
 }
 
 void GetOtherMemIdxInGtmPhonyDead(int32 *oMemIdx, uint32 groupIdx, int32 memIdx)
@@ -1099,9 +1140,9 @@ static void CheckLocalGtmIsPrimaryAndChangePrimaryIdx(uint32 groupIdx, int32 mem
         return;
     }
     cm_instance_gtm_report_status *gtmReport = g_instance_group_report_status_ptr[groupIdx].instance_status.gtm_member;
-    if (gtmReport[memIdx].local_status.local_role == INSTANCE_ROLE_PRIMARY
-        && g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].role == INSTANCE_ROLE_PRIMARY
-        && gtmReport[oMemIdx].phony_dead_times == 0) {
+    if (gtmReport[memIdx].local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+        g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].role == INSTANCE_ROLE_PRIMARY &&
+        gtmReport[oMemIdx].phony_dead_times == 0) {
         int32 res = SetNotifyPrimaryInfoToEtcd(groupIdx, oMemIdx);
         if (res == -1) {
             return;
@@ -1110,7 +1151,7 @@ static void CheckLocalGtmIsPrimaryAndChangePrimaryIdx(uint32 groupIdx, int32 mem
     }
 }
 
-static void DealGtmPhonyDead(CM_Connection *con, uint32 groupIdx, int32 memIdx)
+static void DealGtmPhonyDead(MsgRecvInfo* recvMsgInfo, uint32 groupIdx, int32 memIdx)
 {
     if (g_enableE2ERto) {
         DealGTMPhonyDeadStatusE2E(groupIdx, memIdx);
@@ -1126,11 +1167,11 @@ static void DealGtmPhonyDead(CM_Connection *con, uint32 groupIdx, int32 memIdx)
     int32 otherMemIdx;
     GetOtherMemIdxInGtmPhonyDead(&otherMemIdx, groupIdx, memIdx);
     if (curRep->phony_dead_times >= phony_dead_effective_time) {
-        ReportAlarmAndSendRestart(con, groupIdx, memIdx, otherMemIdx, INSTANCE_TYPE_GTM);
+        ReportAlarmAndSendRestart(recvMsgInfo, groupIdx, memIdx, otherMemIdx, INSTANCE_TYPE_GTM);
         CheckLocalGtmIsPrimaryAndChangePrimaryIdx(groupIdx, memIdx, otherMemIdx);
     }
-    RestInstDynamicRoleToUnkown(&(curRep->local_status.local_role), curRep->phony_dead_times,
-        curInstd, INSTANCE_TYPE_GTM);
+    RestInstDynamicRoleToUnkown(
+        &(curRep->local_status.local_role), curRep->phony_dead_times, curInstd, INSTANCE_TYPE_GTM);
 }
 
 static void ResetCnCentral(uint32 groupIdx, uint32 instd)
@@ -1148,8 +1189,11 @@ static void ResetCnCentral(uint32 groupIdx, uint32 instd)
             continue;
         }
         if (g_centralNode.instanceId == instd) {
-            errno_t rc = snprintf_s(g_centralNode.cnodename, NAMEDATALEN, NAMEDATALEN - 1,
-                "cn_%u", g_instance_role_group_ptr[i].instanceMember[0].instanceId);
+            errno_t rc = snprintf_s(g_centralNode.cnodename,
+                NAMEDATALEN,
+                NAMEDATALEN - 1,
+                "cn_%u",
+                g_instance_role_group_ptr[i].instanceMember[0].instanceId);
             securec_check_intval(rc, (void)rc);
             g_centralNode.instanceId = g_instance_role_group_ptr[i].instanceMember[0].instanceId;
             g_centralNode.node = g_instance_role_group_ptr[i].instanceMember[0].node;
@@ -1159,7 +1203,7 @@ static void ResetCnCentral(uint32 groupIdx, uint32 instd)
     }
 }
 
-static void DealCnPhonyDead(CM_Connection *con, uint32 groupIdx, int32 memIdx)
+static void DealCnPhonyDead(MsgRecvInfo* recvMsgInfo, uint32 groupIdx, int32 memIdx)
 {
     if (g_enableE2ERto) {
         DealCNPhonyDeadStatusE2E(groupIdx, memIdx);
@@ -1173,14 +1217,15 @@ static void DealCnPhonyDead(CM_Connection *con, uint32 groupIdx, int32 memIdx)
         return;
     }
     if (cnReport->phony_dead_times >= phony_dead_effective_time && cnReport->status.status == INSTANCE_ROLE_NORMAL) {
-        ReportAlarmAndSendRestart(con, groupIdx, memIdx, -1, INSTANCE_TYPE_COORDINATE);
+        ReportAlarmAndSendRestart(recvMsgInfo, groupIdx, memIdx, -1, INSTANCE_TYPE_COORDINATE);
         ResetCnCentral(groupIdx, curInstd);
     }
-    RestInstDynamicRoleToUnkown(&(cnReport->status.status), cnReport->phony_dead_times,
-        curInstd, INSTANCE_TYPE_COORDINATE);
+    RestInstDynamicRoleToUnkown(
+        &(cnReport->status.status), cnReport->phony_dead_times, curInstd, INSTANCE_TYPE_COORDINATE);
 }
 
-void DealPhonyDeadStatus(CM_Connection *con, int32 instRole, uint32 groupIdx, int32 memIdx, maintenance_mode mode)
+void DealPhonyDeadStatus(
+    MsgRecvInfo* recvMsgInfo, int32 instRole, uint32 groupIdx, int32 memIdx, maintenance_mode mode)
 {
     if (IsMaintenanceModeDisableOperation(CMS_PHONY_DEAD_CHECK, mode)) {
         write_runlog(LOG, "%d Maintaining cluster: cm server cannot deal phony dead status.\n", __LINE__);
@@ -1188,40 +1233,18 @@ void DealPhonyDeadStatus(CM_Connection *con, int32 instRole, uint32 groupIdx, in
     }
     switch (instRole) {
         case INSTANCE_TYPE_DATANODE:
-            DealDnPhonyDead(con, groupIdx, memIdx);
+            DealDnPhonyDead(recvMsgInfo, groupIdx, memIdx);
             return;
         case INSTANCE_TYPE_COORDINATE:
-            DealCnPhonyDead(con, groupIdx, memIdx);
+            DealCnPhonyDead(recvMsgInfo, groupIdx, memIdx);
             return;
         case INSTANCE_TYPE_GTM:
-            DealGtmPhonyDead(con, groupIdx, memIdx);
+            DealGtmPhonyDead(recvMsgInfo, groupIdx, memIdx);
             return;
         default:
             write_runlog(ERROR, "undefined instRole(%d).\n", instRole);
             return;
     }
-}
-
-bool isLoneNode(int timeout)
-{
-    uint32 count = 0;
-    long currentTime = time(NULL);
-    long delayTime;
-
-    (void)pthread_rwlock_wrlock(&gConns.lock);
-    for (int i = 0; i < CM_MAX_CONNECTIONS + MAXLISTEN; i++) {
-        if ((gConns.connections[i] != NULL) && (gConns.connections[i]->fd >= 0)) {
-            delayTime = currentTime - gConns.connections[i]->last_active;
-            if (delayTime < timeout) {
-                count++;
-            }
-        }
-    }
-    (void)pthread_rwlock_unlock(&gConns.lock);
-
-    write_runlog(LOG, "active agent connections count = %u\n", count);
-
-    return g_single_node_cluster ? false : (count <= g_node_num / 2);
 }
 
 void CleanCommand(uint32 groupIndex, int memberIndex)
@@ -1230,12 +1253,20 @@ void CleanCommand(uint32 groupIndex, int memberIndex)
         &g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[memberIndex];
     if (curCmd->command_status != INSTANCE_NONE_COMMAND || curCmd->pengding_command != MSG_CM_AGENT_BUTT) {
         write_runlog(LOG,
-            "instance %d will clean pending command, command_status=%d, pengding_command=%d, time_out=%d, "
+            "instance %u will clean pending command, command_status=%d, pengding_command=%d, time_out=%d, "
             "command_send_times=%d, command_send_num=[%d/%d], full_build=%d. cmd[%d: %d: %d :%u].\n",
             g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex].instanceId,
-            curCmd->command_status, curCmd->pengding_command, curCmd->time_out,
-            curCmd->command_send_times, curCmd->maxSendTimes, curCmd->command_send_num, curCmd->full_build,
-            curCmd->cmdPur, curCmd->cmdSour, curCmd->cmdRealPur, curCmd->peerInstId);
+            curCmd->command_status,
+            curCmd->pengding_command,
+            curCmd->time_out,
+            curCmd->command_send_times,
+            curCmd->maxSendTimes,
+            curCmd->command_send_num,
+            curCmd->full_build,
+            curCmd->cmdPur,
+            curCmd->cmdSour,
+            curCmd->cmdRealPur,
+            curCmd->peerInstId);
     }
 
     curCmd->command_status = INSTANCE_NONE_COMMAND;
@@ -1319,9 +1350,13 @@ void kill_instance_for_agent_fault(uint32 node, uint32 instanceId, int insType)
     securec_check_intval(rcs, (void)rcs);
 
     char command[MAXPGPATH] = {0};
-    rcs = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+    rcs = snprintf_s(command,
+        MAXPGPATH,
+        MAXPGPATH - 1,
         "pssh %s -s -H %s \"cat %s| head -n1 | xargs kill -9\" > /dev/null 2>&1 &",
-        PSSH_TIMEOUT_OPTION, sshIp, pid_path);
+        PSSH_TIMEOUT_OPTION,
+        sshIp,
+        pid_path);
     securec_check_intval(rcs, (void)rcs);
 
     uint32 tryTimes = 2;
@@ -1330,8 +1365,7 @@ void kill_instance_for_agent_fault(uint32 node, uint32 instanceId, int insType)
         write_runlog(DEBUG1, "Call system command(%s) for killing disconnected instances.\n", command);
         if (rcs != 0) {
             /* If system command failed, we need try again. */
-            write_runlog(ERROR, "Execute the command %s failed, errnum:%d, errno=%d. errmsg:%m.\n",
-                command, rcs, errno);
+            write_runlog(ERROR, "Execute the command %s failed, errnum:%d, errno=%d.\n", command, rcs, errno);
             tryTimes--;
             cm_sleep(1);
             continue;
@@ -1341,8 +1375,8 @@ void kill_instance_for_agent_fault(uint32 node, uint32 instanceId, int insType)
     }
 }
 
-int instance_delay_arbitrate_time_out(int localDynamicRole, int peerlDynamicRole, uint32 groupIdx,
-    int memIdx, int delayMaxCount)
+int instance_delay_arbitrate_time_out(
+    int localDynamicRole, int peerlDynamicRole, uint32 groupIdx, int memIdx, int delayMaxCount)
 {
     cm_instance_command_status *localCmd =
         &(g_instance_group_report_status_ptr[groupIdx].instance_status.command_member[memIdx]);
@@ -1353,13 +1387,17 @@ int instance_delay_arbitrate_time_out(int localDynamicRole, int peerlDynamicRole
             localCmd->local_arbitrate_delay_role = localDynamicRole;
             localCmd->peerl_arbitrate_delay_role = peerlDynamicRole;
 
-            write_runlog(LOG, "instance_delay_arbitrate_time_out start (node=%u instanceid=%u) local_delay_role=%d "
+            write_runlog(LOG,
+                "instance_delay_arbitrate_time_out start (node=%u instanceid=%u) local_delay_role=%d "
                 "peerl_delay_role=%d "
                 "local_dynamic_role=%d peerl_dynamic_role=%d delayMaxCount=%d arbitrate_delay_time_out=%d\n",
                 g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].node,
                 g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].instanceId,
-                localCmd->local_arbitrate_delay_role, localCmd->peerl_arbitrate_delay_role,
-                localDynamicRole, peerlDynamicRole, delayMaxCount,
+                localCmd->local_arbitrate_delay_role,
+                localCmd->peerl_arbitrate_delay_role,
+                localDynamicRole,
+                peerlDynamicRole,
+                delayMaxCount,
                 localCmd->arbitrate_delay_time_out);
         } else {
             return 1;
@@ -1376,24 +1414,32 @@ int instance_delay_arbitrate_time_out(int localDynamicRole, int peerlDynamicRole
             localCmd->local_arbitrate_delay_role = INSTANCE_ROLE_UNKNOWN;
             localCmd->peerl_arbitrate_delay_role = INSTANCE_ROLE_UNKNOWN;
 
-            write_runlog(LOG, "instance_delay_arbitrate_time_out end (node=%u  instanceid=%u) local_delay_role=%d "
+            write_runlog(LOG,
+                "instance_delay_arbitrate_time_out end (node=%u  instanceid=%u) local_delay_role=%d "
                 "peerl_delay_role=%d "
                 "local_dynamic_role=%d peerl_dynamic_role=%d delayMaxCount=%d arbitrate_delay_time_out=%d \n",
                 g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].node,
                 g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].instanceId,
-                localCmd->local_arbitrate_delay_role, localCmd->peerl_arbitrate_delay_role,
-                localDynamicRole, peerlDynamicRole, delayMaxCount,
+                localCmd->local_arbitrate_delay_role,
+                localCmd->peerl_arbitrate_delay_role,
+                localDynamicRole,
+                peerlDynamicRole,
+                delayMaxCount,
                 localCmd->arbitrate_delay_time_out);
 
             return 1;
         } else {
-            write_runlog(DEBUG1, "instance_delay_arbitrate_time_out running (node=%u  instanceid=%u) "
+            write_runlog(DEBUG1,
+                "instance_delay_arbitrate_time_out running (node=%u  instanceid=%u) "
                 "local_delay_role=%d peerl_delay_role=%d"
                 "local_dynamic_role=%d peerl_dynamic_role =%d delayMaxCount=%d arbitrate_delay_time_out=%d\n",
                 g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].node,
                 g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].instanceId,
-                localCmd->local_arbitrate_delay_role, localCmd->peerl_arbitrate_delay_role,
-                localDynamicRole, peerlDynamicRole, delayMaxCount,
+                localCmd->local_arbitrate_delay_role,
+                localCmd->peerl_arbitrate_delay_role,
+                localDynamicRole,
+                peerlDynamicRole,
+                delayMaxCount,
                 localCmd->arbitrate_delay_time_out);
         }
     }
@@ -1406,19 +1452,20 @@ void instance_delay_arbitrate_time_out_clean(
     bool findDynaicPrimary = false;
     bool findStaticPrimary = false;
     bool isDNType = false;
-    uint32 staticPrimary = 0;
+    int staticPrimary = 0;
     bool needCleanSwitchover = false;
     for (int i = 0; i < g_instance_role_group_ptr[group_index].count; i++) {
         if (g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceType == INSTANCE_TYPE_GTM) {
-            if (g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[i]
-                    .local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+            if (g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[i].local_status.local_role ==
+                INSTANCE_ROLE_PRIMARY) {
                 findDynaicPrimary = true;
                 break;
             }
         } else {
             isDNType = true;
-            if (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i]
-                    .local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+            if (g_instance_group_report_status_ptr[group_index]
+                .instance_status.data_node_member[i]
+                .local_status.local_role == INSTANCE_ROLE_PRIMARY) {
                 findDynaicPrimary = true;
                 break;
             }
@@ -1427,7 +1474,8 @@ void instance_delay_arbitrate_time_out_clean(
     if (isDNType && findDynaicPrimary) {
         for (int i = 0; i < g_instance_role_group_ptr[group_index].count; i++) {
             if (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i].arbitrateFlag) {
-                write_runlog(LOG, "clean arbitrateFlag, instance %u.\n",
+                write_runlog(LOG,
+                    "clean arbitrateFlag, instance %u.\n",
                     g_instance_role_group_ptr[group_index].instanceMember[i].instanceId);
                 g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i].arbitrateFlag =
                     false;
@@ -1438,26 +1486,27 @@ void instance_delay_arbitrate_time_out_clean(
     for (int i = 0; i < g_instance_role_group_ptr[group_index].count; i++) {
         if (g_instance_role_group_ptr[group_index].instanceMember[i].role == INSTANCE_ROLE_PRIMARY) {
             findStaticPrimary = true;
-            staticPrimary = (uint32)i;
+            staticPrimary = i;
             break;
         }
     }
     for (int i = 0; i < g_instance_role_group_ptr[group_index].count; i++) {
         if (g_instance_role_group_ptr[group_index].instanceMember[i].role == INSTANCE_ROLE_PRIMARY &&
             g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i]
-                .local_status.local_role == INSTANCE_ROLE_PENDING) {
+            .local_status.local_role == INSTANCE_ROLE_PENDING) {
+            needCleanSwitchover = true;
+            break;
+        }
+        if (g_instance_group_report_status_ptr[group_index].instance_status.command_member[i].pengding_command ==
+            (int32)MSG_CM_AGENT_SWITCHOVER &&
+            g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i]
+            .local_status.local_role == INSTANCE_ROLE_PENDING) {
             needCleanSwitchover = true;
             break;
         }
         if (g_instance_group_report_status_ptr[group_index].instance_status.command_member[i].pengding_command ==
                 MSG_CM_AGENT_SWITCHOVER &&
-            g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i]
-                .local_status.local_role == INSTANCE_ROLE_PENDING) {
-            needCleanSwitchover = true;
-            break;
-        }
-        if (g_instance_group_report_status_ptr[group_index].instance_status.command_member[i].pengding_command ==
-                MSG_CM_AGENT_SWITCHOVER && !IsArchiveMaxSendTimes(group_index, i)) {
+            !IsArchiveMaxSendTimes(group_index, i)) {
             needCleanSwitchover = true;
             break;
         }
@@ -1469,16 +1518,20 @@ void instance_delay_arbitrate_time_out_clean(
                 write_runlog(LOG,
                     "clean switchover(%u) command, command send num(%d/%d).\n",
                     g_instance_role_group_ptr[group_index].instanceMember[i].instanceId,
-                    GetSendTimes(group_index, i, false), GetSendTimes(group_index, i, true));
+                    GetSendTimes(group_index, i, false),
+                    GetSendTimes(group_index, i, true));
                 if (findStaticPrimary) {
                     write_runlog(LOG,
                         "clean switchover(%u), static primary(%d), switchover(%d), command_send_num(%d).\n",
                         g_instance_role_group_ptr[group_index].instanceMember[i].instanceId,
-                        g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[staticPrimary]
+                        g_instance_group_report_status_ptr[group_index]
+                            .instance_status.data_node_member[staticPrimary]
                             .local_status.local_role,
-                        g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[i]
+                        g_instance_group_report_status_ptr[group_index]
+                            .instance_status.data_node_member[i]
                             .local_status.local_role,
-                        g_instance_group_report_status_ptr[group_index].instance_status.command_member[i]
+                        g_instance_group_report_status_ptr[group_index]
+                            .instance_status.command_member[i]
                             .command_send_num);
                 }
 
@@ -1488,9 +1541,9 @@ void instance_delay_arbitrate_time_out_clean(
     }
     if (findDynaicPrimary &&
         (g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
-            .local_arbitrate_delay_role != local_dynamic_role ||
+        .local_arbitrate_delay_role != local_dynamic_role ||
         g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
-            .peerl_arbitrate_delay_role != peerl_dynamic_role)) {
+        .peerl_arbitrate_delay_role != peerl_dynamic_role)) {
         g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
             .arbitrate_delay_set = INSTANCE_ARBITRATE_DELAY_NO_SET;
         g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
@@ -1505,12 +1558,17 @@ void instance_delay_arbitrate_time_out_clean(
             "local_dynamic_role=%d peerl_dynamic_role=%d delay_max_count=%d arbitrate_delay_time_out=%d\n",
             g_instance_role_group_ptr[group_index].instanceMember[member_index].node,
             g_instance_role_group_ptr[group_index].instanceMember[member_index].instanceId,
-            g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
+            g_instance_group_report_status_ptr[group_index]
+                .instance_status.command_member[member_index]
                 .local_arbitrate_delay_role,
-            g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
+            g_instance_group_report_status_ptr[group_index]
+                .instance_status.command_member[member_index]
                 .peerl_arbitrate_delay_role,
-            local_dynamic_role, peerl_dynamic_role, delay_max_count,
-            g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
+            local_dynamic_role,
+            peerl_dynamic_role,
+            delay_max_count,
+            g_instance_group_report_status_ptr[group_index]
+                .instance_status.command_member[member_index]
                 .arbitrate_delay_time_out);
     }
 }

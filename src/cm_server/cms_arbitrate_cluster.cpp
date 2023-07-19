@@ -999,7 +999,7 @@ static status_t CheckVotingDisk()
     const uint32 timeout = 6;
     uint32 time = timeout;
     while (time > 0) {
-        if (UpdateAllNodeHeartBeat() == CM_SUCCESS) {
+        if (UpdateAllNodeHeartBeat(g_node_num) == CM_SUCCESS) {
             return CM_SUCCESS;
         }
         time--;

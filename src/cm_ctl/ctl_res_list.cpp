@@ -140,7 +140,7 @@ static status_t SetResBaseInfoInArray(ResBaseInfo *info, const cJSON *resArray, 
         }
         resName = GetValueStrFromCJson(item, RES_NAME);
         if (resName == NULL) {
-            resName = NULL;
+            resName = PRINT_NULL;
         } else {
             isCanPrint = CM_TRUE;
         }
@@ -188,7 +188,7 @@ static void PrintAllResInfoBody(const ResBaseInfo *info, const cJSON *resArray)
         }
         resName = GetValueStrFromCJson(item, RES_NAME);
         if (resName == NULL) {
-            resName = NULL;
+            resName = PRINT_NULL;
         }
         resType = GetValueStrFromCJson(item, RESOURCE_TYPE);
         if (resType == NULL) {

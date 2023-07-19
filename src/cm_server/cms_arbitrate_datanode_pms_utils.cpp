@@ -554,7 +554,7 @@ uint32 GetDnArbitateDelayTime(const DnArbCtx *ctx)
     /* if static primary has finished redo, not need to wait for 180s */
     cm_local_replconninfo *status = &(ctx->dnReport[cond->staticPriIdx].local_status);
     if (status->local_role == INSTANCE_ROLE_STANDBY && status->disconn_mode == PROHIBIT_CONNECTION) {
-        return DATANODE_ARBITE_DELAY;
+        return g_waitStaticPrimaryTimes;
     }
     return cond->arbitInterval;
 }

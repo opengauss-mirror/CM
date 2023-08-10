@@ -635,6 +635,12 @@ typedef enum {
     INSTALL_TYPE_STREAMING = 2
 } ClusterInstallType;
 
+typedef enum {
+    SS_DORADO_NULL = 0,
+    SS_DORADO_PRIMARY = 1,
+    SS_DORADO_STANDBY = 2
+} DoradoClusterMode;
+
 typedef struct ctl_to_cm_set_st {
     int msg_type;
     int log_level;

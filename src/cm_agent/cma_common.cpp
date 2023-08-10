@@ -356,7 +356,8 @@ void ReloadParametersFromConfig()
     if (g_enableE2ERto == 1) {
         agent_phony_dead_check_interval = 1;
     }
-
+    g_doradoClusterMode =
+        (DoradoClusterMode)get_uint32_value_from_config(configDir, "dorado_cluster_mode", SS_DORADO_NULL);
     log_threshold_check_interval =
         get_uint32_value_from_config(configDir, "log_threshold_check_interval", log_threshold_check_interval);
     undocumentedVersion = get_uint32_value_from_config(configDir, "upgrade_from", 0);
@@ -409,7 +410,7 @@ void ReloadParametersFromConfigfile()
         "  enableLogCompress=%s, security_mode=%s, incremental_build=%d, unix_socket_directory=%s, "
 #ifndef ENABLE_MULTIPLE_NODES
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s, "
-        "db_service_vip=%s, enable_fence_dn=%s\n",
+        "db_service_vip=%s, enable_fence_dn=%s, dorado_cluster_mode=%d\n",
 #else
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s\n",
 #endif
@@ -439,7 +440,8 @@ void ReloadParametersFromConfigfile()
 #ifndef ENABLE_MULTIPLE_NODES
         g_environmentThreshold,
         g_dbServiceVip,
-        g_enableFenceDn);
+        g_enableFenceDn,
+        g_doradoClusterMode);
 #else
         g_environmentThreshold);
 #endif

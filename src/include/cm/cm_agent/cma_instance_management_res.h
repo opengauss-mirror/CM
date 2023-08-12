@@ -30,7 +30,7 @@
 status_t StartOneResInst(const CmResConfList *conf);
 void StopOneResInst(const CmResConfList *conf);
 void OneResInstShutdown(const CmResConfList *oneResConf);
-status_t RegOneResInst(const CmResConfList *conf, uint32 destInstId);
+status_t RegOneResInst(const CmResConfList *conf, uint32 destInstId, bool8 needNohup);
 status_t UnregOneResInst(const CmResConfList *conf, uint32 destInstId);
 ResIsregStatus IsregOneResInst(const CmResConfList *conf, uint32 destInstId);
 status_t CleanOneResInst(const CmResConfList *conf);

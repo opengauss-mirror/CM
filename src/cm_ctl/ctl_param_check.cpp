@@ -56,14 +56,14 @@ const char *g_cmaParamInfo[] = {
     "agent_rhb_interval|int|0,2147483647|NULL|NULL|",
 #ifndef ENABLE_MULTIPLE_NODES
     "enable_fence_dn|string|0,0|NULL|NULL|",
-#endif
-#ifdef ENABLE_MULTIPLE_NODES
+#else
     "enable_cn_auto_repair|bool|0,0|NULL|NULL|",
     "enable_gtm_phony_dead_check|int|0,1|NULL|NULL|",
     "environment_threshold|string|0,0|NULL|NULL|",
 #endif
     "db_service_vip|string|0,0|NULL|NULL|",
-    "event_triggers|string|0,0|NULL|NULL|"
+    "event_triggers|string|0,0|NULL|NULL|",
+    "dorado_cluster_mode|int|0,2|NULL|NULL|",
 };
 
 const char *g_cmsParamInfo[] = {

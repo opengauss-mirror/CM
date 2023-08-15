@@ -308,6 +308,18 @@ const char* type_int_to_string(int type)
     return "Unknown";
 }
 
+const char *type_int_to_str_dorado(DoradoClusterMode dorado_type)
+{
+    switch (dorado_type) {
+        case SS_DORADO_PRIMARY:
+            return "cluster_primary";
+        case SS_DORADO_STANDBY:
+            return "cluster_standby";
+        default:
+            return "no_dorado_double_cluster";
+    }
+}
+
 gtm_con_string gtm_con_map_string[] = {{"Connection ok", CON_OK},
     {"Connection bad", CON_BAD},
     {"Connection started", CON_STARTED},

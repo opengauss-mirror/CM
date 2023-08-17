@@ -61,7 +61,7 @@ static void UsageHelp(const char *projectName)
 #ifdef ENABLE_MULTIPLE_NODES
     (void)printf(_("  %s stop [[-z AVAILABILITY_ZONE] | [-n NODEID [-D DATADIR [-R] | -I RESOURCE_INSTANCE_ID]]] "
         "[-t SECS] [-m SHUTDOWN-MODE]\n"), projectName);
-    (void)printf(_("  %s query [-z ALL] [-n NODEID [-D DATADIR -R]] [-l FILENAME] [-v [-C [-s] [-S] [-d] [-i] [-F] "
+    (void)printf(_("  %s query [-z ALL] [-n NODEID [-D DATADIR -R]] [-l FILENAME] [-v [-C [-w] [-s] [-S] [-d] [-i] [-F] "
         "[-L ALL] [-x] [-p]] | [-r]] [-t SECS] [--minorityAz=AZ_NAME]\n"), projectName);
     (void)printf(_("  %s restart [-L LCNAME]\n"), projectName);
     (void)printf(_("  %s view [-v | -N | -n NODEID | -c] [-l FILENAME]\n"), projectName);
@@ -69,7 +69,7 @@ static void UsageHelp(const char *projectName)
 #else
     (void)printf(_("  %s stop [[-z AVAILABILITY_ZONE] | [-n NODEID [-D DATADIR]] | [-I RESOURCE_INSTANCE_ID [-n NODEID]]] [-t SECS] "
         "[-m SHUTDOWN-MODE]\n"), projectName);
-    (void)printf(_("  %s query [-z ALL] [-l FILENAME] [-v [-C [-s] [-S] [-d] [-i] [-F] [-x] [-p]] | [-r]] [-t SECS] "
+    (void)printf(_("  %s query [-z ALL] [-l FILENAME] [-v [-C [-w] [-s] [-S] [-d] [-i] [-F] [-x] [-p]] | [-r]] [-t SECS] "
         "[--minorityAz=AZ_NAME]\n"), projectName);
     (void)printf(_("  %s view [-v | -N | -n NODEID] [-l FILENAME]\n"), projectName);
 #endif
@@ -182,6 +182,7 @@ static void QueryHelp()
     (void)printf(_("  -s                     show instances that need to switchover\n"));
     (void)printf(_("  -C                     show query result by HA relation\n"));
     (void)printf(_("  -v                     show detail query result\n"));
+    (void)printf(_("  -w                     show detail query result in vertical format\n"));
     (void)printf(_("  -d                     show instance datapath\n"));
     (void)printf(_("  -i                     show physical node ip\n"));
     (void)printf(_("  -F                     show all fenced UDF master process status\n"));

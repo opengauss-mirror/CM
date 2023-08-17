@@ -30,6 +30,7 @@
 
 extern bool g_detailQuery;
 extern bool g_coupleQuery;
+extern bool g_formatQuery;
 extern bool g_balanceQuery;
 extern bool g_startStatusQuery;
 extern bool g_portQuery;
@@ -453,36 +454,47 @@ void CalcDnHeaderSize(uint32 *nodeLen, uint32 *instanceLen, uint32 *stateLen)
 
 void PrintDnHeaderLine(uint32 nodeLen, uint32 instanceLen, uint32 tmpInstanceLen, uint32 stateLen)
 {
-    if (g_ipQuery) {
-        if (g_multi_az_cluster) {
-            for (uint32 jj = 0; jj < g_dn_replication_num - 1; jj++) {
-                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ",
-                    nodeLen, "node", MAX_IP_LEN + 1, "node_ip",
-                    tmpInstanceLen, "instance", stateLen, "state");
-            }
-        } else if (!g_single_node_cluster) {
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", MAX_IP_LEN + 1,
-                "node_ip", tmpInstanceLen, "instance", stateLen, "state");
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", MAX_IP_LEN + 1,
-                "node_ip", tmpInstanceLen, "instance", stateLen, "state");
+    if (g_formatQuery) {
+        if (g_ipQuery) {
+            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1,
+                          "node_ip", tmpInstanceLen, "instance", "state");
+        } else {
+            (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", nodeLen, "node",
+                          g_single_node_cluster ? tmpInstanceLen : instanceLen,
+                          "instance", "state");
         }
-        (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1,
-            "node_ip", tmpInstanceLen, "instance", "state");
     } else {
-        if (g_multi_az_cluster) {
-            for (uint32 jj = 0; jj < g_dn_replication_num - 1; jj++) {
-                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ", nodeLen, "node",
-                    tmpInstanceLen, "instance", stateLen, "state");
+        if (g_ipQuery) {
+            if (g_multi_az_cluster) {
+                for (uint32 jj = 0; jj < g_dn_replication_num - 1; jj++) {
+                    (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ",
+                                  nodeLen, "node", MAX_IP_LEN + 1, "node_ip",
+                                  tmpInstanceLen, "instance", stateLen, "state");
+                }
+            } else if (!g_single_node_cluster) {
+                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", MAX_IP_LEN + 1,
+                              "node_ip", tmpInstanceLen, "instance", stateLen, "state");
+                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", MAX_IP_LEN + 1,
+                              "node_ip", tmpInstanceLen, "instance", stateLen, "state");
             }
-        } else if (!g_single_node_cluster) {
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ", nodeLen, "node",
-                tmpInstanceLen, "instance", stateLen, "state");
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ",
-                nodeLen, "node", tmpInstanceLen, "instance", stateLen, "state");
+            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1,
+                          "node_ip", tmpInstanceLen, "instance", "state");
+        } else {
+            if (g_multi_az_cluster) {
+                for (uint32 jj = 0; jj < g_dn_replication_num - 1; jj++) {
+                    (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ", nodeLen, "node",
+                                  tmpInstanceLen, "instance", stateLen, "state");
+                }
+            } else if (!g_single_node_cluster) {
+                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ", nodeLen, "node",
+                              tmpInstanceLen, "instance", stateLen, "state");
+                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ",
+                              nodeLen, "node", tmpInstanceLen, "instance", stateLen, "state");
+            }
+            (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", nodeLen, "node",
+                          g_single_node_cluster ? tmpInstanceLen : instanceLen,
+                          "instance", "state");
         }
-        (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", nodeLen, "node",
-            g_single_node_cluster ? tmpInstanceLen : instanceLen,
-            "instance", "state");
     }
 }
 
@@ -507,12 +519,22 @@ void PrintDnStatusLine()
                                       SECONDARY_DYNAMIC_ROLE_LEN + SPACE_LEN +
                                       INSTANCE_DB_STATE_LEN;
     if (g_multi_az_cluster || g_single_node_cluster) {
-        maxLen = g_dn_replication_num *
-                      (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
-                  g_dn_replication_num * (stateLen + SEPERATOR_LEN + SPACE_LEN);
+        if (g_formatQuery) {
+            maxLen = (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
+                      (stateLen + SEPERATOR_LEN + SPACE_LEN);
+        } else {
+            maxLen = g_dn_replication_num *
+                     (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
+                     g_dn_replication_num * (stateLen + SEPERATOR_LEN + SPACE_LEN);
+        }
     } else {
-        maxLen = NODE_NUM * (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
-                  SPACE_NUM * (stateLen + SEPERATOR_LEN + SPACE_LEN) + secondryStateLen;
+        if (g_formatQuery) {
+            maxLen = (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
+                      (stateLen + SEPERATOR_LEN + SPACE_LEN) + secondryStateLen;
+        } else {
+            maxLen = NODE_NUM * (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
+                     SPACE_NUM * (stateLen + SEPERATOR_LEN + SPACE_LEN) + secondryStateLen;
+        }
     }
     for (uint32 i = 0; i < maxLen; i++) {
         (void)fprintf(g_logFilePtr, "-");

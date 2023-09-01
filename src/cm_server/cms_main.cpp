@@ -2149,7 +2149,7 @@ static int server_loop(void)
         int fds = epoll_wait(epollfd, events, MAX_EVENTS, 10000);
         if (fds < 0) {
             if (errno != EINTR && errno != EWOULDBLOCK) {
-                write_runlog(ERROR, "epoll_wait error : %d, mian thread exit.\n", errno);
+                write_runlog(ERROR, "epoll_wait error : %d, main thread exit.\n", errno);
                 break;
             }
         }

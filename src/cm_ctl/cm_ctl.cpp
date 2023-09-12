@@ -44,6 +44,7 @@
 #include "cm_util.h"
 #include "ctl_help.h"
 #include <string>
+#include <vector>
 
 #define ETCD_NUM_UPPER_LIMIT 50
 
@@ -57,8 +58,6 @@
 
 char* g_bin_name = NULL;
 char* g_bin_path = NULL;
-// Need to change the options here, if options of the commands are added or modified
-static const char* g_allowedOptions = "aAb:B:cCD:dE:fFgil:I:j:k:L:m:M:n:NP:pqrRsSt:T:vwxz:";
 
 extern char sys_log_path[MAXPGPATH];
 extern const char* prefix_name;
@@ -196,6 +195,41 @@ const int RES_LIST = 29;
 const int RES_LIST_INST_INPUT = 30;
 const int ErrorCode = -2;
 
+// short and long Options corresponds to CtlCommand.Need to change the options here, if options of the commands are added or modified
+static const char* g_allowedOptions = "aAb:B:cCD:dE:fFgil:I:j:k:L:m:M:n:NP:pqrRsSt:T:vwxz:";
+static const vector<vector<int>> g_allowedActionOptions = {
+        {}, // no command
+        { 'L' }, // "restart" command
+        { 'z', 'n', 'D', 'R', 'I', 'm', 't', 2 }, // "start" command
+        { 'z', 'n', 'D', 'I', 'R', 't', 'm' }, // "stop" command
+        { 'z', 'n', 'D', 'q', 'f', 'a', 'A', 't' }, // "switchover" command
+        {'c', 'n', 'D', 't', 'f', 'b', 'j'}, // "build" command
+        {}, // CM_REMOVE_COMMAND -- no corresponding commands need user to input in the commandline
+        {'z', 'n', 'D', 'R', 'l', 'v', 'w', 'C', 's', 'S', 'd', 'i', 'F', 'L', 'x', 'p', 'r', 't', 'g', MINORITY_AZ}, // "query" command
+        {'I', 'n', 'k', 1, 2, 3, CMS_P_MODE, CM_SET_PARAM, CM_AGENT_MODE, CM_SERVER_MODE}, // "set" command
+        {1, 2, 3}, // "get" command
+        {}, // CM_STARTCM_COMMAND -- no corresponding commands need user to input in the commandline
+        {}, // CM_STOPCM_COMMAND -- no corresponding commands need user to input in the commandline
+        {}, // CM_SYNC_COMMAND -- no corresponding commands need user to input in the commandline
+        {'v', 'n', 'N', 'c', 'l'}, // "view" command
+        {'B', 'T'}, // "check" command
+        {}, // "setmode" command
+        {'E', 'P'}, // "hotpatch" command
+        {'n', 'D', 't'}, // "disable" command
+        {}, // "finishredo" command
+        {'n', 'D', DCF_XMODE, DCF_VOTE_NUM}, // "setrunmode" command
+        {'n', 'D', 't', DCF_ROLE_MODE}, // "changerole" command
+        {'n', 'D', 't', DCF_ROLE_MODE, DCF_GROUP, DCF_PRIORITY}, // "changemember" command
+        {'n', CM_SET_PARAM, CM_AGENT_MODE, CM_SERVER_MODE}, // "reload" command
+        {'n', CM_SET_PARAM, CM_AGENT_MODE, CM_SERVER_MODE}, // "list" command
+        {'M', 'D'}, // "encrypt" command
+        {CM_SWITCH_DDB, CM_SWITCH_COMMIT, CM_SWITCH_ROLLBACK}, // "switch" command
+        {RES_ADD, RES_NAME_INPUT, RES_ATTR_INPUT, RES_DEL, RES_EDIT, RES_LIST, RES_ADD_INST_INPUT, RES_DEL_INST_INPUT,
+         RES_EDIT_INST_INPUT, RES_INST_ATTR_INPUT, RES_LIST_INST_INPUT, RES_CHECK}, // "res" command
+         {}, // "show" command
+         {}, // "pause" command
+         {} // "resume" command
+};
 unordered_map<string, CtlCommand> g_optToCommand {
 #ifdef ENABLE_MULTIPLE_NODES
     {"restart", RESTART_COMMAND},
@@ -230,6 +264,59 @@ unordered_map<string, CtlCommand> g_optToCommand {
     {"resume", CM_RESUME_COMMAND}
 };
 
+static string CheckActionOptions(CtlCommand ctlCommandAction, vector<int> optionIn, option* longActionOptions, int lengthLong)
+{
+    string notMatched;
+    vector<int> checkInterOptions = g_allowedActionOptions[ctlCommandAction];
+    option optionInter;
+    int optionInLength = (int) optionIn.size();
+    for (int checkIndexO = 0; checkIndexO < optionInLength; ++checkIndexO) {
+        bool checkInArr = false;
+        int checkIndexI = 0;
+        while (checkInterOptions[checkIndexI]!= 0) {
+            if (optionIn[checkIndexO] == checkInterOptions[checkIndexI]) {
+                checkInArr = true;
+                break;
+            }
+            ++checkIndexI;
+        }
+        if (!checkInArr) {
+            if (!notMatched.empty()) {
+                notMatched.append(",");
+            }
+            if (optionIn[checkIndexO] <= RES_LIST_INST_INPUT) {
+                int checkInter = 0;
+                while (checkInter < lengthLong) {
+                    optionInter = longActionOptions[checkInter];
+                    if (optionIn[checkIndexO] == optionInter.val) {
+                        notMatched.append(optionInter.name);
+                        break;
+                    }
+                    ++checkInter;
+                }
+            } else {
+                notMatched.push_back(char(optionIn[checkIndexO]));
+            }
+        }
+    }
+    return notMatched;
+}
+
+static status_t CheckActionOptionMatches(CtlCommand ctlCommandAction, vector<int> optionIn, option* longActionOptions, int lengthLong)
+{
+    string checkUnmatchedOption = CheckActionOptions(ctlCommandAction, optionIn, longActionOptions, lengthLong);
+    if (!checkUnmatchedOption.empty()) {
+        write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
+                      errmsg("Commands and options do not match.\n"),
+                      errmodule(MOD_CMCTL),
+                      errcause("%s: The cmdline and options entered by the user is incorrect.\n", g_progname),
+                      erraction("These options \"%s\" are not incorrect or not matched with the command.",
+                                checkUnmatchedOption.c_str()));
+        DoAdvice();
+        return CM_ERROR;
+    }
+    return CM_SUCCESS;
+}
 static void InitializeCmServerNodeIndex(void)
 {
     uint32 i = 0;
@@ -2389,15 +2476,21 @@ int main(int argc, char** argv)
      * that.
      */
     optind = 1;
-
+    vector<int> actionOptionsCode;
+    int lengthLongOptions = sizeof (longOptions)/sizeof (longOptions[0]);
     /* process command-line options */
     while (optind < argc) {
         while ((c = getopt_long(argc, argv, g_allowedOptions, longOptions, &optionIndex)) != -1) {
+            actionOptionsCode.push_back(c);
             /* parse command type */
             ParseCmdArgsCore(c, &set_data_path, &ctlCtx);
         }
 
         if (GetCtlCommand(argc, argv) == CM_ERROR) {
+            exit(1);
+        }
+
+        if (CheckActionOptionMatches(ctl_command, actionOptionsCode, longOptions, lengthLongOptions) == CM_ERROR) {
             exit(1);
         }
     }

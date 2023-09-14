@@ -398,17 +398,15 @@ static void ProcessAbnormalInstance(CmResConfList *conf)
         return;
     }
 
-    write_runlog(LOG, "res(%s) inst(%u) has been abnormal (%d)s, >= timeout(%d)s, need restart.\n",
+    write_runlog(LOG, "res(%s) inst(%u) has been abnormal (%d)s, >= timeout(%d)s, need kill it.\n",
         conf->resName, conf->cmInstanceId, duration, conf->checkInfo.abnormalTimeout);
 
-    RestartOneResInst(conf);
-    conf->checkInfo.startCount++;
-    conf->checkInfo.startTime = curTime;
-
-    if (conf->checkInfo.restartTimes != -1) {
-        write_runlog(LOG, "res(%s) inst(%u) has been restart (%d) times, restart more (%d) time will manually stop.\n",
-            conf->resName, conf->cmInstanceId, conf->checkInfo.startCount, conf->checkInfo.restartTimes);
+    if (CleanOneResInst(conf) == CM_SUCCESS) {
+        write_runlog(LOG, "res(%s) inst(%u) clean abnormal time.\n", conf->resName, conf->cmInstanceId);
+    } else {
+        conf->checkInfo.startCount++;
     }
+    conf->checkInfo.startTime = curTime;
 }
 
 static inline bool NeedStopResInst(const char *resName, uint32 cmInstId)

@@ -304,6 +304,12 @@ static string CheckActionOptions(CtlCommand ctlCommandAction, vector<int> option
 
 static status_t CheckActionOptionMatches(CtlCommand ctlCommandAction, vector<int> optionIn, option* longActionOptions, int lengthLong)
 {
+    if (ctlCommandAction == NO_COMMAND) {
+        write_runlog2(FATAL, errcode(ERRCODE_READ_FILE_FAILURE),
+                      errmsg("option requires an argument, NO_COMMAND only support 'V' and 'h'."));
+        DoAdvice();
+        return CM_ERROR;
+    }
     string checkUnmatchedOption = CheckActionOptions(ctlCommandAction, optionIn, longActionOptions, lengthLong);
     if (!checkUnmatchedOption.empty()) {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),

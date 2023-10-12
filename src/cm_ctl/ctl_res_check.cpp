@@ -146,7 +146,7 @@ static status_t CheckResNumberOptInfo(cJSON *resItem, const char *resName, const
     cJSON *objValue = cJSON_GetObjectItem(resItem, checkKey);
     CM_RETERR_IF_FALSE(CmCheckIsJsonNumber(objValue, resName, checkKey, WARNING));
     if (!IsResConfValid(checkKey, objValue->valueint)) {
-        PrintCheckJsonInfo(WARNING, "resource(%s)'s %s=%d out of range, range[%u %u], default(%s).\n",
+        PrintCheckJsonInfo(WARNING, "resource(%s)'s %s=%d out of range, range[%d %d], default(%s).\n",
             resName, checkKey, objValue->valueint,
             ResConfMinValue(checkKey), ResConfMaxValue(checkKey), ResConfDefValue(checkKey));
         return CM_ERROR;
@@ -353,7 +353,7 @@ static status_t CheckAndGetNumberFromJson(cJSON *resItem, const char *resName, c
     CM_RETERR_IF_FALSE(CmCheckIsJsonNumber(objValue, resName, checkKey, ERROR));
 
     if (!IsResConfValid(checkKey, objValue->valueint)) {
-        PrintCheckJsonInfo(ERROR, "resource(%s)'s %s=%d out of range, range[%u %u].\n", resName, checkKey,
+        PrintCheckJsonInfo(ERROR, "resource(%s)'s %s=%d out of range, range[%d %d].\n", resName, checkKey,
             objValue->valueint, ResConfMinValue(checkKey), ResConfMaxValue(checkKey));
         return CM_ERROR;
     }
@@ -463,13 +463,13 @@ static void GetAllRestypeStr(char *typeStr, uint32 maxlen)
     uint32 arrLen = (uint32)(sizeof(g_resTypeMap) / sizeof(g_resTypeMap[0]));
     char tmpStr[MAX_PATH_LEN] = {0};
     for (uint32 i = 0; i < arrLen; ++i) {
-        if (g_resTypeMap[i].type == RES_TYPE_UNKNOWN) {
+        if (g_resTypeMap[i].type == RES_TYPE_INIT || g_resTypeMap[i].type == RES_TYPE_UNKNOWN) {
             continue;
         }
         if (strlen(typeStr) + strlen(g_resTypeMap[i].typeStr) >= maxlen) {
             return;
         }
-        if (i == 0) {
+        if (typeStr[0] == '\0') {
             rc = snprintf_s(tmpStr, MAX_PATH_LEN, MAX_PATH_LEN - 1, "\"%s\"", g_resTypeMap[i].typeStr);
         } else {
             rc = snprintf_s(tmpStr, MAX_PATH_LEN, MAX_PATH_LEN - 1, ", \"%s\"", g_resTypeMap[i].typeStr);
@@ -517,7 +517,7 @@ static uint32 GetResTypeIndex(cJSON *resItem, const char *resName)
 {
     cJSON *objValue = cJSON_GetObjectItem(resItem, RESOURCE_TYPE);
     if (!CmCheckIsJsonString(objValue, resName, RESOURCE_TYPE, WARNING)) {
-        return 0;
+        return RES_TYPE_UNKNOWN;
     }
 
     uint32 index = 0;
@@ -527,8 +527,8 @@ static uint32 GetResTypeIndex(cJSON *resItem, const char *resName)
     char allResName[MAX_PATH_LEN] = {0};
     GetAllRestypeStr(allResName, MAX_PATH_LEN);
     PrintCheckJsonInfo(WARNING, "resource(%s)'s resources_type is (%s), not in range(%s), default(%s).\n",
-        resName, objValue->string, allResName, ResConfDefValue(RESOURCE_TYPE));
-    return 0;
+        resName, objValue->valuestring, allResName, ResConfDefValue(RESOURCE_TYPE));
+    return RES_TYPE_UNKNOWN;
 }
 
 ResType GetResTypeFromCjson(cJSON *resItem)

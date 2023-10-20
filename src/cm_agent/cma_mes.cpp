@@ -37,6 +37,8 @@
 #define AGENT_RHB_BUFF_POOL_SIZE (1024)
 #define AGENT_RHB_CHECK_SID (0)
 
+const uint32 CMA_MES_PRIORITY = 0;
+
 typedef struct CmaMesMsgHeadT {
     uint32 version;
     uint32 cmd; // command
@@ -53,10 +55,12 @@ typedef struct RhbCtx_ {
     uint32 instId;  // mes use index as id
     uint32 instCount;
     uint32 hbWorkThreadCount;
+    inst_type instType[MAX_RHB_NUM];
     uint64 instMap;
     staticNodeConfig *nodeList[MAX_RHB_NUM];  // node list to be check, it's idx as it's instId
     mes_addr_t instAddrs[MES_MAX_IP_LEN];
 } RhbCtx;
+RhbCtx g_ctx = {0};
 
 static uint32 FindMinServerPort()
 {
@@ -80,7 +84,7 @@ static void InitAgentAddrs(
     uint32 port = FindMinServerPort();
     for (uint32 i = 0; i < g_node_num; i++) {
         if (g_node[i].node == g_nodeHeader.node) {
-            *curInstId = i;
+            *curInstId = (*instCount);
         }
 
         if (g_node[i].datanodeCount == 0) {
@@ -100,6 +104,8 @@ static void InitAgentAddrs(
             sizeof(char) * MES_MAX_IP_LEN - 1);
         securec_check_errno(rc, (void)rc);
         instAddrs[(*instCount)].port = (uint16)port + AGENT_RHB_PORT_INC;
+        instAddrs[(*instCount)].inst_id = (*instCount);
+        instAddrs[(*instCount)].need_connect = CM_TRUE;
 
         int rcs =
             snprintf_s(info, maxInfoLen, maxInfoLen - 1, " [%u-%u](%s)", i, g_node[i].node, instAddrs[(*instCount)].ip);
@@ -112,10 +118,22 @@ static void InitAgentAddrs(
     write_runlog(LOG, "[InitAgentAddrs], detail:%s\n", buf);
 }
 
+void InitInstType(RhbCtx *ctx)
+{
+    uint32 index = 0;
+    for (uint32 i = 0; i < ctx->instCount; ++i) {
+        if (i == ctx->instId) {
+            continue;
+        }
+        ctx->instType[index] = i;
+        ++index;
+    }
+}
+
 static void InitRhbCtxByStaticConfig(RhbCtx *ctx)
 {
     InitAgentAddrs(&ctx->instCount, ctx->instAddrs, ctx->nodeList, &ctx->instId, &ctx->instMap);
-    ctx->hbWorkThreadCount = ctx->instCount;
+    InitInstType(ctx);
 }
 
 typedef enum RhbMsgCmd_ {
@@ -124,21 +142,19 @@ typedef enum RhbMsgCmd_ {
     RHB_MSG_CEIL,
 } RhbMsgCmd;
 
-static void InitTaskCmdGroup(mes_profile_t *pf)
-{
-    pf->task_group[MES_TASK_GROUP_ZERO] = pf->work_thread_cnt;
-    pf->task_group[MES_TASK_GROUP_ONE] = 0;
-    pf->task_group[MES_TASK_GROUP_TWO] = 0;
-    pf->task_group[MES_TASK_GROUP_THREE] = 0;
-
-}
-
 static void InitBuffPool(mes_profile_t *pf)
 {
-    pf->buffer_pool_attr.pool_count = AGENT_RHB_MSG_BUFF_POOL_NUM;
-    pf->buffer_pool_attr.queue_count = AGENT_RHB_MSG_BUFF_QUEUE_NUM;
-    pf->buffer_pool_attr.buf_attr[0].count = AGENT_RHB_BUFF_POOL_COUNT;
-    pf->buffer_pool_attr.buf_attr[0].size = AGENT_RHB_BUFF_POOL_SIZE;
+    pf->buffer_pool_attr[CMA_MES_PRIORITY].pool_count = AGENT_RHB_MSG_BUFF_POOL_NUM;
+    pf->buffer_pool_attr[CMA_MES_PRIORITY].queue_count = AGENT_RHB_MSG_BUFF_QUEUE_NUM;
+    pf->buffer_pool_attr[CMA_MES_PRIORITY].buf_attr[0].count = AGENT_RHB_BUFF_POOL_COUNT;
+    pf->buffer_pool_attr[CMA_MES_PRIORITY].buf_attr[0].size = AGENT_RHB_BUFF_POOL_SIZE;
+    pf->priority_cnt = 1;
+}
+
+static void InitTaskWork(mes_profile_t *pf)
+{
+    pf->send_task_count[CMA_MES_PRIORITY] = 1;
+    pf->recv_task_count[CMA_MES_PRIORITY] = 1;
 }
 
 static void initPfile(mes_profile_t *pf, const RhbCtx *ctx)
@@ -147,7 +163,6 @@ static void initPfile(mes_profile_t *pf, const RhbCtx *ctx)
     pf->pipe_type = MES_TYPE_TCP;
     pf->conn_created_during_init = 1;
     pf->channel_cnt = 1;
-    pf->work_thread_cnt = ctx->hbWorkThreadCount;
 
     pf->mes_elapsed_switch = 0;
 
@@ -156,8 +171,12 @@ static void initPfile(mes_profile_t *pf, const RhbCtx *ctx)
         pf->inst_net_addr, sizeof(mes_addr_t) * MES_MAX_INSTANCES, ctx->instAddrs, sizeof(mes_addr_t) * MAX_RHB_NUM);
     securec_check_errno(rc, (void)rc);
 
+    InitTaskWork(pf);
     InitBuffPool(pf);
-    InitTaskCmdGroup(pf);
+    pf->frag_size = AGENT_RHB_BUFF_POOL_SIZE;
+    pf->connect_timeout = CM_CONNECT_TIMEOUT;
+    pf->socket_timeout = CM_SOCKET_TIMEOUT;
+    pf->send_directly = CM_TRUE;
 }
 
 // it's from CBB cm_log.h
@@ -261,31 +280,28 @@ static const ProcessorFunc g_processors[RHB_MSG_CEIL] = {
 
 void MesMsgProc(unsigned int work_idx, ruid_type ruid, mes_msg_t *msg)
 {
-    do {
-        if (msg == NULL || msg->buffer == NULL) {
-            write_runlog(ERROR, "invaild msg, when msg or buffer is null.\n");
-            break;
-        }
+    if (msg == NULL || msg->buffer == NULL) {
+        write_runlog(ERROR, "invaild msg, when msg or buffer is null.\n");
+        return;
+    }
 
-        if (msg->size < sizeof(CmaMesMsgHead)) {
-            write_runlog(ERROR, "unknown msg head from inst:[%u], size:[%u].\n", msg->src_inst, msg->size);
-            break;
-        }
+    if (msg->size < sizeof(CmaMesMsgHead)) {
+        write_runlog(ERROR, "unknown msg head from inst:[%u], size:[%u].\n", msg->src_inst, msg->size);
+        return;
+    }
 
-        CmaMesMsgHead *head = (CmaMesMsgHead *)msg->buffer;
-        if (head->cmd >= (uint32)RHB_MSG_CEIL) {
-            write_runlog(ERROR, "unknow cmd(%hhu) from inst:[%hhu], size:[%hu]!\n",
-                head->cmd, msg->src_inst, head->bufSize);
-            break;
-        }
+    CmaMesMsgHead *head = (CmaMesMsgHead *)msg->buffer;
+    if (head->cmd >= (uint32)RHB_MSG_CEIL) {
+        write_runlog(ERROR, "unknow cmd(%hhu) from inst:[%hhu], size:[%hu]!\n",
+            head->cmd, msg->src_inst, head->bufSize);
+        return;
+    }
 
-        const ProcessorFunc *processor = &g_processors[head->cmd];
+    const ProcessorFunc *processor = &g_processors[head->cmd];
 
-        CM_ASSERT(processor->proc != NULL);
+    CM_ASSERT(processor->proc != NULL);
 
-        processor->proc(msg);
-    } while (0);
-    mes_release_msg(msg);
+    processor->proc(msg);
 }
 
 status_t CmaRhbInit(const RhbCtx *ctx)
@@ -368,27 +384,20 @@ void *CmaRhbMain(void *args)
 {
     thread_name = "RHB";
 
-    RhbCtx ctx = {0};
-    ctx.sid = AGENT_RHB_CHECK_SID;
-    InitRhbCtxByStaticConfig(&ctx);
-
-    if (CmaRhbInit(&ctx) != CM_SUCCESS) {
-        write_runlog(FATAL, "init cma heartbeat conn by mes failed, RHB check thread will exit.\n");
-        exit(1);
-    }
+    RhbCtx *ctx = (RhbCtx *)args;
 
     // for ssl cleanup
     (void)atexit(CmaRhbUnInit);
 
     write_runlog(LOG, "RHB check is ready to work!\n");
     CmaMesMsgHead head = {0};
-    InitMsgHead(&head, &ctx);
+    InitMsgHead(&head, ctx);
     int32 ret = 0;
     int itv = 0;
     struct timespec curTime = {0, 0};
     struct timespec lastTime = {0, 0};
     for (;;) {
-        if (g_exitFlag) {
+        if (g_exitFlag || g_shutdownRequest) {
             write_runlog(LOG, "Get exit flag, RHB thread will exit!\n");
             break;
         }
@@ -401,7 +410,7 @@ void *CmaRhbMain(void *args)
         }
 
         write_runlog(DEBUG1, "RHB broadcast hb to all nodes.!\n");
-        ret = mes_broadcast(0, (char*)&head, sizeof(CmaMesMsgHead));
+        ret = mes_broadcast_sp(ctx->instType, ctx->instCount - 1, 0, (char*)&head, sizeof(CmaMesMsgHead));
         if (ret != 0) {
             write_runlog(DEBUG1, "bc not all success, ret=%d.\n", ret);
         }
@@ -432,8 +441,16 @@ void CreateRhbCheckThreads()
         return;
     }
 
+    g_ctx.sid = AGENT_RHB_CHECK_SID;
+    InitRhbCtxByStaticConfig(&g_ctx);
+
+    if (CmaRhbInit(&g_ctx) != CM_SUCCESS) {
+        write_runlog(FATAL, "init cma heartbeat conn by mes failed, RHB check thread will exit.\n");
+        exit(1);
+    }
+
     int err;
-    if ((err = pthread_create(&g_rhbThread, NULL, CmaRhbMain, NULL)) != 0) {
+    if ((err = pthread_create(&g_rhbThread, NULL, CmaRhbMain, &g_ctx)) != 0) {
         write_runlog(ERROR, "Failed to create cma mes thread %d: %d\n", err, errno);
     } else {
         write_runlog(LOG, "start rhb check thread success.\n");

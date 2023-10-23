@@ -107,7 +107,7 @@ void SendMsgApi(char *msgPtr, size_t msgLen)
 {
     MsgPackage msg = {msgPtr, msgLen};
     (void)pthread_mutex_lock(&g_sendMsg->lock);
-    g_sendMsg->sendQueue.push(msg);
+    g_sendMsg->sendQueue.push_back(msg);
     (void)pthread_mutex_unlock(&g_sendMsg->lock);
     (void)pthread_cond_signal(&g_sendMsg->cond);
 }
@@ -169,7 +169,7 @@ static void ConnectClose()
     (void)pthread_mutex_lock(&g_sendMsg->lock);
     while (!g_sendMsg->sendQueue.empty()) {
         free(g_sendMsg->sendQueue.front().msgPtr);
-        g_sendMsg->sendQueue.pop();
+        g_sendMsg->sendQueue.pop_front();
     }
     (void)pthread_mutex_unlock(&g_sendMsg->lock);
 
@@ -314,7 +314,7 @@ void SendOneMsgToAgent()
         return;
     }
     MsgPackage msgPkg = g_sendMsg->sendQueue.front();
-    g_sendMsg->sendQueue.pop();
+    g_sendMsg->sendQueue.pop_front();
     (void)pthread_mutex_unlock(&g_sendMsg->lock);
 
     if (msgPkg.msgPtr == NULL) {
@@ -597,9 +597,7 @@ static void InitGlobalVariable(const char *resName)
     (void)pthread_mutex_init(&g_initFlag->lock, NULL);
     InitPthreadCondMonotonic(&g_initFlag->cond);
 
-    while (!g_sendMsg->sendQueue.empty()) {
-        g_sendMsg->sendQueue.pop();
-    }
+    g_sendMsg->sendQueue.clear();
     (void)pthread_mutex_init(&g_sendMsg->lock, NULL);
     InitPthreadCondMonotonic(&g_sendMsg->cond);
 

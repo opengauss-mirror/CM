@@ -120,6 +120,7 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
     SetSwitchoverCmd(&(instStatus->command_member[memberIndex]), localRole, instInfo->instanceId,
         GetPeerInstId(groupIndex, memberIndex));
     instStatus->command_member[memberIndex].time_out = switchoverMsg->wait_seconds;
+    instStatus->command_member[memberIndex].msgProcFlag = recvMsgInfo->msgProcFlag;
     SetSendTimes(groupIndex, memberIndex, switchoverMsg->wait_seconds);
     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[groupIndex].lk_lock));
 

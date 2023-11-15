@@ -101,6 +101,7 @@ int ResConfMinValue(const char *param);
 const char* ResConfDefValue(const char *param);
 
 bool IsResConfValid(const char *param, int value);
+bool IsKeyInRestrictList(const char *key);
 void GetCmConfJsonPath(char *path, uint32 pathLen);
 int ReadCmConfJson(void *logFunc);
 status_t InitAllResStat(int logLevel = LOG);

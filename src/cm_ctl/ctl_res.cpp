@@ -37,6 +37,8 @@
 #include "ctl_res_list.h"
 
 static char g_jsonFile[CM_PATH_LENGTH] = {0};
+static char g_resNames[CM_MAX_RES_COUNT + CM_MAX_VIP_COUNT][CM_MAX_RES_NAME];
+static uint32 g_resCount = 0;
 
 // res
 static const char *g_resSkipMap[] = {RES_NAME, RESOURCE_TYPE, INSTANCES};
@@ -328,7 +330,12 @@ status_t ProcessResAttrConfJson(
 {
     CM_RETURN_IFERR(AddItemToObject(resCtx, confObj, key, value, RES_LEVEL_RES));
     uint32 index;
-    if (cm_str_equal(key, RESOURCE_TYPE) && CompareResType(value, &index)) {
+    if (cm_str_equal(key, RESOURCE_TYPE)) {
+        if (!CompareResType(value, &index)) {
+            write_runlog(ERROR, "%s%s Res(%s) attr %s can not be set to %s.\n", GetResOperStr(resCtx->mode),
+                GetInstOperStr(resCtx->inst.mode), resCtx->resName, RESOURCE_TYPE, value);
+        return CM_ERROR;
+        }
         if (GetResTypeValue(index) == NULL) {
             return CM_SUCCESS;
         }
@@ -505,20 +512,33 @@ cJSON *GetCurResInArray(cJSON *resArray, const char *resName, const ResOption *r
     }
 
     cJSON *resObj;
-    char *curResName;
+    const uint32 maxResCnt = CM_MAX_RES_COUNT + CM_MAX_VIP_COUNT;
+    //char resName[maxResCnt][CM_MAX_RES_NAME];
+    g_resCount = 0;
+    int32 resIndex = -1;
     int32 arraySize = cJSON_GetArraySize(resArray);
     for (int32 i = 0; i < arraySize; ++i) {
         resObj = cJSON_GetArrayItem(resArray, i);
         if (!cJSON_IsObject(resObj)) {
             continue;
         }
-        curResName = GetValueStrFromCJson(resObj, RES_NAME);
-        if (curResName != NULL && cm_str_equal(curResName, resName)) {
+        const char* tmpResName;
+        if(CheckResName(resObj, g_resNames, maxResCnt, &g_resCount, &tmpResName) != CM_SUCCESS) {
+            write_runlog(ERROR, "%s%s Res(%s) configure contains some error, check first.\n", GetResOperStr(resCtx->mode),
+                GetInstOperStr(resCtx->inst.mode), resName);
+            return NULL;
+        }
+
+        if (tmpResName != NULL && cm_str_equal(tmpResName, resName)) {
+            resIndex = i;
             if (resIdx != NULL) {
                 *resIdx = i;
             }
-            return resObj;
         }
+    }
+
+    if (resIndex != -1) {
+        return cJSON_GetArrayItem(resArray, resIndex);
     }
     return NULL;
 }
@@ -922,11 +942,26 @@ static cJSON *GetInstFromArray(const ResOption *resCtx, const cJSON *resArray, i
     return NULL;
 }
 
+static bool CheckResNameForEdit(const char *value)
+{
+    if (strlen(value) >= CM_MAX_RES_NAME) {
+        write_runlog(ERROR, "resource's new name(%s) length exceeds the maximum(%d).\n", value, CM_MAX_RES_NAME);
+        return false;
+    }
+    for (uint32 i = 0; i < g_resCount; i++) {
+        if (strcmp(value, g_resNames[i]) == 0) {
+            write_runlog(ERROR, "resource's new name(%s) has already exist in configure.\n", value);
+            return false;
+        }
+    }
+    return true;
+}
+
 static status_t EditStringToJson(
     const ResOption *resCtx, cJSON *root, const char *key, const char *value, ResOpMode mode)
 {
     if (CM_IS_EMPTY_STR(key) || CM_IS_EMPTY_STR(value)) {
-        write_runlog(ERROR, "%s%s Res(%s) fails to add string to json, when key or value is empty.\n",
+        write_runlog(ERROR, "%s%s Res(%s) fails to edit string to json, when key or value is empty.\n",
             GetResOperStr(resCtx->mode), GetInstOperStr(resCtx->inst.mode), resCtx->resName);
         return CM_ERROR;
     }
@@ -934,6 +969,17 @@ static status_t EditStringToJson(
     if (mode != RES_OP_EDIT) {
         (void)cJSON_AddStringToObject(root, key, value);
     } else {
+        uint32 index = 0;
+        if (cm_str_equal(key, RES_NAME) && !CheckResNameForEdit(value)){
+            write_runlog(ERROR, "%s%s Res(%s) fails to edit new name to json.\n",
+                GetResOperStr(resCtx->mode), GetInstOperStr(resCtx->inst.mode), resCtx->resName);
+            return CM_ERROR;
+        }
+        if (cm_str_equal(key, RESOURCE_TYPE) && !CompareResType(value, &index)){
+            write_runlog(ERROR, "%s%s Res(%s) fails to edit new resource_type to json.\n",
+                GetResOperStr(resCtx->mode), GetInstOperStr(resCtx->inst.mode), resCtx->resName);
+            return CM_ERROR;
+        }
         (void)cJSON_ReplaceItemInObject(root, key, cJSON_CreateString(value));
     }
     return CM_SUCCESS;
@@ -1163,6 +1209,11 @@ static status_t EditObjectToJson(
             (void)cJSON_AddStringToObject(root, key, value);
         }
         return CM_SUCCESS;
+    }
+    if(IsKeyInRestrictList(key) && (!IsValueNumber(value) || !IsResConfValid(key, (const int)CmAtol(value, -1)))) {
+        write_runlog(ERROR, "%s%s Res(%s) fails to set key(%s) to new value(%s) due to wrong type or out of range.\n",
+            GetResOperStr(resCtx->mode), GetInstOperStr(resCtx->inst.mode), resCtx->resName, key, value);
+        return CM_ERROR;
     }
     if (IsValueNumber(value)) {
         (void)cJSON_ReplaceItemInObject(root, key, cJSON_CreateNumber((const double)CmAtol(value, -1)));

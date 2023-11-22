@@ -169,6 +169,17 @@ bool IsResConfValid(const char *param, int value)
     return false;
 }
 
+bool IsKeyInRestrictList(const char *key)
+{
+    uint32 arrLen = (sizeof(g_resConfRange) / sizeof(g_resConfRange[0]));
+    for (uint32 i = 0; i < arrLen; ++i) {
+        if (strcmp(key, g_resConfRange[i].param) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int ResConfMaxValue(const char *param)
 {
     uint32 arrLen = (sizeof(g_resConfRange) / sizeof(g_resConfRange[0]));

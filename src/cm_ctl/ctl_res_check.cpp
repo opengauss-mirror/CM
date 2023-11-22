@@ -428,7 +428,7 @@ static status_t CheckVipResInfo(cJSON *resItem, const char *resName)
     return CM_SUCCESS;
 }
 
-static status_t CheckResName(
+status_t CheckResName(
     const cJSON *resItem, char (*resName)[CM_MAX_RES_NAME], uint32 maxCnt, uint32 *curCnt, const char **curResName)
 {
     cJSON *objName = cJSON_GetObjectItem(resItem, RES_NAME);
@@ -491,6 +491,9 @@ bool CompareResType(const char *value, uint32 *index)
     uint32 arrLen = (uint32)(sizeof(g_resTypeMap) / sizeof(g_resTypeMap[0]));
     char tmpStr[MAX_PATH_LEN] = {0};
     for (uint32 i = 0; i < arrLen; ++i) {
+        if (g_resTypeMap[i].type == RES_TYPE_INIT || g_resTypeMap[i].type == RES_TYPE_UNKNOWN) {
+            continue;
+        }
         if (g_resTypeMap[i].typeStr == NULL) {
             continue;
         }

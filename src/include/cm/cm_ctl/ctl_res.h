@@ -27,6 +27,7 @@
 
 #include "c.h"
 #include "cm_defs.h"
+#include "cm_misc_res.h"
 
 #include "cjson/cJSON.h"
 #include "cm_elog.h"
@@ -153,5 +154,7 @@ bool8 IsResCheckInstances(ResType resType);
 bool8 IsCurNotCheckInstances(const ResOption *resCtx, const cJSON *resObj);
 const char *GetResTypeValue(uint32 index);
 ResType GetResTypeInJson(const ResOption *resCtx, const cJSON *resObj);
+status_t CheckResName(
+    const cJSON *resItem, char (*resName)[CM_MAX_RES_NAME], uint32 maxCnt, uint32 *curCnt, const char **curResName);
 
 #endif

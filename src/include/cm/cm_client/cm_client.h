@@ -24,7 +24,7 @@
 #ifndef CM_CLIENT_H
 #define CM_CLIENT_H
 
-#include <queue>
+#include <list>
 #include <sys/un.h>
 #include "cm/cm_msg.h"
 #include "cm/cm_misc_base.h"
@@ -66,7 +66,7 @@ typedef struct ConnAgentSt {
 } ConnAgent;
 
 typedef struct SendMsgQueueSt {
-    std::queue<MsgPackage> sendQueue;
+    std::list<MsgPackage> sendQueue;
     pthread_mutex_t lock;
     pthread_cond_t cond;
 } SendMsgQueue;

@@ -162,7 +162,7 @@ int UpdateNodeReadonlyInfo(uint32 lastNodeNum)
         curNodeInfo->dataNodeCount = g_node[i].datanodeCount;
         curNodeInfo->logDiskUsage = 0;
         errno_t rc = snprintf_s(curNodeInfo->instanceName, CM_NODE_NAME, CM_NODE_NAME - 1,
-            "LogDisk on %s", g_node[i].nodeName);
+            "%s", g_node[i].nodeName);
         securec_check_intval(rc, FREE_AND_RESET(g_dynamicNodeReadOnlyInfo));
         for (uint32 j = 0; j < g_dynamicNodeReadOnlyInfo[i].dataNodeCount; j++) {
             DataNodeReadOnlyInfo *curdn = &curNodeInfo->dataNode[j];
@@ -201,7 +201,7 @@ static int InitNodeReadonlyInfo()
         curNodeInfo->dataNodeCount = g_node[i].datanodeCount;
         curNodeInfo->logDiskUsage = 0;
         errno_t rc = snprintf_s(curNodeInfo->instanceName, sizeof(curNodeInfo->instanceName),
-            sizeof(curNodeInfo->instanceName) - 1, "LogDisk on %s", g_node[i].nodeName);
+            sizeof(curNodeInfo->instanceName) - 1, "%s", g_node[i].nodeName);
         securec_check_intval(rc, FREE_AND_RESET(g_dynamicNodeReadOnlyInfo));
         for (uint32 j = 0; j < g_dynamicNodeReadOnlyInfo[i].dataNodeCount; j++) {
             DataNodeReadOnlyInfo *curdn = &curNodeInfo->dataNode[j];

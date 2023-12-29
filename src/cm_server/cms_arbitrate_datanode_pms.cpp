@@ -2213,11 +2213,7 @@ static void DnArbitrateInner(DnArbCtx *ctx)
 
 static bool IsMaintance(maintenance_mode mode)
 {
-    if (mode == MAINTENANCE_MODE_UPGRADE || mode == MAINTENANCE_MODE_UPGRADE_OBSERVATION ||
-        mode == MAINTENANCE_MODE_DILATATION || mode == MAINTENANCE_NODE_DISASTER_RECOVERY) {
-        return true;
-    }
-    return false;
+    return mode != MAINTENANCE_MODE_NONE;
 }
 
 static void InitDnArbCond(DnArbCtx *ctx)

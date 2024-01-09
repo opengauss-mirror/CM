@@ -636,10 +636,10 @@ typedef enum {
 } ClusterInstallType;
 
 typedef enum {
-    SS_DORADO_NULL = 0,
-    SS_DORADO_PRIMARY = 1,
-    SS_DORADO_STANDBY = 2
-} DoradoClusterMode;
+    SS_DOUBLE_NULL = 0,
+    SS_DOUBLE_PRIMARY = 1,
+    SS_DOUBLE_STANDBY = 2
+} SSDoubleClusterMode;
 
 typedef struct ctl_to_cm_set_st {
     int msg_type;

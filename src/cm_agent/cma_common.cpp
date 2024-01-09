@@ -356,8 +356,8 @@ void ReloadParametersFromConfig()
     if (g_enableE2ERto == 1) {
         agent_phony_dead_check_interval = 1;
     }
-    g_doradoClusterMode =
-        (DoradoClusterMode)get_uint32_value_from_config(configDir, "dorado_cluster_mode", SS_DORADO_NULL);
+    g_ssDoubleClusterMode =
+        (SSDoubleClusterMode)get_uint32_value_from_config(configDir, "ss_double_cluster_mode", SS_DOUBLE_NULL);
     if (agent_backup_open == CLUSTER_OBS_STANDBY) {
         agent_backup_open = (ClusterRole)get_uint32_value_from_config(configDir, "agent_backup_open", CLUSTER_PRIMARY);
     }
@@ -413,7 +413,7 @@ void ReloadParametersFromConfigfile()
         "  enableLogCompress=%s, security_mode=%s, incremental_build=%d, unix_socket_directory=%s, "
 #ifndef ENABLE_MULTIPLE_NODES
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s, "
-        "db_service_vip=%s, enable_fence_dn=%s, dorado_cluster_mode=%d, agent_backup_open=%d\n",
+        "db_service_vip=%s, enable_fence_dn=%s, ss_double_cluster_mode=%d, agent_backup_open=%d\n",
 #else
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s\n",
 #endif
@@ -444,7 +444,7 @@ void ReloadParametersFromConfigfile()
         g_environmentThreshold,
         g_dbServiceVip,
         g_enableFenceDn,
-        g_doradoClusterMode,
+        g_ssDoubleClusterMode,
         agent_backup_open);
 #else
         g_environmentThreshold);

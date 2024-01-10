@@ -273,7 +273,7 @@ static string CheckActionOptions(CtlCommand ctlCommandAction, vector<int> option
     for (int checkIndexO = 0; checkIndexO < optionInLength; ++checkIndexO) {
         bool checkInArr = false;
         int checkIndexI = 0;
-        while (checkInterOptions[checkIndexI]!= 0) {
+        while (checkIndexI < (int)checkInterOptions.size() && checkInterOptions[checkIndexI]!= 0) {
             if (optionIn[checkIndexO] == checkInterOptions[checkIndexI]) {
                 checkInArr = true;
                 break;

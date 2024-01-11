@@ -177,6 +177,7 @@ static void initPfile(mes_profile_t *pf, const RhbCtx *ctx)
     pf->connect_timeout = CM_CONNECT_TIMEOUT;
     pf->socket_timeout = CM_SOCKET_TIMEOUT;
     pf->send_directly = CM_TRUE;
+    pf->tpool_attr.enable_threadpool = CM_FALSE;
 }
 
 // it's from CBB cm_log.h

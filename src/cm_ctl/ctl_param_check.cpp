@@ -100,6 +100,7 @@ const char *g_cmsParamInfo[] = {
     "switch_rto|int|60,2147483647|NULL|NULL|",
     "force_promote|int|0,1|NULL|NULL|",
     "backup_open|int|0,2|NULL|NULL|",
+    "ss_double_cluster_mode|int|0,2|NULL|NULL|",
     "enable_dcf|bool|0,0|NULL|NULL|",
     "ddb_type|int|0,1|NULL|NULL|",
     "enable_ssl|bool|0,0|NULL|NULL|",

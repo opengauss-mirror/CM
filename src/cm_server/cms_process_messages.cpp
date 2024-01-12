@@ -846,7 +846,8 @@ int CheckShareDiskDataNodeStatus(uint32 groupIndex)
     cm_instance_datanode_report_status *dnReport =
         g_instance_group_report_status_ptr[groupIndex].instance_status.data_node_member;
     for (int32 i = 0; i < g_instance_role_group_ptr->count; ++i) {
-        if (dnReport[i].local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+        if (dnReport[i].local_status.local_role == INSTANCE_ROLE_PRIMARY ||
+            dnReport[i].local_status.local_role == INSTANCE_ROLE_MAIN_STANDBY)  {
             ++priCnt;
             if (dnReport[i].local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
                 ++normalPriCnt;
@@ -859,7 +860,7 @@ int CheckShareDiskDataNodeStatus(uint32 groupIndex)
             ++unknownCnt;
         }
     }
-    if (backup_open == CLUSTER_PRIMARY && normalPriCnt != 1) {
+    if (normalPriCnt != 1) {
         g_HA_status->status = CM_STATUS_NEED_REPAIR;
         write_runlog(LOG,
             "cluster status is unavail, instanceId(%u), normalPriCnt=%d, priCnt=%d, dnFaultCnt=%d, unknownCnt=%d.\n",

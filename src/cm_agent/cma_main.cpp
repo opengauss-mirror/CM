@@ -1449,8 +1449,8 @@ int get_agent_global_params_from_configfile()
     g_disasterRecoveryType =
         (DisasterRecoveryType)get_uint32_value_from_config(configDir, "disaster_recovery_type", DISASTER_RECOVERY_NULL);
     agent_phony_dead_check_interval = g_enableE2ERto == 1 ? 1 : agent_phony_dead_check_interval;
-    g_doradoClusterMode =
-        (DoradoClusterMode)get_uint32_value_from_config(configDir, "dorado_cluster_mode", SS_DORADO_NULL);
+    g_ssDoubleClusterMode =
+        (SSDoubleClusterMode)get_uint32_value_from_config(configDir, "ss_double_cluster_mode", SS_DOUBLE_NULL);
 
     log_threshold_check_interval =
         get_uint32_value_from_config(configDir, "log_threshold_check_interval", log_threshold_check_interval);

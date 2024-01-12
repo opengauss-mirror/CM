@@ -231,7 +231,7 @@ extern uint32 g_dnBuildCheckTimes[CM_MAX_DATANODE_PER_NODE];
 extern uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM];
 extern uint32 g_enableE2ERto;
 extern DisasterRecoveryType g_disasterRecoveryType;
-extern DoradoClusterMode g_doradoClusterMode;
+extern SSDoubleClusterMode g_ssDoubleClusterMode;
 
 extern int g_cmShutdownLevel; /* cm_ctl stop single instance, single node or all nodes */
 extern ShutdownMode g_cmShutdownMode;  /* fast shutdown */

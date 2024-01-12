@@ -150,7 +150,7 @@ uint32 dilatation_shard_count_for_disk_capacity_alarm = 1;
 uint32 g_cnAutoRepairDelay = 0;
 uint32 agent_phony_dead_check_interval = 10;
 DisasterRecoveryType g_disasterRecoveryType = DISASTER_RECOVERY_NULL;
-DoradoClusterMode g_doradoClusterMode = SS_DORADO_NULL;
+SSDoubleClusterMode g_ssDoubleClusterMode = SS_DOUBLE_NULL;
 /* T status agent check phony dead inteval */
 uint32 g_agentCheckTStatusInterval = 36;
 uint32 enable_gtm_phony_dead_check = 1;

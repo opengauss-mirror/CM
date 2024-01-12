@@ -76,9 +76,9 @@ status_t StartOneResInst(const CmResConfList *conf)
     if (conf->resType == CUSTOM_RESOURCE_DN && undocumentedVersion > 0) {
         ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s '-u %u'", conf->resInstanceId,
             conf->arg, undocumentedVersion);
-    } else if (conf->resType == CUSTOM_RESOURCE_DN && g_doradoClusterMode != SS_DORADO_NULL) {
+    } else if (conf->resType == CUSTOM_RESOURCE_DN && g_ssDoubleClusterMode != SS_DOUBLE_NULL) {
         ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s '-z %s'", conf->resInstanceId,
-            conf->arg, type_int_to_str_dorado(g_doradoClusterMode));
+            conf->arg, type_int_to_str_ss_double(g_ssDoubleClusterMode));
     } else {
         ret = snprintf_s(oper, MAX_OPTION_LEN, MAX_OPTION_LEN - 1, "-start %u %s", conf->resInstanceId, conf->arg);
     }

@@ -229,7 +229,7 @@ extern const char* datanode_wal_send_state_int_to_string(int dbstate);
 
 extern const char* datanode_dbstate_int_to_string(int dbstate);
 extern const char* type_int_to_string(int type);
-extern const char* type_int_to_str_dorado(DoradoClusterMode dorado_type);
+extern const char* type_int_to_str_ss_double(SSDoubleClusterMode dorado_type);
 const char* gtm_con_int_to_string(int con);
 extern const char* datanode_role_int_to_string(int role);
 extern const char* datanode_static_role_int_to_string(uint32 role);

@@ -1449,6 +1449,7 @@ typedef struct cm_instance_command_status_st {
     int parallel;
     int32 buildFailedTimeout;
     cmTime_t cmTime; // use to record time
+    uint8 msgProcFlag;
 } cm_instance_command_status;
 
 typedef struct DatanodelocalPeer_t {

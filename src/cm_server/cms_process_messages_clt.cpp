@@ -520,11 +520,12 @@ void PutGsGucContent(MsgRecvInfo* recvMsgInfo, synchronous_standby_mode standbyM
 }
 #endif
 
-void CmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType, bool doSwitchoverFast)
+void CmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType)
 {
     uint32 i;
     int j;
     status_t ret = CM_SUCCESS;
+    bool doSwitchoverFast = false;
 
     if (recvMsgInfo->connID.remoteType != CM_AGENT) {
         return;
@@ -541,6 +542,7 @@ void CmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType, bool doSwitchoverFast)
                 switch (instStatus->command_member[j].pengding_command) {
                     case MSG_CM_AGENT_SWITCHOVER:
                         cm_to_agent_switchover switchoverMsg;
+                        doSwitchoverFast = instStatus->command_member[j].msgProcFlag & MPF_DO_SWITCHOVER;
                         ret = GetSwitchOverMsg(i, j, doSwitchoverFast, &switchoverMsg);
                         if (ret != CM_SUCCESS) {
                             break;
@@ -1046,7 +1048,7 @@ void process_finish_redo_message(MsgRecvInfo* recvMsgInfo)
 
 void FlushCmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType)
 {
-    CmToAgentMsg(recvMsgInfo, msgType, ((recvMsgInfo->msgProcFlag & MPF_DO_SWITCHOVER) != 0));
+    CmToAgentMsg(recvMsgInfo, msgType);
 }
 
 void SetAgentDataReportMsg(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer)

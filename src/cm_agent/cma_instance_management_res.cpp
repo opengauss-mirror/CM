@@ -488,7 +488,7 @@ void StopResourceCheck()
         if (IsInstManualStopped(g_resConf[i].cmInstanceId)) {
             OneResInstShutdown(&g_resConf[i]);
         }
-        if (CmFileExist(g_cmManualStartPath) || !IsOneResInstWork(g_resConf[i].resName, g_resConf[i].cmInstanceId)) {
+        if ((!IsOneResInstWork(g_resConf[i].resName, g_resConf[i].cmInstanceId) && !g_isPauseArbitration) || CmFileExist(g_cmManualStartPath)) {
             OneResInstClean(&g_resConf[i]);
         }
     }

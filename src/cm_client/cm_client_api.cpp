@@ -73,6 +73,10 @@ ClientCmLockMsg *GetLockSendMsg(const char *lockName, LockOption opt)
 
 int ResLockCore(const char *lockName)
 {
+    if (access(g_manualPausePath, F_OK) == 0 && strcmp(lockName, "dms_reformer_lock") == 0) {
+        write_runlog(LOG, "cm is pause, don't lock(%s).\n", lockName);
+        return 1;
+    }
     ClientCmLockMsg *sendMsg = GetLockSendMsg(lockName, CM_RES_LOCK);
     if (sendMsg == NULL) {
         write_runlog(ERROR, "generate (%s)lock msg failed.\n", lockName);

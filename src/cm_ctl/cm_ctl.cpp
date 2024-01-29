@@ -55,6 +55,7 @@
 #define MINORITY_AZ_ARBITRATE "minority_az_arbitrate_hist"
 #define RESUMING_CN_STOP "resuming_cn_stop"
 #define CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
+#define CLUSTER_MANUAL_STARTING "cluster_manual_starting"
 
 char* g_bin_name = NULL;
 char* g_bin_path = NULL;
@@ -121,6 +122,7 @@ static char* hotpatch_path = NULL;
 
 char manual_start_file[MAXPGPATH];
 char instance_manual_start_file[MAXPGPATH];
+char cluster_manual_starting_file[MAXPGPATH];
 char etcd_manual_start_file[MAXPGPATH];
 static bool coordinator_dynamic_view = false;
 #ifndef ENABLE_MULTIPLE_NODES
@@ -864,6 +866,9 @@ static void init_ctl_global_variable()
         securec_check_intval(ret, (void)ret);
         ret = snprintf_s(
             instance_manual_start_file, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, INSTANCE_MANUAL_START);
+        securec_check_intval(ret, (void)ret);
+        ret = snprintf_s(
+            cluster_manual_starting_file, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, CLUSTER_MANUAL_STARTING);
         securec_check_intval(ret, (void)ret);
         ret = snprintf_s(etcd_manual_start_file, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, ETCD_MANUAL_START);
         securec_check_intval(ret, (void)ret);
@@ -2249,6 +2254,7 @@ static void CtlCommandProcessCore(int *status, CtlOption *ctlCtx)
 #endif
         case START_COMMAND:
             *status = do_start();
+            removeStartingFile();
             break;
         case CM_SWITCHOVER_COMMAND:
             *status = DoSwitchover(ctlCtx);

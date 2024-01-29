@@ -232,6 +232,8 @@ char g_enableFenceDn[10] = {0};
 #endif
 bool g_isPauseArbitration = false;
 char g_cmManualPausePath[MAX_PATH_LEN] = {0};
+bool g_isStarting = false;
+char g_cmManualStartingPath[MAX_PATH_LEN] = {0};
 
 bool &GetIsSharedStorageMode()
 {

@@ -312,6 +312,8 @@ extern bool g_dn_report_msg_ok;
 
 extern bool g_isPauseArbitration;
 extern char g_cmManualPausePath[MAX_PATH_LEN];
+extern bool g_isStarting;
+extern char g_cmManualStartingPath[MAX_PATH_LEN];
 
 
 #endif

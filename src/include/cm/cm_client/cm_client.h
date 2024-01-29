@@ -120,6 +120,9 @@ OneResStatList *GetClientStatusList();
 status_t SendInitMsg(uint32 instanceId, const char *resName);
 bool SendInitMsgAndGetResult(const char *resName, uint32 instId);
 ClientLockResult SendLockMsgAndWaitResult(char *msgPtr, uint32 msgLen);
+void get_pause_path();
+
+extern char g_manualPausePath[MAX_PATH_LEN];
 
 #endif
 #endif // CM_CLIENT_H

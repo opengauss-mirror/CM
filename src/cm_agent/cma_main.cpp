@@ -381,6 +381,8 @@ int get_prog_path()
     securec_check_errno(rc, (void)rc);
     rc = memset_s(g_cmManualPausePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_cmManualStartingPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
     if (GetHomePath(exec_path, sizeof(exec_path)) != 0) {
         (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
@@ -432,6 +434,9 @@ int get_prog_path()
         securec_check_intval(rcs, (void)rcs);
         rcs = snprintf_s(
             g_cmManualPausePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, CM_CLUSTER_MANUAL_PAUSE);
+        securec_check_intval(rcs, (void)rcs);
+        rcs = snprintf_s(
+            g_cmManualStartingPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, CM_CLUSTER_MANUAL_STARTING);
         securec_check_intval(rcs, (void)rcs);
         InitClientCrt(exec_path);
     }
@@ -1047,6 +1052,12 @@ void server_loop(void)
         } else {
             g_isPauseArbitration = false;
             pauseLogTimes = 0;
+        }
+
+        if (access(g_cmManualStartingPath, F_OK) == 0) {
+            g_isStarting = true;
+        } else {
+            g_isStarting = false;
         }
 
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);

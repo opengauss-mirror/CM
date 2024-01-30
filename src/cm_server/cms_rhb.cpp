@@ -25,6 +25,7 @@
 #include "cm_rhb.h"
 #include "cm_config.h"
 #include "cms_rhb.h"
+#include "cms_global_params.h"
 
 typedef struct DbResNodeIdxInfo_t {
     uint32 hwl;
@@ -32,7 +33,11 @@ typedef struct DbResNodeIdxInfo_t {
 } DbResNodeIdxInfo;
 
 static time_t g_hbs[MAX_RHB_NUM][MAX_RHB_NUM] = {0};
+static time_t g_hbs_bak[MAX_RHB_NUM][MAX_RHB_NUM] = {0};
 static DbResNodeIdxInfo g_dbResNodeIdxInfo = { 0 };
+bool g_hbsFlags = false;
+time_t startWaitTime = 0;
+int delayTime = 2;
 
 void InitDbListsByStaticConfig()
 {
@@ -76,13 +81,35 @@ static status_t FindResIdxByNodeId(uint32 nodeId, uint32 *resIdx)
 void RefreshNodeRhbInfo(unsigned int nodeId, const time_t *hbs, unsigned int hwl)
 {
     uint32 resIdx;
+    errno_t rc;
     if (hwl != g_dbResNodeIdxInfo.hwl) {
         write_runlog(
             ERROR, "[RefreshNodeRhbInfo] node[%u] rhb hwl(%u) must equal %u\n", nodeId, hwl, g_dbResNodeIdxInfo.hwl);
         return;
     }
     CM_RETVOID_IFERR(FindResIdxByNodeId(nodeId, &resIdx));
-    errno_t rc = memcpy_s(g_hbs[resIdx], sizeof(time_t) * MAX_RHB_NUM, hbs, sizeof(time_t) * hwl);
+    if (g_hbsFlags == true && difftime(time(NULL), startWaitTime) >= delayTime) {
+        rc = memcpy_s(g_hbs, sizeof(time_t) * MAX_RHB_NUM * MAX_RHB_NUM,
+            g_hbs_bak, sizeof(time_t) * MAX_RHB_NUM * MAX_RHB_NUM);
+        securec_check_errno(rc, (void)rc);
+        g_hbsFlags = false;
+    }
+    for (int i = 0; i < MAX_RHB_NUM; i++) {
+        if (hbs[i] - g_hbs[resIdx][i] > g_agentNetworkTimeout) {
+            if (g_hbsFlags == false) {
+                startWaitTime = time(NULL);
+                rc = memcpy_s(g_hbs_bak, sizeof(time_t) * MAX_RHB_NUM * MAX_RHB_NUM,
+                    g_hbs, sizeof(time_t) * MAX_RHB_NUM * MAX_RHB_NUM);
+                securec_check_errno(rc, (void)rc);
+                g_hbsFlags = true;
+            }
+            rc = memcpy_s(g_hbs_bak[resIdx], sizeof(time_t) * MAX_RHB_NUM, hbs, sizeof(time_t) * hwl);
+            securec_check_errno(rc, (void)rc);
+            return;
+        }
+    }
+    startWaitTime = 0;
+    rc = memcpy_s(g_hbs[resIdx], sizeof(time_t) * MAX_RHB_NUM, hbs, sizeof(time_t) * hwl);
     securec_check_errno(rc, (void)rc);
 }
 

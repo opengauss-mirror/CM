@@ -41,6 +41,8 @@ static bool g_shutdownClient = false;
 static SendMsgQueue *g_sendMsg = NULL;
 static OneResStatList *g_clientStatusList = NULL;
 static volatile bool g_needReconnect = false;
+#define CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
+char g_manualPausePath[MAX_PATH_LEN];
 
 static pthread_t *g_conThreadId = NULL;
 static pthread_t *g_sendThreadId = NULL;
@@ -608,6 +610,7 @@ static void InitGlobalVariable(const char *resName)
 
 status_t PreInit(uint32 instanceId, const char *resName, CmNotifyFunc func, bool *isFirstInit)
 {
+    get_pause_path();
     if (isFirstInit) {
         InitGlobalVariable(resName);
         CM_RETURN_IFERR(InitLogFile());
@@ -694,4 +697,23 @@ ClientLockResult SendLockMsgAndWaitResult(char *msgPtr, uint32 msgLen)
     (void)pthread_mutex_unlock(&g_lockFlag->optLock);
 
     return result;
+}
+
+void get_pause_path()
+{
+    char exec_path[MAX_PATH_LEN] = {0};
+    errno_t rc;
+    int rcs;
+
+    rc = memset_s(g_manualPausePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
+    if (GetHomePath(exec_path, sizeof(exec_path)) != 0) {
+        (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
+        return;
+    } else {
+        check_input_for_security(exec_path);
+        rcs = snprintf_s(
+            g_manualPausePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, CLUSTER_MANUAL_PAUSE);
+        securec_check_intval(rcs, (void)rcs);
+    }
 }

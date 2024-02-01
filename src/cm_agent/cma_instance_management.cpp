@@ -398,7 +398,7 @@ void start_instance_check(void)
 
     StartInstanceAndCheck(CheckAgentNicDown, "[CheckAgentNicDown]");
 
-    if (IsCusResExistLocal()) {
+    if (IsCusResExistLocal() && !(g_isPauseArbitration && !g_isStarting)) {
         StartInstanceAndCheck(StartResourceCheck, "[StartResourceCheck]");
     }
 

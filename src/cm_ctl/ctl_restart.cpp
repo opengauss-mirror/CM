@@ -52,6 +52,7 @@ extern char result_path[MAXPGPATH];
 extern char* g_command_operation_lcName;
 extern uint32 g_nodeId;
 extern char instance_manual_start_file[MAXPGPATH];
+extern char cluster_manual_starting_file[MAXPGPATH];
 extern bool switchover_all_quick;
 
 #ifdef ENABLE_MULTIPLE_NODES

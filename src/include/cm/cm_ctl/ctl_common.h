@@ -312,5 +312,6 @@ int DoRhbPrint();
 int DoPause();
 int DoResume();
 bool CheckTrustAndNet();
+void removeStartingFile();
 
 #endif

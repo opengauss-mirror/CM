@@ -90,6 +90,7 @@ static struct timespec g_endTime;
 extern char g_cmData[CM_PATH_LENGTH];
 extern char manual_start_file[MAXPGPATH];
 extern char instance_manual_start_file[MAXPGPATH];
+extern char cluster_manual_starting_file[MAXPGPATH];
 extern char etcd_manual_start_file[MAXPGPATH];
 extern char minority_az_start_file[MAX_PATH_LEN];
 extern char g_minorityAzArbitrateFile[MAX_PATH_LEN];
@@ -388,6 +389,7 @@ status_t do_start(void)
     } else {
         if (CheckOfflineInstance(g_commandOperationNodeId)) {
             write_runlog(LOG, "the instance(node:%u) is Offline, no need to start.\n", g_commandOperationNodeId);
+            removeStartingFile();
             exit(0);
         }
         write_runlog(LOG, "start the node:%u,datapath:%s. \n", g_commandOperationNodeId, g_cmData);
@@ -489,12 +491,13 @@ static void start_cluster(void)
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
-                SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"rm -f %s %s_*\" > %s; "
+                SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"rm -f %s %s_*; touch %s\" > %s; "
                             "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s" SYSTEMQUOTE,
                 PSSH_TIMEOUT_OPTION,
                 hosts_path,
                 manual_start_file,
                 instance_manual_start_file,
+		        cluster_manual_starting_file,
                 pssh_out_path,
                 pssh_out_path,
                 pssh_out_path);
@@ -502,13 +505,14 @@ static void start_cluster(void)
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
-                SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"source %s;rm -f %s %s_*\" > %s; "
+                SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"source %s;rm -f %s %s_*; touch %s\" > %s; "
                             "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s" SYSTEMQUOTE,
                 PSSH_TIMEOUT_OPTION,
                 hosts_path,
                 mpp_env_separate_file,
                 manual_start_file,
                 instance_manual_start_file,
+                cluster_manual_starting_file,
                 pssh_out_path,
                 pssh_out_path,
                 pssh_out_path);
@@ -1320,8 +1324,10 @@ static void start_node(uint32 nodeid)
     char command[MAXPGPATH];
     uint32 ii;
     errno_t rc;
-    rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE "rm -f %s %s %s_* < \"%s\" 2>&1 &" SYSTEMQUOTE,
-        manual_start_file, etcd_manual_start_file, instance_manual_start_file, DEVNULL);
+    rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+        SYSTEMQUOTE "rm -f %s %s %s_*; touch %s < \"%s\" 2>&1 &" SYSTEMQUOTE,
+        manual_start_file, etcd_manual_start_file,
+        instance_manual_start_file, cluster_manual_starting_file, DEVNULL);
     securec_check_intval(rc, (void)rc);
 
     if (nodeid == g_currentNode->node) {
@@ -1415,6 +1421,52 @@ void start_instance(uint32 nodeid, const char* datapath)
     }
 }
 
+void removeStartingFile()
+{
+    int ret;
+    char command[MAX_COMMAND_LEN] = {0};
+
+    init_hosts();
+    if (mpp_env_separate_file[0] == '\0') {
+        ret = snprintf_s(command,
+            MAX_COMMAND_LEN,
+            MAX_COMMAND_LEN - 1,
+            SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"rm -f %s\" > %s; "
+                        "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s" SYSTEMQUOTE,
+            PSSH_TIMEOUT_OPTION,
+            hosts_path,
+            cluster_manual_starting_file,
+            pssh_out_path,
+            pssh_out_path,
+            pssh_out_path);
+    } else {
+        ret = snprintf_s(command,
+            MAX_COMMAND_LEN,
+            MAX_COMMAND_LEN - 1,
+            SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"source %s;rm -f %s\" > %s; "
+                        "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s" SYSTEMQUOTE,
+            PSSH_TIMEOUT_OPTION,
+            hosts_path,
+            mpp_env_separate_file,
+            cluster_manual_starting_file,
+            pssh_out_path,
+            pssh_out_path,
+            pssh_out_path);
+    }
+    securec_check_intval(ret, (void)ret);
+    ret = system(command);
+    if (ret != 0) {
+        write_runlog(DEBUG1,
+            "Failed to delete the startingFile with executing the command: command=\"%s\","
+            " nodeId=%u, systemReturn=%d, shellReturn=%d, errno=%d.\n",
+            command,
+            g_currentNode->node,
+            ret,
+            SHELL_RETURN_CODE(ret),
+            errno);
+    }
+}
+
 static void* check_cluster_start_status(void* arg)
 {
     int count = 0;
@@ -1428,9 +1480,11 @@ static void* check_cluster_start_status(void* arg)
     while (startingTime < g_waitSeconds) {
         if (g_cluster_start_status == CM_STATUS_NORMAL) {
             write_runlog(LOG, "start cluster successfully.\n");
+            removeStartingFile();
             exit(0);
         } else if (g_cluster_start_status == CM_STATUS_NORMAL_WITH_CN_DELETED) {
             write_runlog(LOG, "start cluster successfully. There is a coordinator that has been deleted. \n");
+            removeStartingFile();
             exit(0);
         } else if (g_az_start_status == CM_STATUS_NORMAL) {
             for (uint32 ii = 0; ii < g_node_num; ii++) {
@@ -1440,6 +1494,7 @@ static void* check_cluster_start_status(void* arg)
             }
 
             write_runlog(LOG, "start availability zone successfully.\n");
+            removeStartingFile();
             exit(0);
         } else if (g_az_start_status == CM_STATUS_NORMAL_WITH_CN_DELETED) {
             for (uint32 ii = 0; ii < g_node_num; ii++) {
@@ -1449,12 +1504,15 @@ static void* check_cluster_start_status(void* arg)
             }
 
             write_runlog(LOG, "start availability zone successfully. There is a coordinator that has been deleted. \n");
+            removeStartingFile();
             exit(0);
         } else if (g_node_start_status == CM_STATUS_NORMAL) {
             write_runlog(LOG, "start node successfully.\n");
+            removeStartingFile();
             exit(0);
         } else if (g_node_start_status == CM_STATUS_NORMAL_WITH_CN_DELETED) {
             write_runlog(LOG, "start node successfully. There is a coordinator that has been deleted. \n");
+            removeStartingFile();
             exit(0);
         } else if (g_instance_start_status == CM_STATUS_NORMAL) {
             /*
@@ -1464,16 +1522,19 @@ static void* check_cluster_start_status(void* arg)
             count++;
             if (count > INSTANCE_START_CONFIRM_TIME) {
                 write_runlog(LOG, "start instance successfully.\n");
+                removeStartingFile();
                 exit(0);
             }
         } else if (g_dn_relation_start_status == CM_STATUS_NORMAL) {
             /* check whether the relation datanodes have been started successfully */
             write_runlog(LOG, "start relation datanodes successfully(node:%u, path:%s).\n",
                          g_commandOperationNodeId, g_cmData);
+            removeStartingFile();
             exit(0);
         } else if (g_resStartStatus == CM_STATUS_NORMAL) {
             write_runlog(LOG, "start resource instance successfully(nodeId:%u, instId:%u).\n",
                 g_commandOperationNodeId, g_commandOperationInstanceId);
+            removeStartingFile();
             exit(0);
         } else {
             count = 0;
@@ -1535,6 +1596,7 @@ static void* check_cluster_start_status(void* arg)
             g_waitSeconds);
     }
 
+    removeStartingFile();
     exit(-1);
 }
 

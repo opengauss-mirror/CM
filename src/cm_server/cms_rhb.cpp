@@ -47,8 +47,8 @@ void InitDbListsByStaticConfig()
                 return;
             }
             g_dbResNodeIdxInfo.idxLists[g_dbResNodeIdxInfo.hwl] = i;
-            rcs =
-                snprintf_s(info, maxInfoLen, maxInfoLen - 1, " %u:[%u-%u]", g_dbResNodeIdxInfo.hwl, i, g_node[i].node);
+            rcs = snprintf_s(info, maxInfoLen, maxInfoLen - 1, " %u:[%u-%u]",
+                g_dbResNodeIdxInfo.hwl, i, g_node[i].node);
             securec_check_intval(rcs, (void)rcs);
             rcs = strncat_s(buf, MAX_LOG_BUFF_LEN, info, strlen(info));
             securec_check_errno(rcs, (void)rcs);

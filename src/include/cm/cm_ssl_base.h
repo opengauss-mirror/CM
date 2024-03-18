@@ -133,6 +133,7 @@ typedef struct st_cs_pipe {
 #define CM_BUFLEN_4K             4096
 
 #define CM_POLL_WAIT               (uint32)50   /* mill-seconds */
+#define CM_MAX_WAIT_TIME           (uint32)10000 /* mill-seconds */
 #define CM_CONNECT_TIMEOUT         (uint32)60000 /* mill-seconds */
 #define CM_SOCKET_TIMEOUT          (uint32)60000 /* mill-seconds */
 #define CM_TIME_THOUSAND_UN        (uint32)1000

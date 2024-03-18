@@ -174,6 +174,7 @@ static void initPfile(mes_profile_t *pf, const RhbCtx *ctx)
     InitTaskWork(pf);
     InitBuffPool(pf);
     pf->frag_size = AGENT_RHB_BUFF_POOL_SIZE;
+    pf->max_wait_time = CM_MAX_WAIT_TIME;
     pf->connect_timeout = CM_CONNECT_TIMEOUT;
     pf->socket_timeout = CM_SOCKET_TIMEOUT;
     pf->send_directly = CM_TRUE;

@@ -54,7 +54,7 @@ static void start_datanode_instance_relation(uint32 node, const char *dataPath);
 static void start_az_try_more_one(const char* azName);
 static void* check_cluster_start_status(void* arg);
 static void StartFailQueryAndReport();
-static int start_check();
+static void* start_check(void* arg);
 static int start_check_cluster();
 static int start_check_az(const char* azName);
 static int start_check_node(uint32 node_id_check);
@@ -82,6 +82,7 @@ static int g_instance_start_status = CM_STATUS_UNKNOWN;
 static int g_node_start_status = CM_STATUS_UNKNOWN;
 static int g_dn_relation_start_status = CM_STATUS_UNKNOWN;
 static int g_resStartStatus = CM_STATUS_UNKNOWN;
+static StartExitCode g_startExitCode = CM_START_EXIT_INIT;
 
 static int startaz_try_heartbeat = START_AZ_TRY_HEARTBEAT;
 static struct timespec g_startTime;
@@ -113,6 +114,7 @@ extern char* cm_arbitration_mode_set;
 extern const char* g_progname;
 extern CM_Conn* CmServer_conn;
 extern uint32 g_commandOperationInstanceId;
+extern char manualPauseFile[MAXPGPATH];
 
 static int StartResInstCheck(uint32 instId)
 {
@@ -235,11 +237,14 @@ status_t do_start(void)
 {
     CtlGetCmJsonConf();
     int ret;
-    pthread_t thr_id;
+    pthread_t checkStatusThrId;
+    pthread_t startCheckThrId;
+    g_startExitCode = CM_START_EXIT_INIT;
 #ifndef ENABLE_MULTIPLE_NODES
     int nodeNumsInAz = 0;
     struct stat libnetManualStat = {0};
     int ltranCheckTimes = 0;
+    (void)atexit(RemoveStartingFile);
 #endif
     if (g_commandOperationNodeId > 0 && get_node_index(g_commandOperationNodeId) >= g_node_num) {
         write_runlog(FATAL, "node_id specified is illegal. \n");
@@ -389,7 +394,6 @@ status_t do_start(void)
     } else {
         if (CheckOfflineInstance(g_commandOperationNodeId)) {
             write_runlog(LOG, "the instance(node:%u) is Offline, no need to start.\n", g_commandOperationNodeId);
-            removeStartingFile();
             exit(0);
         }
         write_runlog(LOG, "start the node:%u,datapath:%s. \n", g_commandOperationNodeId, g_cmData);
@@ -397,18 +401,21 @@ status_t do_start(void)
     }
 
     /* create a thread to check cluster's status */
-    ret = pthread_create(&thr_id, NULL, &check_cluster_start_status, NULL);
+    ret = pthread_create(&checkStatusThrId, NULL, &check_cluster_start_status, NULL);
     if (ret != 0) {
         write_runlog(FATAL, "failed to create thread to check if cluster started.\n");
         return CM_ERROR;
     }
 
     /* check node's status */
-    if (start_check() != 0) {
+    ret = pthread_create(&startCheckThrId, NULL, &start_check, NULL);
+    if (ret != 0) {
+        write_runlog(FATAL, "failed to create start check thread.\n");
         return CM_ERROR;
     }
 
-    return CM_SUCCESS;
+    (void)pthread_join(startCheckThrId, NULL);
+    exit((int)g_startExitCode);
 }
 
 /*
@@ -1421,10 +1428,15 @@ void start_instance(uint32 nodeid, const char* datapath)
     }
 }
 
-void removeStartingFile()
+void RemoveStartingFile()
 {
     int ret;
     char command[MAX_COMMAND_LEN] = {0};
+
+    ret = access(manualPauseFile, F_OK);
+    if (ret != 0) {
+        exit(0);
+    }
 
     init_hosts();
     if (mpp_env_separate_file[0] == '\0') {
@@ -1465,6 +1477,20 @@ void removeStartingFile()
             SHELL_RETURN_CODE(ret),
             errno);
     }
+    exit(0);
+}
+
+static void ContinueCheckClsStatus(long *startingTime)
+{
+    (void)sleep(1);
+
+    (void)clock_gettime(CLOCK_MONOTONIC, &g_endTime);
+    *startingTime = (g_endTime.tv_sec - g_startTime.tv_sec);
+    if (*startingTime > EXPECTED_CLUSTER_START_TIME && *startingTime % CLUSTER_STATE_CHECK_INTERVAL == 0) {
+        write_runlog(DEBUG1, "starting exceeds 2 mins, instance status:g_cluster_start_status=%d,"
+            "g_az_start_status=%d, g_node_start_status=%d, g_instance_start_status=%d\n",
+            g_cluster_start_status, g_az_start_status, g_node_start_status, g_instance_start_status);
+    }
 }
 
 static void* check_cluster_start_status(void* arg)
@@ -1478,14 +1504,19 @@ static void* check_cluster_start_status(void* arg)
     }
 
     while (startingTime < g_waitSeconds) {
+        if (g_startExitCode != CM_START_EXIT_INIT) {
+            // wait start_check thread exit until g_waitSeconds
+            ContinueCheckClsStatus(&startingTime);
+            continue;
+        }
         if (g_cluster_start_status == CM_STATUS_NORMAL) {
             write_runlog(LOG, "start cluster successfully.\n");
-            removeStartingFile();
-            exit(0);
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else if (g_cluster_start_status == CM_STATUS_NORMAL_WITH_CN_DELETED) {
             write_runlog(LOG, "start cluster successfully. There is a coordinator that has been deleted. \n");
-            removeStartingFile();
-            exit(0);
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else if (g_az_start_status == CM_STATUS_NORMAL) {
             for (uint32 ii = 0; ii < g_node_num; ii++) {
                 if (g_command_operation_azName != NULL && strcmp(g_node[ii].azName, g_command_operation_azName) == 0) {
@@ -1494,8 +1525,8 @@ static void* check_cluster_start_status(void* arg)
             }
 
             write_runlog(LOG, "start availability zone successfully.\n");
-            removeStartingFile();
-            exit(0);
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else if (g_az_start_status == CM_STATUS_NORMAL_WITH_CN_DELETED) {
             for (uint32 ii = 0; ii < g_node_num; ii++) {
                 if (g_command_operation_azName != NULL && strcmp(g_node[ii].azName, g_command_operation_azName) == 0) {
@@ -1504,16 +1535,16 @@ static void* check_cluster_start_status(void* arg)
             }
 
             write_runlog(LOG, "start availability zone successfully. There is a coordinator that has been deleted. \n");
-            removeStartingFile();
-            exit(0);
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else if (g_node_start_status == CM_STATUS_NORMAL) {
             write_runlog(LOG, "start node successfully.\n");
-            removeStartingFile();
-            exit(0);
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else if (g_node_start_status == CM_STATUS_NORMAL_WITH_CN_DELETED) {
             write_runlog(LOG, "start node successfully. There is a coordinator that has been deleted. \n");
-            removeStartingFile();
-            exit(0);
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else if (g_instance_start_status == CM_STATUS_NORMAL) {
             /*
              * CM Client found the instance running, but maybe it quit immediately after startup.
@@ -1522,34 +1553,26 @@ static void* check_cluster_start_status(void* arg)
             count++;
             if (count > INSTANCE_START_CONFIRM_TIME) {
                 write_runlog(LOG, "start instance successfully.\n");
-                removeStartingFile();
-                exit(0);
+                g_startExitCode = CM_START_EXIT_SUCCESS;
+                continue;
             }
         } else if (g_dn_relation_start_status == CM_STATUS_NORMAL) {
             /* check whether the relation datanodes have been started successfully */
             write_runlog(LOG, "start relation datanodes successfully(node:%u, path:%s).\n",
                          g_commandOperationNodeId, g_cmData);
-            removeStartingFile();
-            exit(0);
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else if (g_resStartStatus == CM_STATUS_NORMAL) {
             write_runlog(LOG, "start resource instance successfully(nodeId:%u, instId:%u).\n",
                 g_commandOperationNodeId, g_commandOperationInstanceId);
-            removeStartingFile();
-            exit(0);
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else {
             count = 0;
         }
 
-        (void)sleep(1);
+        ContinueCheckClsStatus(&startingTime);
         write_runlog(LOG, ".");
-
-        (void)clock_gettime(CLOCK_MONOTONIC, &g_endTime);
-        startingTime = (g_endTime.tv_sec - g_startTime.tv_sec);
-        if (startingTime > EXPECTED_CLUSTER_START_TIME && startingTime % CLUSTER_STATE_CHECK_INTERVAL == 0) {
-            write_runlog(DEBUG1, "starting exceeds 2 mins, instance status:g_cluster_start_status=%d,"
-                "g_az_start_status=%d,g_node_start_status=%d,g_instance_start_status=%d\n",
-                g_cluster_start_status, g_az_start_status, g_node_start_status, g_instance_start_status);
-        }
     }
 
     /* query cluster and report when start failed */
@@ -1596,7 +1619,10 @@ static void* check_cluster_start_status(void* arg)
             g_waitSeconds);
     }
 
-    removeStartingFile();
+    g_startExitCode = CM_START_EXIT_FAILED;
+    // wait start_check thread exit
+    // cm_ctl maybe core if start_check thread not exit conn cm_server with openssl
+    (void)sleep(6);
     exit(-1);
 }
 
@@ -1644,11 +1670,15 @@ static void StartFailQueryAndReport()
     return;
 }
 
-static int start_check()
+static void* start_check(void* arg)
 {
     uint32 ii;
 
     for (;;) {
+        if (g_startExitCode != CM_START_EXIT_INIT) {
+            write_runlog(DEBUG1, "start_check thread exit:%d\n", (int)g_startExitCode);
+            break;
+        }
         if (g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
             g_cluster_start_status = start_check_cluster();
         } else if (g_command_operation_azName != NULL) {
@@ -1665,7 +1695,8 @@ static int start_check()
 
             if (ii >= g_node_num) {
                 write_runlog(ERROR, "can't find the nodeid: %u\n", g_commandOperationNodeId);
-                return 1;
+                g_startExitCode = CM_START_EXIT_FAILED;
+                break;
             }
             g_node_start_status = start_check_node(ii);
         } else if (g_commandRelationship) {
@@ -1679,7 +1710,8 @@ static int start_check()
 
             if (ii >= g_node_num) {
                 write_runlog(ERROR, "can't find the nodeid: %u\n", g_commandOperationNodeId);
-                return 1;
+                g_startExitCode = CM_START_EXIT_FAILED;
+                break;
             }
 
             g_instance_start_status = start_check_instance(ii, g_cmData);
@@ -1687,7 +1719,7 @@ static int start_check()
 
         (void)sleep(1);
     }
-    return 0;
+    return NULL;
 }
 
 static void NotifyCMSClusterStarting()
@@ -1702,18 +1734,6 @@ static void NotifyCMSClusterStarting()
         write_runlog(WARNING, "Notify Cluster Starting failed.\n");
     }
     return;
-}
-
-static bool IsTimeOut(const cmTime_t *lastTime, const char *str)
-{
-    cmTime_t curTime = {0};
-    (void)clock_gettime(CLOCK_MONOTONIC, &curTime);
-    const long maxTimeInterval = 60;
-    if (curTime.tv_sec - lastTime->tv_sec > maxTimeInterval) {
-        write_runlog(DEBUG1, "%s this has timeout(%ld), it will exit.\n", str, maxTimeInterval);
-        return true;
-    }
-    return false;
 }
 
 static int start_check_cluster()
@@ -1921,9 +1941,17 @@ static int start_check_node(uint32 node_id_check)
                 CmServer_conn = NULL;
                 return CM_STATUS_UNKNOWN;
             }
+            struct timespec timeBegin = {0, 0};
+            (void)clock_gettime(CLOCK_MONOTONIC, &timeBegin);
             for (;;) {
                 ret = cm_client_flush_msg(CmServer_conn);
                 if (ret == TCP_SOCKET_ERROR_EPIPE) {
+                    CMPQfinish(CmServer_conn);
+                    CmServer_conn = NULL;
+                    return CM_STATUS_UNKNOWN;
+                }
+
+                if (IsTimeOut(&timeBegin, "[start_check_node]")) {
                     CMPQfinish(CmServer_conn);
                     CmServer_conn = NULL;
                     return CM_STATUS_UNKNOWN;

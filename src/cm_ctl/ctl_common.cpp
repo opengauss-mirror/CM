@@ -1868,3 +1868,15 @@ void CtlGetCmJsonConf()
         write_runlog(DEBUG1, "init res status failed.\n");
     }
 }
+
+bool IsTimeOut(const cmTime_t *lastTime, const char *str)
+{
+    cmTime_t curTime = {0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &curTime);
+    const long maxTimeInterval = 60;
+    if(curTime.tv_sec - lastTime->tv_sec > maxTimeInterval) {
+        write_runlog(DEBUG1, "%s this has timeout(%ld), it will exit.\n", str, maxTimeInterval);
+        return true;
+    }
+    return false;
+}

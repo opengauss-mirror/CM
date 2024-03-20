@@ -2254,7 +2254,6 @@ static void CtlCommandProcessCore(int *status, CtlOption *ctlCtx)
 #endif
         case START_COMMAND:
             *status = do_start();
-            removeStartingFile();
             break;
         case CM_SWITCHOVER_COMMAND:
             *status = DoSwitchover(ctlCtx);

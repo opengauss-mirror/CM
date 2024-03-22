@@ -62,6 +62,12 @@ typedef enum ClientErrorEn {
     CM_RES_CLIENT_NO_LOCK_OWNER = 6,
 } ClientError;
 
+typedef enum StartExitCodeEn {
+    CM_START_EXIT_FAILED = -1,
+    CM_START_EXIT_SUCCESS = 0,
+    CM_START_EXIT_INIT = 2,
+} StartExitCode;
+
 typedef unsigned char bool8;
 
 #define CMS_ONE_PRIMARY_ONE_STANDBY 2

@@ -50,10 +50,13 @@ static inline void ResInstCheckGetQueryMsg(QueryOneResInstStat *queryMsg, uint32
 
 static ResStatus ResInstCheckGetResult(CM_Conn *pCmsCon)
 {
+    struct timespec timeBegin = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &timeBegin);
     for (;;) {
         if (cm_client_flush_msg(pCmsCon) == TCP_SOCKET_ERROR_EPIPE) {
             break;
         }
+        CM_BREAK_IF_TRUE(IsTimeOut(&timeBegin, "[ResInstCheckGetResult]"));
         char *recvMsg = recv_cm_server_cmd(pCmsCon);
         while (recvMsg != NULL) {
             cm_msg_type *msgTypePtr = (cm_msg_type*)recvMsg;

@@ -312,6 +312,7 @@ int DoRhbPrint();
 int DoPause();
 int DoResume();
 bool CheckTrustAndNet();
-void removeStartingFile();
+bool IsTimeOut(const cmTime_t *lastTime, const char *str);
+void RemoveStartingFile();
 
 #endif

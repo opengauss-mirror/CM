@@ -212,7 +212,7 @@ static void ChangeCheckList(uint32 errIndex)
     }
 
     for (uint32 i = (newIndex + 1); i < g_isregCheckList.nodeCount; ++i) {
-        if ((i == errIndex) && !g_isregCheckList.nodeCheck[i].isValid) {
+        if ((i == errIndex) || !g_isregCheckList.nodeCheck[i].isValid) {
             continue;
         }
         if (g_isregCheckList.nodeCheck[i].checkCount < g_isregCheckList.nodeCheck[newIndex].checkCount) {

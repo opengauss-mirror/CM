@@ -71,6 +71,7 @@ ddb_log_suppress_enable = 1              # Indicates whether to enable the log s
 ddb_election_timeout = 3                 # DCC election timeout interval [1S,600S]
 share_disk_path = ''
 third_party_gateway_ip = ''				 # used in 2 nodes cluster for ddb role arbitration with network isolation, 
+                                         # support multiple iP addresses separated by commas, like '172.0.0.1,172.0.0.2'
 										 # when cms_enable_failover_on2nodes is true.
 										 # default ''. if cms_enable_failover_on2nodes is true, this param must be configured.
 cms_enable_failover_on2nodes = false	 # used in 2 nodes cluster. if true, will use third_party_gateway_ip as an arbitrator, 

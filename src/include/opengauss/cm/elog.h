@@ -186,6 +186,7 @@ extern const char* prefix_name;
 extern volatile uint32 undocumentedVersion;
 #define INPLACE_UPGRADE_PRECOMMIT_VERSION 1
 #define DORADO_UPGRADE_VERSION (92574)
+#define FAILOVER_STAPRI_VERSION (94503)
 
 template<typename... T>
 void write_runlog2(int elevel, T... args)

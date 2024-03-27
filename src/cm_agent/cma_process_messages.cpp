@@ -443,7 +443,8 @@ void GetDnFailoverCommand(char *command, uint32 cmdLen, const char *dataDir, uin
     securec_check_intval(rc, (void)rc);
 }
 
-static void process_failover_command(const char* dataDir, int instanceType, uint32 instance_id, uint32 term)
+static void process_failover_command(const char* dataDir, int instanceType,
+    uint32 instance_id, uint32 term, int32 staPrimId)
 {
     char command[MAXPGPATH];
     errno_t rc;
@@ -501,7 +502,7 @@ static void process_failover_command(const char* dataDir, int instanceType, uint
     RunCmd(command);
 
     if (instanceType == INSTANCE_TYPE_DATANODE) {
-        ExecuteEventTrigger(EVENT_FAILOVER);
+        ExecuteEventTrigger(EVENT_FAILOVER, staPrimId);
     }
 
     return;
@@ -1403,23 +1404,39 @@ static void MsgCmAgentFailover(const AgentMsgPkg* msg, char *dataPath, const cm_
 {
     int instanceType;
     int ret;
+    uint32 node, term, instanceId;
+    int32 staPrimId = -1;
 
-    const cm_to_agent_failover *msgTypeFailoverPtr =
-        (const cm_to_agent_failover *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_failover));
-    if (msgTypeFailoverPtr == NULL) {
-        return;
+    if (undocumentedVersion != 0 && undocumentedVersion < FAILOVER_STAPRI_VERSION) {
+        const cm_to_agent_failover *failoverMsg =
+            (const cm_to_agent_failover *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_failover));
+        if (failoverMsg == NULL) {
+            return;
+        }
+        term = failoverMsg->term;
+        node = failoverMsg->node;
+        instanceId = failoverMsg->instanceId;
+    } else {
+        const cm_to_agent_failover_sta *failoverMsg =
+            (const cm_to_agent_failover_sta *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_failover_sta));
+        if (failoverMsg == NULL) {
+            return;
+        }
+        term = failoverMsg->term;
+        node = failoverMsg->node;
+        instanceId = failoverMsg->instanceId;
+        staPrimId = failoverMsg->staPrimId;
     }
-    uint32 term = msgTypeFailoverPtr->term;
+
     ret = FindInstancePathAndType(
-        msgTypeFailoverPtr->node, msgTypeFailoverPtr->instanceId, dataPath, &instanceType);
+        node, instanceId, dataPath, &instanceType);
     if (ret != 0) {
         write_runlog(ERROR,
             "can't find the instance  node is %u, instance is %u\n",
-            msgTypeFailoverPtr->node,
-            msgTypeFailoverPtr->instanceId);
+            node, instanceId);
         return;
     }
-    process_failover_command(dataPath, instanceType, msgTypeFailoverPtr->instanceId, term);
+    process_failover_command(dataPath, instanceType, instanceId, term, staPrimId);
 }
 
 static void MsgCmAgentBuild(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)

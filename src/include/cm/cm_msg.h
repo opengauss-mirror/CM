@@ -669,6 +669,16 @@ typedef struct cm_to_agent_failover_st {
     uint32 term;
 } cm_to_agent_failover;
 
+typedef struct cm_to_agent_failover_sta_st {
+    int msg_type;
+    uint32 node;
+    uint32 instanceId;
+    int instance_type;
+    int wait_seconds;
+    int32 staPrimId;
+    uint32 term;
+} cm_to_agent_failover_sta;
+
 typedef struct cm_to_agent_build_st {
     int msg_type;
     uint32 node;

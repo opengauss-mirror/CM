@@ -88,7 +88,7 @@ char *g_eventTriggers[EVENT_COUNT] = {NULL};
 
 static const uint32 MAX_MSG_BUF_POOL_SIZE = 102400;
 static const uint32 MAX_MSG_BUF_POOL_COUNT = 200;
-
+static const int32 INVALID_ID = -1;
 /* unify log style */
 void create_system_call_log(void);
 int check_one_instance_status(const char *processName, const char *cmdLine, int *isPhonyDead);
@@ -2113,15 +2113,21 @@ void GetEventTrigger()
     ParseEventTriggers(eventTriggerString);
 }
 
-void ExecuteEventTrigger(const EventTriggerType triggerType)
+void ExecuteEventTrigger(const EventTriggerType triggerType, int32 staPrimId)
 {
     if (g_eventTriggers[triggerType] == NULL) {
         return;
     }
     write_runlog(LOG, "Event trigger %s was triggered.\n", triggerTypeStringMap[triggerType].typeStr);
     char execTriggerCmd[MAX_COMMAND_LEN] = {0};
-    int rc = snprintf_s(execTriggerCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
+    int rc;
+    if (staPrimId != INVALID_ID && triggerType == EVENT_FAILOVER) {
+        rc = snprintf_s(execTriggerCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
+        SYSTEMQUOTE "%s %d >> %s 2>&1 &" SYSTEMQUOTE, g_eventTriggers[triggerType], staPrimId, system_call_log);
+    } else {
+        rc = snprintf_s(execTriggerCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
         SYSTEMQUOTE "%s >> %s 2>&1 &" SYSTEMQUOTE, g_eventTriggers[triggerType], system_call_log);
+    }
     securec_check_intval(rc, (void)rc);
     write_runlog(LOG, "event trigger command: \"%s\".\n", execTriggerCmd);
     RunCmd(execTriggerCmd);

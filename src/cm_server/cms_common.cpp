@@ -352,10 +352,19 @@ void GetTwoNodesArbitrateParams(void) {
         }
     }
 
-    if (g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes == true && !IsIPAddrValid(g_paramsOn2Nodes.thirdPartyGatewayIp)) {
-        write_runlog(ERROR, "parameter \"cms_enable_failover_on2nodes\" is true, "
-            "but parameter \"third_party_gateway_ip\" is invalid, please check!\n");
-        exit(1);
+    if (g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes) {
+        char tmpIp[MAXPGPATH];
+        strcpy_s(tmpIp, MAXPGPATH, g_paramsOn2Nodes.thirdPartyGatewayIp);
+        char *saveptr = NULL;
+        char *token = strtok_r(tmpIp, ",", &saveptr);
+        while (token != NULL) {
+            if (!IsIPAddrValid(token)) {
+                write_runlog(ERROR, "parameter \"cms_enable_failover_on2nodes\" is true, "
+                    "but parameter \"third_party_gateway_ip\" is invalid, please check!\n");
+                exit(1);
+            }
+            token = strtok_r(NULL, ",", &saveptr);
+        }
     }
 
     g_paramsOn2Nodes.cmsNetworkIsolationTimeout = (uint32)get_int_value_from_config(configDir,

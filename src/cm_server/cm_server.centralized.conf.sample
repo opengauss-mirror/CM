@@ -74,6 +74,7 @@ agent_network_timeout = 6
 dn_arbitrate_mode = quorum
 agent_fault_timeout = 60
 third_party_gateway_ip = ''				 # used in 2 nodes cluster for ddb role arbitration with network isolation, 
+                                         # support multiple iP addresses separated by commas, like '172.0.0.1,172.0.0.2'
 										 # when cms_enable_failover_on2nodes is true.
 										 # default ''. if cms_enable_failover_on2nodes is true, this param must be configured.
 cms_enable_failover_on2nodes = false	 # used in 2 nodes cluster. if true, will use third_party_gateway_ip as an arbitrator, 

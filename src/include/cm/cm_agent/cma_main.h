@@ -246,7 +246,7 @@ extern pthread_rwlock_t g_datanodesFailoverLock;
 extern pthread_rwlock_t g_gtmsFailoverLock;
 extern int g_gtmMode;
 extern char *g_eventTriggers[EVENT_COUNT];
-extern void ExecuteEventTrigger(const EventTriggerType triggerType);
+extern void ExecuteEventTrigger(const EventTriggerType triggerType, int32 staPrimId = -1);
 
 extern int node_match_find(const char *node_type, const char *node_port, const char *node_host, const char *node_port1,
     const char *node_host1, int *node_index, int *instance_index, int *inode_type);

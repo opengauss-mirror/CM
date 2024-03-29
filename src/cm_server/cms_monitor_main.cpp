@@ -1056,15 +1056,51 @@ static inline void DdbSetDdbWorkMode(ddb_work_mode workMode, unsigned int voteNu
     }
 }
 
+/*
+ * if reachale is true:
+ * all ip is reachable, return CM_SUCCESS
+ * else return CM_ERROR
+ * if reachale is false:
+ * all ip is not reachable, return CM_SUCCESS
+ * else return CM_ERROR
+ */
+static status_t CheckAllIpStatus(char *ip, bool reachable)
+{
+    if (ip == nullptr) {
+        return CM_ERROR;
+    }
+
+    char tmpIp[CM_IP_LENGTH];
+    errno_t rc = strcpy_s(tmpIp, CM_IP_LENGTH, ip);
+    securec_check_errno(rc, (void)rc);
+    char *saveptr = NULL;
+    char *token = strtok_r(tmpIp, ",", &saveptr);
+    status_t ret = CM_SUCCESS;
+    bool flag = false;
+    while (token != NULL) {
+        if (reachable && IsReachableIP(token) != CM_SUCCESS) {
+            ret = CM_ERROR;
+            break;
+        } else if (!reachable && IsReachableIP(token) == CM_SUCCESS) {
+            ret = CM_ERROR;
+            break;
+        }
+        flag = true;
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+
+    return flag ? ret : CM_ERROR;
+}
+
 static void DdbMinorityWorkModeSetInMajority()
 {
     uint32 minVoteNum = 1;
-    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS) {
-        // third party gateway is reachable, setting a small vote num to make sure current node works as primary.
+    if (CheckAllIpStatus(g_paramsOn2Nodes.thirdPartyGatewayIp, true) == CM_SUCCESS) {
+        // all third party gateway is reachable, setting a small vote num to make sure current node works as primary.
         write_runlog(LOG, "promote node to primary\n");
         DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
     } else {
-        // third party gateway is not reachable, setting a big vote num to make sure current node works as standby.
+        // not all third party gateway is reachable, setting a big vote num to make sure current node works as standby.
         minVoteNum += MAX_VOTE_NUM;
         DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 1);
 
@@ -1088,10 +1124,15 @@ static void DdbMinorityWorkModeSetInMajority()
 static void DdbMinorityWorkModeSetInMinority()
 {
     uint32 minVoteNum = 1;
-    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS && g_bigVoteNumInMinorityMode == 1) {
+    if (CheckAllIpStatus(g_paramsOn2Nodes.thirdPartyGatewayIp, true) == CM_SUCCESS && g_bigVoteNumInMinorityMode == 1) {
         write_runlog(LOG, "reset minority work mode and become primary.\n");
         DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
-    } else if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) != CM_SUCCESS && g_bigVoteNumInMinorityMode == 0) {
+    } else if (CheckAllIpStatus(g_paramsOn2Nodes.thirdPartyGatewayIp, false) == CM_SUCCESS
+        && g_bigVoteNumInMinorityMode == 0) {
+        /*
+         * every third party gateway is not reachable,
+         * setting a big vote num to make sure current node works as standby.
+         */
         minVoteNum += MAX_VOTE_NUM;
         write_runlog(LOG, "reset minority work mode and become standby.\n");
         DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 1);
@@ -1108,7 +1149,7 @@ static void DdbMinorityWorkModeSetInMinority()
 static void DdbMinorityWorkModeSetInStartup()
 {
     uint32 minVoteNum = 1;
-    if (IsReachableIP(g_paramsOn2Nodes.thirdPartyGatewayIp) == CM_SUCCESS) {
+    if (CheckAllIpStatus(g_paramsOn2Nodes.thirdPartyGatewayIp, true) == CM_SUCCESS) {
         write_runlog(LOG, "start up with minority work mode and minVoteNum: %d.\n", minVoteNum);
         DdbSetDdbWorkMode(DDB_WORK_MODE_MINORITY, minVoteNum, 0);
     } else {

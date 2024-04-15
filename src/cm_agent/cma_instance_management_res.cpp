@@ -30,6 +30,26 @@
 
 uint32 g_localResConfCount = 0;
 
+static const char* StatToString(int stat)
+{
+    switch (stat) {
+        case CUS_RES_CHECK_STAT_ONLINE:
+            return "online";
+        case CUS_RES_CHECK_STAT_OFFLINE:
+            return "offline";
+        case CUS_RES_CHECK_STAT_UNKNOWN:
+            return "unknown";
+        case CUS_RES_CHECK_STAT_ABNORMAL:
+            return "abnormal";
+        case CUS_RES_CHECK_STAT_TIMEOUT:
+            return "timeout";
+        case CUS_RES_CHECK_STAT_FAILED:
+            return "failed";
+        default:
+            return "invalid status";
+    }
+}
+
 static int CusResCmdExecute(const char *scriptPath, const char *oper, uint32 timeout, bool8 needNohup)
 {
     char command[MAX_PATH_LEN + MAX_OPTION_LEN] = {0};
@@ -227,8 +247,8 @@ static inline void CleanOneInstCheckCount(CmResConfList *resConf)
 static inline void CleanOneInstAbnormalStat(CmResConfList *resConf, int curStat)
 {
     if (resConf->checkInfo.abnormalTime != 0) {
-        write_runlog(LOG, "res(%s) inst(%u) status from abnormal change to %d.\n",
-            resConf->resName, resConf->cmInstanceId, curStat);
+        write_runlog(LOG, "res(%s) inst(%u) status from abnormal change to %s.\n",
+            resConf->resName, resConf->cmInstanceId, StatToString(curStat));
         resConf->checkInfo.abnormalTime = 0;
     }
 }

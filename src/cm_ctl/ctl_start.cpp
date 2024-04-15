@@ -114,7 +114,7 @@ extern char* cm_arbitration_mode_set;
 extern const char* g_progname;
 extern CM_Conn* CmServer_conn;
 extern uint32 g_commandOperationInstanceId;
-extern char manualPauseFile[MAXPGPATH];
+extern char manual_pause_file[MAXPGPATH];
 
 static int StartResInstCheck(uint32 instId)
 {
@@ -132,8 +132,14 @@ static void StartResInst(uint32 nodeId, uint32 instId)
     securec_check_intval(ret, (void)ret);
 
     char command[MAX_PATH_LEN] = {0};
-    ret = snprintf_s(command, MAX_PATH_LEN, MAX_PATH_LEN - 1, SYSTEMQUOTE "rm -f %s < \"%s\" 2>&1" SYSTEMQUOTE,
-        instStartFile, DEVNULL);
+    if (g_isPauseArbitration) {
+        ret = snprintf_s(command, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+            SYSTEMQUOTE "rm -f %s; touch %s < \"%s\" 2>&1" SYSTEMQUOTE,
+            instStartFile, cluster_manual_starting_file, DEVNULL);
+    } else {
+        ret = snprintf_s(command, MAX_PATH_LEN, MAX_PATH_LEN - 1, SYSTEMQUOTE "rm -f %s < \"%s\" 2>&1" SYSTEMQUOTE,
+            instStartFile, DEVNULL);
+    }
     securec_check_intval(ret, (void)ret);
 
     ret = runCmdByNodeId(command, nodeId);
@@ -252,6 +258,7 @@ status_t do_start(void)
     }
 
     (void)clock_gettime(CLOCK_MONOTONIC, &g_startTime);
+    (void)getPauseStatus();
     /* start the whole cluster */
     if (g_commandOperationInstanceId == 0 && g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
 #ifdef ENABLE_MULTIPLE_NODES
@@ -488,7 +495,7 @@ static void start_cluster(void)
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
-                SYSTEMQUOTE "source /etc/profile; source %s;rm -f %s %s_*" SYSTEMQUOTE,
+                SYSTEMQUOTE "source /etc/profile; source %s; rm -f %s %s_*" SYSTEMQUOTE,
                 mpp_env_separate_file,
                 manual_start_file,
                 instance_manual_start_file);
@@ -498,12 +505,14 @@ static void start_cluster(void)
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
-                SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"rm -f %s %s_*; touch %s\" > %s; "
-                            "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s" SYSTEMQUOTE,
+                SYSTEMQUOTE "source /etc/profile; "
+                        "pssh -i %s -h %s \"rm -f %s %s_*; if [ -f %s ]; then touch %s; fi\" > %s; "
+                        "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s" SYSTEMQUOTE,
                 PSSH_TIMEOUT_OPTION,
                 hosts_path,
                 manual_start_file,
                 instance_manual_start_file,
+                manual_pause_file,
 		        cluster_manual_starting_file,
                 pssh_out_path,
                 pssh_out_path,
@@ -512,13 +521,15 @@ static void start_cluster(void)
             ret = snprintf_s(command,
                 MAXPGPATH,
                 MAXPGPATH - 1,
-                SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"source %s;rm -f %s %s_*; touch %s\" > %s; "
-                            "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s" SYSTEMQUOTE,
+                SYSTEMQUOTE "source /etc/profile;"
+                        "pssh -i %s -h %s \"source %s; rm -f %s %s_*; if [ -f %s ]; then touch %s; fi\" > %s; "
+                        "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s" SYSTEMQUOTE,
                 PSSH_TIMEOUT_OPTION,
                 hosts_path,
                 mpp_env_separate_file,
                 manual_start_file,
                 instance_manual_start_file,
+                manual_pause_file,
                 cluster_manual_starting_file,
                 pssh_out_path,
                 pssh_out_path,
@@ -1331,10 +1342,17 @@ static void start_node(uint32 nodeid)
     char command[MAXPGPATH];
     uint32 ii;
     errno_t rc;
-    rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
-        SYSTEMQUOTE "rm -f %s %s %s_*; touch %s < \"%s\" 2>&1 &" SYSTEMQUOTE,
-        manual_start_file, etcd_manual_start_file,
-        instance_manual_start_file, cluster_manual_starting_file, DEVNULL);
+    if (g_isPauseArbitration) {
+        rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+            SYSTEMQUOTE "rm -f %s %s %s_*; touch %s < \"%s\" 2>&1 &" SYSTEMQUOTE,
+            manual_start_file, etcd_manual_start_file,
+            instance_manual_start_file, cluster_manual_starting_file, DEVNULL);
+    } else {
+        rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+            SYSTEMQUOTE "rm -f %s %s %s_* < \"%s\" 2>&1 &" SYSTEMQUOTE,
+            manual_start_file, etcd_manual_start_file,
+            instance_manual_start_file, DEVNULL);
+    }
     securec_check_intval(rc, (void)rc);
 
     if (nodeid == g_currentNode->node) {
@@ -1416,8 +1434,14 @@ void start_instance(uint32 nodeid, const char* datapath)
         return;
     }
 
-    nRet = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE "rm -f %s_%u < \"%s\" 2>&1 &" SYSTEMQUOTE,
-        instance_manual_start_file, instanceId, DEVNULL);
+    if (g_isPauseArbitration) {
+        nRet = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+            SYSTEMQUOTE "rm -f %s_%u; touch %s < \"%s\" 2>&1 &" SYSTEMQUOTE,
+            instance_manual_start_file, instanceId, cluster_manual_starting_file, DEVNULL);
+    } else {
+        nRet = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, SYSTEMQUOTE "rm -f %s_%u < \"%s\" 2>&1 &" SYSTEMQUOTE,
+            instance_manual_start_file, instanceId, DEVNULL);
+    }
     securec_check_intval(nRet, (void)nRet);
 
     nRet = runCmdByNodeId(command, nodeid);
@@ -1433,8 +1457,7 @@ void RemoveStartingFile()
     int ret;
     char command[MAX_COMMAND_LEN] = {0};
 
-    ret = access(manualPauseFile, F_OK);
-    if (ret != 0) {
+    if (!g_isPauseArbitration) {
         exit(0);
     }
 
@@ -2260,4 +2283,14 @@ static int start_check_az(const char* azName)
     }
 
     return ret;
+}
+
+void getPauseStatus()
+{
+    struct stat statBuf = { 0 };
+    if (stat(manual_pause_file, &statBuf) == 0) {
+        g_isPauseArbitration = true;
+    } else {
+        g_isPauseArbitration = false;
+    }
 }

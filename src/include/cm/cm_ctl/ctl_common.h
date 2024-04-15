@@ -217,6 +217,7 @@ typedef struct CtlOptionSt {
 extern bool g_isRestop;
 extern DdbConn *g_sess;
 extern TlsAuthPath g_tlsPath;
+extern bool g_isPauseArbitration;
 
 status_t do_start(void);
 int DoStop(void);
@@ -314,5 +315,6 @@ int DoResume();
 bool CheckTrustAndNet();
 bool IsTimeOut(const cmTime_t *lastTime, const char *str);
 void RemoveStartingFile();
+void getPauseStatus();
 
 #endif

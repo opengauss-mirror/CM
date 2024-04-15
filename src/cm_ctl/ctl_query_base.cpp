@@ -49,7 +49,6 @@ extern bool g_gtmBalance;
 extern bool g_datanodesBalance;
 extern cm_to_ctl_central_node_status g_centralNode;
 extern FILE* g_logFilePtr;
-extern bool g_isPauseArbitration;
 
 static void PrintClusterStatus(int clusterStatus = CM_STATUS_UNKNOWN, bool redistributing = false,
     int switchedCount = -1, int nodeID = -1);

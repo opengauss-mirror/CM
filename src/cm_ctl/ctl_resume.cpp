@@ -34,7 +34,7 @@
 
 static status_t ResumeCluster();
 
-extern char manualPauseFile[MAXPGPATH];
+extern char manual_pause_file[MAXPGPATH];
 extern char hosts_path[MAXPGPATH];
 extern char pssh_out_path[MAXPGPATH];
 extern bool got_stop;
@@ -71,7 +71,7 @@ static status_t ResumeCluster()
     ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
         SYSTEMQUOTE "source /etc/profile;pssh -i %s -h %s \"rm %s -f\" > %s; "
                     "if [ $? -ne 0 ]; then cat %s; fi; rm -f %s"  SYSTEMQUOTE,
-        PSSH_TIMEOUT_OPTION, hosts_path, manualPauseFile, pssh_out_path,
+        PSSH_TIMEOUT_OPTION, hosts_path, manual_pause_file, pssh_out_path,
         pssh_out_path, pssh_out_path);
     securec_check_intval(ret, (void)ret);
 

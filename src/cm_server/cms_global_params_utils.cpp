@@ -48,8 +48,8 @@ void ChangeDnMemberIndex(const char *str, uint32 groupIdx, int32 memIdx, int32 i
                 datanode_role_int_to_string(instTypePur));
             instMem[i].role = instTypePur;
             cmd[i].role_changed = INSTANCE_ROLE_CHANGED;
-        } else if ((instTypePur == INSTANCE_ROLE_PRIMARY || peerInstId == instMem[i].instanceId) &&
-            (i != memIdx) && instMem[i].role == instTypePur) {
+        } else if (((instTypePur == INSTANCE_ROLE_PRIMARY || instTypePur == INSTANCE_ROLE_MAIN_STANDBY)
+            || peerInstId == instMem[i].instanceId) && (i != memIdx) && instMem[i].role == instTypePur) {
             write_runlog(LOG, "%s: %d: instance(%u) static role(%s) will change to be %s.\n",
                 str, __LINE__, instMem[i].instanceId, datanode_role_int_to_string(instMem[i].role),
                 datanode_role_int_to_string(instTypeSor));
@@ -63,8 +63,13 @@ void ChangeDnMemberIndex(const char *str, uint32 groupIdx, int32 memIdx, int32 i
 void ChangeDnPrimaryMemberIndex(uint32 group_index, int primary_member_index)
 {
     if (g_one_master_multi_slave) {
-        ChangeDnMemberIndex("[ChangeDnPrimaryMemberIndex]",
-            group_index, primary_member_index, INSTANCE_ROLE_PRIMARY, INSTANCE_ROLE_STANDBY);
+        if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+            ChangeDnMemberIndex("[ChangeDnPrimaryMemberIndex]",
+                group_index, primary_member_index, INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_STANDBY);
+        } else {
+            ChangeDnMemberIndex("[ChangeDnPrimaryMemberIndex]",
+                group_index, primary_member_index, INSTANCE_ROLE_PRIMARY, INSTANCE_ROLE_STANDBY);
+        }
     } else {
         change_primary_member_index(group_index, primary_member_index);
     }
@@ -79,11 +84,17 @@ void change_primary_member_index(uint32 group_index, int primary_member_index)
 
     for (int i = 0; i < count; i++) {
         /* Does not change dummy standby member index, only change primary and standby member index */
-        if (i == primary_member_index && instanceMember[i].role != INSTANCE_ROLE_PRIMARY) {
-            instanceMember[i].role = INSTANCE_ROLE_PRIMARY;
+        if (i == primary_member_index &&
+            (instanceMember[i].role != INSTANCE_ROLE_PRIMARY && instanceMember[i].role != INSTANCE_ROLE_MAIN_STANDBY)) {
+            if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+                instanceMember[i].role = INSTANCE_ROLE_MAIN_STANDBY;
+            } else {
+                instanceMember[i].role = INSTANCE_ROLE_PRIMARY;
+            }
             status[i].role_changed = INSTANCE_ROLE_CHANGED;
             SetDynamicConfigChangeToDdb(group_index, i);
-        } else if (i != primary_member_index && instanceMember[i].role == INSTANCE_ROLE_PRIMARY) {
+        } else if (i != primary_member_index &&
+            (instanceMember[i].role == INSTANCE_ROLE_PRIMARY || instanceMember[i].role == INSTANCE_ROLE_MAIN_STANDBY)) {
             instanceMember[i].role = INSTANCE_ROLE_STANDBY;
             status[i].role_changed = INSTANCE_ROLE_CHANGED;
             SetDynamicConfigChangeToDdb(group_index, i);
@@ -386,7 +397,11 @@ void SetSwitchoverCmd(cm_instance_command_status *cmd, int32 localRole, uint32 i
     cmd->command_status = INSTANCE_COMMAND_WAIT_EXEC;
     cmd->pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
     if (localRole == INSTANCE_ROLE_STANDBY) {
-        cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
+        if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+            cmd->cmdPur = INSTANCE_ROLE_MAIN_STANDBY;
+        } else {
+            cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
+        }
         cmd->cmdSour = INSTANCE_ROLE_STANDBY;
     } else if (localRole == INSTANCE_ROLE_CASCADE_STANDBY) {
         cmd->cmdPur = INSTANCE_ROLE_STANDBY;

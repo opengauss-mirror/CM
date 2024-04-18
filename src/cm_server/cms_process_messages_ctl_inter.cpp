@@ -143,7 +143,11 @@ void SetSwitchoverPendingCmd(uint32 groupIdx, int32 memIdx, int32 waitSecond, co
             cmd->cmdSour = INSTANCE_ROLE_CASCADE_STANDBY;
             cmd->cmdRealPur = INSTANCE_ROLE_PRIMARY;
         } else {
-            cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
+            if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+                cmd->cmdPur = INSTANCE_ROLE_MAIN_STANDBY;
+            } else {
+                cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
+            }
             cmd->cmdSour = INSTANCE_ROLE_STANDBY;
             cmd->cmdRealPur = INSTANCE_ROLE_INIT;
             if (isNeedDelay) {

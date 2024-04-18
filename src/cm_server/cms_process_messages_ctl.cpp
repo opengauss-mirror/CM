@@ -110,6 +110,7 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
 
     // tell cm_ctl will switchover to primary or standby
     ackMsg.pengding_command = localRole;
+    write_runlog(LOG, "ackMsg.pengding_command: %d\n", localRole);
     (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
     if (ackMsg.command_result == CM_INVALID_COMMAND) {
         return;
@@ -435,7 +436,11 @@ static void process_single_instance_switchover_info(switchover_instance *instanc
     cm_instance_command_status *cmd = &(instReport->command_member[j]);
     cmd->command_status = INSTANCE_COMMAND_WAIT_EXEC;
     cmd->pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
-    cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
+    if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+        cmd->cmdPur = INSTANCE_ROLE_MAIN_STANDBY;
+    } else {
+        cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
+    }
     cmd->cmdSour = INSTANCE_ROLE_STANDBY;
     cmd->peerInstId = GetPeerInstId(i, j);
     cmd->time_out = ctl_to_cm_swithover_ptr->wait_seconds;
@@ -701,7 +706,9 @@ void ProcessCtlToCmSwitchoverAzMsg(MsgRecvInfo* recvMsgInfo, ctl_to_cm_switchove
                 break;
             } else if (g_instance_role_group_ptr[i].instanceMember[j].instanceType == INSTANCE_TYPE_DATANODE &&
                 ((g_instance_group_report_status_ptr[i].instance_status.data_node_member[j]
-                .local_status.local_role == INSTANCE_ROLE_PRIMARY && sameAz))) {
+                .local_status.local_role == INSTANCE_ROLE_PRIMARY ||
+                g_instance_group_report_status_ptr[i].instance_status.data_node_member[j]
+                .local_status.local_role == INSTANCE_ROLE_MAIN_STANDBY) && sameAz)) {
                 primaryInstanceInTargetAZ = true;
                 noNeedDoDnNum++;
                 checkSwitchoverInstance = true;
@@ -849,7 +856,8 @@ static int SwitchoverDone(void)
                     int dnLocalRole = g_instance_group_report_status_ptr[i].instance_status.data_node_member[j]
                         .local_status.local_role;
                     bool enCheck = (CheckInstInSyncList(i, j, str) == SYNCLIST_IS_FINISTH);
-                    if (initRole == INSTANCE_ROLE_PRIMARY && dnLocalRole != INSTANCE_ROLE_PRIMARY &&
+                    if ((initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY) &&
+                        (dnLocalRole != INSTANCE_ROLE_PRIMARY && dnLocalRole != INSTANCE_ROLE_MAIN_STANDBY) &&
                         *command != (int)MSG_CM_AGENT_SWITCHOVER && enCheck) {
                         if (localStatus == INSTANCE_HA_STATE_NORMAL) {
                             set_pending_command(i, j, MSG_CM_AGENT_SWITCHOVER, SWITCHOVER_DEFAULT_WAIT);
@@ -864,23 +872,26 @@ static int SwitchoverDone(void)
                         }
                     }
 
-                    if (initRole == INSTANCE_ROLE_PRIMARY && dnLocalRole == INSTANCE_ROLE_STANDBY &&
+                    if ((initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY) && dnLocalRole == INSTANCE_ROLE_STANDBY &&
                         localStatus == INSTANCE_HA_STATE_PROMOTING && *command == MSG_CM_AGENT_SWITCHOVER) {
                         anyInitPrimarySwitchover = true;
                     }
 
                     /* must keep three or in this if condition, otherwise will result to some problem. */
                     if (*command == MSG_CM_AGENT_SWITCHOVER &&
-                        ((dnLocalRole != INSTANCE_ROLE_PRIMARY && initRole == INSTANCE_ROLE_PRIMARY) ||
-                            (g_instance_role_group_ptr[i].instanceMember[j].role == INSTANCE_ROLE_PRIMARY &&
+                        (((dnLocalRole != INSTANCE_ROLE_PRIMARY && dnLocalRole != INSTANCE_ROLE_MAIN_STANDBY) &&
+                            (initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY)) ||
+                            ((g_instance_role_group_ptr[i].instanceMember[j].role == INSTANCE_ROLE_PRIMARY ||
+                            g_instance_role_group_ptr[i].instanceMember[j].role == INSTANCE_ROLE_MAIN_STANDBY) &&
                             localStatus != INSTANCE_HA_STATE_NORMAL))) {
                         (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
                         write_runlog(LOG, "%s: inst(%u) is doing switchover.\n", str, instanceId);
                         return SWITCHOVER_EXECING;
                     }
 
-                    if (*command != MSG_CM_AGENT_SWITCHOVER && dnLocalRole != INSTANCE_ROLE_PRIMARY &&
-                        initRole == INSTANCE_ROLE_PRIMARY) {
+                    if (*command != MSG_CM_AGENT_SWITCHOVER &&
+                        (dnLocalRole != INSTANCE_ROLE_PRIMARY && dnLocalRole != INSTANCE_ROLE_MAIN_STANDBY) &&
+                        (initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY)) {
                         write_runlog(LOG, "line %d: instanceId(%u) has not do switchover.\n", __LINE__, instanceId);
                         dnCount++;
                         partlySwitchover = true;
@@ -2197,38 +2208,44 @@ void ProcessCtlToCmSwitchoverAllMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_sw
                     bool isCatchUp = IsInCatchUpState(i, j);
                     bool isCheckSyncList = (CheckInstInSyncList(i, j, str) == SYNCLIST_IS_FINISTH);
                     if ((dnLocalRole == INSTANCE_ROLE_STANDBY || dnLocalRole == INSTANCE_ROLE_CASCADE_STANDBY) &&
-                        initRole == INSTANCE_ROLE_PRIMARY && localStatus == INSTANCE_HA_STATE_NORMAL && !isInVoteAz &&
+                        (initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY) &&
+                        localStatus == INSTANCE_HA_STATE_NORMAL && !isInVoteAz &&
                         !isCatchUp && isCheckSyncList) {
                         SetSwitchoverInSwitchoverProcess(i, j, switchoverMsg->wait_seconds);
                         needDoDnNum++;
-                    } else if (initRole == INSTANCE_ROLE_PRIMARY && localStatus != INSTANCE_HA_STATE_NORMAL) {
+                    } else if ((initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY) &&
+                        localStatus != INSTANCE_HA_STATE_NORMAL) {
                         write_runlog(LOG, "dn instance=%u status=%s, will not switchover for status is unNormal.\n",
                             instanceId, datanode_dbstate_int_to_string(localStatus));
                         msgBalanceResult.instances[imbalanceIndex++] = instanceId;
                         noNeedDoDnNum++;
-                    } else if (initRole == INSTANCE_ROLE_PRIMARY && dnLocalRole == INSTANCE_ROLE_PRIMARY) {
+                    } else if ((initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY) &&
+                        (dnLocalRole == INSTANCE_ROLE_PRIMARY || dnLocalRole == INSTANCE_ROLE_MAIN_STANDBY)) {
                         write_runlog(LOG,
                             "dn instance=%u status=%s, will not switchover for status is already primary.\n",
                             instanceId, datanode_dbstate_int_to_string(localStatus));
                         noNeedDoDnNum++;
-                    } else if (initRole == INSTANCE_ROLE_PRIMARY && isInVoteAz && isCheckSyncList) {
+                    } else if ((initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY) &&
+                        isInVoteAz && isCheckSyncList) {
                         write_runlog(LOG, "dn instance=%u status=%s, will not switchover in vote AZ.\n", instanceId,
                             datanode_dbstate_int_to_string(localStatus));
                         noNeedDoDnNum++;
-                    } else if (initRole == INSTANCE_ROLE_PRIMARY && isCatchUp) {
+                    } else if ((initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY) && isCatchUp) {
                         write_runlog(LOG,
                             "dn instance=%u status=%s, will not switchover for the xlog location gap"
                             "between the primary and standby is too large.\n",
                             instanceId, datanode_dbstate_int_to_string(localStatus));
-                        if (dnLocalRole == INSTANCE_ROLE_STANDBY && initRole == INSTANCE_ROLE_PRIMARY) {
+                        if (dnLocalRole == INSTANCE_ROLE_STANDBY &&
+                            (initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY)) {
                             msgBalanceResult.instances[imbalanceIndex++] = instanceId;
                         }
                         noNeedDoDnNum++;
-                    } else if (initRole == INSTANCE_ROLE_PRIMARY && isCheckSyncList) {
+                    } else if ((initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY) && isCheckSyncList) {
                         write_runlog(LOG,
                             "dn instance=%u status=%s, will not switchover for the inst not in synclist.\n", instanceId,
                             datanode_dbstate_int_to_string(localStatus));
-                        if (dnLocalRole == INSTANCE_ROLE_STANDBY && initRole == INSTANCE_ROLE_PRIMARY) {
+                        if (dnLocalRole == INSTANCE_ROLE_STANDBY &&
+                            (initRole == INSTANCE_ROLE_PRIMARY || initRole == INSTANCE_ROLE_MAIN_STANDBY)) {
                             msgBalanceResult.instances[imbalanceIndex++] = instanceId;
                         }
                         noNeedDoDnNum++;

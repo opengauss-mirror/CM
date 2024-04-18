@@ -614,6 +614,8 @@ void get_parameters_from_configfile()
         SECONDS_PER_DAY);
     g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
     g_agentNetworkTimeout = get_uint32_value_from_config(configDir, "agent_network_timeout", 6);
+    g_ssDoubleClusterMode =
+        (SSDoubleClusterMode)get_uint32_value_from_config(configDir, "ss_double_cluster_mode", SS_DOUBLE_NULL);
     GetDnArbitrateMode();
 #ifndef ENABLE_PRIVATEGAUSS
     g_waitStaticPrimaryTimes = get_uint32_value_from_config(configDir, "wait_static_primary_times", 6);

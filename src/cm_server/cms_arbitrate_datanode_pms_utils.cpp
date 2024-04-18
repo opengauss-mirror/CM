@@ -590,7 +590,7 @@ static void DnWillChangeStaticRole(const DnArbCtx *ctx, const char *str)
     if (ctx->localRole->role != cmdSour) {
         return;
     }
-    if (cmdPur == INSTANCE_ROLE_PRIMARY) {
+    if (cmdPur == INSTANCE_ROLE_PRIMARY || cmdPur == INSTANCE_ROLE_MAIN_STANDBY) {
         ChangeStaticRoleAndNotifyCn(ctx->groupIdx, ctx->memIdx);
     } else {
         ChangeDnMemberIndex(str, ctx->groupIdx, ctx->memIdx, cmdPur, cmdSour);

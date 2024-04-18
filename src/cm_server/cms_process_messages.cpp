@@ -1064,14 +1064,16 @@ int isNodeBalanced(uint32 *switchedInstance)
                     logicClusterId = get_logicClusterId_by_dynamic_dataNodeId(
                         g_instance_role_group_ptr[i].instanceMember[0].instanceId);
                     if (g_single_node_cluster && dnStat->local_role == INSTANCE_ROLE_NORMAL &&
-                        g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_PRIMARY) {
+                        (g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_PRIMARY ||
+                        g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_MAIN_STANDBY)) {
                         break;
                     }
 
-                    if ((dnStat->local_role == INSTANCE_ROLE_PRIMARY &&
+                    if (((dnStat->local_role == INSTANCE_ROLE_PRIMARY || dnStat->local_role == INSTANCE_ROLE_MAIN_STANDBY) &&
                         g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_STANDBY) ||
-                        (dnStat->local_role != INSTANCE_ROLE_PRIMARY &&
-                        g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_PRIMARY)) {
+                        ((dnStat->local_role != INSTANCE_ROLE_PRIMARY && dnStat->local_role != INSTANCE_ROLE_MAIN_STANDBY) &&
+                        (g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_PRIMARY ||
+                        g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit == INSTANCE_ROLE_MAIN_STANDBY))) {
                         if (switchedInstance != NULL) {
                             switchedInstance[switchedCount] = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
                         }
@@ -1156,8 +1158,10 @@ int switchoverFullDone(void)
             case INSTANCE_TYPE_DATANODE:
                 if (g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
                         .pengding_command != (int32)MSG_CM_AGENT_SWITCHOVER &&
+                    (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index]
+                        .local_status.local_role != INSTANCE_ROLE_PRIMARY &&
                     g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index]
-                        .local_status.local_role != INSTANCE_ROLE_PRIMARY) {
+                        .local_status.local_role != INSTANCE_ROLE_MAIN_STANDBY)) {
                     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
                     write_runlog(LOG, "the instance(node = %u  instanceid = %u) switchover fail\n",
                         switchOverInstances[i].node, switchOverInstances[i].instanceId);
@@ -1166,7 +1170,8 @@ int switchoverFullDone(void)
                 if (g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
                     .pengding_command == (int32)MSG_CM_AGENT_SWITCHOVER) {
                     for (int ii = 0; ii < g_instance_role_group_ptr[group_index].count; ii++) {
-                        if (g_instance_role_group_ptr[group_index].instanceMember[ii].role == INSTANCE_ROLE_PRIMARY &&
+                        if ((g_instance_role_group_ptr[group_index].instanceMember[ii].role == INSTANCE_ROLE_PRIMARY ||
+                            g_instance_role_group_ptr[group_index].instanceMember[ii].role == INSTANCE_ROLE_MAIN_STANDBY) &&
                             g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[ii]
                             .local_status.db_state != INSTANCE_HA_STATE_NORMAL) {
                             (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
@@ -1180,7 +1185,9 @@ int switchoverFullDone(void)
                 if ((g_instance_group_report_status_ptr[group_index].instance_status.command_member[member_index]
                         .pengding_command == MSG_CM_AGENT_SWITCHOVER) ||
                     (g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index]
-                        .local_status.local_role != INSTANCE_ROLE_PRIMARY)) {
+                        .local_status.local_role != INSTANCE_ROLE_PRIMARY &&
+                    g_instance_group_report_status_ptr[group_index].instance_status.data_node_member[member_index]
+                        .local_status.local_role != INSTANCE_ROLE_MAIN_STANDBY)) {
                     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
                     write_runlog(LOG, "the instance(node = %u  instanceid = %u) is executing switchover.\n",
                         switchOverInstances[i].node, switchOverInstances[i].instanceId);
@@ -1224,7 +1231,11 @@ void SwitchOverSetting(int time_out, int instanceType, uint32 ptrIndex, int memb
         &(g_instance_group_report_status_ptr[ptrIndex].instance_status.command_member[memberIndex]);
     cmd->command_status = INSTANCE_COMMAND_WAIT_EXEC;
     cmd->pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
-    cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
+    if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+        cmd->cmdPur = INSTANCE_ROLE_MAIN_STANDBY;
+    } else {
+        cmd->cmdPur = INSTANCE_ROLE_PRIMARY;
+    }
     cmd->cmdSour = INSTANCE_ROLE_STANDBY;
     cmd->time_out = time_out;
     cmd->peerInstId = GetPeerInstId(ptrIndex, memberIndex);

@@ -251,6 +251,7 @@ char g_cmStaticConfigurePath[MAX_PATH_LEN] = {0};
 cm_fenced_UDF_report_status *g_fenced_UDF_report_status_ptr = NULL;
 int *cn_dn_disconnect_times = NULL;
 int *g_lastCnDnDisconnectTimes = NULL;
+SSDoubleClusterMode g_ssDoubleClusterMode = SS_DOUBLE_NULL;
 
 volatile switchover_az_mode cm_switchover_az_mode = AUTOSWITCHOVER_AZ;
 volatile logic_cluster_restart_mode cm_logic_cluster_restart_mode = INITIAL_LOGIC_CLUSTER_RESTART;

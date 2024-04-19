@@ -42,6 +42,7 @@ static char g_confFile[CM_PATH_LENGTH];
 
 extern char g_appPath[MAXPGPATH];
 extern char mpp_env_separate_file[MAXPGPATH];
+extern CtlCommand ctl_command;
 
 static status_t CheckGucOption(const GucOption &gucCtx);
 
@@ -152,9 +153,11 @@ static bool IsMatchParameterName(char *optLine, const char *paraName, size_t &va
 
 static void PrintResults(bool isSuccess, const CtlOption *ctx)
 {
-    errno_t rc = 0;
+    errno_t rc1 = 0;
+    errno_t rc2 = 0;
     char nodeType[NODE_TYPE_LEN];
     char gucType[CONF_COMMAND_LEN];
+    char cmNodeType[NODE_TYPE_LEN];
 
     if (isSuccess && ctx->guc.gucCommand == LIST_CONF_COMMAND) {
         return;
@@ -162,36 +165,44 @@ static void PrintResults(bool isSuccess, const CtlOption *ctx)
 
     switch (ctx->guc.nodeType) {
         case NODE_TYPE_AGENT:
-            rc = strcpy_s(nodeType, NODE_TYPE_LEN, "cm_agent.conf");
+            rc1 = strcpy_s(nodeType, NODE_TYPE_LEN, "cm_agent.conf");
+            rc2 = strcpy_s(cmNodeType, NODE_TYPE_LEN, "agent");
             break;
         case NODE_TYPE_SERVER:
-            rc = strcpy_s(nodeType, NODE_TYPE_LEN, "cm_server.conf");
+            rc1 = strcpy_s(nodeType, NODE_TYPE_LEN, "cm_server.conf");
+            rc2 = strcpy_s(cmNodeType, NODE_TYPE_LEN, "server");
             break;
         case NODE_TYPE_UNDEF:
         default:
-            rc = strcpy_s(nodeType, NODE_TYPE_LEN, "unknown");
+            rc1 = strcpy_s(nodeType, NODE_TYPE_LEN, "unknown");
+            rc2 = strcpy_s(cmNodeType, NODE_TYPE_LEN, "unknown");
             break;
     }
-    securec_check_errno(rc, (void)rc);
+    securec_check_errno(rc1, (void)rc1);
+    securec_check_errno(rc2, (void)rc2);
 
     switch (ctx->guc.gucCommand) {
         case SET_CONF_COMMAND:
-            rc = strcpy_s(gucType, CONF_COMMAND_LEN, "set");
+            rc1 = strcpy_s(gucType, CONF_COMMAND_LEN, "set");
             break;
         case RELOAD_CONF_COMMAND:
-            rc = strcpy_s(gucType, CONF_COMMAND_LEN, "reload");
+            rc1 = strcpy_s(gucType, CONF_COMMAND_LEN, "reload");
             break;
         case LIST_CONF_COMMAND:
-            rc = strcpy_s(gucType, CONF_COMMAND_LEN, "list");
+            rc1 = strcpy_s(gucType, CONF_COMMAND_LEN, "list");
             break;
         case UNKNOWN_COMMAND:
         default:
             break;
     }
-    securec_check_errno(rc, (void)rc);
+    securec_check_errno(rc1, (void)rc1);
 
     if (isSuccess) {
         write_runlog(LOG, "%s %s success.\n", gucType, nodeType);
+        if (ctl_command == CM_SET_COMMAND) {
+            write_runlog(LOG, "HINT: For the setting to take effect, you should execute \'cm_ctl reload --param --%s\'.\n",
+                cmNodeType);
+        }
         return;
     }
     write_runlog(ERROR, "%s %s fail.\n", gucType, nodeType);

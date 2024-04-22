@@ -263,10 +263,13 @@ void process_agent_to_cm_heartbeat_msg(
 void process_agent_to_cm_disk_usage_msg(const AgentToCmDiskUsageStatusReport *diskUsage)
 {
     const int maxUsage = 100;
-    if (diskUsage->dataPathUsage > maxUsage || diskUsage->logPathUsage > maxUsage) {
+    if (diskUsage->dataPathUsage > maxUsage || diskUsage->logPathUsage > maxUsage ||
+        diskUsage->vgdataPathUsage > maxUsage || diskUsage->vglogPathUsage > maxUsage) {
         write_runlog(ERROR,
-            "the percentage of disk usage is illegal, it must be [0-100], dataDiskUsage=%u, logDiskUsage=%u.\n",
-            diskUsage->dataPathUsage, diskUsage->logPathUsage);
+            "the percentage of disk usage is illegal, it must be [0-100], dataDiskUsage=%u,"
+            "logDiskUsage=%u, vgdataDiskUsage=%u, vglogDiskUsage:%u.\n",
+            diskUsage->dataPathUsage, diskUsage->logPathUsage,
+            diskUsage->vgdataPathUsage, diskUsage->vglogPathUsage);
         return;
     }
 
@@ -288,6 +291,8 @@ void process_agent_to_cm_disk_usage_msg(const AgentToCmDiskUsageStatusReport *di
             DataNodeReadOnlyInfo *curDn = &curNodeInfo->dataNode[j];
             if (diskUsage->instanceId == curDn->instanceId) {
                 curDn->dataDiskUsage = diskUsage->dataPathUsage;
+                curDn->vgdataDiskUsage = diskUsage->vgdataPathUsage;
+                curDn->vglogDiskUsage = diskUsage->vglogPathUsage;
                 curDn->readOnly = diskUsage->readOnly;
                 curDn->instanceType = INSTANCE_TYPE_DATANODE;
                 curNodeInfo->logDiskUsage = diskUsage->logPathUsage;

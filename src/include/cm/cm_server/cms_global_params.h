@@ -100,6 +100,8 @@ typedef struct DataNodeReadOnlyInfoT {
     uint32 node;
     uint32 instanceId;
     uint32 dataDiskUsage;
+    uint32 vgdataDiskUsage;
+    uint32 vglogDiskUsage;
     int instanceType;
     char ddbValue;
     bool readOnly;

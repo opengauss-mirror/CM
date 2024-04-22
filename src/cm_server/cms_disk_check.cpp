@@ -124,6 +124,8 @@ static void InitDnReadOnlyInfo(DataNodeReadOnlyInfo *instance, uint32 i, uint32 
 {
     instance->instanceId = g_node[i].datanode[j].datanodeId;
     instance->dataDiskUsage = 0;
+    instance->vgdataDiskUsage = 0;
+    instance->vglogDiskUsage = 0;
     instance->ddbValue = 0;
     instance->node = g_node[i].node;
     instance->finalState = false;
@@ -219,7 +221,10 @@ static ReadOnlyFsmEvent GetReadOnlyFsmEvent(const DataNodeReadOnlyInfo *instance
 {
     if (instance->dataDiskUsage == 0) {
         return DISK_USAGE_INIT;
-    } else if (instance->dataDiskUsage >= g_readOnlyThreshold) {
+    } else if (GetIsSharedStorageMode() && instance->vgdataDiskUsage == 0) {
+        return DISK_USAGE_INIT;
+    } else if (instance->dataDiskUsage >= g_readOnlyThreshold ||
+        instance->vgdataDiskUsage >= g_readOnlyThreshold || instance->vglogDiskUsage >= g_readOnlyThreshold) {
         g_allHealth = false;
         return DISK_USAGE_EXCEEDS_THRESHOLD;
     } else {
@@ -326,7 +331,7 @@ static void PreAlarmForNodeThreshold()
         DynamicNodeReadOnlyInfo *curNodeInfo = &g_dynamicNodeReadOnlyInfo[i];
         /* log usage */
         if (curNodeInfo->logDiskUsage >= preAlarmThreshhold) {
-            write_runlog(LOG, "[%s] [logDisk usage] Pre Alarm threshold reached, node=%u, usage=%u.\n",
+            write_runlog(LOG, "[%s] [logDisk usage] Pre Alarm threshold reached, node=%u, log_disk_usage=%u.\n",
                 __FUNCTION__, g_node[i].node, curNodeInfo->logDiskUsage);
             ReportLogStorageAlarm(ALM_AT_Fault, curNodeInfo->instanceName, i);
         } else {
@@ -346,9 +351,12 @@ static void PreAlarmForNodeThreshold()
         /* DN */
         for (uint32 j = 0; j < curNodeInfo->dataNodeCount; j++) {
             DataNodeReadOnlyInfo *curDn = &curNodeInfo->dataNode[j];
-            if (curDn->dataDiskUsage >= preAlarmThreshhold) {
-                write_runlog(LOG, "[%s] [dataDisk usage] Pre Alarm threshold reached, instanceId=%u, usage=%u\n",
-                    __FUNCTION__,  curDn->instanceId, curDn->dataDiskUsage);
+            if (curDn->dataDiskUsage >= preAlarmThreshhold || curDn->vgdataDiskUsage >= preAlarmThreshhold ||
+                curDn->vglogDiskUsage >= preAlarmThreshhold) {
+                write_runlog(LOG, "[%s] [dataDisk usage] Pre Alarm threshold reached, instanceId=%u,"
+                    "disk_usage=%u, shared_disk_usage_for_data=%u, shared_disk_usage_for_log=%u.\n",
+                    __FUNCTION__,  curDn->instanceId, curDn->dataDiskUsage,
+                    curDn->vgdataDiskUsage, curDn->vglogDiskUsage);
                 ReportReadOnlyPreAlarm(ALM_AT_Fault, curDn->instanceName, curDn->instanceId);
             } else {
                 ReportReadOnlyPreAlarm(ALM_AT_Resume, curDn->instanceName, curDn->instanceId);
@@ -360,11 +368,10 @@ static void PreAlarmForNodeThreshold()
 static bool IsStorageDetectContinue()
 {
     bool isEnable = IsBoolCmParamTrue(g_enableSetReadOnly);
-    bool isNotShareDisk = g_dnArbitrateMode != SHARE_DISK;
     bool isPrimary = g_HA_status->local_role == CM_SERVER_PRIMARY;
     bool isNeedSyncDdb = IsNeedSyncDdb();
     bool isNotUpgrade = undocumentedVersion == 0;
-    return (isEnable && isPrimary && isNeedSyncDdb && isNotShareDisk && isNotUpgrade);
+    return (isEnable && isPrimary && isNeedSyncDdb && isNotUpgrade);
 }
 
 static void GetReadOnlyCmd(char *command, size_t commandLen, const DataNodeReadOnlyInfo *instance, bool readOnly)
@@ -400,9 +407,12 @@ static bool IsPeerPrimaryReadOnly(DataNodeReadOnlyInfo *instance)
 
 bool ReadOnlyActDoNoting(DataNodeReadOnlyInfo *instance)
 {
-    if (instance->dataDiskUsage >= g_readOnlyThreshold) {
-        write_runlog(LOG, "[%s] instance %u is transaction read only, disk_usage:%u, read_only_threshold:%u\n",
-            __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+    if (instance->dataDiskUsage >= g_readOnlyThreshold || instance->vgdataDiskUsage >= g_readOnlyThreshold ||
+        instance->vglogDiskUsage >= g_readOnlyThreshold) {
+        write_runlog(LOG, "[%s] instance %u is transaction read only, disk_usage:%u,"
+            "shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
+            __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
+            instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
     }
     instance->finalState = true;
     return false;
@@ -411,8 +421,9 @@ bool ReadOnlyActDoNoting(DataNodeReadOnlyInfo *instance)
 bool ReadOnlyActSetDdbTo0(DataNodeReadOnlyInfo *instance)
 {
     write_runlog(LOG, "[%s] instance %u is not read only and ddb is 1, need set ddb to 0,"
-        "disk_usage:%u, read_only_threshold:%u\n",
-        __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+        "disk_usage:%u, shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
+        __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
+        instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
     instance->ddbValue = 0;
     instance->finalState = false;
     return true;
@@ -421,8 +432,9 @@ bool ReadOnlyActSetDdbTo0(DataNodeReadOnlyInfo *instance)
 bool ReadOnlyActSetDdbTo1(DataNodeReadOnlyInfo *instance)
 {
     write_runlog(LOG, "[%s] instance %u is not read only and ddb is 0, need set ddb to 1,"
-        " disk_usage:%u, read_only_threshold:%u\n",
-        __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+        " disk_usage:%u, shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
+        __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
+        instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
     instance->ddbValue = 1;
     instance->finalState = false;
     return true;
@@ -431,8 +443,9 @@ bool ReadOnlyActSetDdbTo1(DataNodeReadOnlyInfo *instance)
 bool ReadOnlyActSetReadOnlyOn(DataNodeReadOnlyInfo *instance)
 {
     write_runlog(LOG, "[%s] instance %u is not read only and ddb is 1, set default_transaction_read_only on,"
-        " disk_usage:%u, read_only_threshold:%u\n",
-        __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+        " disk_usage:%u, shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
+        __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
+        instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
 
     instance->finalState = false;
     char command[CM_MAX_COMMAND_LEN] = {0};
@@ -452,8 +465,9 @@ bool ReadOnlyActSetReadOnlyOn(DataNodeReadOnlyInfo *instance)
 bool ReadOnlyActSetReadOnlyOff(DataNodeReadOnlyInfo *instance)
 {
     write_runlog(LOG, "[%s] instance %u is read only and ddb is 1, set default_transaction_read_only off,"
-        " disk_usage:%u, read_only_threshold:%u\n",
-        __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+        " disk_usage:%u, shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
+        __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
+        instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
 
     instance->finalState = false;
     char command[CM_MAX_COMMAND_LEN] = {0};
@@ -472,16 +486,20 @@ bool ReadOnlyActSetReadOnlyOff(DataNodeReadOnlyInfo *instance)
 
 bool ReadOnlyActRecordManuallySetReadOnly(DataNodeReadOnlyInfo *instance)
 {
-    write_runlog(WARNING, "[%s] instance %u set read only manually, disk_usage:%u, read_only_threshold:%u\n",
-        __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+    write_runlog(WARNING, "[%s] instance %u set read only manually, disk_usage:%u,"
+        "shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
+        __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
+        instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
     instance->finalState = false;
     return false;
 }
 
 bool ReadOnlyActSetDdbTo1Conditional(DataNodeReadOnlyInfo *instance)
 {
-    write_runlog(WARNING, "[%s] instance %u set read only manually, disk_usage:%u, read_only_threshold:%u\n",
-        __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+    write_runlog(WARNING, "[%s] instance %u set read only manually, disk_usage:%u,"
+        "shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
+        __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
+        instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
 
     instance->finalState = false;
     if (instance->instanceType == INSTANCE_TYPE_COORDINATE) {
@@ -499,8 +517,10 @@ bool ReadOnlyActSetDdbTo1Conditional(DataNodeReadOnlyInfo *instance)
 
 bool ReadOnlyActRecordDiskUsageAbnormal(DataNodeReadOnlyInfo *instance)
 {
-    write_runlog(WARNING, "[%s] instance %u disk usage abnormal, disk_usage:%u, read_only_threshold:%u\n",
-        __FUNCTION__, instance->instanceId, instance->dataDiskUsage, g_readOnlyThreshold);
+    write_runlog(WARNING, "[%s] instance %u disk usage abnormal, disk_usage:%u,"
+        "shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
+        __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
+        instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
     instance->finalState = false;
     return false;
 }

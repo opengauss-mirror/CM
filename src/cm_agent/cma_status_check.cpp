@@ -1414,6 +1414,31 @@ void* KerberosStatusCheckMain(void* arg)
     }
 }
 
+
+void CheckSharedDiskUsage(uint32 &vgdataPathUsage, uint32 &vglogPathUsage)
+{
+    FILE *fp;
+    char result[1024];
+    double percent1 = 0.0, percent2 = 0.0;
+
+    fp = popen("dsscmd lsvg | awk 'NR==2 || NR==3 {print $NF}'", "r");
+    if (fp == NULL) {
+        write_runlog(ERROR, "Failed to exec command(dsscmd lsvg).\n");
+    }
+
+    if (fgets(result, sizeof(result)-1, fp) != NULL) {
+        sscanf(result, "%lf", &percent1);
+    }
+    if (fgets(result, sizeof(result)-1, fp) != NULL) {
+        sscanf(result, "%lf", &percent2);
+    }
+
+    vgdataPathUsage = (uint)percent1;
+    vglogPathUsage = (uint)percent2;
+
+    pclose(fp);
+}
+
 /**
  * @brief Get DN node log path disk usage and datapath disk usage, send them to the CMS
  *
@@ -1428,6 +1453,14 @@ void CheckDiskForDNDataPath()
         status.dataPathUsage = GetDiskUsageForPath(g_currentNode->datanode[ii].datanodeLocalDataPath);
         status.readOnly = g_dnReadOnly[ii];
         status.instanceType = INSTANCE_TYPE_DATANODE;
+        if (IsCusResExistLocal()) {
+            CheckSharedDiskUsage(status.vgdataPathUsage, status.vglogPathUsage);
+            write_runlog(DEBUG1, "vgdataPathUsage:%u, vglogPathUsage:%u.\n",
+                status.vgdataPathUsage, status.vglogPathUsage);
+        } else {
+            status.vgdataPathUsage = 0;
+            status.vglogPathUsage = 0;
+        }
 
         write_runlog(DEBUG1, "[%s] msgType:%d, instanceId:%u, logPathUsage:%u, dataPathUsage:%u.\n",
             __FUNCTION__, status.msgType, status.instanceId, status.logPathUsage, status.dataPathUsage);

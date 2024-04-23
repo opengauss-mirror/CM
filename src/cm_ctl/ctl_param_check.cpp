@@ -130,6 +130,7 @@ const char *g_cmsParamInfo[] = {
 #ifndef ENABLE_PRIVATEGAUSS
     "wait_static_primary_times|int|5,2147483647|NULL|NULL|",
 #endif
+    "ss_double_cluster_mode|int|0,2|NULL|NULL|",
 };
 
 const char *g_valueTypeStr[] = {

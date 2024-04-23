@@ -28,6 +28,8 @@
 #include "ctl_common.h"
 #include "cm/libpq-int.h"
 #include "cm/cm_agent/cma_main.h"
+#include "cm_elog.h"
+#include "cm_msg.h"
 
 /* If DN switch take long time and do not complete, it will timeout, pending_command will be clear in server_main.cpp
 CM_ThreadMonitorMain(), the default g_wait_seconds is 180s, we need to increase the g_wait_seconds to 1200s. */
@@ -59,6 +61,7 @@ extern bool wait_seconds_set;
 extern int g_waitSeconds;
 extern CM_Conn* CmServer_conn;
 extern char *g_command_operation_azName;
+SSDoubleClusterMode  g_ssDoubleClusterMode = SS_DOUBLE_NULL;
 
 static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
     NeedQuickSwitchoverInstanceArray* needQuickSwitchoverInstance, bool* is_cluster_balance,
@@ -69,11 +72,16 @@ static int GetDatapathByInstanceId(uint32 instanceId, int instanceType, char* da
 static int JudgeInstanceRole(int instanceType, int member_index, int instance_role, const CommonOption *commCtx);
 static int JudgeDatanodeStatus(uint32 node_id, const char *data_path, int db_state);
 static int JudgeGtmStatus(uint32 node_id, const char *data_path, int gtm_state);
+static void GetClusterMode();
 
 static void SetSwitchoverOper(SwitchoverOper *oper, int32 localRole, uint32 instanceId)
 {
     if (localRole == INSTANCE_ROLE_STANDBY) {
-        oper->localRole = INSTANCE_ROLE_PRIMARY;
+        if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+            oper->localRole = INSTANCE_ROLE_MAIN_STANDBY;
+        } else {
+            oper->localRole = INSTANCE_ROLE_PRIMARY;
+        }
         oper->peerRole = INSTANCE_ROLE_STANDBY;
     } else if (localRole == INSTANCE_ROLE_CASCADE_STANDBY) {
         oper->localRole = INSTANCE_ROLE_STANDBY;
@@ -101,7 +109,12 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     cm_to_ctl_command_ack *ackMsg = NULL;
     cm_to_ctl_instance_status *instStatusPtr = NULL;
     cm_switchover_incomplete_msg *switchoverIncompletePtr = NULL;
-    SwitchoverOper oper = {INSTANCE_ROLE_PRIMARY, INSTANCE_ROLE_STANDBY};
+    SwitchoverOper oper;
+    if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+        oper = {INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_STANDBY};
+    } else {
+        oper = {INSTANCE_ROLE_PRIMARY, INSTANCE_ROLE_STANDBY};
+    }
 
     // return conn to cm_server
     do_conn_cmserver(false, 0);
@@ -1489,6 +1502,7 @@ static int GetDatapathByInstanceId(uint32 instanceId, int instanceType, char* da
 
 int DoSwitchover(const CtlOption *ctx)
 {
+    GetClusterMode();
     if (ctx->switchover.switchoverAll) {
         if (switchover_all_quick && g_clusterType != V3SingleInstCluster) {
             return DoSwitchoverAllQuick();
@@ -1509,4 +1523,25 @@ int DoSwitchover(const CtlOption *ctx)
     }
 
     return DoSwitchoverBase(ctx);
+}
+
+static void GetClusterMode()
+{
+    errno_t rc;
+    char cmDir[CM_PATH_LENGTH] = { 0 };
+    char configDir[CM_PATH_LENGTH] = { 0 };
+
+    rc = memcpy_s(cmDir, sizeof(cmDir), g_currentNode->cmDataPath, sizeof(cmDir));
+    securec_check_errno(rc, (void)rc);
+
+    if (cmDir[0] == '\0') {
+        write_runlog(ERROR, "Failed to get cm base data path from static config file.");
+        exit(-1);
+    }
+
+    rc = snprintf_s(configDir, sizeof(configDir), sizeof(configDir) - 1, "%s/cm_agent/cm_agent.conf", cmDir);
+    securec_check_intval(rc, (void)rc);
+
+    g_ssDoubleClusterMode =
+        (SSDoubleClusterMode)get_uint32_value_from_config(configDir, "ss_double_cluster_mode", SS_DOUBLE_NULL);
 }

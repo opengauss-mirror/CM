@@ -660,7 +660,6 @@ typedef struct cm_to_agent_failover_st {
     uint32 instanceId;
     int instance_type;
     int wait_seconds;
-    int32 staPrimId;
     uint32 term;
 } cm_to_agent_failover;
 

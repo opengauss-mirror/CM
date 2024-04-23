@@ -443,7 +443,7 @@ void GetDnFailoverCommand(char *command, uint32 cmdLen, const char *dataDir, uin
     securec_check_intval(rc, (void)rc);
 }
 
-static void process_failover_command(const char* dataDir, int instanceType, uint32 instance_id, uint32 term, int32 staPrimId)
+static void process_failover_command(const char* dataDir, int instanceType, uint32 instance_id, uint32 term)
 {
     char command[MAXPGPATH];
     errno_t rc;
@@ -501,7 +501,7 @@ static void process_failover_command(const char* dataDir, int instanceType, uint
     RunCmd(command);
 
     if (instanceType == INSTANCE_TYPE_DATANODE) {
-        ExecuteEventTrigger(EVENT_FAILOVER, staPrimId);
+        ExecuteEventTrigger(EVENT_FAILOVER);
     }
 
     return;
@@ -1410,7 +1410,6 @@ static void MsgCmAgentFailover(const AgentMsgPkg* msg, char *dataPath, const cm_
         return;
     }
     uint32 term = msgTypeFailoverPtr->term;
-    int32 staPrimId = msgTypeFailoverPtr->staPrimId;
     ret = FindInstancePathAndType(
         msgTypeFailoverPtr->node, msgTypeFailoverPtr->instanceId, dataPath, &instanceType);
     if (ret != 0) {
@@ -1420,7 +1419,7 @@ static void MsgCmAgentFailover(const AgentMsgPkg* msg, char *dataPath, const cm_
             msgTypeFailoverPtr->instanceId);
         return;
     }
-    process_failover_command(dataPath, instanceType, msgTypeFailoverPtr->instanceId, term, staPrimId);
+    process_failover_command(dataPath, instanceType, msgTypeFailoverPtr->instanceId, term);
 }
 
 static void MsgCmAgentBuild(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)

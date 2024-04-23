@@ -71,7 +71,6 @@ agent_network_timeout = 6
 dn_arbitrate_mode = quorum
 delay_arbitrate_max_cluster_timeout = 300 # When resources are in the startup process, delay arbitration of the maximum cluster.
 third_party_gateway_ip = ''				 # used in 2 nodes cluster for ddb role arbitration with network isolation, 
-                                         # support multiple iP addresses separated by commas, like '172.0.0.1,172.0.0.2'
 										 # when cms_enable_failover_on2nodes is true.
 										 # default ''. if cms_enable_failover_on2nodes is true, this param must be configured.
 cms_enable_failover_on2nodes = false	 # used in 2 nodes cluster. if true, will use third_party_gateway_ip as an arbitrator, 

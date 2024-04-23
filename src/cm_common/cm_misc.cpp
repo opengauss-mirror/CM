@@ -1322,7 +1322,6 @@ status_t IsReachableIP(char *ip)
     if (ip == nullptr) {
         return CM_ERROR;
     }
-
     char cmd[MAXPGPATH] = {0};
     int rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "timeout 2 ping -c 2 %s > /dev/null 2>&1", ip);
     securec_check_intval(rc, (void)rc);

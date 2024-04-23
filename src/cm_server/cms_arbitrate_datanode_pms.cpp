@@ -1394,17 +1394,6 @@ static bool InstanceForceFinishRedo(DnArbCtx *ctx)
     return false;
 }
 
-static void SetFailoverMsgStaPriID(DnArbCtx *ctx,  cm_to_agent_failover* failover_msg_ptr) {
-    ArbiCond *cond = &(ctx->cond);
-    if (cond->staticPriIdx != INVALID_INDEX) {
-        cm_instance_role_status *role = ctx->roleGroup->instanceMember;
-        failover_msg_ptr->staPrimId = role[cond->staticPriIdx].instanceId;
-    }
-    else {
-        failover_msg_ptr->staPrimId = INVALID_INDEX;
-    }
-}
-
 static bool InstanceForceFailover(DnArbCtx *ctx)
 {
     bool res = InstanceForceFinishRedo(ctx);
@@ -1421,7 +1410,6 @@ static bool InstanceForceFailover(DnArbCtx *ctx)
         if (cond->candiIdx == ctx->memIdx && CanFailoverDn(isMajority) &&
             cond->redoDone > HALF_COUNT(cond->vaildCount)) {
             cm_to_agent_failover failoverMsg;
-            SetFailoverMsgStaPriID(ctx, &failoverMsg);
             send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
             write_runlog(LOG, "[ForceFailover], line %d: Redo done, non force failover message sent to instance %u, "
                 "requested by cm_ctl, arbitrate_time=%u\n", __LINE__, ctx->instId, cond->maxMemArbiTime);
@@ -1776,7 +1764,6 @@ static void SendFailoverMsg(DnArbCtx *ctx, uint32 arbitInterval, bool isStaPrim,
     ctx->repGroup->time = 0;
     ClearDnArbiCond(ctx->groupIdx, CLEAR_ARBI_TIME);
     cm_to_agent_failover failoverMsg;
-    SetFailoverMsgStaPriID(ctx, &failoverMsg);
     if ((!cond->instMainta && !IsSyncListEmpty(ctx->groupIdx, ctx->instId, ctx->maintaMode)) || isStaPrim) {
         GroupStatusShow(sfMsg->tyName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
         send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
@@ -1935,7 +1922,6 @@ static void SendFailoverInQuarmBackup(DnArbCtx *ctx)
     cm_to_agent_failover failoverMsg;
     if (!cond->instMainta || ctx->localRole->role == INSTANCE_ROLE_PRIMARY) {
         GroupStatusShow(sfMsg.tyName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
-        SetFailoverMsgStaPriID(ctx, &failoverMsg);
         send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
         ctx->repGroup->lastFailoverDn = ctx->instId;
         write_runlog(LOG, "%s, line %d: Failover message has sent to instance %u, %s.\n",

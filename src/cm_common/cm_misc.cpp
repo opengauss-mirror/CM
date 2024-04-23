@@ -1322,25 +1322,11 @@ status_t IsReachableIP(char *ip)
     if (ip == nullptr) {
         return CM_ERROR;
     }
-    char tmpIp[CM_IP_LENGTH];
-    int rc = -1;
-    rc = strcpy_s(tmpIp, CM_IP_LENGTH, ip);
-    securec_check_errno(rc, (void)rc);
-    char *saveptr = NULL;
-    char *token = strtok_r(tmpIp, ",", &saveptr);
     char cmd[MAXPGPATH] = {0};
-    while (token != NULL) {
-        rc = memset_s(cmd, MAXPGPATH, 0, MAXPGPATH);
-        securec_check_errno(rc, (void)rc);
-        rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "timeout 2 ping -c 2 %s > /dev/null 2>&1", token);
-        securec_check_intval(rc, (void)rc);
-        rc = system(cmd);
-        if (rc == 0) {
-            return CM_SUCCESS;
-        }
-        token = strtok_r(NULL, ",", &saveptr);
-    }
-    return CM_ERROR;
+    int rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "timeout 2 ping -c 2 %s > /dev/null 2>&1", ip);
+    securec_check_intval(rc, (void)rc);
+    rc = system(cmd);
+    return rc == 0 ? CM_SUCCESS : CM_ERROR;
 }
 
 bool IsIPAddrValid(const char *ipAddr)

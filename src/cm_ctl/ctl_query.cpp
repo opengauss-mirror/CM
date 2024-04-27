@@ -1276,68 +1276,60 @@ static status_t PrintResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_c
 
         if (cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role == INSTANCE_ROLE_PRIMARY) {
             if (g_node[node_index].datanode[instance_index].datanodePeerRole == STANDBY_DN ||
-                g_node[node_index].datanode[instance_index].datanodePeerRole == PRIMARY_DN) {
+                g_node[node_index].datanode[instance_index].datanodePeerRole == DUMMY_STANDBY_DN) {
                 (void)fprintf(g_logFilePtr,
                     "standby_node              : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeerHAIP[0]);
                 (void)fprintf(g_logFilePtr,
                     "standby_data_path         : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeerDataPath);
-            }
-            if (g_node[node_index].datanode[instance_index].datanodePeer2Role == STANDBY_DN ||
-                g_node[node_index].datanode[instance_index].datanodePeer2Role == PRIMARY_DN) {
-                (void)fprintf(g_logFilePtr,
-                    "standby_node              : %s\n",
-                    g_node[node_index].datanode[instance_index].datanodePeer2HAIP[0]);
-                (void)fprintf(g_logFilePtr,
-                    "standby_data_path         : %s\n",
-                    g_node[node_index].datanode[instance_index].datanodePeer2DataPath);
-            }
 
-            (void)fprintf(g_logFilePtr,
-                "standby_state             : %s\n",
-                datanode_role_int_to_string(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].peer_role));
-            (void)fprintf(g_logFilePtr,
-                "sender_sent_location      : %X/%X\n",
-                (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_sent_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_sent_location);
-            (void)fprintf(g_logFilePtr,
-                "sender_write_location     : %X/%X\n",
-                (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_write_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_write_location);
-            (void)fprintf(g_logFilePtr,
-                "sender_flush_location     : %X/%X\n",
-                (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_flush_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_flush_location);
-            (void)fprintf(g_logFilePtr,
-                "sender_replay_location    : %X/%X\n",
-                (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_replay_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_replay_location);
-            (void)fprintf(g_logFilePtr,
-                "receiver_received_location: %X/%X\n",
-                (uint32)(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_received_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_received_location);
-            (void)fprintf(g_logFilePtr,
-                "receiver_write_location   : %X/%X\n",
-                (uint32)(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_write_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_write_location);
-            (void)fprintf(g_logFilePtr,
-                "receiver_flush_location   : %X/%X\n",
-                (uint32)(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_flush_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_flush_location);
-            (void)fprintf(g_logFilePtr,
-                "receiver_replay_location  : %X/%X\n",
-                (uint32)(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_replay_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_replay_location);
-            (void)fprintf(g_logFilePtr,
-                "sync_state                : %s\n",
-                datanode_wal_sync_state_int_to_string(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sync_state));
+                (void)fprintf(g_logFilePtr,
+                    "standby_state             : %s\n",
+                    datanode_role_int_to_string(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].peer_role));
+                (void)fprintf(g_logFilePtr,
+                    "sender_sent_location      : %X/%X\n",
+                    (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_sent_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_sent_location);
+                (void)fprintf(g_logFilePtr,
+                    "sender_write_location     : %X/%X\n",
+                    (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_write_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_write_location);
+                (void)fprintf(g_logFilePtr,
+                    "sender_flush_location     : %X/%X\n",
+                    (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_flush_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_flush_location);
+                (void)fprintf(g_logFilePtr,
+                    "sender_replay_location    : %X/%X\n",
+                    (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_replay_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sender_replay_location);
+                (void)fprintf(g_logFilePtr,
+                    "receiver_received_location: %X/%X\n",
+                    (uint32)(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_received_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_received_location);
+                (void)fprintf(g_logFilePtr,
+                    "receiver_write_location   : %X/%X\n",
+                    (uint32)(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_write_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_write_location);
+                (void)fprintf(g_logFilePtr,
+                    "receiver_flush_location   : %X/%X\n",
+                    (uint32)(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_flush_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_flush_location);
+                (void)fprintf(g_logFilePtr,
+                    "receiver_replay_location  : %X/%X\n",
+                    (uint32)(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_replay_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].receiver_replay_location);
+                (void)fprintf(g_logFilePtr,
+                    "sync_state                : %s\n",
+                    datanode_wal_sync_state_int_to_string(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[0].sync_state));
+                }
+
             if (g_node[node_index].datanode[instance_index].datanodePeerRole == DUMMY_STANDBY_DN) {
                 (void)fprintf(g_logFilePtr,
                     "secondary_node            : %s\n",
@@ -1346,6 +1338,62 @@ static status_t PrintResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_c
                     "secondary_data_path       : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeerDataPath);
             }
+
+            if (g_node[node_index].datanode[instance_index].datanodePeer2Role == STANDBY_DN ||
+                g_node[node_index].datanode[instance_index].datanodePeer2Role == DUMMY_STANDBY_DN) {
+                (void)fprintf(g_logFilePtr,
+                    "standby_node              : %s\n",
+                    g_node[node_index].datanode[instance_index].datanodePeer2HAIP[0]);
+                (void)fprintf(g_logFilePtr,
+                    "standby_data_path         : %s\n",
+                    g_node[node_index].datanode[instance_index].datanodePeer2DataPath);
+            
+                (void)fprintf(g_logFilePtr,
+                    "secondary_state           : %s\n",
+                    datanode_role_int_to_string(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].peer_role));
+                (void)fprintf(g_logFilePtr,
+                    "sender_sent_location      : %X/%X\n",
+                    (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_sent_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_sent_location);
+                (void)fprintf(g_logFilePtr,
+                    "sender_write_location     : %X/%X\n",
+                    (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_write_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_write_location);
+                (void)fprintf(g_logFilePtr,
+                    "sender_flush_location     : %X/%X\n",
+                    (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_flush_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_flush_location);
+                (void)fprintf(g_logFilePtr,
+                    "sender_replay_location    : %X/%X\n",
+                    (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_replay_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_replay_location);
+                (void)fprintf(g_logFilePtr,
+                    "receiver_received_location: %X/%X\n",
+                    (uint32)(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_received_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_received_location);
+                (void)fprintf(g_logFilePtr,
+                    "receiver_write_location   : %X/%X\n",
+                    (uint32)(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_write_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_write_location);
+                (void)fprintf(g_logFilePtr,
+                    "receiver_flush_location   : %X/%X\n",
+                    (uint32)(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_flush_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_flush_location);
+                (void)fprintf(g_logFilePtr,
+                    "receiver_replay_location  : %X/%X\n",
+                    (uint32)(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_replay_location >> 32),
+                    (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_replay_location);
+                (void)fprintf(g_logFilePtr,
+                    "sync_state                : %s\n\n",
+                    datanode_wal_sync_state_int_to_string(
+                        cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sync_state));
+            }
+
             if (g_node[node_index].datanode[instance_index].datanodePeer2Role == DUMMY_STANDBY_DN) {
                 (void)fprintf(g_logFilePtr,
                     "secondary_node            : %s\n",
@@ -1354,50 +1402,7 @@ static status_t PrintResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_c
                     "secondary_data_path       : %s\n",
                     g_node[node_index].datanode[instance_index].datanodePeer2DataPath);
             }
-            (void)fprintf(g_logFilePtr,
-                "secondary_state           : %s\n",
-                datanode_role_int_to_string(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].peer_role));
-            (void)fprintf(g_logFilePtr,
-                "sender_sent_location      : %X/%X\n",
-                (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_sent_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_sent_location);
-            (void)fprintf(g_logFilePtr,
-                "sender_write_location     : %X/%X\n",
-                (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_write_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_write_location);
-            (void)fprintf(g_logFilePtr,
-                "sender_flush_location     : %X/%X\n",
-                (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_flush_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_flush_location);
-            (void)fprintf(g_logFilePtr,
-                "sender_replay_location    : %X/%X\n",
-                (uint32)(cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_replay_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sender_replay_location);
-            (void)fprintf(g_logFilePtr,
-                "receiver_received_location: %X/%X\n",
-                (uint32)(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_received_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_received_location);
-            (void)fprintf(g_logFilePtr,
-                "receiver_write_location   : %X/%X\n",
-                (uint32)(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_write_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_write_location);
-            (void)fprintf(g_logFilePtr,
-                "receiver_flush_location   : %X/%X\n",
-                (uint32)(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_flush_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_flush_location);
-            (void)fprintf(g_logFilePtr,
-                "receiver_replay_location  : %X/%X\n",
-                (uint32)(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_replay_location >> 32),
-                (uint32)cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].receiver_replay_location);
-            (void)fprintf(g_logFilePtr,
-                "sync_state                : %s\n\n",
-                datanode_wal_sync_state_int_to_string(
-                    cm_to_ctl_instance_status_ptr->data_node_member.sender_status[1].sync_state));
+
         } else {
             (void)fprintf(g_logFilePtr,
                 "sender_sent_location      : %X/%X\n",

@@ -1391,6 +1391,12 @@ static void normal_shutdown_nodes(void)
         NormalShutdownAllDatanode();
     }
 
+    /* resource */
+    if (IsCusResExistLocal()) {
+        write_runlog(LOG, "normal_shutdown_nodes, %u resource will be stopped.\n", GetLocalResConfCount());
+        StopAllResInst();
+    }
+
     /* cm_server */
     if (g_currentNode->cmServerLevel == 1) {
         write_runlog(LOG, "cm_server normal shutdown, datapath: %s.\n", g_currentNode->cmDataPath);
@@ -1401,12 +1407,6 @@ static void normal_shutdown_nodes(void)
     if (g_currentNode->gtm == 1) {
         write_runlog(LOG, "gtm normal shutdown, path: %s.\n", g_currentNode->gtmLocalDataPath);
         fast_stop_one_instance(g_currentNode->gtmLocalDataPath, INSTANCE_GTM);
-    }
-
-    /* resource */
-    if (IsCusResExistLocal()) {
-        write_runlog(LOG, "normal_shutdown_nodes, %u resource will be stopped.\n", GetLocalResConfCount());
-        StopAllResInst();
     }
 }
 

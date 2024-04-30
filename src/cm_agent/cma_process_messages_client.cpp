@@ -323,7 +323,8 @@ static void ProcessUnregResInst(const CmsNotifyAgentRegMsg *recvMsg)
     ResIsregStatus isreg = IsregOneResInst(local, recvMsg->resInstId);
     if (isreg == CM_RES_ISREG_UNREG) {
         write_runlog(LOG, "local res inst[%s:%u] has been unreg.\n", recvMsg->resName, recvMsg->resInstId);
-    } else if ((isreg == CM_RES_ISREG_REG) || (isreg == CM_RES_ISREG_PENDING)) {
+    } else if ((isreg == CM_RES_ISREG_REG) || (isreg == CM_RES_ISREG_PENDING) ||
+        (recvMsg->resStat == CM_RES_ISREG_REG) || (recvMsg->resStat == CM_RES_ISREG_PENDING)) {
         (void)UnregOneResInst(local, recvMsg->resInstId);
     } else if (isreg == CM_RES_ISREG_NOT_SUPPORT) {
         write_runlog(LOG, "res inst[%s:%u] don't support reg, not need unreg.\n", recvMsg->resName, recvMsg->resInstId);

@@ -2068,6 +2068,7 @@ typedef struct CmsNotifyAgentRegMsgSt {
     uint32 nodeId;  // reg node or unreg node
     uint32 resInstId;  // reg node or unreg res inst
     char resName[CM_MAX_RES_NAME];
+    ResIsregStatus resStat;
 } CmsNotifyAgentRegMsg;
 
 typedef struct CmsFlushIsregCheckListSt {

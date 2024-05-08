@@ -559,13 +559,14 @@ status_t GetAllResStatusFromDdb()
     return CM_SUCCESS;
 }
 
-void SendRegMsgToCma(uint32 destNodeId, int resMode, uint32 resInstId, const char *resName)
+void SendRegMsgToCma(uint32 destNodeId, int resMode, uint32 resInstId, const char *resName, ResIsregStatus resStat)
 {
     CmsNotifyAgentRegMsg sendMsg = {0};
     sendMsg.msgType = (int32)MSG_CM_RES_REG;
     sendMsg.resMode = resMode;
     sendMsg.nodeId = destNodeId;
     sendMsg.resInstId = resInstId;
+    sendMsg.resStat = resStat;
     errno_t rc = strcpy_s(sendMsg.resName, CM_MAX_RES_NAME, resName);
     securec_check_errno(rc, (void)rc);
 
@@ -590,7 +591,7 @@ void NotifyCmaDoReg(uint32 destNodeId)
             if (isreg == CM_RES_ISREG_REG) {
                 UpdateIsworkList(resInfo->resStat[j].cmInstanceId, RES_INST_WORK_STATUS_AVAIL);
             } else if (isreg == CM_RES_ISREG_UNREG || isreg == CM_RES_ISREG_PENDING || isreg == CM_RES_ISREG_INIT) {
-                SendRegMsgToCma(destNodeId, 1, resInfo->resStat[j].resInstanceId, resInfo->resName);
+                SendRegMsgToCma(destNodeId, 1, resInfo->resStat[j].resInstanceId, resInfo->resName, isreg);
             } else if (isreg == CM_RES_ISREG_NOT_SUPPORT && resInfo->resStat[j].status == (uint32)CM_RES_STAT_OFFLINE) {
                 UpdateIsworkList(resInfo->resStat[j].cmInstanceId, RES_INST_WORK_STATUS_AVAIL);
             }
@@ -608,7 +609,7 @@ void NotifyCmaDoUnreg(uint32 destNodeId)
             }
             ResIsregStatus isreg = GetIsregStatusByCmInstId(g_resStatus[i].status.resStat[j].cmInstanceId);
             if (isreg == CM_RES_ISREG_REG || isreg == CM_RES_ISREG_PENDING || isreg == CM_RES_ISREG_INIT) {
-                SendRegMsgToCma(destNodeId, 0, resInfo->resStat[j].resInstanceId, resInfo->resName);
+                SendRegMsgToCma(destNodeId, 0, resInfo->resStat[j].resInstanceId, resInfo->resName, isreg);
             } else if (isreg == CM_RES_ISREG_UNREG || isreg == CM_RES_ISREG_NOT_SUPPORT) {
                 UpdateIsworkList(g_resStatus[i].status.resStat[j].cmInstanceId, RES_INST_WORK_STATUS_UNAVAIL);
             }

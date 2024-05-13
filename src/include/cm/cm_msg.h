@@ -1239,6 +1239,8 @@ typedef struct {
     uint32 instanceId;
     uint32 dataPathUsage;
     uint32 logPathUsage;
+    uint32 vgdataPathUsage;
+    uint32 vglogPathUsage;
     int instanceType;
     bool readOnly;
     char reserved[16];

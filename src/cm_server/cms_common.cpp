@@ -608,6 +608,7 @@ void get_parameters_from_configfile()
     canonicalize_path(g_shareDiskPath);
     GetDdbArbiCfg(INIT_GET_PARAMTER);
     g_readOnlyThreshold = get_uint32_value_from_config(configDir, "datastorage_threshold_value_check", 85);
+    g_ss_enable_check_sys_disk_usage = get_uint32_value_from_config(configDir, "ss_enable_check_sys_disk_usage", 0);
     g_sslOption.expire_time = get_uint32_value_from_config(configDir, "ssl_cert_expire_alert_threshold",
         CM_DEFAULT_SSL_EXPIRE_THRESHOLD);
     g_sslCertExpireCheckInterval = get_uint32_value_from_config(configDir, "ssl_cert_expire_check_interval",

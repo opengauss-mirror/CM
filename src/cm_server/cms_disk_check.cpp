@@ -221,10 +221,12 @@ static ReadOnlyFsmEvent GetReadOnlyFsmEvent(const DataNodeReadOnlyInfo *instance
 {
     if (instance->dataDiskUsage == 0) {
         return DISK_USAGE_INIT;
-    } else if (GetIsSharedStorageMode() && instance->vgdataDiskUsage == 0) {
+    } else if (g_dnArbitrateMode == SHARE_DISK && instance->vgdataDiskUsage == 0) {
         return DISK_USAGE_INIT;
-    } else if (instance->dataDiskUsage >= g_readOnlyThreshold ||
-        instance->vgdataDiskUsage >= g_readOnlyThreshold || instance->vglogDiskUsage >= g_readOnlyThreshold) {
+    } else if (instance->vgdataDiskUsage >= g_readOnlyThreshold ||
+        instance->vglogDiskUsage >= g_readOnlyThreshold ||
+        (instance->dataDiskUsage >= g_readOnlyThreshold &&
+        (g_dnArbitrateMode != SHARE_DISK || g_ss_enable_check_sys_disk_usage))) {
         g_allHealth = false;
         return DISK_USAGE_EXCEEDS_THRESHOLD;
     } else {
@@ -505,7 +507,10 @@ bool ReadOnlyActSetDdbTo1Conditional(DataNodeReadOnlyInfo *instance)
     if (instance->instanceType == INSTANCE_TYPE_COORDINATE) {
         return false;
     }
-    if (IsPeerPrimaryReadOnly(instance)) {
+    if (g_dnArbitrateMode == SHARE_DISK) {
+        instance->ddbValue = 1;
+        return true;
+    } else if (IsPeerPrimaryReadOnly(instance)) {
         write_runlog(WARNING, "[%s] instance %u sync read only from primary, set ddb to 1\n",
             __FUNCTION__, instance->instanceId);
         /* Primary is set to read-only by cm, means total group is set to read-only by the CM */

@@ -139,6 +139,7 @@ char g_doradoIp[CM_IP_LENGTH] = {0};
 char g_votingDiskPath[MAX_PATH_LEN] = {0};
 
 uint32 g_readOnlyThreshold = 85;
+uint32 g_ss_enable_check_sys_disk_usage = 0;
 uint32 datastorage_threshold_check_interval = 10;
 uint32 ctl_stop_cluster_server_halt_arbitration_timeout = 0;
 uint32 arbitration_majority_reelection_timeout = majority_reelection_timeout_init;

@@ -411,6 +411,7 @@ extern uint32 g_diskTimeout;
 extern uint32 g_agentNetworkTimeout;
 extern DnArbitrateMode g_dnArbitrateMode;
 extern uint32 g_readOnlyThreshold;
+extern uint32 g_ss_enable_check_sys_disk_usage;
 extern bool do_finish_redo;
 extern bool isNeedCancel;
 extern bool g_init_cluster_mode;

@@ -41,6 +41,8 @@ enable_transaction_read_only = on
 datastorage_threshold_check_interval = 10
 #data directory threshold check
 datastorage_threshold_value_check = 85
+#enable check sys disk uasge in shared usage
+ss_enable_check_sys_disk_usage = 0
 #modify from read only to read write for recovery disk usage,12 hours default
 max_datastorage_threshold_check = 43200
 #enable switchover cross AZ

@@ -27,7 +27,7 @@
 
 #include "cm_misc.h"
 
-status_t StartOneResInst(const CmResConfList *conf);
+status_t StartOneResInst(CmResConfList *conf);
 void StopOneResInst(const CmResConfList *conf);
 void OneResInstShutdown(const CmResConfList *oneResConf);
 status_t RegOneResInst(const CmResConfList *conf, uint32 destInstId, bool8 needNohup);

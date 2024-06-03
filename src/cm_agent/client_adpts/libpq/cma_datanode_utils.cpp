@@ -255,6 +255,50 @@ int check_datanode_status_by_SQL0(agent_to_cm_datanode_status_report* report_msg
     return 0;
 }
 
+static bool datanode_realtime_build_string_to_int(const char* realtime_build_status)
+{
+    if (strcmp(realtime_build_status, "on") == 0) {
+        return true;
+    }
+
+    return false;
+}
+
+int check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
+{
+    int maxRows = 0;
+    int maxColums = 0;
+
+    const char* sqlCommands = "show ss_enable_ondemand_realtime_build;";
+    cltPqResult_t *node_result = Exec(g_dnConn[ii], sqlCommands);
+    if (node_result == NULL) {
+        write_runlog(ERROR, "sqlCommands[0] query realtime build status fail return NULL!\n");
+        CLOSE_CONNECTION(g_dnConn[ii]);
+    }
+    if ((ResultStatus(node_result) == CLTPQRES_CMD_OK) || (ResultStatus(node_result) == CLTPQRES_TUPLES_OK)) {
+        maxRows = Ntuples(node_result);
+        if (maxRows == 0) {
+            write_runlog(LOG, "sqlCommands[0] query realtime build status fail  is 0\n");
+            CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
+        } else {
+            maxColums = Nfields(node_result);
+            if (maxColums != 1) {
+                write_runlog(ERROR, "sqlCommands[0] query realtime build status fail  FAIL! col is %d\n", maxColums);
+                CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
+            }
+
+            report_msg->local_status.realtime_build_status =
+                datanode_realtime_build_string_to_int(Getvalue(node_result, 0, 0));
+        }
+    } else {
+        write_runlog(ERROR, "sqlCommands[0] query realtime build status fail  FAIL! Status=%d\n",
+            ResultStatus(node_result));
+        CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
+    }
+    Clear(node_result);
+    return 0;
+}
+
 /* DN instance status check SQL 1 */
 int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
 {

@@ -333,6 +333,12 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
     if (check_datanode_status_by_SQL0(reportMsg, dataNodeIndex) != 0) {
         return -1;
     }
+
+    /* check datanode realtime build status by sending sql*/
+    if (check_datanode_realtime_build_status_by_sql(reportMsg, dataNodeIndex) != 0) {
+        return -1;
+    }
+
     /* SQL6 check */
     if (check_datanode_status_by_SQL6(reportMsg, dataNodeIndex, dataPath) != 0) {
         return -1;

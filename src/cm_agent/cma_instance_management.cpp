@@ -1473,6 +1473,12 @@ void immediate_shutdown_nodes(bool kill_cmserver, bool kill_cn)
         ImmediateShutdownAllDatanode();
     }
 
+    /* resource */
+    if (IsCusResExistLocal()) {
+        write_runlog(LOG, "immediate_shutdown_nodes, %u resource will be stopped.\n", GetLocalResConfCount());
+        StopAllResInst();
+    }
+
     /* cm_server */
     if (g_currentNode->cmServerLevel == 1 && kill_cmserver) {
         write_runlog(LOG, "cm_server immediate shutdown, kill_intance_force():%s.\n", g_currentNode->cmDataPath);
@@ -1483,12 +1489,6 @@ void immediate_shutdown_nodes(bool kill_cmserver, bool kill_cn)
     if (g_currentNode->gtm == 1) {
         write_runlog(LOG, "gtm immediate shutdown, kill_instance_force(): %s.\n", g_currentNode->gtmLocalDataPath);
         immediate_stop_one_instance(g_currentNode->gtmLocalDataPath, INSTANCE_GTM);
-    }
-
-    /* resource */
-    if (IsCusResExistLocal()) {
-        write_runlog(LOG, "immediate_shutdown_nodes, %u resource will be stopped.\n", GetLocalResConfCount());
-        StopAllResInst();
     }
 }
 
@@ -1519,22 +1519,32 @@ void fast_shutdown_nodes(void)
         FastShutdownAllDatanode();
     }
 
+    /* resource */
+    if (IsCusResExistLocal()) {
+        write_runlog(LOG, "fast shutdown, %u resource process will be stopped.\n", GetLocalResConfCount());
+        StopAllResInst();
+    }
+       
     /* cm_server */
     if (g_currentNode->cmServerLevel == 1) {
         write_runlog(LOG, "cm_server fast shutdown, datapath: %s.\n", g_currentNode->cmDataPath);
-        StopCmInstance();
+
+        /* Check if all resources have been cleaned up */
+        bool areResourcesCleaned = true;
+        for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+           if (CheckOneResInst(&g_resConf[i]) == CUS_RES_CHECK_STAT_ONLINE) {
+               areResourcesCleaned = false;
+           }
+        }
+        if (areResourcesCleaned) {
+            StopCmInstance();
+        }
     }
 
     /* gtm */
     if (g_currentNode->gtm == 1) {
         write_runlog(LOG, "gtm fast shutdown, path: %s.\n", g_currentNode->gtmLocalDataPath);
         fast_stop_one_instance(g_currentNode->gtmLocalDataPath, INSTANCE_GTM);
-    }
-
-    /* resource */
-    if (IsCusResExistLocal()) {
-        write_runlog(LOG, "fast shutdown, %u resource process will be stopped.\n", GetLocalResConfCount());
-        StopAllResInst();
     }
 }
 

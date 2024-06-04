@@ -414,13 +414,13 @@ class InstallImpl:
                 continue
             status, output = self.executeCmdOnHost(host, createCertPathCmd)
             if status != 0:
-                errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" (createCertPathCmd, status, output)
+                errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (createCertPathCmd, status, output)
                 self.logger.debug(errorDetail)
                 self.logger.logExit("Failed to create path of CA for CM on host %s." % host)
             scpCmd = "scp {certPath}/* {host}:{certPath}".format(certPath=certPath, host=host)
             status, output = subprocess.getstatusoutput(scpCmd)
             if status != 0:
-                errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" (scpCmd, status, output)
+                errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (scpCmd, status, output)
                 self.logger.debug(errorDetail)
                 self.logger.logExit("Failed to create CA for CM.")
 

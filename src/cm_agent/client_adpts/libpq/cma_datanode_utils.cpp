@@ -255,6 +255,59 @@ int check_datanode_status_by_SQL0(agent_to_cm_datanode_status_report* report_msg
     return 0;
 }
 
+static bool get_datanode_realtime_build(const char* realtime_build_status)
+{
+    if (strncmp(realtime_build_status, "on", strlen("on")) == 0) {
+        return true;
+    }
+
+    return false;
+}
+
+constexpr int SQL_QUERY_REALTIME_BUILD_SUCCESS = 0;
+constexpr int SQL_QUERY_REALTIME_BUILD_FAILURE = -1;
+
+int check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
+{
+    int max_rows = 0;
+    int max_colums = 0;
+
+    const char* sql_command = "show ss_enable_ondemand_realtime_build;";
+    if (g_dnConn[ii] == NULL) {
+        return SQL_QUERY_REALTIME_BUILD_FAILURE;
+    }
+    cltPqResult_t* node_result = Exec(g_dnConn[ii], sql_command);
+    if (node_result == NULL) {
+        write_runlog(ERROR, "query sql fail: %s\n", sql_command);
+        CLOSE_CONNECTION(g_dnConn[ii]);
+        return SQL_QUERY_REALTIME_BUILD_FAILURE;
+    }
+    if ((ResultStatus(node_result) == CLTPQRES_CMD_OK) || (ResultStatus(node_result) == CLTPQRES_TUPLES_OK)) {
+        max_rows = Ntuples(node_result);
+        if (max_rows == 0) {
+            write_runlog(ERROR, "query sql fail: %s\n", sql_command);
+            CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
+            return SQL_QUERY_REALTIME_BUILD_FAILURE;
+        } else {
+            max_colums = Nfields(node_result);
+            if (max_colums != 1) {
+                write_runlog(ERROR, "query sql fail: %s! col is %d\n", sql_command, max_colums);
+                CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
+                return SQL_QUERY_REALTIME_BUILD_FAILURE;
+            }
+
+            report_msg->local_status.realtime_build_status =
+                get_datanode_realtime_build(Getvalue(node_result, 0, 0));
+        }
+    } else {
+        write_runlog(ERROR, "query sql fail: %s! Status=%d\n", sql_command, ResultStatus(node_result));
+        CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
+        return SQL_QUERY_REALTIME_BUILD_FAILURE;
+    }
+    Clear(node_result);
+    return SQL_QUERY_REALTIME_BUILD_SUCCESS;
+}
+
 /* DN instance status check SQL 1 */
 int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
 {

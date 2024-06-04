@@ -75,5 +75,6 @@ void ShowPgThreadWaitStatus(cltPqConn_t* Conn, uint32 index, int instanceType);
 void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir);
 void ExecuteCascadeStandbyDnBuildCommand(const char *dataDir);
 void CleanStandbyClusterCnAlarm();
+extern int check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii);
 
 #endif

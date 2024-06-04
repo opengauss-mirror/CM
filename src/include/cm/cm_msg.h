@@ -1041,6 +1041,7 @@ typedef struct cm_local_replconninfo_st {
     char local_host[HOST_LENGTH];
     uint32 local_port;
     bool redo_finished;
+    bool realtime_build_status;
 } cm_local_replconninfo;
 
 typedef struct cm_sender_replconninfo_st {

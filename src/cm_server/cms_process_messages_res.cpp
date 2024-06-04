@@ -547,7 +547,7 @@ static bool EnableRealTimeBuild(const char *resName, const char* lockName, uint3
         if (resStat->status.resStat[i].cmInstanceId == cmInstId) {
             nodeId = resStat->status.resStat[i].nodeId;
             found = true;
-	    break;
+            break;
         }
     }
 
@@ -577,6 +577,20 @@ static bool EnableRealTimeBuild(const char *resName, const char* lockName, uint3
         return true;
     }
 
+    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
+        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
+            if (g_instance_group_report_status_ptr[i]
+                    .instance_status.data_node_member[j]
+                    .local_status.realtime_build_status) {
+                for (uint32 k = 0; k < resStat->status.instanceCount; ++k) {
+                    if (resStat->status.resStat[k].cmInstanceId == static_cast<uint32>(j) && resStat->status.resStat[k].status == 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
     if (g_instance_group_report_status_ptr[group_index]
             .instance_status.data_node_member[member_index]
             .local_status.realtime_build_status) {
@@ -586,8 +600,28 @@ static bool EnableRealTimeBuild(const char *resName, const char* lockName, uint3
     return false;
 }
 
+static void LogCmResLockDetail(const char *resName)
+{
+    uint32 index = 0;
+    if (GetGlobalResStatusIndex(resName, index) != CM_SUCCESS) {
+        write_runlog(ERROR, "%s, unknown resName(%s).\n", __FUNCTION__, resName);
+        return;
+    }
+
+    CmResStatList *resStat = &g_resStatus[index];
+    for (uint32 i = 0; i < resStat->status.instanceCount; ++i) {
+        write_runlog(LOG, "nodeId(%d), cmInstanceId(%d), resInstanceId(%d), isWorkMember(%d), status(%d).\n",
+        resStat->status.resStat[i].nodeId,
+        resStat->status.resStat[i].cmInstanceId,
+        resStat->status.resStat[i].resInstanceId,
+        resStat->status.resStat[i].isWorkMember,
+        resStat->status.resStat[i].status);
+    }
+}
+
 static ClientError CmResLock(const CmaToCmsResLock *lockMsg)
 {
+    LogCmResLockDetail(lockMsg->resName);
     if (!IsResInstIdValid((int)lockMsg->cmInstId)) {
         write_runlog(ERROR, "[CLIENT] res(%s) (%s)lock new owner (%u) is invalid.\n",
             lockMsg->resName, lockMsg->lockName, lockMsg->cmInstId);

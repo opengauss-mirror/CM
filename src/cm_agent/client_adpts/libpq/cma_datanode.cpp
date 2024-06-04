@@ -334,7 +334,7 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
         return -1;
     }
 
-    /* check datanode realtime build status by sending sql*/
+    /* check datanode realtime build status by sending sql */
     if (check_datanode_realtime_build_status_by_sql(reportMsg, dataNodeIndex) != 0) {
         return -1;
     }

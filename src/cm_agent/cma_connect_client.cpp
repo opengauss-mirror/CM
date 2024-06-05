@@ -32,6 +32,7 @@
 #include "cma_global_params.h"
 #include "cma_instance_check.h"
 #include "cma_connect_client.h"
+#include "cma_connect.h"
 
 ClientConn g_clientConnect[CM_MAX_RES_COUNT];
 
@@ -234,6 +235,15 @@ static void RecvCmResLockProcess(const MsgHead &head, int epollfd)
         write_runlog(LOG, "[CLIENT] Recv ClientCmLockMsg failed, close the connect.\n");
         EpollEventDel(epollfd, g_clientConnect[head.conId].sock);
         ConnectClose(&g_clientConnect[head.conId]);
+        return;
+    }
+
+    if (agent_cm_server_connect == NULL) {    
+        AgentToClientResLockResult clientAck = {0};
+        clientAck.head.msgType = (uint32)MSG_CM_RES_LOCK_ACK;
+        clientAck.head.conId = head.conId;
+        clientAck.result.error = (uint32)CM_RES_CLIENT_CANNOT_DO;
+        PushMsgToClientSendQue((char*)&clientAck, sizeof(AgentToClientResLockResult), head.conId);
         return;
     }
 

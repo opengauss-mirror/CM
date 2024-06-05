@@ -452,8 +452,16 @@ void *SendAndRecvCmsMsgMain(void *arg)
 
     for (;;) {
         if (g_shutdownRequest || g_exitFlag) {
-            CloseConnToCmserver();
-            cm_sleep(SHUTDOWN_SLEEP_TIME);
+
+            /* Check if the CM_SERVER process is still running */
+            char cm_path[MAXPGPATH] = {0};
+            errno_t rcs = snprintf_s(cm_path, MAXPGPATH, MAXPGPATH - 1, "%s/%s", g_binPath, CM_SERVER_BIN_NAME);
+            securec_check_intval(rcs, (void)rcs);
+            int ret = check_one_instance_status(CM_SERVER_BIN_NAME, cm_path, NULL);
+            if (ret != PROCESS_RUNNING) {
+               CloseConnToCmserver();
+               cm_sleep(SHUTDOWN_SLEEP_TIME);
+            }
             continue;
         }
         if (agent_cm_server_connect == NULL) {

@@ -257,7 +257,7 @@ int check_datanode_status_by_SQL0(agent_to_cm_datanode_status_report* report_msg
 
 static bool get_datanode_realtime_build(const char* realtime_build_status)
 {
-    if (strncmp(realtime_build_status, "on", strlen("on")) == 0) {
+    if (strcmp(realtime_build_status, "on") == 0) {
         return true;
     }
 

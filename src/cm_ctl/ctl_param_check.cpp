@@ -93,6 +93,7 @@ const char *g_cmsParamInfo[] = {
     "enable_transaction_read_only|bool|0,0|NULL|NULL|",
     "datastorage_threshold_check_interval|int|1,2592000|NULL|NULL|",
     "datastorage_threshold_value_check|int|1,99|NULL|NULL|",
+    "ss_enable_check_sys_disk_usage|bool|0,0|NULL|NULL|",
     "max_datastorage_threshold_check|int|1,2592000|NULL|NULL|",
     "enable_az_auto_switchover|int|0,1|NULL|NULL|",
     "cm_auth_method|enum|trust,gss|NULL|NULL|",

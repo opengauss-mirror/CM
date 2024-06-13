@@ -301,6 +301,7 @@ static void ReloadParametersFromConfigfile()
     datastorage_threshold_check_interval =
         get_uint32_value_from_config(configDir, "datastorage_threshold_check_interval", 10);
     g_readOnlyThreshold = get_uint32_value_from_config(configDir, "datastorage_threshold_value_check", 85);
+    g_ss_enable_check_sys_disk_usage = get_uint32_value_from_config(configDir, "ss_enable_check_sys_disk_usage", 0);
     max_datastorage_threshold_check = get_int_value_from_config(configDir, "max_datastorage_threshold_check", 1800);
     az_switchover_threshold = get_int_value_from_config(configDir, "az_switchover_threshold", 100);
     az_check_and_arbitrate_interval = get_int_value_from_config(configDir, "az_check_and_arbitrate_interval", 2);

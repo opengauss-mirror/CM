@@ -34,6 +34,7 @@ const int  CM_MS_COUNT_PER_SEC  = 1000;
 int CmMkdirP(char *path, unsigned int omode);
 char *gs_getenv_r(const char *name);
 uint64 GetMonotonicTimeMs();
+uint64 GetMonotonicTimeS();
 
 enum class CMFairMutexType {
     CM_MUTEX_NODE,

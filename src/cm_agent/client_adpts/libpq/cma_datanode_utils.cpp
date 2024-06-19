@@ -602,31 +602,58 @@ int check_datanode_status_by_SQL3(agent_to_cm_datanode_status_report* report_msg
     return 0;
 }
 
+static int ParseIpAndPort(char *addrStr, char *ipStr, uint32 *port)
+{
+    char *lastColon = strrchr(addrStr, ':');
+    if (lastColon != NULL) {
+        // Calculate the position of the colon
+        size_t colonPos = lastColon - addrStr;
+        
+        // Copy the IP portion
+        errno_t rc = strncpy_s(ipStr, CM_IP_LENGTH, addrStr, colonPos);
+        securec_check_errno(rc, (void)rc);
+        ipStr[colonPos] = '\0';  // Ensure the string terminator
+
+        // Copy the port portion
+        *port = (uint32)atoi(lastColon + 1);
+        return 0; // Success
+    } else {
+        return -1;
+    }
+}
+
 static void GetLpInfoByStr(char *channel, DnLocalPeer *lpInfo, uint32 instId)
 {
-    char *outerPtr = NULL;
-    char *token = strtok_r(channel, ":", &outerPtr);
-    errno_t rc = strcpy_s(lpInfo->localIp, CM_IP_LENGTH, token);
-    securec_check_errno(rc, (void)rc);
-    if (outerPtr == NULL) {
-        write_runlog(ERROR, "[GetLpInfoByStr] line: %d, instId is %u, channel is %s.\n", __LINE__, instId, channel);
+    char localIpStr[CM_IP_LENGTH];
+    char peerIpStr[CM_IP_LENGTH];
+    char *peerStr = NULL;
+    char *localStr = strtok_r(channel, "<--", &peerStr);
+    errno_t rc;
+    if (localStr == NULL) {
+        write_runlog(ERROR, "[GetLpInfoByStr] line: %d, instance ID is %u, channel is %s.\n",
+            __LINE__, instId, channel);
         return;
     }
-    token = strtok_r(NULL, "<", &outerPtr);
-    lpInfo->localPort = (uint32)CmAtoi(token, 0);
-    if (outerPtr == NULL) {
-        write_runlog(ERROR, "[GetLpInfoByStr] line: %d, instId is %u, channel is %s.\n", __LINE__, instId, channel);
+
+    if (ParseIpAndPort(localStr, localIpStr, &lpInfo->localPort) == 0) {
+        rc = strcpy_s(lpInfo->localIp, CM_IP_LENGTH, localIpStr);
+        securec_check_errno(rc, (void)rc);
+    } else {
+        write_runlog(ERROR, "[GetLpInfoByStr] line: %d, instance ID is %u, channel is %s.\n",
+            __LINE__, instId, channel);
         return;
     }
-    outerPtr = outerPtr + strlen("--");
-    if (outerPtr == NULL) {
-        write_runlog(ERROR, "[GetLpInfoByStr] line: %d, instId is %u, channel is %s.\n", __LINE__, instId, channel);
+
+    // Parse peer IP and port
+    if (ParseIpAndPort(peerStr, peerIpStr, &lpInfo->peerPort) == 0) {
+        rc = strcpy_s(lpInfo->peerIp, CM_IP_LENGTH, peerIpStr);
+        securec_check_errno(rc, (void)rc);
+    } else {
+        write_runlog(ERROR, "[GetLpInfoByStr] line: %d, instance ID is %u, channel is %s.\n",
+            __LINE__, instId, channel);
         return;
     }
-    token = strtok_r(NULL, ":", &outerPtr);
-    rc = strcpy_s(lpInfo->peerIp, CM_IP_LENGTH, token);
-    securec_check_errno(rc, (void)rc);
-    lpInfo->peerPort = (uint32)CmAtoi(outerPtr, 0);
+
     write_runlog(DEBUG1, "%u, channel is %s:%u<--%s:%u.\n", instId,
         lpInfo->localIp, lpInfo->localPort, lpInfo->peerIp, lpInfo->peerPort);
 }
@@ -865,21 +892,23 @@ int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg
             }
 
             report_msg->local_status.disconn_mode = datanode_lockmode_string_to_int(Getvalue(node_result, 0, 0));
-            errno_t rc = memset_s(report_msg->local_status.disconn_host, HOST_LENGTH, 0, HOST_LENGTH);
+            errno_t rc = memset_s(report_msg->local_status.disconn_host, CM_IP_LENGTH, 0, CM_IP_LENGTH);
             securec_check_errno(rc, (void)rc);
             char *tmp_result = Getvalue(node_result, 0, 1);
             if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
-                rc = snprintf_s(report_msg->local_status.disconn_host, HOST_LENGTH, HOST_LENGTH - 1, "%s", tmp_result);
+                rc = snprintf_s(report_msg->local_status.disconn_host,
+                    CM_IP_LENGTH, CM_IP_LENGTH - 1, "%s", tmp_result);
                 securec_check_intval(rc, (void)rc);
             }
             rc = sscanf_s(Getvalue(node_result, 0, 2), "%u", &(report_msg->local_status.disconn_port));
             check_sscanf_s_result(rc, 1);
             securec_check_intval(rc, (void)rc);
-            rc = memset_s(report_msg->local_status.local_host, HOST_LENGTH, 0, HOST_LENGTH);
+            rc = memset_s(report_msg->local_status.local_host, CM_IP_LENGTH, 0, CM_IP_LENGTH);
             securec_check_errno(rc, (void)rc);
             tmp_result = Getvalue(node_result, 0, 3);
             if (tmp_result != NULL && (strlen(tmp_result) > 0)) {
-                rc = snprintf_s(report_msg->local_status.local_host, HOST_LENGTH, HOST_LENGTH - 1, "%s", tmp_result);
+                rc = snprintf_s(report_msg->local_status.local_host,
+                    CM_IP_LENGTH, CM_IP_LENGTH - 1, "%s", tmp_result);
                 securec_check_intval(rc, (void)rc);
             }
             rc = sscanf_s(Getvalue(node_result, 0, 4), "%u", &(report_msg->local_status.local_port));

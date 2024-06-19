@@ -970,12 +970,12 @@ static status_t EditStringToJson(
         (void)cJSON_AddStringToObject(root, key, value);
     } else {
         uint32 index = 0;
-        if (cm_str_equal(key, RES_NAME) && !CheckResNameForEdit(value)){
+        if (cm_str_equal(key, RES_NAME) && !CheckResNameForEdit(value)) {
             write_runlog(ERROR, "%s%s Res(%s) fails to edit new name to json.\n",
                 GetResOperStr(resCtx->mode), GetInstOperStr(resCtx->inst.mode), resCtx->resName);
             return CM_ERROR;
         }
-        if (cm_str_equal(key, RESOURCE_TYPE) && !CompareResType(value, &index)){
+        if (cm_str_equal(key, RESOURCE_TYPE) && !CompareResType(value, &index)) {
             write_runlog(ERROR, "%s%s Res(%s) fails to edit new resource_type to json.\n",
                 GetResOperStr(resCtx->mode), GetInstOperStr(resCtx->inst.mode), resCtx->resName);
             return CM_ERROR;
@@ -1315,7 +1315,7 @@ void CheckAndWriteJson(const cJSON *root, ResOpMode mode)
     if (mode == RES_OP_ADD || mode == RES_OP_DEL || mode == RES_OP_EDIT) {
         if (WriteJsonFile(root, g_jsonFile) != CM_SUCCESS) {
             write_runlog(ERROR, "failed to write json file(%s).\n", g_jsonFile);
-        }
+            }
     }
 }
 

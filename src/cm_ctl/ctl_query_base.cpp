@@ -25,7 +25,7 @@
 #include "cm/libpq-fe.h"
 #include "cm/cm_misc.h"
 #include "ctl_common.h"
-#include "cm/cm_msg.h"
+#include "cm_msg_ipv4.h"
 #include "ctl_query_base.h"
 
 extern bool g_detailQuery;
@@ -203,7 +203,7 @@ status_t SetCmQueryContent(ctl_to_cm_query *cmQueryContent)
     return CM_SUCCESS;
 }
 
-void PrintCnHeaderLine(uint32 nodeLen, uint32 instanceLen)
+void PrintCnHeaderLine(uint32 nodeLen, uint32 instanceLen, uint32 ipLen)
 {
     (void)fprintf(g_logFilePtr, "\n[ Coordinator State ]\n\n");
     uint32 tmpInstanceLen = instanceLen;
@@ -211,17 +211,40 @@ void PrintCnHeaderLine(uint32 nodeLen, uint32 instanceLen)
         tmpInstanceLen = tmpInstanceLen + INSTANCE_LEN;
     }
     if (g_ipQuery) {
-        (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1, "node_ip",
-            tmpInstanceLen, "instance", "state");
+        (void)fprintf(g_logFilePtr,
+            "%-*s%-*s%-*s%s\n",
+            nodeLen,
+            "node",
+            ipLen,
+            "node_ip",
+            tmpInstanceLen,
+            "instance",
+            "state");
     } else {
         (void)fprintf(
-            g_logFilePtr, "%-*s%-*s%s\n", nodeLen, "node", tmpInstanceLen, "instance", "state");
+            g_logFilePtr,
+            "%-*s%-*s%s\n", nodeLen,
+            "node",
+            tmpInstanceLen,
+            "instance",
+            "state");
     }
-    uint32 maxLen = nodeLen + instanceLen + INSTANCE_DYNAMIC_ROLE_LEN + (g_ipQuery ? (MAX_IP_LEN + 1) : 0);
+    uint32 maxLen = nodeLen + instanceLen + INSTANCE_DYNAMIC_ROLE_LEN + (g_ipQuery ? ipLen : 0);
     for (uint32 i = 0; i < maxLen; i++) {
         (void)fprintf(g_logFilePtr, "-");
     }
     (void)fprintf(g_logFilePtr, "\n");
+}
+
+uint32 GetCnIpMaxLen()
+{
+    uint32 maxLen = MAX_IPV4_LEN;
+    uint32 curIpLen;
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        curIpLen = (uint32)strlen(g_node[i].coordinateListenIP[0]);
+        maxLen = (maxLen > curIpLen) ? maxLen : curIpLen;
+    }
+    return (maxLen + SPACE_LEN);
 }
 
 int ProcessCoupleDetailQuery(const char *receiveMsg)
@@ -253,7 +276,8 @@ int ProcessCoupleDetailQuery(const char *receiveMsg)
     if (g_only_dn_cluster) {
         return 0;
     }
-    PrintCnHeaderLine(nodeLen, instanceLen);
+    uint32 ipLen = GetCnIpMaxLen();
+    PrintCnHeaderLine(nodeLen, instanceLen, ipLen);
     return 0;
 }
 
@@ -322,6 +346,7 @@ static void PrintCentralNodeDetail(FILE* file)
     uint32 nodeLen = MAX_NODE_ID_LEN + SPACE_LEN + max_node_name_len + SPACE_LEN;
     const uint32 instanceLen = INSTANCE_ID_LEN + SPACE_LEN +
         (g_dataPathQuery ? (max_cnpath_len + 1) : DEFAULT_PATH_LEN);
+    uint32 ipLen = GetCnIpMaxLen();
 
     if (g_availabilityZoneCommand) {
         nodeLen += max_az_name_len + SPACE_LEN;
@@ -332,13 +357,12 @@ static void PrintCentralNodeDetail(FILE* file)
 
     /* show ip */
     if (g_ipQuery) {
-        (void)fprintf(
-            file, "%-*s%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1, "node_ip", instanceLen, "instance", "state");
+        (void)fprintf(file, "%-*s%-*s%-*s%s\n", nodeLen, "node", ipLen, "node_ip", instanceLen, "instance", "state");
     } else {
         (void)fprintf(file, "%-*s%-*s%s\n", nodeLen, "node", instanceLen, "instance", "state");
     }
 
-    for (uint32 i = 0; i < nodeLen + instanceLen + INSTANCE_DYNAMIC_ROLE_LEN + (g_ipQuery ? (MAX_IP_LEN + 1) : 0);
+    for (uint32 i = 0; i < nodeLen + instanceLen + INSTANCE_DYNAMIC_ROLE_LEN + (g_ipQuery ? ipLen : 0);
          ++i) {
         (void)fprintf(file, "-");
     }
@@ -359,7 +383,7 @@ static void PrintCentralNodeDetail(FILE* file)
         (void)fprintf(file, "%-*s ", max_node_name_len, g_node[nodeIndex].nodeName);
 
         if (g_ipQuery) {
-            (void)fprintf(file, "%-15s ", g_node[nodeIndex].coordinateListenIP[0]);
+            (void)fprintf(file, "%-*s ", ipLen, g_node[nodeIndex].coordinateListenIP[0]);
         }
 
         (void)fprintf(file, "%u ", g_centralNode.instanceId);
@@ -381,6 +405,17 @@ static void PrintCentralNodeDetail(FILE* file)
     }
 }
 
+uint32 GetGtmIpMaxLen()
+{
+    uint32 maxLen = MAX_IPV4_LEN;
+    uint32 curIpLen;
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        curIpLen = (uint32)strlen(g_node[i].gtmLocalListenIP[0]);
+        maxLen = (maxLen > curIpLen) ? maxLen : curIpLen;
+    }
+    return (maxLen + SPACE_LEN);
+}
+
 void PrintGtmHeaderLine()
 {
     uint32 nodeLen;
@@ -388,6 +423,7 @@ void PrintGtmHeaderLine()
     uint32 stateLen;
 
     CalcGtmHeaderSize(&nodeLen, &instanceLen, &stateLen);
+    uint32 ipLen = GetGtmIpMaxLen();
 
     if (g_only_dn_cluster) {
         return;
@@ -405,10 +441,10 @@ void PrintGtmHeaderLine()
 
     if (g_ipQuery) {
         if (g_single_node_cluster) {
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s\n", nodeLen, "node", MAX_IP_LEN + 1, "node_ip",
+            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s\n", nodeLen, "node", ipLen, "node_ip",
                 instanceLen, "instance", stateLen, "state");
         } else {
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1, "node_ip",
+            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s%s\n", nodeLen, "node", ipLen, "node_ip",
                 instanceLen, "instance", stateLen, "state", "sync_state");
         }
     } else {
@@ -421,14 +457,26 @@ void PrintGtmHeaderLine()
     }
     for (uint32 i = 0; i < nodeLen + instanceLen + stateLen +
                         (g_single_node_cluster ? 0 : MAX_GTM_SYNC_STATE_LEN) +
-                        (g_ipQuery ? (MAX_IP_LEN + 1) : 0);
+                        (g_ipQuery ? ipLen : 0);
         i++) {
         (void)fprintf(g_logFilePtr, "-");
     }
     (void)fprintf(g_logFilePtr, "\n");
 }
 
-void CalcDnHeaderSize(uint32 *nodeLen, uint32 *instanceLen, uint32 *stateLen)
+uint32 GetDnIpMaxLen()
+{
+    uint32 maxLen = MAX_IPV4_LEN;
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        for (uint32 j = 0; j < g_node[i].datanodeCount; ++j) {
+            uint32 curIpLen = (uint32)strlen(g_node[i].datanode[j].datanodeListenIP[0]);
+            maxLen = (maxLen > curIpLen) ? maxLen : curIpLen;
+        }
+    }
+    return (maxLen + SPACE_LEN);
+}
+
+void CalcDnHeaderSize(uint32 *nodeLen, uint32 *ipLen, uint32 *instanceLen, uint32 *stateLen)
 {
     uint32 nameLen;
     uint32 nodeLength;
@@ -449,50 +497,62 @@ void CalcDnHeaderSize(uint32 *nodeLen, uint32 *instanceLen, uint32 *stateLen)
         (void)fprintf(g_logFilePtr, "%-*s| ", nameLen, "logiccluster_name");
     }
     *nodeLen = nodeLength;
+    *ipLen = GetDnIpMaxLen();
 }
 
-void PrintDnHeaderLine(uint32 nodeLen, uint32 instanceLen, uint32 tmpInstanceLen, uint32 stateLen)
+void PrintDnHeaderLine(uint32 nodeLen, uint32 ipLen, uint32 instanceLen, uint32 tmpInstanceLen, uint32 stateLen)
 {
     if (g_formatQuery) {
         if (g_ipQuery) {
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1,
-                          "node_ip", tmpInstanceLen, "instance", "state");
+            (void)fprintf(g_logFilePtr,
+                "%-*s%-*s%-*s%s\n",
+                nodeLen,
+                "node",
+                ipLen,
+                "node_ip",
+                tmpInstanceLen,
+                "instance",
+                "state");
         } else {
             (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", nodeLen, "node",
-                          g_single_node_cluster ? tmpInstanceLen : instanceLen,
-                          "instance", "state");
+                g_single_node_cluster ? tmpInstanceLen : instanceLen, "instance", "state");
         }
     } else {
         if (g_ipQuery) {
             if (g_multi_az_cluster) {
                 for (uint32 jj = 0; jj < g_dn_replication_num - 1; jj++) {
-                    (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ",
-                                  nodeLen, "node", MAX_IP_LEN + 1, "node_ip",
-                                  tmpInstanceLen, "instance", stateLen, "state");
+                    (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", ipLen, "node_ip",
+                        tmpInstanceLen, "instance", stateLen, "state");
                 }
             } else if (!g_single_node_cluster) {
-                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", MAX_IP_LEN + 1,
-                              "node_ip", tmpInstanceLen, "instance", stateLen, "state");
-                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", MAX_IP_LEN + 1,
-                              "node_ip", tmpInstanceLen, "instance", stateLen, "state");
+                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", ipLen, "node_ip",
+                    tmpInstanceLen, "instance", stateLen, "state");
+                (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%-*s| ", nodeLen, "node", ipLen, "node_ip",
+                    tmpInstanceLen, "instance", stateLen, "state");
             }
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1,
-                          "node_ip", tmpInstanceLen, "instance", "state");
+            (void)fprintf(g_logFilePtr,
+                "%-*s%-*s%-*s%s\n",
+                nodeLen,
+                "node",
+                ipLen,
+                "node_ip",
+                tmpInstanceLen,
+                "instance",
+                "state");
         } else {
             if (g_multi_az_cluster) {
                 for (uint32 jj = 0; jj < g_dn_replication_num - 1; jj++) {
                     (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ", nodeLen, "node",
-                                  tmpInstanceLen, "instance", stateLen, "state");
+                        tmpInstanceLen, "instance", stateLen, "state");
                 }
             } else if (!g_single_node_cluster) {
                 (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ", nodeLen, "node",
-                              tmpInstanceLen, "instance", stateLen, "state");
+                    tmpInstanceLen, "instance", stateLen, "state");
                 (void)fprintf(g_logFilePtr, "%-*s%-*s%-*s| ",
-                              nodeLen, "node", tmpInstanceLen, "instance", stateLen, "state");
+                    nodeLen, "node", tmpInstanceLen, "instance", stateLen, "state");
             }
             (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", nodeLen, "node",
-                          g_single_node_cluster ? tmpInstanceLen : instanceLen,
-                          "instance", "state");
+                g_single_node_cluster ? tmpInstanceLen : instanceLen, "instance", "state");
         }
     }
 }
@@ -500,10 +560,11 @@ void PrintDnHeaderLine(uint32 nodeLen, uint32 instanceLen, uint32 tmpInstanceLen
 void PrintDnStatusLine()
 {
     uint32 nodeLen;
+    uint32 ipLen;
     uint32 instanceLen;
     uint32 stateLen;
 
-    CalcDnHeaderSize(&nodeLen, &instanceLen, &stateLen);
+    CalcDnHeaderSize(&nodeLen, &ipLen, &instanceLen, &stateLen);
     uint32 tmpInstanceLen = instanceLen;
     if (g_portQuery) {
         tmpInstanceLen = tmpInstanceLen + INSTANCE_LEN;
@@ -511,28 +572,27 @@ void PrintDnStatusLine()
 
     (void)fprintf(g_logFilePtr, "\n[  Datanode State   ]\n\n");
 
-    PrintDnHeaderLine(nodeLen, instanceLen, tmpInstanceLen, stateLen);
+    PrintDnHeaderLine(nodeLen, ipLen, instanceLen, tmpInstanceLen, stateLen);
 
     uint32 maxLen;
     uint32 secondryStateLen = INSTANCE_STATIC_ROLE_LEN + SPACE_LEN +
-                                      SECONDARY_DYNAMIC_ROLE_LEN + SPACE_LEN +
-                                      INSTANCE_DB_STATE_LEN;
+        SECONDARY_DYNAMIC_ROLE_LEN + SPACE_LEN + INSTANCE_DB_STATE_LEN;
     if (g_multi_az_cluster || g_single_node_cluster) {
         if (g_formatQuery) {
-            maxLen = (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
-                      (stateLen + SEPERATOR_LEN + SPACE_LEN);
+            maxLen = (nodeLen + tmpInstanceLen + (g_ipQuery ? ipLen : 0)) +
+                (stateLen + SEPERATOR_LEN + SPACE_LEN);
         } else {
             maxLen = g_dn_replication_num *
-                     (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
-                     g_dn_replication_num * (stateLen + SEPERATOR_LEN + SPACE_LEN);
+                (nodeLen + tmpInstanceLen + (g_ipQuery ? ipLen : 0)) +
+                    g_dn_replication_num * (stateLen + SEPERATOR_LEN + SPACE_LEN);
         }
     } else {
         if (g_formatQuery) {
-            maxLen = (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
-                      (stateLen + SEPERATOR_LEN + SPACE_LEN) + secondryStateLen;
+            maxLen = (nodeLen + tmpInstanceLen + (g_ipQuery ? ipLen : 0)) +
+                (stateLen + SEPERATOR_LEN + SPACE_LEN) + secondryStateLen;
         } else {
-            maxLen = NODE_NUM * (nodeLen + tmpInstanceLen + (g_ipQuery ? (MAX_IP_LEN + 1) : 0)) +
-                     SPACE_NUM * (stateLen + SEPERATOR_LEN + SPACE_LEN) + secondryStateLen;
+            maxLen = NODE_NUM * (nodeLen + tmpInstanceLen + (g_ipQuery ? ipLen : 0)) +
+                SPACE_NUM * (stateLen + SEPERATOR_LEN + SPACE_LEN) + secondryStateLen;
         }
     }
     for (uint32 i = 0; i < maxLen; i++) {
@@ -544,19 +604,18 @@ void PrintDnStatusLine()
 void PrintFenceHeaderLine()
 {
     const uint32 nodeLen = MAX_NODE_ID_LEN + SPACE_LEN + max_node_name_len + SPACE_LEN;
+    uint32 ipLen = GetDnIpMaxLen();
     if (g_balanceQuery && g_datanodesBalance) {
         (void)fprintf(g_logFilePtr, "(no need to switchover datanodes)\n");
     }
     if (g_fencedUdfQuery && !g_balanceQuery) {
         (void)fprintf(g_logFilePtr, "\n[  Fenced UDF State   ]\n\n");
         if (g_ipQuery) {
-            (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", nodeLen, "node", MAX_IP_LEN + 1,
-                "node_ip", "state");
+            (void)fprintf(g_logFilePtr, "%-*s%-*s%s\n", nodeLen, "node", ipLen, "node_ip", "state");
         } else {
             (void)fprintf(g_logFilePtr, "%-*s%s\n", nodeLen, "node", "state");
         }
-        for (uint32 i = 0; i < nodeLen + INSTANCE_DYNAMIC_ROLE_LEN + (g_ipQuery ? (MAX_IP_LEN + 1) : 0);
-            i++) {
+        for (uint32 i = 0; i < nodeLen + INSTANCE_DYNAMIC_ROLE_LEN + (g_ipQuery ? ipLen : 0); i++) {
             (void)fprintf(g_logFilePtr, "-");
         }
         (void)fprintf(g_logFilePtr, "\n");
@@ -565,15 +624,22 @@ void PrintFenceHeaderLine()
 
 void DoProcessNodeEndMsg(const char *receiveMsg)
 {
-    cm_to_ctl_instance_status *instanceStatusPtr = (cm_to_ctl_instance_status*)receiveMsg;
+    int instanceType;
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        cm_to_ctl_instance_status_ipv4 *instanceStatusPtrIpv4 = (cm_to_ctl_instance_status_ipv4 *)receiveMsg;
+        instanceType = instanceStatusPtrIpv4->instance_type;
+    } else {
+        cm_to_ctl_instance_status *instanceStatusPtr = (cm_to_ctl_instance_status *)receiveMsg;
+        instanceType = instanceStatusPtr->instance_type;
+    }
     if (g_coupleQuery && !g_startStatusQuery) {
-        if (instanceStatusPtr->instance_type == INSTANCE_TYPE_COORDINATE) {
+        if (instanceType == INSTANCE_TYPE_COORDINATE) {
             PrintGtmHeaderLine();
         }
-        if (instanceStatusPtr->instance_type == INSTANCE_TYPE_GTM) {
+        if (instanceType == INSTANCE_TYPE_GTM) {
             PrintDnStatusLine();
         }
-        if (instanceStatusPtr->instance_type == INSTANCE_TYPE_DATANODE) {
+        if (instanceType == INSTANCE_TYPE_DATANODE) {
             PrintFenceHeaderLine();
         }
     } else {

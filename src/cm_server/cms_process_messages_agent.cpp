@@ -1309,3 +1309,60 @@ void GetFloatIpSet(CmFloatIpStatAck *ack, size_t maxMsgLen, size_t *curMsgLen)
         }
     }
 }
+
+void NotifyPrimaryDnToResetFailedFloatIp(
+    MsgRecvInfo *recvMsgInfo, const CmSendPingDnFloatIpFail *failedFloatIpInfo, uint32 groupIdx)
+{
+    int32 memIdx = -1;
+    if (FindAvaliableFloatIpPrimary(groupIdx, &memIdx) != CM_SUCCESS) {
+        return;
+    }
+    cm_instance_role_status *roleStatus = &g_instance_role_group_ptr[groupIdx].instanceMember[memIdx];
+    CmSendPingDnFloatIpFail ack;
+    errno_t rc = memcpy_s(&(ack), sizeof(CmSendPingDnFloatIpFail), failedFloatIpInfo, sizeof(CmSendPingDnFloatIpFail));
+    securec_check_errno(rc, (void)rc);
+    ack.baseInfo.msgType = (int32)MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP;
+    ack.baseInfo.node = roleStatus->node;
+    ack.baseInfo.instId = roleStatus->instanceId;
+    write_runlog(LOG,
+        "[%s] primary dn nodeId:%u, instId:%u.\n", __FUNCTION__, roleStatus->node, roleStatus->instanceId);
+    (void)SendToAgentMsg(roleStatus->node, 'S', (const char *)(&ack), sizeof(CmSendPingDnFloatIpFail));
+}
+
+void ProcessPingDnFloatIpFailedMsg(MsgRecvInfo *recvMsgInfo, CmSendPingDnFloatIpFail *failedFloatIpInfo)
+{
+    if (failedFloatIpInfo->failedCount > MAX_FLOAT_IP_COUNT) {
+        write_runlog(ERROR,
+            "[%s] cms get ping float ip failed count (%u) is invalid.\n",
+            __FUNCTION__,
+            failedFloatIpInfo->failedCount);
+        return;
+    }
+    const BaseInstInfo *baseInst = &(failedFloatIpInfo->baseInfo);
+    if (baseInst->instType != INSTANCE_TYPE_DATANODE) {
+        write_runlog(ERROR,
+            "[%s] cms get instance(%u) is not dn, this type is %d.\n",
+            __FUNCTION__,
+            baseInst->instId,
+            baseInst->instType);
+        return;
+    }
+    uint32 groupIdx = 0;
+    int32 memIdx = 0;
+    uint32 node = baseInst->node;
+    uint32 instId = baseInst->instId;
+    int32 ret = find_node_in_dynamic_configure(node, instId, &groupIdx, &memIdx);
+    if (ret != 0) {
+        write_runlog(LOG,
+            "[%s] can't find the instance(node=%u instanceId=%u).\n", __FUNCTION__, node, instId);
+        return;
+    }
+    write_runlog(LOG,
+        "[%s] cms receive pingDnFloatIpFailedMsg, and group[%u: %d], node[%u], instId[%u].\n",
+        __FUNCTION__,
+        groupIdx,
+        memIdx,
+        node,
+        instId);
+    NotifyPrimaryDnToResetFailedFloatIp(recvMsgInfo, failedFloatIpInfo, groupIdx);
+}

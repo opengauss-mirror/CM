@@ -21,12 +21,15 @@
  * -------------------------------------------------------------------------
  */
 #include <ctype.h>
+#include <climits>
 #include "cm_text.h"
 
 #include "securec.h"
 #include "cm_debug.h"
+#include "cm_error.h"
 
 #include "cm_elog.h"
+#include "cm_config.h"
 
 bool8 IsCmBracketText(const text_t *text)
 {
@@ -55,6 +58,43 @@ bool8 IsCmBracketText(const text_t *text)
         } else if (text->str[i] == '(') {
             depth++;
         } else if (text->str[i] == ')') {
+            depth--;
+            if (depth == 0) {
+                return (bool8)(i == text->len - 1);
+            }
+        }
+    }
+
+    return CM_FALSE;
+}
+
+bool8 IsCmSquareBracketText(const text_t *text)
+{
+    bool8 inString = CM_FALSE;
+    uint32 depth;
+    const int minLen = 2;
+
+    if (text->len < minLen) {
+        return CM_FALSE;
+    }
+
+    bool8 flag = (bool8)(CM_TEXT_BEGIN(text) != '[' || CM_TEXT_END(text) != ']');
+    if (flag) {
+        return CM_FALSE;
+    }
+
+    depth = 1;
+    for (uint32 i = 1; i < text->len; i++) {
+        if (text->str[i] == '\'') {
+            inString = (bool8)(!inString);
+            continue;
+        }
+
+        if (inString) {
+            continue;
+        } else if (text->str[i] == '[') {
+            depth++;
+        } else if (text->str[i] == ']') {
             depth--;
             if (depth == 0) {
                 return (bool8)(i == text->len - 1);
@@ -169,6 +209,16 @@ void CmRemoveBrackets(text_t *text)
     }
 }
 
+void CmRemoveSquareBrackets(text_t *text)
+{
+    const int lenReduce = 2;
+    while (IsCmSquareBracketText(text)) {
+        text->str++;
+        text->len -= lenReduce;
+        CmTrimText(text);
+    }
+}
+
 void CmSplitText(const text_t *text, char splitChar, char encloseChar, text_t *left, text_t *right)
 {
     uint32 i;
@@ -264,4 +314,81 @@ status_t CmText2Str(const text_t *text, char *buf, uint32 bufSize)
 
     buf[copy_size] = '\0';
     return CM_SUCCESS;
+}
+
+status_t CmText2Uint16(const text_t *textSrc, uint16 *value)
+{
+    char buf[CM_MAX_NUMBER_LENGTH + 1] = {0};
+    text_t text = *textSrc;
+
+    CmTrimText(&text);
+
+    if (text.len > CM_MAX_NUMBER_LENGTH) {
+        write_runlog(ERROR,
+            "[%s] Convert uint16 failed,the length of text %u can't be larger than %u.\n",
+            __FUNCTION__,
+            text.len,
+            CM_MAX_NUMBER_LENGTH);
+        return CM_ERROR;
+    }
+    CM_RETURN_IFERR(CmText2Str(&text, buf, CM_MAX_NUMBER_LENGTH + 1));
+
+    return CmStr2Uint16(buf, value);
+}
+
+status_t CmStr2Uint16(const char *str, uint16 *value)
+{
+    char *err = NULL;
+    int ret = CmCheckIsNumber(str);
+    if (ret != CM_SUCCESS) {
+        write_runlog(ERROR,
+            "[%s] Convert uint16 failed, the text is not number, text = %s.\n", __FUNCTION__, str);
+        return CM_ERROR;
+    }
+
+    int64_t valInt64 = strtol(str, &err, CM_DEFAULT_DIGIT_RADIX);
+    if (CmIsErr(err)) {
+        write_runlog(ERROR, "[%s] Convert uint32 failed, text = %s.\n", __FUNCTION__, str);
+        return CM_ERROR;
+    }
+
+    if (valInt64 > UINT_MAX || valInt64 < 0) {
+        write_runlog(ERROR,
+            "[%s] Convert uint32 failed, the text is not in the range of uint32, text = %s.\n",
+            __FUNCTION__, str);
+        return CM_ERROR;
+    }
+
+    *value = (uint32)valInt64;
+    return CM_SUCCESS;
+}
+
+status_t CmCheckIsNumber(const char *str)
+{
+    size_t len = strlen(str);
+    if (len == 0) {
+        return CM_ERROR;
+    }
+
+    for (size_t i = 0; i < len; i++) {
+        if (!CM_IS_DIGITAL_LETER(str[i])) {
+            return CM_ERROR;
+        }
+    }
+    return CM_SUCCESS;
+}
+
+bool CmIsErr(const char *err)
+{
+    if (err == NULL) {
+        return false;
+    }
+
+    while (*err != '\0') {
+        if (*err != ' ') {
+            return true;
+        }
+        err++;
+    }
+    return false;
 }

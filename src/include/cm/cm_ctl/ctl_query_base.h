@@ -28,7 +28,8 @@
 
 #define ELASTICGROUP "elastic_group"
 #define DELAY_THRESHOLD (8 * 1024 * 1014)
-#define MAX_IP_LEN (15)
+#define MAX_IPV4_LEN (15)
+#define MAX_IPV6_LEN (45)
 #define INSTANCE_ID_LEN (4)
 #define INSTANCE_DYNAMIC_ROLE_LEN (7)
 #define ETCD_DYNAMIC_ROLE_LEN (13)
@@ -57,6 +58,8 @@
 int ProcessDataBeginMsg(const char *receiveMsg, bool *recDataEnd);
 void DoProcessNodeEndMsg(const char *receiveMsg);
 status_t SetCmQueryContent(ctl_to_cm_query *cmQueryContent);
-
+uint32 GetDnIpMaxLen();
+uint32 GetCnIpMaxLen();
+uint32 GetGtmIpMaxLen();
 
 #endif

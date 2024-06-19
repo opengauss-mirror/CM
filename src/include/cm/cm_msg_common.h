@@ -39,4 +39,12 @@ typedef enum NetworkStateE {
     NETWORK_STATE_CEIL  // it must be end
 } NetworkState;
 
+typedef enum ProcessStatusE {
+    PROCESS_STATUS_INIT = 0,
+    PROCESS_STATUS_UNKNOWN,
+    PROCESS_STATUS_SUCCESS,
+    PROCESS_STATUS_FAIL,
+    PROCESS_STATUS_CEIL  // it must be end
+} ProcessStatus;
+
 #endif

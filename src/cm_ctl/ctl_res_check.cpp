@@ -25,6 +25,7 @@
 #include "cjson/cJSON.h"
 
 #include "cm_text.h"
+#include "cm_ip.h"
 
 #include "ctl_res.h"
 #include "ctl_common.h"
@@ -340,7 +341,7 @@ static status_t GetExpIpFromJson(cJSON *resItem, const char *key, const char *re
 static status_t CheckIpValidInJson(cJSON *resItem, const char *key, const char *resName, char *ip, uint32 ipLen)
 {
     CM_RETURN_IFERR(GetExpIpFromJson(resItem, key, resName, ip, ipLen));
-    if (CheckIpValid(ip) == CM_FALSE) {
+    if (!CheckIpValid(ip)) {
         PrintCheckJsonInfo(ERROR, "resource(%s)'s %s is an invalid ip.\n", resName, key);
         return CM_ERROR;
     }
@@ -383,7 +384,7 @@ static status_t CheckFloatIPResInfo(
 
     // base_ip
     for (int32 i = 0; i < point; ++i) {
-        if (strcmp(curInfo->ip, info[i].ip) == 0) {
+        if (IsEqualIp(curInfo->ip, info[i].ip)) {
             PrintCheckJsonInfo(ERROR,
                 "resource(%s)'s FloatIp base_ip_list base_ip(%s) may be repeated.\n", resName, curInfo->ip);
             return CM_ERROR;

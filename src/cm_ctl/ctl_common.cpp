@@ -25,7 +25,7 @@
 #include "common/config/cm_config.h"
 #include "cm/libpq-fe.h"
 #include "cm/cm_misc.h"
-#include "cm/cm_msg.h"
+#include "cm_msg_version_convert.h"
 #include "cm/libpq-int.h"
 #include "cs_ssl.h"
 #include "cm_json_config.h"
@@ -1492,7 +1492,8 @@ int GetDatanodeRelationInfo(uint32 nodeId, const char *cmData, cm_to_ctl_get_dat
     int i = 0;
     int timePass = 0;
     char* receiveMsg = NULL;
-    cm_to_ctl_get_datanode_relation_ack* getInstanceMsgPtr = NULL;
+    cm_to_ctl_get_datanode_relation_ack *getInstanceMsgPtr = NULL;
+    cm_to_ctl_get_datanode_relation_ack_ipv4 *getInstanceMsgPtrIpv4 = NULL;
     ctl_to_cm_datanode_relation_info cmDatanodeRelationInfoContent = {0};
 
     ret = FindInstanceIdAndType(nodeId, cmData, &instanceId, &instanceType);
@@ -1529,7 +1530,12 @@ int GetDatanodeRelationInfo(uint32 nodeId, const char *cmData, cm_to_ctl_get_dat
             receiveMsg = recv_cm_server_cmd(CmServer_conn);
         }
         if (receiveMsg != NULL) {
-            getInstanceMsgPtr = (cm_to_ctl_get_datanode_relation_ack*)receiveMsg;
+            if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+                getInstanceMsgPtrIpv4 = (cm_to_ctl_get_datanode_relation_ack_ipv4 *)receiveMsg;
+                CmToCtlGetDatanodeRelationAckV1ToV2(getInstanceMsgPtrIpv4, getInstanceMsg);
+                break;
+            }
+            getInstanceMsgPtr = (cm_to_ctl_get_datanode_relation_ack *)receiveMsg;
             getInstanceMsg->command_result = getInstanceMsgPtr->command_result;
             getInstanceMsg->member_index = getInstanceMsgPtr->member_index;
             for (i = 0; i < CM_PRIMARY_STANDBY_MAX_NUM; i++) {

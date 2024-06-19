@@ -24,6 +24,7 @@
 #include "cm_text.h"
 #include "cm_misc.h"
 #include "cm_elog.h"
+#include "cm_ip.h"
 
 #include "cm_config.h"
 
@@ -31,6 +32,7 @@
 
 #include "cma_global_params.h"
 #include "cma_common.h"
+#include "cm_util.h"
 #include "cma_libpq_com.h"
 #include "cma_network_check.h"
 #include "cma_datanode_utils.h"
@@ -68,9 +70,11 @@ static THR_LOCAL DnIpText g_curDnIpText = {0};
 static const char *const LISTEN_ADDRESSES = "listen_addresses";
 static const char *const MATCH_POINT = "=";
 static const char MATCH_POINT_CHAR = '=';
-static const char *const ALL_LISTEN_ADDRESSES = "0.0.0.0";
-static const char *const ALL_LISTEN_ADDRESSES_ARRAY[] = {ALL_LISTEN_ADDRESSES, "*"};
-static const char *const LOCAL_HOST_ARRAY[] = {"localhost", "127.0.0.1"};
+static const char *const IPV4_ALL_LISTEN_ADDRESSES = "0.0.0.0";
+static const char *const IPV4_ALL_LISTEN_ADDRESSES_ARRAY[] = {IPV4_ALL_LISTEN_ADDRESSES, "*"};
+static const char *const IPV6_ALL_LISTEN_ADDRESSES = "::";
+static const char *const IPV6_ALL_LISTEN_ADDRESSES_ARRAY[] = {IPV6_ALL_LISTEN_ADDRESSES, "*"};
+static const char *const LOCAL_HOST = {"localhost"};
 static const char INPUT_END_ARRAY[] = {'\n'};
 static const char SEPARATOR_ARRAY[] = {',', '\0'};
 
@@ -375,18 +379,27 @@ static bool8 IsCurIpAllListenAddress(const char *ip)
     if (CM_IS_EMPTY_STR(ip)) {
         return CM_FALSE;
     }
-    uint32 len = ELEMENT_COUNT(ALL_LISTEN_ADDRESSES_ARRAY);
-    for (uint32 i = 0; i < len; ++i) {
-        if (cm_str_equal(ip, ALL_LISTEN_ADDRESSES_ARRAY[i])) {
+    uint32 len = ELEMENT_COUNT(IPV4_ALL_LISTEN_ADDRESSES_ARRAY);
+    uint32 i;
+    for (i = 0; i < len; ++i) {
+        if (cm_str_equal(ip, IPV4_ALL_LISTEN_ADDRESSES_ARRAY[i])) {
             return CM_TRUE;
         }
     }
+
+    len = ELEMENT_COUNT(IPV6_ALL_LISTEN_ADDRESSES_ARRAY);
+    for (i = 0; i < len; ++i) {
+        if (cm_str_equal(ip, IPV6_ALL_LISTEN_ADDRESSES_ARRAY[i])) {
+            return CM_TRUE;
+        }
+    }
+    
     return CM_FALSE;
 }
 
 static bool8 IsIpSkipCheck(const char *ip)
 {
-    if (cm_str_equal(ip, LOCAL_HOST_ARRAY[0])) {
+    if (cm_str_equal(ip, LOCAL_HOST)) {
         return CM_TRUE;
     }
     if (IsCurIpAllListenAddress(ip)) {
@@ -449,28 +462,6 @@ static status_t ParseDnText(DnResultText *dnText, uint32 instId)
     return CM_SUCCESS;
 }
 
-static bool8 IsLocalHostIp(const char *ip)
-{
-    uint32 len = ELEMENT_COUNT(LOCAL_HOST_ARRAY);
-    for (uint32 i = 0; i < len; ++i) {
-        if (cm_str_equal(ip, LOCAL_HOST_ARRAY[i])) {
-            return CM_TRUE;
-        }
-    }
-    return CM_FALSE;
-}
-
-static bool8 IsSameIp(const char *srcIp, const char *dstIp)
-{
-    if (cm_str_equal(srcIp, dstIp)) {
-        return CM_TRUE;
-    }
-    if (IsLocalHostIp(srcIp) && IsLocalHostIp(dstIp)) {
-        return CM_TRUE;
-    }
-    return CM_FALSE;
-}
-
 static bool8 IsFindVipInDnText(const DnResultText *dnText, const char *ip, bool8 isDel, bool8 *isAllListen)
 {
     if (CM_IS_EMPTY_STR(dnText->result) || CM_IS_EMPTY_STR(ip)) {
@@ -490,7 +481,7 @@ static bool8 IsFindVipInDnText(const DnResultText *dnText, const char *ip, bool8
             return CM_FALSE;
         }
         curIp = dnText->result + curPoint;
-        if (IsSameIp(ip, curIp)) {
+        if (IsEqualIp(ip, curIp)) {
             return CM_TRUE;
         }
         if (!isDel && IsCurIpAllListenAddress(curIp)) {
@@ -524,7 +515,7 @@ static status_t GetDnListenAddressesFromFile(DnIpText *dnIpText, uint32 dnIdx)
     CM_RETURN_IFERR(GetDnText(dnIpText, INIT_DN_IP_LEN + dnFloatIp->dnFloatIpCount * CM_IP_LENGTH));
     char cmd[MAX_PATH_LEN] = {0};
     errno_t rc = snprintf_s(cmd, MAX_PATH_LEN, MAX_PATH_LEN - 1, "gs_guc check -Z datanode -D %s -c \"%s\" 2>&1 "
-        "| grep \"gs_guc check\" | awk -F ':' '{print $3}'", GetCurDnDataPath(dnIdx), LISTEN_ADDRESSES);
+        "| grep \"gs_guc check\" | awk -F ': ' '{print $3}'", GetCurDnDataPath(dnIdx), LISTEN_ADDRESSES);
     securec_check_intval(rc, (void)rc);
     uint32 instId = GetCurDnInstId(dnIdx);
     FILE *cmdFd = popen(cmd, "r");
@@ -568,7 +559,7 @@ static status_t GetDnListenAddressesFromFile(DnIpText *dnIpText, uint32 dnIdx)
 static int32 CheckFloatIpListen(const char *ip, uint32 dnIdx)
 {
     char cmd[INIT_DN_CMD_LEN] = {0};
-    errno_t rc = snprintf_s(cmd, INIT_DN_CMD_LEN, INIT_DN_CMD_LEN - 1, "netstat -anop 2>&1 |grep \""
+    errno_t rc = snprintf_s(cmd, INIT_DN_CMD_LEN, INIT_DN_CMD_LEN - 1, "netstat -anopW 2>&1 |grep \""
         "$(ps -ux |grep -w \"%s/%s\"|grep -w \"%s\" |grep -v grep | awk '{print $2}')/%s\" "
         "| grep -w \"LISTEN\" | awk '{print $4}'| grep -w \"%s\"",
         g_binPath, GetDnProcessName(), GetCurDnDataPath(dnIdx), GetDnProcessName(), ip);
@@ -603,12 +594,13 @@ static void GetAllFloatIpNetState(DnStatus *dnStatus, const DnFloatIp *dnFloatIp
         return;
     }
 
-    listenRet = CheckFloatIpListen(ALL_LISTEN_ADDRESSES, dnIdx);
-    if (listenRet == (int32)NETWORK_STATE_DOWN) {
-        return;
-    }
-
     for (uint32 i = 0; i < dnFloatIp->dnFloatIpCount; ++i) {
+        listenRet = CheckFloatIpListen(GetIpVersion(
+            dnFloatIp->dnFloatIp[i]) == AF_INET6 ? IPV6_ALL_LISTEN_ADDRESSES : IPV4_ALL_LISTEN_ADDRESSES,
+            dnIdx);
+        if (listenRet == (int32)NETWORK_STATE_DOWN) {
+            continue;
+        }
         floatIpInfo->dnNetState[i] = listenRet;
         if (listenRet == (int32)NETWORK_STATE_UP) {
             floatIpInfo->dnNetState[i] =
@@ -744,7 +736,7 @@ static status_t GetDnFloatIpCmd(const char *floatIp, DnIpText *dnIpText, Network
 
         curIp = dnText->result + curPoint;
         tmpFindCurIp = CM_FALSE;
-        if (IsSameIp(floatIp, curIp)) {
+        if (IsEqualIp(floatIp, curIp)) {
             isFindCurIp = CM_TRUE;
             tmpFindCurIp = CM_TRUE;
         } else {
@@ -965,6 +957,83 @@ static void ClearFloatIpConn(DnIpText *dnIpText, const DnStatus *dnStatus, bool8
     }
 }
 
+void ReportPingDnFloatIpFailToCms(uint32 instanceId, char failedDnFloatIp[MAX_FLOAT_IP_COUNT][CM_IP_LENGTH],
+    uint32 failedCount)
+{
+    CmSendPingDnFloatIpFail reportMsg = {0};
+    BaseInstInfo *baseInfo = &reportMsg.baseInfo;
+    baseInfo->msgType = (int)MSG_CMA_PING_DN_FLOAT_IP_FAIL;
+    baseInfo->node = g_currentNode->node;
+    baseInfo->instId = instanceId;
+    baseInfo->instType = INSTANCE_TYPE_DATANODE;
+    reportMsg.failedCount = failedCount;
+
+    if (failedCount > MAX_FLOAT_IP_COUNT) {
+        write_runlog(ERROR, "[%s] failed float ip count %u more tahn max float ip count %u.\n",
+            __FUNCTION__,
+            failedCount,
+            MAX_FLOAT_IP_COUNT);
+        return;
+    }
+    errno_t rc;
+    for (uint32 i = 0; i < failedCount; ++i) {
+        rc = strcpy_s(reportMsg.failedDnFloatIp[i], CM_IP_LENGTH, failedDnFloatIp[i]);
+        securec_check_errno(rc, (void)rc);
+    }
+    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(CmSendPingDnFloatIpFail), "ping dn float ip fail");
+}
+
+bool8 CanPingDnFloatIp()
+{
+    static uint64 last = 0;
+    const long oneMinute = 60;
+    if ((GetMonotonicTimeS() - last) > oneMinute) {
+        last = GetMonotonicTimeS();
+        write_runlog(LOG, "[%s] floatIp ping successful.\n", __FUNCTION__);
+        return CM_TRUE;
+    }
+    write_runlog(ERROR, "[%s] floatIp ping failed.\n", __FUNCTION__);
+    return CM_FALSE;
+}
+
+void PingDnFloatIp(const DnStatus *dnstatus, uint32 dnIdx, bool8 isRuning)
+{
+    if (dnstatus->reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY || !isRuning) {
+        return;
+    }
+
+    DnFloatIp *dnFloatIp = GetDnFloatIpByDnIdx(dnIdx);
+    if (dnFloatIp == NULL) {
+        return;
+    }
+
+    if (!CanPingDnFloatIp()) {
+        return;
+    }
+
+    uint32 instanceId = g_currentNode->datanode[dnIdx].datanodeId;
+    char failedDnFloatIp[MAX_FLOAT_IP_COUNT][CM_IP_LENGTH] = {0};
+    uint32 failedCount = 0;
+    errno_t rc;
+    for (uint32 i = 0; i < dnFloatIp->dnFloatIpCount; i++) {
+        if (IsLocalHostIp(dnFloatIp->dnFloatIp[i])) {
+            continue;
+        }
+        if (GetIpVersion(dnFloatIp->dnFloatIp[i]) != AF_INET6) {
+            continue;
+        }
+
+        if (CheckPeerIp(dnFloatIp->dnFloatIp[i], "[PingFloatIp]", NULL, 1, AF_INET6) != PROCESS_STATUS_SUCCESS) {
+            rc = strcpy_s(failedDnFloatIp[failedCount], CM_IP_LENGTH, dnFloatIp->dnFloatIp[i]);
+            securec_check_errno(rc, (void)rc);
+            failedCount++;
+        }
+    }
+    if (failedCount > 0) {
+        ReportPingDnFloatIpFailToCms(instanceId, failedDnFloatIp, failedCount);
+    }
+}
+
 void DnCheckFloatIp(DnStatus *dnStatus, uint32 dnIdx, bool8 isRunning)
 {
     if (!IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
@@ -984,6 +1053,7 @@ void DnCheckFloatIp(DnStatus *dnStatus, uint32 dnIdx, bool8 isRunning)
     DoFloatIpOper(dnIpText, dnStatus, dnIdx, isRunning);
     CheckDownFloatIp(dnIpText, dnStatus, dnIdx, isRunning);
     ClearFloatIpConn(dnIpText, dnStatus, isRunning, dnIdx);
+    PingDnFloatIp(dnStatus, dnIdx, isRunning);
     return;
 }
 

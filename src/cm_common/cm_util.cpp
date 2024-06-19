@@ -94,6 +94,13 @@ uint64 GetMonotonicTimeMs()
     return (uint64)ts.tv_sec * CM_MS_COUNT_PER_SEC + (uint64)ts.tv_nsec / CM_NSEC_COUNT_PER_MS;
 }
 
+uint64 GetMonotonicTimeS()
+{
+    struct timespec ts;
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64)ts.tv_sec;
+}
+
 void CMFairMutexInit(CMFairMutex &mutex)
 {
     (void)pthread_mutex_init(&mutex.lock, NULL);

@@ -40,6 +40,7 @@ void UpdateResIsregStatusList(uint32 nodeId, ResInstIsreg *isregList, uint32 isr
 bool IsCmInstIdInCheckList(uint32 nodeId, uint32 cmInstId);
 bool IsRecvCheckListMiss(uint32 nodeId, uint32 *checkList, uint32 checkCount);
 bool IsRecvIsregStatValid(int stat);
+void CleanAllResStatusReportInter();
 
 status_t SaveOneResStatusToDdb(const OneResStatList *oneResStat);
 status_t GetOneResStatusFromDdb(OneResStatList *resStat);

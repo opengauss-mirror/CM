@@ -226,6 +226,8 @@ char g_enableMesSsl[BOOL_STR_MAX_LEN] = {0};
 uint32 g_sslCertExpireCheckInterval = SECONDS_PER_DAY;
 uint32 g_cmaRhbItvl = 1000;
 CmResConfList g_resConf[CM_MAX_RES_INST_COUNT] = {{{0}}};
+IpType g_ipType = IP_TYPE_INIT;
+bool g_supportIpV6 = false;
 #ifndef ENABLE_MULTIPLE_NODES
 char g_dbServiceVip[CM_IP_LENGTH] = {0};
 char g_enableFenceDn[10] = {0};
@@ -240,6 +242,16 @@ char g_cmManualStartingPath[MAX_PATH_LEN] = {0};
 bool &GetIsSharedStorageMode()
 {
     return g_isSharedStorageMode;
+}
+
+bool GetEnvSupportIpV6()
+{
+    return g_supportIpV6;
+}
+
+void SetEnvSupportIpV6(bool val)
+{
+    g_supportIpV6 = val;
 }
 
 #ifdef __aarch64__

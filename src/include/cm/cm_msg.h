@@ -269,6 +269,8 @@ typedef enum CM_MessageType_st {
     MSG_CTL_CM_FLOAT_IP_ACK = 182,
     MSG_CM_AGENT_MODIFY_MOST_AVAILABLE = 183,
     MSG_AGENT_CM_DN_MOST_AVAILABLE = 184,
+    MSG_CMA_PING_DN_FLOAT_IP_FAIL = 185,
+    MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP = 186,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -712,7 +714,7 @@ typedef struct cm_to_agent_lock2_st {
     int msg_type;
     uint32 node;
     uint32 instanceId;
-    char disconn_host[HOST_LENGTH];
+    char disconn_host[CM_IP_LENGTH];
     uint32 disconn_port;
 } cm_to_agent_lock2;
 
@@ -1057,9 +1059,9 @@ typedef struct cm_local_replconninfo_st {
     int buildReason;
     uint32 term;
     uint32 disconn_mode;
-    char disconn_host[HOST_LENGTH];
+    char disconn_host[CM_IP_LENGTH];
     uint32 disconn_port;
-    char local_host[HOST_LENGTH];
+    char local_host[CM_IP_LENGTH];
     uint32 local_port;
     bool redo_finished;
     bool realtime_build_status;
@@ -2221,6 +2223,12 @@ typedef struct CmFloatIpStatInfoT {
     uint32 count;
     int32 nicNetState[MAX_FLOAT_IP_COUNT];
 } CmFloatIpStatInfo;
+
+typedef struct CmSendPingDnFloatIpFailSt {
+    BaseInstInfo baseInfo;
+    uint32 failedCount;
+    char failedDnFloatIp[MAX_FLOAT_IP_COUNT][CM_IP_LENGTH];
+} CmSendPingDnFloatIpFail;
 
 typedef struct CmFloatIpStatAckT {
     int32 msgType;

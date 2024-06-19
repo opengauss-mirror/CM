@@ -40,7 +40,7 @@
 
 const int DOUBLE_REPLICATION = 2;
 
-#define PROCESS_MSG_BY_TYPE_WITHOUT_CONN(struct_name, strunct_ptr, function_name)    \
+#define PROCESS_MSG_BY_TYPE_WITHOUT_CONN(struct_name, strunct_ptr, function_name) \
     do {                                                                             \
         (strunct_ptr) = (struct_name *)CmGetmsgbytes((CM_StringInfo)&recvMsgInfo->msg, sizeof(struct_name)); \
         if ((strunct_ptr) != NULL) {                                                 \
@@ -1262,32 +1262,37 @@ static void MsgRelationDatanode(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgPro
 {
     ctl_to_cm_datanode_relation_info *ctlToCmDatanodeRelationInfoPtr;
     PROCESS_MSG_BY_TYPE(
-        ctl_to_cm_datanode_relation_info, ctlToCmDatanodeRelationInfoPtr, process_ctl_to_cm_get_datanode_relation_msg);
+        ctl_to_cm_datanode_relation_info, ctlToCmDatanodeRelationInfoPtr, process_ctl_to_cm_get_datanode_relation_msg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSwitchover(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ctl_to_cm_switchover *ctlToCmSwithoverPtr;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverMsg);
+    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSwitchoverFast(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ctl_to_cm_switchover *ctlToCmSwithoverPtr;
     msgProc->doSwitchover = true;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverMsg);
+    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSwitchoverAll(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ctl_to_cm_switchover *ctlToCmSwithoverPtr;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverAllMsg);
+    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverAllMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSwitchoverFull(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ctl_to_cm_switchover *ctlToCmSwithoverPtr;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, process_ctl_to_cm_switchover_full_msg);
+    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, process_ctl_to_cm_switchover_full_msg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSwitchoverFullCheck(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1303,7 +1308,8 @@ static void MsgSwitchoverFullTimeout(MsgRecvInfo* recvMsgInfo, int msgType, CmdM
 static void MsgSwitchoverAz(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ctl_to_cm_switchover *ctlToCmSwithoverPtr;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverAzMsg);
+    PROCESS_MSG_BY_TYPE(ctl_to_cm_switchover, ctlToCmSwithoverPtr, ProcessCtlToCmSwitchoverAzMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSwitchoverAzTimeout(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1334,7 +1340,8 @@ static void MsgSetMode(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgPro
 static void MsgBuild(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ctl_to_cm_build* ctlToCmBuildPtr;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_build, ctlToCmBuildPtr, ProcessCtlToCmBuildMsg);
+    PROCESS_MSG_BY_TYPE(ctl_to_cm_build, ctlToCmBuildPtr, ProcessCtlToCmBuildMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSync(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1370,13 +1377,15 @@ static void MsgNotify(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc
 static void MsgQuery(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ctl_to_cm_query *ctlToCmQueryPtr;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_query, ctlToCmQueryPtr, ProcessCtlToCmQueryMsg);
+    PROCESS_MSG_BY_TYPE(ctl_to_cm_query, ctlToCmQueryPtr, ProcessCtlToCmQueryMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgCtlResourceStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     CmsToCtlGroupResStatus *queryStatusPtr;
-    PROCESS_MSG_BY_TYPE(CmsToCtlGroupResStatus, queryStatusPtr, ProcessResInstanceStatusMsg);
+    PROCESS_MSG_BY_TYPE(CmsToCtlGroupResStatus, queryStatusPtr, ProcessResInstanceStatusMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgQueryCmserver(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1387,7 +1396,8 @@ static void MsgQueryCmserver(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *
 static void MsgSet(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ctl_to_cm_set *ctl_to_cm_set_ptr;
-    PROCESS_MSG_BY_TYPE(ctl_to_cm_set, ctl_to_cm_set_ptr, ProcessCtlToCmSetMsg);
+    PROCESS_MSG_BY_TYPE(ctl_to_cm_set, ctl_to_cm_set_ptr, ProcessCtlToCmSetMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgGet(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1410,7 +1420,8 @@ static void MsgFencedUdf(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgP
 static void MsgHeatbeat(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     agent_to_cm_heartbeat *agentToCmHeartbeatPtr;
-    PROCESS_MSG_BY_TYPE(agent_to_cm_heartbeat, agentToCmHeartbeatPtr, process_agent_to_cm_heartbeat_msg);
+    PROCESS_MSG_BY_TYPE(agent_to_cm_heartbeat, agentToCmHeartbeatPtr, process_agent_to_cm_heartbeat_msg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgGsGucAck(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1429,13 +1440,14 @@ static void MsgEtcdCurrentTime(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc
 static void MsgQueryInstanceStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     cm_query_instance_status *cmQueryInstanceStatusPtr;
-    PROCESS_MSG_BY_TYPE(cm_query_instance_status, cmQueryInstanceStatusPtr, process_to_query_instance_status_msg);
+    PROCESS_MSG_BY_TYPE(cm_query_instance_status, cmQueryInstanceStatusPtr, process_to_query_instance_status_msg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgHotpatch(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     cm_hotpatch_msg *cmHotpatchMsgPtr;
-    PROCESS_MSG_BY_TYPE(cm_hotpatch_msg, cmHotpatchMsgPtr, ProcessHotpatchMessage);
+    PROCESS_MSG_BY_TYPE(cm_hotpatch_msg, cmHotpatchMsgPtr, ProcessHotpatchMessage, recvMsgInfo, msgType);
 }
 
 static void MsgStopArbitration(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1506,13 +1518,13 @@ static void MsgDnSyncList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msg
 static void MsgDnMostAvailable(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     AgentToCmserverDnSyncAvailable *availableMsg;
-    PROCESS_MSG_BY_TYPE(AgentToCmserverDnSyncAvailable, availableMsg, ProcessDnMostAvailableMsg);
+    PROCESS_MSG_BY_TYPE(AgentToCmserverDnSyncAvailable, availableMsg, ProcessDnMostAvailableMsg, recvMsgInfo, msgType);
 }
 
 static void MsgDnLocalPeer(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     AgentCmDnLocalPeer *dnLocalPeer;
-    PROCESS_MSG_BY_TYPE(AgentCmDnLocalPeer, dnLocalPeer, ProcessDnLocalPeerMsg);
+    PROCESS_MSG_BY_TYPE(AgentCmDnLocalPeer, dnLocalPeer, ProcessDnLocalPeerMsg, recvMsgInfo, msgType);
 }
 
 static void MsgReload(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1523,13 +1535,15 @@ static void MsgReload(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc
 static void MsgDdbCmd(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ExecDdbCmdMsg *execDccCmdMsg;
-    PROCESS_MSG_BY_TYPE(ExecDdbCmdMsg, execDccCmdMsg, ProcessCtlToCmExecDccCmdMsg);
+    PROCESS_MSG_BY_TYPE(ExecDdbCmdMsg, execDccCmdMsg, ProcessCtlToCmExecDccCmdMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSwitchCmd(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     CtlToCmsSwitch *switchMsg;
-    PROCESS_MSG_BY_TYPE(CtlToCmsSwitch, switchMsg, ProcessCtlToCmsSwitchMsg);
+    PROCESS_MSG_BY_TYPE(CtlToCmsSwitch, switchMsg, ProcessCtlToCmsSwitchMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgRequestResStatusList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1554,7 +1568,8 @@ static void MsgLatestResStatusList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsg
         return;
     }
     RequestLatestStatList *recvMsg;
-    PROCESS_MSG_BY_TYPE(RequestLatestStatList, recvMsg, ProcessRequestLatestResStatusListMsg);
+    PROCESS_MSG_BY_TYPE(RequestLatestStatList, recvMsg, ProcessRequestLatestResStatusListMsg,
+        recvMsgInfo, msgType);
 }
 
 static void MsgGetSharedStorageInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1565,13 +1580,15 @@ static void MsgGetSharedStorageInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMs
 static void MsgDdbOper(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     CltSendDdbOper *cltSendOper;
-    PROCESS_MSG_BY_TYPE(CltSendDdbOper, cltSendOper, ProcessCltSendOper);
+    PROCESS_MSG_BY_TYPE(CltSendDdbOper, cltSendOper, ProcessCltSendOper,
+        recvMsgInfo, msgType);
 }
 
 static void MsgSslConnRequest(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     AgentToCmConnectRequest *connMsgReq;
-    PROCESS_MSG_BY_TYPE(AgentToCmConnectRequest, connMsgReq, ProcessSslConnRequest);
+    PROCESS_MSG_BY_TYPE(AgentToCmConnectRequest, connMsgReq, ProcessSslConnRequest,
+        recvMsgInfo, msgType);
 }
 
 static void MsgCmResLock(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1580,13 +1597,15 @@ static void MsgCmResLock(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgP
         return;
     }
     CmaToCmsResLock *lockMsg = NULL;
-    PROCESS_MSG_BY_TYPE(CmaToCmsResLock, lockMsg, ProcessCmResLock);
+    PROCESS_MSG_BY_TYPE(CmaToCmsResLock, lockMsg, ProcessCmResLock,
+        recvMsgInfo, msgType);
 }
 
 static void MsgCmQueryOneResInst(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     QueryOneResInstStat *queryMsg = NULL;
-    PROCESS_MSG_BY_TYPE(QueryOneResInstStat, queryMsg, ProcessQueryOneResInst);
+    PROCESS_MSG_BY_TYPE(QueryOneResInstStat, queryMsg, ProcessQueryOneResInst,
+        recvMsgInfo, msgType);
 }
 
 void ProcessCmRhbMsg(MsgRecvInfo *recvMsgInfo, const CmRhbMsg *rhbMsg)
@@ -1598,7 +1617,7 @@ void ProcessCmRhbMsg(MsgRecvInfo *recvMsgInfo, const CmRhbMsg *rhbMsg)
 static void MsgCmRhb(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     CmRhbMsg *hbMsg = NULL;
-    PROCESS_MSG_BY_TYPE(CmRhbMsg, hbMsg, ProcessCmRhbMsg);
+    PROCESS_MSG_BY_TYPE(CmRhbMsg, hbMsg, ProcessCmRhbMsg, recvMsgInfo, msgType);
 }
 
 void ProcessRhbStatReq(MsgRecvInfo *recvMsgInfo, const CmShowStatReq *req)
@@ -1639,13 +1658,13 @@ static void MsgShowStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msg
     CmShowStatReq *req = NULL;
     switch (msgType) {
         case MSG_CTL_CM_RHB_STATUS_REQ:
-            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessRhbStatReq);
+            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessRhbStatReq, recvMsgInfo, msgType);
             break;
         case MSG_CTL_CM_NODE_DISK_STATUS_REQ:
-            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessNodeDiskStatReq);
+            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessNodeDiskStatReq, recvMsgInfo, msgType);
             break;
         case MSG_CTL_CM_FLOAT_IP_REQ:
-            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessFloatIpReq);
+            PROCESS_MSG_BY_TYPE(CmShowStatReq, req, ProcessFloatIpReq, recvMsgInfo, msgType);
             break;
         default:
             write_runlog(ERROR, "[MsgShowStatus] unknown request(%d)\n", msgType);
@@ -1659,7 +1678,7 @@ static void MsgGetFloatIpInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc 
         return;
     }
     CmaDnFloatIpInfo *floatIpInfo;
-    PROCESS_MSG_BY_TYPE(CmaDnFloatIpInfo, floatIpInfo, ProcessDnFloatIpMsg);
+    PROCESS_MSG_BY_TYPE(CmaDnFloatIpInfo, floatIpInfo, ProcessDnFloatIpMsg, recvMsgInfo, msgType);
 }
 
 static void MsgResIsreg(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
@@ -1668,7 +1687,17 @@ static void MsgResIsreg(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgPr
         return;
     }
     CmaToCmsIsregMsg *isregMsg;
-    PROCESS_MSG_BY_TYPE(CmaToCmsIsregMsg, isregMsg, ProcessResIsregMsg);
+    PROCESS_MSG_BY_TYPE(CmaToCmsIsregMsg, isregMsg, ProcessResIsregMsg, recvMsgInfo, msgType);
+}
+
+void MsgGetPingDnFloatIpFailedInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    if (!IsNeedCheckFloatIp() || (backup_open != CLUSTER_PRIMARY)) {
+        return;
+    }
+    CmSendPingDnFloatIpFail *failedFloatIpInfo;
+    PROCESS_MSG_BY_TYPE(
+        CmSendPingDnFloatIpFail, failedFloatIpInfo, ProcessPingDnFloatIpFailedMsg, recvMsgInfo, msgType);
 }
 
 static void InitCmCtlCmdProc()
@@ -1735,6 +1764,8 @@ static void InitCmAgentCmdProc()
     g_cmdProc[MSG_AGENT_CM_RESOURCE_STATUS] = MsgAgentResourceStatus;
     g_cmdProc[MSG_AGENT_CM_GET_LATEST_STATUS_LIST] = MsgLatestResStatusList;
     g_cmdProc[MSG_AGENT_CM_REQUEST_RES_STATUS_LIST] = MsgRequestResStatusList;
+
+    g_cmdProc[MSG_CMA_PING_DN_FLOAT_IP_FAIL] = MsgGetPingDnFloatIpFailedInfo;
 }
 
 static void InitCmClientCmdProc()

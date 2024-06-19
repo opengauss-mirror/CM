@@ -29,7 +29,7 @@
 #include "cm/libpq-int.h"
 #include "cm/cm_agent/cma_main.h"
 #include "cm_elog.h"
-#include "cm_msg.h"
+#include "cm_msg_version_convert.h"
 
 /* If DN switch take long time and do not complete, it will timeout, pending_command will be clear in server_main.cpp
 CM_ThreadMonitorMain(), the default g_wait_seconds is 180s, we need to increase the g_wait_seconds to 1200s. */
@@ -107,7 +107,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     ctl_to_cm_query queryMsg;
     ctl_to_cm_switchover switchoverMsg;
     cm_to_ctl_command_ack *ackMsg = NULL;
-    cm_to_ctl_instance_status *instStatusPtr = NULL;
+    cm_to_ctl_instance_status instStatusPtr = {0};
     cm_switchover_incomplete_msg *switchoverIncompletePtr = NULL;
     SwitchoverOper oper;
     if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
@@ -176,27 +176,27 @@ static int DoSwitchoverBase(const CtlOption *ctx)
                     break;
 
                 case MSG_CM_CTL_DATA:
-                    instStatusPtr = (cm_to_ctl_instance_status*)receiveMsg;
-                    if (instStatusPtr->instance_type == INSTANCE_TYPE_GTM) {
-                        if ((instStatusPtr->gtm_member.local_status.local_role == oper.localRole) &&
-                            (instStatusPtr->gtm_member.local_status.connect_status == CON_OK) &&
-                            (instStatusPtr->gtm_member.local_status.sync_mode == INSTANCE_DATA_REPLICATION_SYNC)) {
+                    GetCtlInstanceStatusFromRecvMsg(receiveMsg, &instStatusPtr);
+                    if (instStatusPtr.instance_type == INSTANCE_TYPE_GTM) {
+                        if ((instStatusPtr.gtm_member.local_status.local_role == oper.localRole) &&
+                            (instStatusPtr.gtm_member.local_status.connect_status == CON_OK) &&
+                            (instStatusPtr.gtm_member.local_status.sync_mode == INSTANCE_DATA_REPLICATION_SYNC)) {
                             success = true;
                         }
-                    } else if (instStatusPtr->instance_type == INSTANCE_TYPE_DATANODE) {
-                        if ((instStatusPtr->data_node_member.local_status.local_role == oper.localRole) &&
-                            (instStatusPtr->data_node_member.sender_status[0].peer_role == oper.peerRole ||
-                                instStatusPtr->data_node_member.sender_status[0].peer_role == INSTANCE_ROLE_INIT)) {
+                    } else if (instStatusPtr.instance_type == INSTANCE_TYPE_DATANODE) {
+                        if ((instStatusPtr.data_node_member.local_status.local_role == oper.localRole) &&
+                            (instStatusPtr.data_node_member.sender_status[0].peer_role == oper.peerRole ||
+                                instStatusPtr.data_node_member.sender_status[0].peer_role == INSTANCE_ROLE_INIT)) {
                             success = true;
                         }
-                        if ((instStatusPtr->data_node_member.local_status.local_role == INSTANCE_ROLE_PENDING) ||
-                            (instStatusPtr->data_node_member.sender_status[0].peer_role == INSTANCE_ROLE_PENDING)) {
+                        if ((instStatusPtr.data_node_member.local_status.local_role == INSTANCE_ROLE_PENDING) ||
+                            (instStatusPtr.data_node_member.sender_status[0].peer_role == INSTANCE_ROLE_PENDING)) {
                             write_runlog(ERROR, "can not do switchover at current role.\n");
                             FINISH_CONNECTION();
                         }
-                        if ((instStatusPtr->data_node_member.local_status.db_state != INSTANCE_HA_STATE_PROMOTING) &&
-                            (instStatusPtr->data_node_member.local_status.db_state != INSTANCE_HA_STATE_WAITING) &&
-                            (instStatusPtr->data_node_member.local_status.local_role == INSTANCE_ROLE_STANDBY)) {
+                        if ((instStatusPtr.data_node_member.local_status.db_state != INSTANCE_HA_STATE_PROMOTING) &&
+                            (instStatusPtr.data_node_member.local_status.db_state != INSTANCE_HA_STATE_WAITING) &&
+                            (instStatusPtr.data_node_member.local_status.local_role == INSTANCE_ROLE_STANDBY)) {
                             unExpectedTime++;
                         } else {
                             unExpectedTime = 0;
@@ -1187,8 +1187,8 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
     int wait_time;
     char* receiveMsg = NULL;
     cm_msg_type *msgType = NULL;
-    cm_to_ctl_instance_status* cm_to_ctl_instance_status_ptr = NULL;
-    cm_to_ctl_cluster_status* cm_to_ctl_cluster_status_ptr = NULL;
+    cm_to_ctl_instance_status cm_to_ctl_instance_status_ptr = {0};
+    cm_to_ctl_cluster_status *cm_to_ctl_cluster_status_ptr = NULL;
     int ret;
 
     /* return conn to cm_server */
@@ -1227,7 +1227,7 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
             msgType = (cm_msg_type*)receiveMsg;
             switch (msgType->msg_type) {
                 case MSG_CM_CTL_DATA_BEGIN:
-                    cm_to_ctl_cluster_status_ptr = (cm_to_ctl_cluster_status*)receiveMsg;
+                    cm_to_ctl_cluster_status_ptr = (cm_to_ctl_cluster_status *)receiveMsg;
                     if (switchover_query_second) {
                         if (cm_to_ctl_cluster_status_ptr->switchedCount == 0) {
                             *is_cluster_balance = true;
@@ -1242,12 +1242,11 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
                     }
                     break;
                 case MSG_CM_CTL_DATA:
-                    cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status*)receiveMsg;
+                    GetCtlInstanceStatusFromRecvMsg(receiveMsg, &cm_to_ctl_instance_status_ptr);
                     GetNeedQuickSwitchInstances(
-                        cm_to_ctl_instance_status_ptr, need_quick_switchover_instance, needQuickSwitchoverInstance);
+                        &cm_to_ctl_instance_status_ptr, need_quick_switchover_instance, needQuickSwitchoverInstance);
                     break;
                 case MSG_CM_CTL_NODE_END:
-                    cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status*)receiveMsg;
                     break;
                 case MSG_CM_CTL_DATA_END:
                     rec_data_end = true;

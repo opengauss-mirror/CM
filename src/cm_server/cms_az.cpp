@@ -27,6 +27,7 @@
 #include "cms_process_messages.h"
 #include "cms_common.h"
 #include "cms_az.h"
+#include "cm_ip.h"
 
 static uint32 GetCurrentAZnodeNum(const char *azName);
 static void StartOrStopInstanceByCommand(OperateType operateType, uint32 node, const char *instanceDataPath,
@@ -260,13 +261,14 @@ bool doPingAzNodes(const char *sshIp, AZRole azRole)
     do {
         for (i = 0; i < g_node_num; i++) {
             if (isAZPrioritySatisfyAZRole(g_node[i].azPriority, azRole)) {
+                const char *pingStr = GetPingStr(GetIpVersion(g_node[i].cmAgentIP[0]));
                 if (sshIp != NULL) {
                     rc = snprintf_s(pingCommand, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
-                        "pssh %s -s -H %s \"ping %s %s\" ",
-                        PSSH_TIMEOUT, sshIp, g_node[i].cmAgentIP[0], PING_TIMEOUT_OPTION);
+                        "pssh %s -s -H %s \"%s %s %s\" ",
+                        PSSH_TIMEOUT, sshIp, pingStr, g_node[i].cmAgentIP[0], PING_TIMEOUT_OPTION);
                 } else {
                     rc = snprintf_s(pingCommand, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
-                        "ping %s %s", g_node[i].cmAgentIP[0], PING_TIMEOUT_OPTION);
+                        "%s %s %s", pingStr, g_node[i].cmAgentIP[0], PING_TIMEOUT_OPTION);
                 }
                 securec_check_intval(rc, (void)rc);
                 rc = system(pingCommand);
@@ -301,13 +303,16 @@ bool doCheckAzStatus(const char *sshIp, AZRole azRole)
     char checkStartFile[CM_MAX_COMMAND_LONG_LEN] = {0};
 
     for (uint32 i = 0; i < g_node_num; i++) {
+        const char *ping_ip = g_node[i].cmAgentIP[0];
+        const char *pingStr = GetPingStr(GetIpVersion(ping_ip));
         if (isAZPrioritySatisfyAZRole(g_node[i].azPriority, azRole)) {
             if (sshIp == NULL) {
                 rc = snprintf_s(checkStartFile,
                     CM_MAX_COMMAND_LONG_LEN,
                     CM_MAX_COMMAND_LONG_LEN - 1,
-                    "ping %s %s;if [ $? == 0 ];then pssh %s -s -H %s \"ls %s \";fi;",
-                    g_node[i].cmAgentIP[0],
+                    "%s %s %s;if [ $? == 0 ];then pssh %s -s -H %s \"ls %s \";fi;",
+                    pingStr,
+                    ping_ip,
                     PING_TIMEOUT_OPTION,
                     PSSH_TIMEOUT,
                     g_node[i].sshChannel[0],
@@ -316,17 +321,19 @@ bool doCheckAzStatus(const char *sshIp, AZRole azRole)
                 rc = snprintf_s(checkStartFile,
                     CM_MAX_COMMAND_LONG_LEN,
                     CM_MAX_COMMAND_LONG_LEN - 1,
-                    "ping %s %s;"
-                    "if [ $? == 0 ];then pssh %s -s -H %s \" "
-                    " echo 'ping %s %s;if [ $\"\"? -eq 0 ];then touch %s/azIpcheck.flag;fi;' > %s/azIpcheck.sh;"
+                    "%s %s %s;"
+                    "if [ $? == 0 ];then pssh %s -s -H [%s] \" "
+                    " echo '%s %s %s;if [ $\"\"? -eq 0 ];then touch %s/azIpcheck.flag;fi;' > %s/azIpcheck.sh;"
                     " sh %s/azIpcheck.sh;rm -f %s/azIpcheck.sh;"
                     " if test -e %s/azIpcheck.flag;then rm -f %s/azIpcheck.flag;pssh %s -s -H %s \"ls %s \";fi;"
                     "\";fi;",
+                    pingStr,
                     sshIp,
                     PING_TIMEOUT_OPTION,
                     PSSH_TIMEOUT,
                     sshIp,
-                    g_node[i].cmAgentIP[0],
+                    pingStr,
+                    ping_ip,
                     PING_TIMEOUT_OPTION,
                     sys_log_path,
                     sys_log_path,
@@ -483,19 +490,27 @@ static void *PingIpThrdFuncMain(void *arg)
     char command[MAXPGPATH] = {0};
     char buf[MAXPGPATH];
     PingCheckThreadParmInfo *info = (PingCheckThreadParmInfo *)arg;
+
+    if (info == NULL) {
+        write_runlog(ERROR, "PingIpThrdFuncMain: invalid argument (info is NULL)\n");
+        return NULL;
+    }
+
     uint32 threadIndex = info->threadIdx;
     uint32 nodeIndex = 0;
     int ret = find_node_index_by_nodeid(info->azNode, &nodeIndex);
+    int rc;
     if (ret != 0) {
         write_runlog(ERROR, "PingIpThrdFuncMain: get node index failed!\n");
         return NULL;
     }
-
-    int rc = snprintf_s(command,
+     
+    const char *pingStr = GetPingStr(GetIpVersion(g_node[nodeIndex].cmAgentIP[0]));
+    rc = snprintf_s(command,
         MAXPGPATH,
         MAXPGPATH - 1,
-        "ping -c 1 -w 1 %s > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
-        g_node[nodeIndex].cmAgentIP[0]);
+        "%s -c 1 -w 1 %s > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
+        pingStr, g_node[nodeIndex].cmAgentIP[0]);
     securec_check_intval(rc, (void)rc);
     write_runlog(DEBUG1, "ping command is %s.\n", command);
 

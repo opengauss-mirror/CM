@@ -39,7 +39,7 @@ static const char* query_cm_server(uint32 node_id);
 static const char* query_cm_server_directory(uint32 node_id);
 static status_t PrintResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
 static void PrintParallelRedoResult(cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
-static void PrintSimpleResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
+static void PrintSimpleResult(cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
 static void print_simple_DN_result(uint32 node_index, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr);
 static status_t QueryResourceStatus(CM_Conn *pCmsCon);
 
@@ -211,9 +211,8 @@ status_t QueryEtcdAndCms(void)
     return CM_SUCCESS;
 }
 
-int DoProcessQueryMsg(char *receiveMsg, bool *recDataEnd)
+int DoProcessQueryMsg(char *receiveMsg, bool *recDataEnd, uint32 *pre_node)
 {
-    uint32 pre_node = INVALID_NODE_NUM;
     int ret = 0;
 
     cm_msg_type *cm_msg_type_ptr = (cm_msg_type *)receiveMsg;
@@ -225,11 +224,11 @@ int DoProcessQueryMsg(char *receiveMsg, bool *recDataEnd)
         case MSG_CM_CTL_DATA: {
             cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status *)receiveMsg;
             if (g_coupleQuery) {
-                PrintSimpleResult(&pre_node, cm_to_ctl_instance_status_ptr);
+                PrintSimpleResult(cm_to_ctl_instance_status_ptr);
             } else if (g_paralleRedoState) {
                 PrintParallelRedoResult(cm_to_ctl_instance_status_ptr);
             } else {
-                ret = (int)PrintResult(&pre_node, cm_to_ctl_instance_status_ptr);
+                ret = (int)PrintResult(pre_node, cm_to_ctl_instance_status_ptr);
             }
             break;
         }
@@ -261,6 +260,7 @@ status_t ProcessMsgAndPrintStatus(CM_Conn *pCmsCon)
 
     wait_time = g_waitSeconds * 1000;
     bool recDataEnd = false;
+    uint32 pre_node = INVALID_NODE_NUM;
     for (; wait_time > 0;) {
         ret = cm_client_flush_msg(pCmsCon);
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
@@ -269,7 +269,7 @@ status_t ProcessMsgAndPrintStatus(CM_Conn *pCmsCon)
 
         char *receiveMsg = recv_cm_server_cmd(pCmsCon);
         while (receiveMsg != NULL) {
-            ret = DoProcessQueryMsg(receiveMsg, &recDataEnd);
+            ret = DoProcessQueryMsg(receiveMsg, &recDataEnd, &pre_node);
             if (ret != 0) {
                 if (ret == CYCLE_BREAK) {
                     break;
@@ -1725,7 +1725,7 @@ static void PrintSimpleCnResult(uint32 nodeIndex, const cm_to_ctl_instance_statu
     }
 }
 
-static void PrintSimpleResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr)
+static void PrintSimpleResult(cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr)
 {
     uint32 i;
     uint32 node_index = 0;
@@ -1747,10 +1747,6 @@ static void PrintSimpleResult(uint32 *pre_node, cm_to_ctl_instance_status *cm_to
         g_centralNode.node_index = (int32)node_index;
         g_centralNode.instanceId = cm_to_ctl_instance_status_ptr->instanceId;
         g_centralNode.status = cm_to_ctl_instance_status_ptr->coordinatemember.status;
-    }
-
-    if ((g_detailQuery && (cm_to_ctl_instance_status_ptr->node != *pre_node)) || g_coupleQuery) {
-        *pre_node = cm_to_ctl_instance_status_ptr->node;
     }
 
     if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_COORDINATE &&

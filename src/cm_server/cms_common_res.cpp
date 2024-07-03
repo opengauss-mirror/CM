@@ -610,6 +610,7 @@ void NotifyCmaDoUnreg(uint32 destNodeId)
             ResIsregStatus isreg = GetIsregStatusByCmInstId(g_resStatus[i].status.resStat[j].cmInstanceId);
             if (isreg == CM_RES_ISREG_REG || isreg == CM_RES_ISREG_PENDING || isreg == CM_RES_ISREG_INIT) {
                 SendRegMsgToCma(destNodeId, 0, resInfo->resStat[j].resInstanceId, resInfo->resName, isreg);
+                ReleaseResLockOwner(g_resStatus[i].status.resName, g_resStatus[i].status.resStat[j].cmInstanceId);
             } else if (isreg == CM_RES_ISREG_UNREG || isreg == CM_RES_ISREG_NOT_SUPPORT) {
                 UpdateIsworkList(g_resStatus[i].status.resStat[j].cmInstanceId, RES_INST_WORK_STATUS_UNAVAIL);
             }

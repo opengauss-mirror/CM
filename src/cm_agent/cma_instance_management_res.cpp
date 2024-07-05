@@ -350,11 +350,10 @@ static inline void RestartOneResInst(CmResConfList *conf)
 {
     ResIsregStatus stat = IsregOneResInst(conf, conf->resInstanceId);
     if ((stat != CM_RES_ISREG_REG) && (stat != CM_RES_ISREG_NOT_SUPPORT)) {
-        if (RegOneResInst(conf, conf->resInstanceId, CM_FALSE) != CM_SUCCESS) {
-            write_runlog(LOG, "cur inst(%u) isreg stat=(%u), and reg failed, restart failed.\n",
-                conf->cmInstanceId, (uint32)stat);
-            return;
-        }
+        conf->checkInfo.startCount++;
+        write_runlog(LOG, "cur inst(%u) isreg stat=(%u), and reg failed, restart failed.\n",
+            conf->cmInstanceId, (uint32)stat);
+        return;
     }
     (void)StartOneResInst(conf);
 }

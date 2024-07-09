@@ -393,6 +393,7 @@ extern uint32 coordinator_heartbeat_timeout;
 extern int32 g_cmAgentDeleteCn;
 #endif
 extern uint32 g_cm_agent_kill_instance_time;
+extern uint32 g_cm_agent_set_most_available_sync_delay_time;
 extern uint32 cmserver_switchover_timeout;
 extern uint32 cmserver_and_etcd_instance_status_for_timeout;
 extern uint32 g_dropped_cn[MAX_CN_NUM];
@@ -432,6 +433,7 @@ extern bool g_needIncTermToDdbAgain;
 extern volatile bool g_needReloadSyncStandbyMode;
 extern bool g_instance_status_for_cm_server_pending[CM_PRIMARY_STANDBY_NUM];
 extern bool g_clusterStarting;
+extern bool g_enableSetMostAvailableSync;
 /* thread count of thread pool */
 extern int cm_thread_count;
 

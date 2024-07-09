@@ -390,6 +390,21 @@ void GetCmsParaFromConfig()
 
     get_config_param(configDir, "enable_dcf", g_enableDcf, sizeof(g_enableDcf));
 
+    char szEnableSetMostAvailableSync[MAX_PATH_LEN] = {0};
+    get_config_param(configDir, "enable_set_most_available_sync",
+        szEnableSetMostAvailableSync, sizeof(szEnableSetMostAvailableSync));
+    if (szEnableSetMostAvailableSync[0] == '\0') {
+        write_runlog(WARNING,
+            "parameter \"enable_set_most_available_sync\" not provided, will use defaule value [%d].\n",
+                g_enableSetMostAvailableSync);
+    } else {
+        if (!CheckBoolConfigParam(szEnableSetMostAvailableSync)) {
+            write_runlog(FATAL, "invalid value for parameter \"enable_set_most_available_sync\" in %s, "
+                "will use default value [%d].\n", configDir, g_enableSetMostAvailableSync);
+        } else {
+            g_enableSetMostAvailableSync = IsBoolCmParamTrue(szEnableSetMostAvailableSync) ? true : false;
+        }
+    }
     char enableSsl[10] = {0};
     get_config_param(configDir, "enable_ssl", enableSsl, sizeof(enableSsl));
     get_config_param(configDir, "voting_disk_path", g_votingDiskPath, sizeof(g_votingDiskPath));
@@ -533,6 +548,7 @@ void GetDnArbitrateMode()
 void get_parameters_from_configfile()
 {
     const int min_switch_rto = 60;
+    const uint32 default_value = 6;
     char alarmPath[MAX_PATH_LEN] = {0};
     int rcs;
     int rc = GetHomePath(alarmPath, sizeof(alarmPath));
@@ -603,6 +619,8 @@ void get_parameters_from_configfile()
         instance_heartbeat_timeout = INSTANCE_HEARTBEAT_TIMEOUT_FOR_E2E_RTO;
     }
     g_cm_agent_kill_instance_time = get_uint32_value_from_config(configDir, "agent_fault_timeout", 60);
+    g_cm_agent_set_most_available_sync_delay_time =
+        get_uint32_value_from_config(configDir, "cmserver_set_most_available_sync_delay_times", default_value);
     GetCmsParaFromConfig();
     get_config_param(configDir, "share_disk_path", g_shareDiskPath, sizeof(g_shareDiskPath));
     canonicalize_path(g_shareDiskPath);

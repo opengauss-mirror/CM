@@ -399,6 +399,10 @@ void GetCandicateIdxBackup(DnArbCtx *ctx, const CandicateCond *cadiCond)
         write_runlog(LOG, "%s, instanceId(%u) standbyMaxTerm or standbyMaxLsn is invalid.\n", str, ctx->instId);
         return;
     }
+    ChooseMostAvailableSyncOnTobaCandicate(ctx, cadiCond);
+    if (ctx->cond.candiIdx != INVALID_INDEX) {
+        return;
+    }
     /* static primary is the first choice */
     if (CanbeCandicateBackup(ctx, ctx->cond.staticPriIdx, cadiCond)) {
         ctx->cond.candiIdx = ctx->cond.staticPriIdx;

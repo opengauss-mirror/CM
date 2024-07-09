@@ -1500,9 +1500,28 @@ static int GetDatapathByInstanceId(uint32 instanceId, int instanceType, char* da
     return -1;
 }
 
+/* check whether primary dn  most_available_sync is on */
+static bool CheckDnMostAvaiSync()
+{
+    char command[MAX_COMMAND_LEN] = "cm_ctl ddb --get /most_available_sync | grep success >> \"/dev/null\" 2>&1";
+    int rc = -1;
+    rc = system(command);
+    if (rc == 0) {
+        write_runlog(DEBUG1, "[CheckDnMostAvaiSync]cmd is %s, rc=%d\n", command, WEXITSTATUS(rc));
+        return true;
+    }
+    return false;
+}
+
 int DoSwitchover(const CtlOption *ctx)
 {
     GetClusterMode();
+    // if primary dn most_available_sync is on, can not do switchover
+    if (CheckDnMostAvaiSync()) {
+        write_runlog(ERROR,
+            "primary dn most_available_sync is on, can not do switchover.\n");
+        return -1;
+    }
     if (ctx->switchover.switchoverAll) {
         if (switchover_all_quick && g_clusterType != V3SingleInstCluster) {
             return DoSwitchoverAllQuick();

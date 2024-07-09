@@ -153,6 +153,7 @@ void SetSwitchoverPendingCmd(
 int CheckNotifyCnStatus();
 int32 GetSwitchoverDone(const char *str);
 void ProcessDnLocalPeerMsg(MsgRecvInfo* recvMsgInfo, AgentCmDnLocalPeer *dnLpInfo);
+void ProcessDnMostAvailableMsg(MsgRecvInfo* recvMsgInfo, AgentToCmserverDnSyncAvailable *dnAvailInfo);
 void ProcessResInstanceStatusMsg(MsgRecvInfo* recvMsgInfo, const CmsToCtlGroupResStatus *queryStatusPtr);
 void ProcessCmResLock(MsgRecvInfo* recvMsgInfo, CmaToCmsResLock *lockMsg);
 void ProcessQueryOneResInst(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat *queryMsg);

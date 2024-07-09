@@ -168,6 +168,7 @@ uint32 g_cm_to_cm_report_sync_cycle_count = 0;
 uint32 g_datanode_instance_count = 0;
 uint32 g_gaussdb_restart_counts = 50; /* DN or CN restarts frequently due to core down */
 uint32 g_cm_agent_kill_instance_time = 0;
+uint32 g_cm_agent_set_most_available_sync_delay_time = 0;
 uint32 g_instance_manual_start_file_exist = 0;
 uint32 g_instance_status_for_cm_server[CM_PRIMARY_STANDBY_NUM] = {0};
 uint32 g_instance_status_for_etcd[CM_PRIMARY_STANDBY_NUM] = {
@@ -210,6 +211,7 @@ bool g_getHistoryCnStatusFromDdb = false;
 bool g_needIncTermToDdbAgain = false;
 bool g_clusterStarting = false;
 bool g_isSharedStorageMode = false;
+bool g_enableSetMostAvailableSync = false;
 volatile bool g_needReloadSyncStandbyMode = false;
 
 volatile uint32 g_refreshDynamicCfgNum = 0;

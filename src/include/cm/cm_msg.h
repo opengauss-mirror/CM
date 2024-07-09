@@ -267,6 +267,8 @@ typedef enum CM_MessageType_st {
     MSG_CM_CTL_EXT_IP_DATA_END = 180,
     MSG_CTL_CM_FLOAT_IP_REQ = 181,
     MSG_CTL_CM_FLOAT_IP_ACK = 182,
+    MSG_CM_AGENT_MODIFY_MOST_AVAILABLE = 183,
+    MSG_AGENT_CM_DN_MOST_AVAILABLE = 184,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -899,6 +901,14 @@ typedef struct cm_to_agent_rep_most_available_st {
     int sync_mode;
 } cm_to_agent_rep_most_available;
 
+typedef struct cm_to_agent_modify_most_available_st {
+    int msg_type;
+    uint32 node;
+    uint32 instanceId;
+    int instance_type;
+    uint32 oper; /*0： turn off; 1: trun on*/
+} cm_to_agent_modify_most_available;
+
 typedef struct cm_instance_central_node_st {
     pthread_rwlock_t rw_lock;
     pthread_mutex_t mt_lock;
@@ -1228,6 +1238,17 @@ typedef struct AgentToCmserverDnSyncListSt {
     int remain[REMAIN_LEN - 1];
     char remainStr[DN_SYNC_LEN];
 } AgentToCmserverDnSyncList;
+
+typedef struct AgentToCmserverDnSyncAvailableSt {
+    int msg_type;
+    uint32 node;
+    uint32 instanceId;
+    int instanceType;
+    char dnSynLists[DN_SYNC_LEN];
+    char syncStandbyNames[DN_SYNC_LEN];
+    char syncCommit[REMAIN_LEN-1];
+    bool dnAvailableSyncStatus;
+} AgentToCmserverDnSyncAvailable;
 
 typedef struct agent_to_cm_gtm_status_report_st {
     int msg_type;

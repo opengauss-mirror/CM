@@ -1503,6 +1503,12 @@ static void MsgDnSyncList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msg
 #endif
 }
 
+static void MsgDnMostAvailable(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    AgentToCmserverDnSyncAvailable *availableMsg;
+    PROCESS_MSG_BY_TYPE(AgentToCmserverDnSyncAvailable, availableMsg, ProcessDnMostAvailableMsg);
+}
+
 static void MsgDnLocalPeer(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     AgentCmDnLocalPeer *dnLocalPeer;
@@ -1718,6 +1724,7 @@ static void InitCmAgentCmdProc()
     g_cmdProc[MSG_AGENT_CM_DISKUSAGE_STATUS] = MsgDiskUsageStatus;
     g_cmdProc[MSG_AGENT_CM_DATANODE_INSTANCE_BARRIER] = MsgDatanodeInstanceBarrier;
     g_cmdProc[MSG_AGENT_CM_DN_SYNC_LIST] = MsgDnSyncList;
+    g_cmdProc[MSG_AGENT_CM_DN_MOST_AVAILABLE] = MsgDnMostAvailable;
     g_cmdProc[MSG_AGENT_CM_DATANODE_LOCAL_PEER] = MsgDnLocalPeer;
     g_cmdProc[MSG_GET_SHARED_STORAGE_INFO] = MsgGetSharedStorageInfo;
     g_cmdProc[MSG_CM_RHB] = MsgCmRhb;

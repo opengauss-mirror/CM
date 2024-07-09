@@ -1783,6 +1783,7 @@ int main(int argc, char** argv)
             CreateDNStatusCheckThread(ind);
             CreateDNConnectionStatusCheckThread(ind);
             CreateDNCheckSyncListThread(ind);
+            CreateDNCheckAvailableSyncThread(ind);
 #ifdef ENABLE_MULTIPLE_NODES
             CreateDNBackupStatusCheckThread(ind);
             CreateDNStorageScalingAlarmThread(ind);

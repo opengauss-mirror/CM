@@ -54,6 +54,8 @@ extern int check_datanode_status_by_SQL6(
 extern int CheckDatanodeStatusBySqL10(agent_to_cm_datanode_status_report *reportMsg, uint32 ii);
 extern int check_flush_lsn_by_preparse(agent_to_cm_datanode_status_report* report_msg, uint32 dataNodeIndex);
 extern int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltPqConn_t **curDnConn);
+extern int CheckDatanodeSyncCommit(uint32 instd, AgentToCmserverDnSyncAvailable *syncMsg, cltPqConn_t **curDnConn);
+extern int CheckDatanodeCurSyncLists(uint32 instd, AgentToCmserverDnSyncAvailable *syncMsg, cltPqConn_t **curDnConn);
 extern int CheckMostAvailableSync(uint32 index);
 void CheckTransactionReadOnly(cltPqConn_t* Conn, uint32 index, int instanceType);
 extern int cmagent_execute_query(cltPqConn_t *db_connection, const char *run_command);

@@ -31,6 +31,13 @@
 
 using namespace std;
 
+typedef struct SyncGroup_t {
+    char syncNames[DN_SYNC_LEN];
+    uint32 exepctSyncNum;
+} SyncGroup;
+
+static char *g_AvailDdbCmd = "/most_available_sync";
+
 void process_agent_to_cm_fenced_UDF_status_report_msg(
     const agent_to_cm_fenced_UDF_status_report *agent_to_cm_fenced_UDF_status_ptr)
 {
@@ -753,6 +760,390 @@ void GetInstanceIdByIp(uint32 localInstd, uint32 *peerInstId, uint32 groupIdx, D
         }
     }
     write_runlog(ERROR, "[GetInstanceIdByIp] instId(%u) cannot find the peerInst.\n", localInstd);
+}
+
+static bool deleteDnMostAvailableDdb()
+{
+    status_t st = DelKeyInDdb(g_AvailDdbCmd, (uint32)strlen(g_AvailDdbCmd));
+    if (st != CM_SUCCESS) {
+        write_runlog(ERROR, "[deleteDnMostAvailableDdb]%d: ddb delete falied. Key=%s\n", __LINE__, g_AvailDdbCmd);
+        return false;
+    }
+    return true;
+}
+
+static bool setDnMostAvailableDdb(uint32 instanceId)
+{
+    char value[INSTANCE_ID_LEN+1] = {0};
+    errno_t rc = snprintf_s(value, INSTANCE_ID_LEN, INSTANCE_ID_LEN - 1, "%u", instanceId);
+    securec_check_intval(rc, (void)rc);
+    status_t st = SetKV2Ddb(g_AvailDdbCmd, (uint32)strlen(g_AvailDdbCmd), value, (uint32)strlen(value), NULL);
+    if (st != CM_SUCCESS) {
+        write_runlog(ERROR, "[setDnMostAvailableDdb]%d: ddb set falied. Key=%s, value=%s\n",
+            __LINE__, g_AvailDdbCmd, value);
+        return false;
+    }
+    return true;
+}
+
+static void SendModifyMostAvaiable(MsgRecvInfo* recvMsgInfo, AgentToCmserverDnSyncAvailable *dnAvailInfo,
+    bool turnOn, bool isDnPrimary = true)
+{
+    cm_to_agent_modify_most_available msg;
+    uint32 node = dnAvailInfo->node;
+    uint32 instanceId = dnAvailInfo->instanceId;
+    msg.msg_type = (int)MSG_CM_AGENT_MODIFY_MOST_AVAILABLE;
+    msg.node = dnAvailInfo->node;
+    msg.instanceId = dnAvailInfo->instanceId;
+    msg.oper = turnOn ? 1 : 0;
+    if (turnOn) {
+        if (isDnPrimary && !setDnMostAvailableDdb(msg.instanceId)) {
+            write_runlog(ERROR, "instance(node =%u  instanceid =%u), setDnMostAvailableDdb failed.\n",
+                node, instanceId);
+            return;
+        }
+    } else {
+        if (isDnPrimary && !deleteDnMostAvailableDdb()) {
+            write_runlog(ERROR, "instance(node =%u  instanceid =%u), deleteDnMostAvailableDdb failed.\n",
+                node, instanceId);
+            return;
+        }
+    }
+
+    write_runlog(WARNING, "send modify most available message to (node = %u,  instanceid = %u, oper = %s).\n",
+        node, instanceId, msg.oper == 1 ? "on":"off");
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msg), sizeof(cm_to_agent_modify_most_available));
+}
+
+static bool CheckDNSyncCommit(char *syncCommit)
+{
+    if (syncCommit == NULL) {
+        return false;
+    }
+    if (strcmp(syncCommit, "on")==0 ||  strcmp(syncCommit, "remote_apply")==0
+        || strcmp(syncCommit, "remote_write")==0) {
+        return true;
+    }
+    return false;
+}
+
+static void initSyncGroups(SyncGroup *groups)
+{
+    for (uint32 i = 0; i<CM_PRIMARY_STANDBY_NUM; i++) {
+        groups[i].syncNames[0] = '\0';
+        groups[i].exepctSyncNum = 0;
+    }
+}
+
+/* remove spaces in string names */
+static void removeSpaces(char *names)
+{
+    int i, j;
+    int len = strlen(names);
+    for (i = 0, j = 0; i < len; i++) {
+        if (names[i] != ' ') {
+            names[j++] = names[i];
+        }
+    }
+    names[j] = '\0';
+}
+
+static void parseSyncGroup(SyncGroup *group, char *tmpSyncNames, uint32 matchNum)
+{
+    group->exepctSyncNum = matchNum;
+    errno_t rc = memset_s(group->syncNames, DN_SYNC_LEN, 0, DN_SYNC_LEN);
+    securec_check_errno(rc, (void)rc);
+    rc = strcpy_s(group->syncNames, DN_SYNC_LEN, tmpSyncNames);
+    securec_check_errno(rc, (void)rc);
+}
+
+/* whether token is a substring of s */
+static bool checkSubString(char *s, char *token)
+{
+    int len1 = strlen(s);
+    int len2 = strlen(token);
+    if (len1 < len2) {
+        return false;
+    }
+
+    for (int i = 0; i <= len1-len2; i++) {
+        int j;
+        for (j = 0; j < len2; j++) {
+            if (s[i + j] != token[j]) {
+                break;
+            }
+        }
+        if (j == len2) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool checkEachGroupSync(SyncGroup *group, char *curSyncLists)
+{
+    bool starMode = false;
+    char tmpLists[DN_SYNC_LEN];
+    errno_t rc = strcpy_s(tmpLists, DN_SYNC_LEN, curSyncLists);
+    securec_check_errno(rc, (void)rc);
+    char *saveptr = NULL;
+    char *token = strtok_r(tmpLists, ",", &saveptr);
+    uint curMatchNum = 0;
+    if (group->syncNames[0] == '*') {
+        starMode = true;
+    }
+    while (token != NULL) {
+        if (starMode) {
+            curMatchNum++;
+        } else if (checkSubString(group->syncNames, token)) {
+            curMatchNum++;
+        }
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+    return curMatchNum >= group->exepctSyncNum ;
+}
+
+static bool checkGroupSyncNumber(SyncGroup *groups, char *curSyncLists, uint32 syncGroupNum)
+{
+    if (groups == NULL) {
+        return false;
+    }
+    for (uint32 i = 0; i<syncGroupNum; i++) {
+        if (!checkEachGroupSync(&groups[i], curSyncLists)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool checkSyncGroups(char *syncStandbyNames, char *curSyncLists)
+{
+    const uint32 lenTwo = 2;
+    uint32 syncGroupNum = 0;
+    SyncGroup groups[CM_PRIMARY_STANDBY_NUM];
+    initSyncGroups(groups);
+    removeSpaces(syncStandbyNames);
+    char *ptr = syncStandbyNames;
+    uint32 matchNum = 0;
+    bool firstMode = false;
+    bool anyMode = false;
+    while (*ptr != '\0') {
+        /* match sync "ANY" mode */
+        if (*ptr == 'A') {
+            if (strlen(ptr) >= strlen("ANY") && strncmp(ptr, "ANY", strlen("ANY")) == 0) {
+                ptr += strlen("ANY");
+                matchNum = 0;
+                anyMode = true;
+                continue;
+            }
+        } else if (*ptr == 'F') {
+            if (strlen(ptr) >= strlen("FIRST") && strncmp(ptr, "FIRST", strlen("FIRST")) == 0) {
+                ptr += strlen("FIRST");
+                matchNum = 0;
+                firstMode = true;
+                continue;
+            }
+        } else if (isdigit(*ptr) && strlen(ptr)>=lenTwo && *(ptr+1) == '(') {
+            matchNum = *ptr - '0';
+        } else {
+            char tmpSyncNames[CM_NODE_NAME] = {0};
+            if (*ptr == '(') {
+                int j = 0;
+                ptr++;
+                while (*ptr != '\0' && *ptr != ')') {
+                    tmpSyncNames[j++] = *ptr;
+                    ptr++;
+                }
+                tmpSyncNames[j] = '\0';
+                if (!anyMode && !firstMode) {
+                    matchNum = 1;
+                }
+                parseSyncGroup(&groups[syncGroupNum++], tmpSyncNames, matchNum);
+                if (*ptr == ')') {
+                    ptr++;
+                    continue;
+                }
+            } else if (*ptr == ',') {
+                ptr++;
+                continue;
+            } else {  //like node1,node2
+                int j = 0;
+                while (*ptr != '\0') {
+                    tmpSyncNames[j++] = *ptr;
+                    ptr++;
+                }
+                tmpSyncNames[j] = '\0';
+                matchNum = 1;
+                parseSyncGroup(&groups[syncGroupNum++], tmpSyncNames, matchNum);
+            }
+        }
+        if (*ptr !='\0') {
+            ptr++;
+        }
+    }
+    if (firstMode && anyMode) {
+        return false;
+    }
+    if (firstMode && syncGroupNum > 1) {
+        return false;
+    }
+    return checkGroupSyncNumber(groups, curSyncLists, syncGroupNum);
+}
+
+/*
+ * check current dn cluster sync standby number whether
+ * meets the synchronous_standby_name requirements
+ * if meets return true
+ * else return false
+ */
+static bool checkSyncNum(char *syncStandbyNames, char *curSyncLists)
+{
+    if (syncStandbyNames == NULL || curSyncLists == NULL) {
+        return false;
+    }
+    if (strcmp(syncStandbyNames, "") == 0 || strlen(syncStandbyNames) == 0) {
+        return true;
+    }
+    if (strcmp(curSyncLists, "") == 0 || strlen(curSyncLists) == 0) {
+        return false;
+    }
+    return checkSyncGroups(syncStandbyNames, curSyncLists);
+}
+
+static void checkDnAvailableDdb(AgentToCmserverDnSyncAvailable *dnAvailInfo)
+{
+    bool curAvailSyncStatus = dnAvailInfo->dnAvailableSyncStatus;
+    char value[MAX_PATH_LEN] = {0};
+    bool find =  false;
+    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
+    if (GetKVFromDDb(g_AvailDdbCmd, (uint32)strlen(g_AvailDdbCmd), value, MAX_PATH_LEN, &ddbResult) == CM_SUCCESS) {
+        write_runlog(DEBUG5, "find key:\"%s\" in ddb.\n", g_AvailDdbCmd);
+        find = true;
+    }
+    if (find) {
+        if (curAvailSyncStatus) {
+            uint32 instID = (uint32)atoi(value);
+            if (instID != dnAvailInfo->instanceId) {
+                setDnMostAvailableDdb(dnAvailInfo->instanceId);
+            }
+        } else {
+            deleteDnMostAvailableDdb();
+        }
+    } else {
+        if (curAvailSyncStatus) {
+            setDnMostAvailableDdb(dnAvailInfo->instanceId);
+        }
+    }
+}
+
+static bool checkSyncStandbyNamesLegal(char *syncStandbyNames)
+{
+    if (syncStandbyNames == NULL) {
+        return false;
+    }
+    static char AZ[CM_NODE_NAME] = "AZ";
+    /* "AZ" in synchronous_standby_names, is illegal */
+    if (checkSubString(syncStandbyNames, AZ)) {
+        return false;
+    }
+    return true;
+}
+
+static void DealSetMostAvailableSync(MsgRecvInfo* recvMsgInfo, AgentToCmserverDnSyncAvailable *dnAvailInfo)
+{
+    static int preInstanceId = -1;
+    static bool preAvailSyncStatus = false;
+    static bool firstPrint = true;
+    static uint32 setAvailSyncDelayTime = g_cm_agent_set_most_available_sync_delay_time;
+    int memIdx = 0;
+    uint32 groupIdx = 0;
+    uint32 node = dnAvailInfo->node;
+    uint32 instanceId = dnAvailInfo->instanceId;
+    bool curAvailSyncStatus = dnAvailInfo->dnAvailableSyncStatus;
+    int ret = find_node_in_dynamic_configure(node, instanceId, &groupIdx, &memIdx);
+    if (ret != 0) {
+        write_runlog(LOG, "can't find the instance(node =%u  instanceid =%u)\n", node, instanceId);
+        return;
+    }
+    cm_instance_datanode_report_status *roleMember =
+        g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
+    if (roleMember[memIdx].local_status.local_role != INSTANCE_ROLE_PRIMARY) {
+        if (curAvailSyncStatus) {
+            write_runlog(WARNING, "[DealSetMostAvailableSync] instance (node =%u  instanceid =%u) is not primary,"
+                " but dn most_available_sync is on.\n", node, instanceId);
+            SendModifyMostAvaiable(recvMsgInfo, dnAvailInfo, false, false);
+        }
+        return;
+    }
+
+    char *syncStandbyNames = dnAvailInfo->syncStandbyNames;
+    char *curSyncLists = dnAvailInfo->dnSynLists;
+    write_runlog(DEBUG5, "[DealSetMostAvailableSync] instance(node =%u  instanceid =%u)"
+        "  synchronous_standby_names is %s, curSyncLists is %s.\n",
+        node, instanceId, syncStandbyNames, curSyncLists);
+
+    if (preInstanceId != (int)instanceId || preAvailSyncStatus != curAvailSyncStatus) {
+        preInstanceId = (int)instanceId;
+        preAvailSyncStatus = curAvailSyncStatus;
+        setAvailSyncDelayTime = g_cm_agent_set_most_available_sync_delay_time;
+        firstPrint = true;
+    }
+    if (!checkSyncStandbyNamesLegal(syncStandbyNames)) {
+        if (firstPrint) {
+            write_runlog(ERROR, "[DealSetMostAvailableSync] instance(node =%u  instanceid =%u)"
+                "  synchronous_standby_names is %s, is illegal!.\n",
+                node, instanceId, syncStandbyNames);
+            firstPrint = false;
+        }
+        return;
+    }
+
+    if (setAvailSyncDelayTime > 1) {
+        setAvailSyncDelayTime--;
+    } else {
+        if (checkSyncNum(syncStandbyNames, curSyncLists)) {
+            /* primary dn's most_available_sync is on */
+            if (curAvailSyncStatus) {
+                SendModifyMostAvaiable(recvMsgInfo, dnAvailInfo, false);
+            } else {
+                checkDnAvailableDdb(dnAvailInfo);
+            }
+        } else {
+            /* primary dn's most_available_sync is off */
+            if (!curAvailSyncStatus) {
+                SendModifyMostAvaiable(recvMsgInfo, dnAvailInfo, true);
+            } else {
+                checkDnAvailableDdb(dnAvailInfo);
+            }
+        }
+        setAvailSyncDelayTime = g_cm_agent_set_most_available_sync_delay_time;
+    }
+}
+
+void ProcessDnMostAvailableMsg(MsgRecvInfo* recvMsgInfo, AgentToCmserverDnSyncAvailable *dnAvailInfo)
+{
+    if (!g_enableSetMostAvailableSync || g_cm_server_num <= CMS_ONE_PRIMARY_ONE_STANDBY) {
+        return;
+    }
+    write_runlog(DEBUG5, "[ProcessDnMostAvailableMsg] instance(node =%u  instanceid =%u)"
+                "  synchronous_standby_names is %s, "
+                "  syncCommit is %s, "
+                " dnSynLists is %s, dnAvailableSyncStatus is %d\n",
+            dnAvailInfo->node, dnAvailInfo->instanceId, dnAvailInfo->syncStandbyNames,
+            dnAvailInfo->syncCommit, dnAvailInfo->dnSynLists, dnAvailInfo->dnAvailableSyncStatus);
+    if (dnAvailInfo->instanceType != INSTANCE_TYPE_DATANODE) {
+        write_runlog(ERROR, "cms get instance(%u) is not dn, this type is %d.\n",
+            dnAvailInfo->instanceId, dnAvailInfo->instanceType);
+        return;
+    }
+
+    if (!CheckDNSyncCommit(dnAvailInfo->syncCommit)) {
+        write_runlog(DEBUG5, "instance(%u), dnAvailInfo->syncCommit is %s.\n",
+            dnAvailInfo->instanceId, dnAvailInfo->syncCommit);
+        return;
+    }
+
+    DealSetMostAvailableSync(recvMsgInfo, dnAvailInfo);
 }
 
 void ProcessDnLocalPeerMsg(MsgRecvInfo* recvMsgInfo, AgentCmDnLocalPeer *dnLpInfo)

@@ -39,7 +39,11 @@ const uint32 ONE_PRIMARY_ONE_STANDBY = 2;
 static DdbArbiCon *g_arbiCon = NULL;
 static const time_t MAX_VALID_LOCK_TIME = 125;
 static const time_t BASE_VALID_LOCK_TIME = 1;
+#ifdef ENABLE_MEMCHECK
+static const uint32 DEFAULT_CMD_TIME_OUT = 120;
+#else
 static const uint32 DEFAULT_CMD_TIME_OUT = 2;
+#endif
 
 typedef enum en_persist_cmd_type {
     CMD_LOCK = 0,

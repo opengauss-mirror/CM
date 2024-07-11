@@ -56,13 +56,10 @@ if (ENABLE_MEMCHECK)
     message("add memcheck dependencies.")
     set(MEMCHECK_HOME ${3RD_DEPENDENCY_ROOT}/memcheck/debug)
     set(MEMCHECK_LIB_PATH ${MEMCHECK_HOME}/gcc${GCC_VERSION}/lib)
-
-    set(MEMCHECK_FLAGS -fsanitize=address -fsanitize=leak -fno-omit-frame-pointer)
-    set(MEMCHECK_LIBS libasan.a rt dl)
-    set(MEMCHECK_LINK_DIRECTORIES ${MEMCHECK_LIB_PATH})
     list(REMOVE_ITEM SECURE_OPTIONS -fstack-protector)
-
-    add_compile_options(${MEMCHECK_FLAGS})
+    add_definitions(-D ENABLE_MEMCHECK)
+    add_compile_options(-fsanitize=address -fsanitize=leak -fno-omit-frame-pointer -lasan)
+    add_link_options(-fsanitize=address -fsanitize=leak -fno-omit-frame-pointer -lasan)
 endif ()
 
 if (ENABLE_GCOV)

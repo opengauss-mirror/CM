@@ -375,6 +375,18 @@ static bool IsAllResAvailInNode(int32 resIdx)
     return (heartbeatRes && nodeRes);
 }
 
+static bool IsNodeRhbAlive(int32 nodeIdx)
+{
+    int heart_beat = 
+        g_instance_group_report_status_ptr[nodeIdx].instance_status.command_member[0].heat_beat;
+    if (heart_beat > (int)instance_heartbeat_timeout) {
+        write_runlog(DEBUG1, "node(%d) heartbeat timeout, heartbeat:%d, threshold:%u\n",
+            nodeIdx, heart_beat, instance_heartbeat_timeout);
+        return false;
+    }
+    return true;
+}
+
 static int32 GetInMaxClusterNodeCnt(int32 maxNum, const NodeCluster *nodeCluster)
 {
     int32 cnt = 0;
@@ -483,7 +495,7 @@ static void FindMaxNodeCluster(MaxNodeCluster *maxCluster)
     GetRhbStat(g_curRhbStat.hbs, &g_curRhbStat.hwl);
     // assume that all meet the conditions.
     for (int32 i = nodeCluster->maxNodeNum - 1; i >= 0; --i) {
-        if (!IsAllResAvailInNode(i)) {
+        if (!IsAllResAvailInNode(i) || !IsNodeRhbAlive(i)) {
             continue;
         }
         nodeCluster->visNode[0] = i;  // first node

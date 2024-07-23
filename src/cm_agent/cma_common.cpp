@@ -24,6 +24,8 @@
 #include <sys/stat.h>
 #include <sys/vfs.h>
 #include <sys/wait.h>
+#include <string>
+#include <algorithm>
 #include "cm/cm_c.h"
 #include "cm/cm_elog.h"
 #include "cm/pqsignal.h"
@@ -1323,6 +1325,109 @@ void PrintInstanceStack(const char* dataPath, bool isPrintedOnce)
     } else {
         write_runlog(LOG, "[%s] command:%s success\n", __FUNCTION__, command);
     }
+}
+
+uint32 GetMaxLenOfPartition(void)
+{
+    FILE *fp;
+    char line[1024];
+    char partitionName[1024];
+    uint32 maxPartitionLen = 0;
+
+    char command[CM_MAX_COMMAND_LEN];
+    errno_t rc = snprintf_s(command, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
+                            "df |awk '{print $NF}' |grep ^/");
+    securec_check_intval(rc, (void)rc);
+
+    fp = popen(command, "r");
+    if (fp == NULL) {
+        write_runlog(ERROR, "[%s] command: %s failed! errno=%d.\n", __FUNCTION__, command, errno);
+        return MAX_PATH_LEN;
+    }
+    while (fgets(line, sizeof(line)-1, fp)!= NULL) {
+        sscanf(line, "%s", partitionName);
+        maxPartitionLen = maxPartitionLen > strlen(partitionName)? maxPartitionLen: strlen(partitionName);
+    }
+    (void)pclose(fp);
+    return maxPartitionLen;
+}
+
+uint32 GetMaxPercentFromDirList(const vector<string> v_linkPathInfo)
+{
+    uint32 maxDiskUsage = 0;
+    uint32 diskUsage = 0;
+    for (unsigned i = 0; i < v_linkPathInfo.size(); i++) {
+        diskUsage = GetDiskUsageForPath(v_linkPathInfo[i].c_str());
+        maxDiskUsage = maxDiskUsage > diskUsage ? maxDiskUsage : diskUsage;
+    }
+    return maxDiskUsage;
+}
+
+uint32 GetDiskUsageForLinkPath(const char *pathName)
+{
+    vector<string> v_linkPathInfo;
+    uint32 maxPartitionLen = GetMaxLenOfPartition();
+    const char *pgDirList[] = {"base", "global", "pg_xlog", "pg_tblspc"};
+    char entryObsolutePath[MAX_PATH_LEN];
+    char entryObsoluteRealPath[MAX_PATH_LEN];
+    char pgTblspcObsolutePath[MAX_PATH_LEN];
+    int rc = 0;
+
+    for (unsigned i = 0; i < sizeof(pgDirList) / sizeof(pgDirList[0]); i++) {
+        rc = memset_s(entryObsolutePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+        securec_check_errno(rc, (void) rc);
+        rc = memset_s(entryObsoluteRealPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+        securec_check_errno(rc, (void) rc);
+        snprintf_s(entryObsolutePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s", pathName, pgDirList[i]);
+        int size = readlink(entryObsolutePath, entryObsoluteRealPath, MAX_PATH_LEN - 1);
+        if (size > 0) {
+            for (unsigned ii = maxPartitionLen -1; ii < strlen(entryObsoluteRealPath); ii++) {
+                if (entryObsoluteRealPath[ii] == '/') {
+                    entryObsoluteRealPath[ii] = '\0';
+                }
+            }
+            v_linkPathInfo.push_back(entryObsoluteRealPath);
+        }
+    }
+
+    rc = memset_s(pgTblspcObsolutePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void) rc);
+    snprintf_s(pgTblspcObsolutePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s", pathName, "pg_tblspc");
+    DIR *dir;
+    struct dirent *entry;
+
+    if ((dir = opendir(pgTblspcObsolutePath)) == nullptr) {
+        write_runlog(WARNING, "%s is not a valid directory.\n", pgTblspcObsolutePath);
+        return GetMaxPercentFromDirList(v_linkPathInfo);
+    }
+
+    while ((entry = readdir(dir)) != nullptr) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        rc = memset_s(entryObsolutePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+        securec_check_errno(rc, (void) rc);
+        rc = memset_s(entryObsoluteRealPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+        securec_check_errno(rc, (void) rc);
+        if (entry->d_type == DT_LNK) {
+            snprintf_s(entryObsolutePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s", pgTblspcObsolutePath,
+                       entry->d_name);
+            int size = readlink(entryObsolutePath, entryObsoluteRealPath, MAX_PATH_LEN - 1);
+            if (size > 0) {
+                for (unsigned i = maxPartitionLen -1; i < strlen(entryObsoluteRealPath); i++) {
+                    if (entryObsoluteRealPath[i] == '/'){
+                        entryObsoluteRealPath[i] = '\0';
+                    }
+                }
+                v_linkPathInfo.push_back(entryObsoluteRealPath);
+            }
+        }
+    }
+
+    (void)closedir(dir);
+
+    v_linkPathInfo.erase(unique(v_linkPathInfo.begin(), v_linkPathInfo.end()), v_linkPathInfo.end());
+    return GetMaxPercentFromDirList(v_linkPathInfo);
 }
 
 void *DiskUsageCheckMain(void *arg)

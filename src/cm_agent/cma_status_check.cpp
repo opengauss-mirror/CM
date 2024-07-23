@@ -1450,7 +1450,9 @@ void CheckDiskForDNDataPath()
         status.msgType = (int)MSG_AGENT_CM_DISKUSAGE_STATUS;
         status.instanceId = g_currentNode->datanode[ii].datanodeId;
         status.logPathUsage = CheckDiskForLogPath();
-        status.dataPathUsage = GetDiskUsageForPath(g_currentNode->datanode[ii].datanodeLocalDataPath);
+        uint32 dataPathUsage = GetDiskUsageForPath(g_currentNode->datanode[ii].datanodeLocalDataPath);
+        uint32 linkPathUsage = GetDiskUsageForLinkPath(g_currentNode->datanode[ii].datanodeLocalDataPath);
+        status.dataPathUsage = (dataPathUsage > linkPathUsage) ? dataPathUsage : linkPathUsage;
         status.readOnly = g_dnReadOnly[ii];
         status.instanceType = INSTANCE_TYPE_DATANODE;
         if (IsCusResExistLocal()) {
@@ -1462,8 +1464,8 @@ void CheckDiskForDNDataPath()
             status.vglogPathUsage = 0;
         }
 
-        write_runlog(DEBUG1, "[%s] msgType:%d, instanceId:%u, logPathUsage:%u, dataPathUsage:%u.\n",
-            __FUNCTION__, status.msgType, status.instanceId, status.logPathUsage, status.dataPathUsage);
+        write_runlog(DEBUG1, "[%s] msgType:%d, instanceId:%u, logPathUsage:%u, linkPathUsage: %u, dataPathUsage:%u.\n",
+            __FUNCTION__, status.msgType, status.instanceId, status.logPathUsage, linkPathUsage, status.dataPathUsage);
 
         (void)pthread_rwlock_wrlock(&(g_dnReportMsg[ii].lk_lock));
         errno_t rc = memcpy_s((void *)&(g_dnReportMsg[ii].dnStatus.diskUsageMsg),

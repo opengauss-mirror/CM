@@ -986,7 +986,8 @@ static void GetCandiDyPrimaryInfo(DnArbCtx *ctx, int32 memIdx)
 
 static void GetCandiCateLockMsg(DnArbCtx *ctx, int32 memIdx)
 {
-    if (ctx->dnReport[memIdx].local_status.disconn_mode == PROHIBIT_CONNECTION) {
+    if (ctx->dnReport[memIdx].local_status.disconn_mode == PROHIBIT_CONNECTION ||
+        ctx->dnReport[memIdx].local_status.disconn_mode == PRE_PROHIBIT_CONNECTION) {
         ctx->cond.lock1Count++;
         if (ctx->dnReport[memIdx].local_status.local_role == INSTANCE_ROLE_STANDBY) {
             ComputeSameAzDnCount(ctx, memIdx, &(ctx->cond.snameAzRedoDoneCount));
@@ -1026,7 +1027,8 @@ static void GetCandiCateTermLsn(DnArbCtx *ctx, int32 memIdx)
         ctx->cond.maxLsn = ctx->dnReport[memIdx].local_status.last_flush_lsn;
     }
 
-    if (ctx->dyPrim.count == 0 && localRepl->disconn_mode != PROHIBIT_CONNECTION) {
+    if (ctx->dyPrim.count == 0 && localRepl->disconn_mode != PROHIBIT_CONNECTION &&
+        localRepl->disconn_mode != PRE_PROHIBIT_CONNECTION) {
         return;
     }
 
@@ -1700,6 +1702,27 @@ static bool DyPrimaryIsUnheal(DnArbCtx *ctx, const char *str)
     return false;
 }
 
+static status_t SendStartWalrcvMsg(DnArbCtx *ctx)
+{
+    if (ctx->cond.vaildPrimIdx == INVALID_INDEX) {
+        return CM_SUCCESS;
+    }
+    if (ctx->info.lockmode == POLLING_CONNECTION && ctx->info.dbState == INSTANCE_HA_STATE_NEED_REPAIR &&
+        (ctx->info.buildReason == INSTANCE_HA_DATANODE_BUILD_REASON_CONNECTING ||
+        ctx->info.buildReason == INSTANCE_HA_DATANODE_BUILD_REASON_DISCONNECT)) {
+        char* chosenHost = ctx->dnReport[ctx->cond.vaildPrimIdx].local_status.local_host;
+        uint32 chosenPort = ctx->dnReport[ctx->cond.vaildPrimIdx].local_status.local_port;
+        if (chosenHost != NULL && strlen(chosenHost) != 0) {
+            uint32 primaryTerm = GetInstanceTerm(ctx->groupIdx, ctx->cond.vaildPrimIdx);
+            SendLock2Messange(ctx, chosenHost, (int)strlen(chosenHost), chosenPort, primaryTerm);
+            write_runlog(LOG, "%s, Lock2 message has sent to instance (%u: %u), disconn(%s:%u).\n",
+                "[SendUnLock]", ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, ctx->cond.vaildPrimIdx), chosenHost, chosenPort);
+            return CM_TIMEDOUT;
+        }
+    }
+    return CM_SUCCESS;
+}
+
 static void ArbitratePrimaryInstance(DnArbCtx *ctx, const char *typeName)
 {
     /* clean primary instance lock msg */
@@ -1707,6 +1730,9 @@ static void ArbitratePrimaryInstance(DnArbCtx *ctx, const char *typeName)
         SendUnlockMessage(ctx, ctx->info.term);
         write_runlog(LOG, "%s, line %d: Unlock message has sent to instance %u.\n", typeName, __LINE__, ctx->instId);
     }
+    
+    (void)SendStartWalrcvMsg(ctx);
+
     bool res = DyPrimaryIsUnheal(ctx, typeName);
     if (res) {
         return;
@@ -1834,6 +1860,9 @@ static status_t SendUnlockToInstance(DnArbCtx *ctx)
                 write_runlog(LOG, "%s, %u, Lock2 message error, invalid primary port.\n", str, ctx->instId);
             }
         }
+        return CM_TIMEDOUT;
+    }
+    if (SendStartWalrcvMsg(ctx) != CM_SUCCESS) {
         return CM_TIMEDOUT;
     }
     return CM_SUCCESS;

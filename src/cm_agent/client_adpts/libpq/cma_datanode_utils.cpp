@@ -888,6 +888,52 @@ int check_datanode_status_by_SQL6(agent_to_cm_datanode_status_report* report_msg
     return 0;
 }
 
+int check_flush_lsn_by_preparse(agent_to_cm_datanode_status_report* report_msg, uint32 dataNodeIndex)
+{
+    if (report_msg->local_status.local_role != INSTANCE_ROLE_STANDBY ||
+        report_msg->local_status.disconn_mode == PROHIBIT_CONNECTION) {
+        return 0;
+    }
+
+    cltPqResult_t *node_result = Exec(g_dnConn[dataNodeIndex],  "select preparse_end_location from gs_get_preparse_location();");
+
+    if (node_result == NULL) {
+        write_runlog(ERROR, "sqlCommands query preparse flush lsn fail return NULL!\n");
+        CLOSE_CONNECTION(g_dnConn[dataNodeIndex]);
+    }
+
+    if ((ResultStatus(node_result) != CLTPQRES_CMD_OK) && (ResultStatus(node_result) != CLTPQRES_TUPLES_OK)) {
+        write_runlog(ERROR, "sqlCommands query preparse flush lsn fail ResultStatus=%d!\n", ResultStatus(node_result));
+        CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[dataNodeIndex]);
+    }
+
+    if (Ntuples(node_result) == 0) {
+        write_runlog(DEBUG5, "No preparse flush lsn information available.\n");
+        Clear(node_result);
+        return 0;
+    }  
+
+    int maxColums = Nfields(node_result);
+    if (maxColums != 1) {
+        write_runlog(ERROR, "sqlCommands query preparse flush lsn fail! col is %d\n", maxColums);
+        CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[dataNodeIndex]);
+    }
+
+    uint32 hi = 0;
+    uint32 lo = 0;
+    int rc = sscanf_s(Getvalue(node_result, 0, 0), "%X/%X", &hi, &lo);
+    check_sscanf_s_result(rc, 2);
+    securec_check_intval(rc, (void)rc);
+    XLogRecPtr preparseLsn = (((uint64)hi) << 32) | lo;
+    if (preparseLsn == InvalidXLogRecPtr) {
+        return 0;
+    }
+    report_msg->local_status.last_flush_lsn = preparseLsn;
+    report_msg->local_status.disconn_mode = PRE_PROHIBIT_CONNECTION;
+    Clear(node_result);
+    return 0;
+}
+
 int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, cltPqConn_t **curDnConn)
 {
     int maxRows = 0;

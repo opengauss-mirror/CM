@@ -422,6 +422,7 @@ const char* server_role_to_string(int role)
 instance_datanode_lockmode_string g_datanode_lockmode_map_string[] = {{"polling_connection", POLLING_CONNECTION},
     {"specify_connection", SPECIFY_CONNECTION},
     {"prohibit_connection", PROHIBIT_CONNECTION},
+    {"pre_prohibit_connection", PRE_PROHIBIT_CONNECTION},
     {NULL, UNDEFINED_LOCKMODE}};
 
 uint32 datanode_lockmode_string_to_int(const char* lockmode)

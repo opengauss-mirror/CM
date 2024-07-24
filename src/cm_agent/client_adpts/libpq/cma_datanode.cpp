@@ -347,6 +347,9 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
     if (check_datanode_status_by_SQL1(reportMsg, dataNodeIndex) != 0) {
         return -1;
     }
+    if (check_flush_lsn_by_preparse(reportMsg, dataNodeIndex) != 0) {
+        return -1;
+    }
 if (!IsBoolCmParamTrue(g_agentEnableDcf)) {
         /* SQL2 check */
         if (check_datanode_status_by_SQL2(reportMsg, dataNodeIndex) != 0) {

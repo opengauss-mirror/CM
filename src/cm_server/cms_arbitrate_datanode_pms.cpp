@@ -472,6 +472,14 @@ static void SaveDnStatusFromReport(const agent_to_cm_datanode_status_report *age
     if (backup_open == CLUSTER_STREAMING_STANDBY) {
         ctx->localRep->local_status.term = FirstTerm;
     }
+
+    if (g_instance_group_report_status_ptr[ctx->groupIdx]
+            .instance_status.data_node_member[ctx->memIdx]
+            .local_status.realtime_build_status) {
+        g_realtimeBuildStatus |= (1U << (ctx->node - 1));
+    } else {
+        g_realtimeBuildStatus &= ~(1U << (ctx->node - 1));
+    }
 }
 
 static void InitStateRole(db_state_role *role, const DnArbCtx *ctx)

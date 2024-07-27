@@ -480,6 +480,7 @@ extern bool g_isPauseArbitration;
 extern char g_cmManualPausePath[MAX_PATH_LEN];
 extern uint32 g_waitStaticPrimaryTimes;
 extern SSDoubleClusterMode g_ssDoubleClusterMode;
+extern uint32 g_realtimeBuildStatus;
 
 extern void clean_init_cluster_state();
 extern void instance_delay_arbitrate_time_out_direct_clean(uint32 group_index, int member_index,

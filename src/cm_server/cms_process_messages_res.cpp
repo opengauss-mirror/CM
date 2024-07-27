@@ -528,29 +528,15 @@ void ReleaseResLockOwner(const char *resName, uint32 instId)
     }
 }
 
-static bool GetClusterRealTimeBuildStaus(CmResStatList *resStat)
-{
-    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-            if (g_instance_group_report_status_ptr[i]
-                    .instance_status.data_node_member[j]
-                    .local_status.realtime_build_status) {
-                for (uint32 k = 0; k < resStat->status.instanceCount; ++k) {
-                    if (resStat->status.resStat[k].cmInstanceId == (uint32)j && resStat->status.resStat[k].status == 1) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    return false;
-}
-
-static bool EnableRealTimeBuild(const char *resName, const char* lockName, uint32 cmInstId)
+static bool RealTimeBuildIsOff(const char *resName, const char* lockName, uint32 cmInstId)
 {
     if (strcmp(lockName, "dms_reformer_lock") != 0) {
-        return true;
+        return false;
+    }
+
+    if (g_realtimeBuildStatus == 0) {
+        write_runlog(LOG, "skip check as realtimebuild of all nodes is off\n");
+        return false;
     }
 
     uint32 index = 0;
@@ -562,51 +548,39 @@ static bool EnableRealTimeBuild(const char *resName, const char* lockName, uint3
     uint32 nodeId = 0;
     bool found = false;
     CmResStatList *resStat = &g_resStatus[index];
+    uint32 realtimeStatusForCmp = 0;
     for (uint32 i = 0; i < resStat->status.instanceCount; ++i) {
         if (resStat->status.resStat[i].cmInstanceId == cmInstId) {
             nodeId = resStat->status.resStat[i].nodeId;
             found = true;
-            break;
         }
+        if (resStat->status.resStat[i].status == 1) {
+            realtimeStatusForCmp |= (1U << (resStat->status.resStat[i].nodeId - 1));
+        }
+    }
+
+    if (realtimeStatusForCmp == (1U << (nodeId - 1))) {
+        write_runlog(LOG, "skip check as I'm the only one live node, curStatus:%u, g_realtimeBuildStatus:%u.\n",
+            realtimeStatusForCmp, g_realtimeBuildStatus);
+        return false;
+    }
+
+    write_runlog(LOG, "instid:%u, nodeid:%u, curStatus:%u, g_realtimeBuildStatus:%u.\n", cmInstId, nodeId,
+        realtimeStatusForCmp, g_realtimeBuildStatus);
+
+    if (((g_realtimeBuildStatus & realtimeStatusForCmp) == realtimeStatusForCmp) ||
+        ((g_realtimeBuildStatus & realtimeStatusForCmp) == 0)) {
+        write_runlog(LOG, "skip check as realtimebuild of all nodes is off or on, g_realtimeBuildStatus:%u.\n",
+            g_realtimeBuildStatus);
+        return false;
     }
 
     if (!found) {
         write_runlog(ERROR, "%s, skip check as can't get nodeId by instanceId(%d).\n", __FUNCTION__, cmInstId);
-        return true;
+        return false;
     }
 
-    if (!GetClusterRealTimeBuildStaus(resStat)) {
-        return true;
-    }
-
-    found = false;
-    uint32 group_index = 0;
-    uint32 member_index = 0;
-    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-            if ((nodeId == g_instance_role_group_ptr[i].instanceMember[j].node) &&
-                (cmInstId == g_instance_role_group_ptr[i].instanceMember[j].instanceId)) {
-                group_index = i;
-                member_index = j;
-                found = true;
-                break;
-            }
-        }
-    }
-
-    if (!found) {
-        write_runlog(ERROR, "%s, skip check as can't find status of instance by nodeId(%d) and instanceId(%d).\n",
-            __FUNCTION__, nodeId, cmInstId);
-        return true;
-    }
-
-    if (g_instance_group_report_status_ptr[group_index]
-            .instance_status.data_node_member[member_index]
-            .local_status.realtime_build_status) {
-        return true;
-    }
-
-    return false;
+    return !(g_realtimeBuildStatus & (1U << (nodeId - 1)));
 }
 
 static ClientError CmResLock(const CmaToCmsResLock *lockMsg)
@@ -632,7 +606,7 @@ static ClientError CmResLock(const CmaToCmsResLock *lockMsg)
         return CM_RES_CLIENT_DDB_ERR;
     }
 
-    if (!EnableRealTimeBuild(lockMsg->resName, lockMsg->lockName, lockMsg->cmInstId)) {
+    if (RealTimeBuildIsOff(lockMsg->resName, lockMsg->lockName, lockMsg->cmInstId)) {
         write_runlog(LOG, "[CLIENT] res(%s) (%s)lock owner is inst(%u), inst(%u) can't lock as the realtime build status is off.\n",
             lockMsg->resName, lockMsg->lockName, curLockOwner, lockMsg->cmInstId);
         return CM_RES_CLIENT_CANNOT_DO;

@@ -331,6 +331,7 @@ int32 g_clusterArbiTime = 300;
 bool g_isPauseArbitration = false;
 char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 uint32 g_waitStaticPrimaryTimes = 6;
+uint32 g_realtimeBuildStatus = 0;
 
 bool isLargerNode()
 {

@@ -1092,6 +1092,11 @@ void *MaxNodeClusterArbitrateMain(void *arg)
             break;
         }
 
+        if (ctl_stop_cluster_server_halt_arbitration_timeout > 0) {
+            cm_sleep(sleepInterval);
+            break;
+        }
+
         if (CheckCmNodeClusterArbitrate(&hasHistory, &cmsSt) != CM_SUCCESS) {
             cm_sleep(sleepInterval);
             continue;

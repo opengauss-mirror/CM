@@ -288,6 +288,7 @@ extern char g_doradoIp[CM_IP_LENGTH];
 #ifndef ENABLE_MULTIPLE_NODES
 extern char g_dbServiceVip[CM_IP_LENGTH];
 extern char g_enableFenceDn[10];
+extern bool g_isStorageWithDMSorDSS;
 #endif
 extern uint32 g_diskTimeout;
 extern char g_enableMesSsl[BOOL_STR_MAX_LEN];

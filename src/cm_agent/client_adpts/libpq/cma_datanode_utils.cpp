@@ -269,6 +269,10 @@ constexpr int SQL_QUERY_REALTIME_BUILD_FAILURE = -1;
 
 int check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
 {
+    if (undocumentedVersion != 0) {
+        return SQL_QUERY_REALTIME_BUILD_SUCCESS;
+    }
+
     int max_rows = 0;
     int max_colums = 0;
 

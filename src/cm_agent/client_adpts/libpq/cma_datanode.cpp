@@ -334,11 +334,6 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
         return -1;
     }
 
-    /* check datanode realtime build status by sending sql */
-    if (check_datanode_realtime_build_status_by_sql(reportMsg, dataNodeIndex) != 0) {
-        return -1;
-    }
-
     /* SQL6 check */
     if (check_datanode_status_by_SQL6(reportMsg, dataNodeIndex, dataPath) != 0) {
         return -1;
@@ -384,6 +379,12 @@ if (!IsBoolCmParamTrue(g_agentEnableDcf)) {
         ShowPgThreadWaitStatus(g_dnConn[dataNodeIndex], dataNodeIndex, INSTANCE_TYPE_DATANODE);
     }
     g_dnPhonyDeadTimes[dataNodeIndex] = 0;
+
+    /* check datanode realtime build status by sending sql */
+    if (g_isStorageWithDMSorDSS && (check_datanode_realtime_build_status_by_sql(reportMsg, dataNodeIndex) != 0)) {
+        return -1;
+    }
+
     return 0;
 }
 

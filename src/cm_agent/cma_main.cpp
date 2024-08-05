@@ -1575,6 +1575,18 @@ static status_t CmaReadCusResConf()
     return CM_SUCCESS;
 }
 
+static void InitAgentGlobalVariable()
+{
+    //Init is openGauss with dms or dss mode
+    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+        if (strcmp(g_resConf[i].resName, "dss") == 0 || strcmp(g_resConf[i].resName, "dms_res") == 0) {
+            g_isStorageWithDMSorDSS = true;
+            write_runlog(LOG, "This node has dms or dss enabled.\n");
+            return;
+        }
+    }
+}
+
 int main(int argc, char** argv)
 {
     uid_t uid = getuid();
@@ -1724,6 +1736,8 @@ int main(int argc, char** argv)
     if (CmaReadCusResConf() != CM_SUCCESS) {
         exit(-1);
     }
+
+    InitAgentGlobalVariable();
 
     CmServerCmdProcessorInit();
     status = CreateCheckNetworkThread();

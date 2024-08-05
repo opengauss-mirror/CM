@@ -229,6 +229,7 @@ CmResConfList g_resConf[CM_MAX_RES_INST_COUNT] = {{{0}}};
 #ifndef ENABLE_MULTIPLE_NODES
 char g_dbServiceVip[CM_IP_LENGTH] = {0};
 char g_enableFenceDn[10] = {0};
+bool g_isStorageWithDMSorDSS = false;
 #endif
 bool g_isPauseArbitration = false;
 char g_cmManualPausePath[MAX_PATH_LEN] = {0};

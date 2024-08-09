@@ -981,6 +981,36 @@ static void process_rep_most_available_command(const char *dataDir, int instance
     return;
 }
 
+static void process_modify_most_available_command(const char* data_dir, int instance_type, uint32 oper)
+{
+    char command[MAXPGPATH] = {0};
+    int ret;
+    errno_t rc;
+
+    write_runlog(LOG, "receive modify most available msg from cm_server, data_dir :%s  nodetype is %d, oper is %d.\n",
+        data_dir, instance_type, oper);
+
+    switch (instance_type) {
+        case INSTANCE_TYPE_DATANODE:
+            rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+            "gs_guc reload  -Z datanode -D %s  -c \"most_available_sync = '%s'\"  >> %s 2>&1 ",
+            data_dir, oper ? "on" : "off",
+            system_call_log);
+            securec_check_intval(rc, (void)rc);
+            break;
+        default:
+            write_runlog(LOG, "node_type is unknown !\n");
+            return;
+    }
+    ret = system(command);
+    write_runlog(LOG, "exec modify most available command:%s\n", command);
+    if (ret != 0) {
+        write_runlog(LOG, "exec modify most available command failed ret=%d ! command is %s, errno=%d.\n",
+            ret, command, errno);
+    }
+    return;
+}
+
 static void process_notify_command(const char* data_dir, int instance_type, int role, uint32 term)
 {
     char command[MAXPGPATH] = {0};
@@ -1543,6 +1573,30 @@ static void MsgCmAgentRepMostAvailable(const AgentMsgPkg* msg, char *dataPath, c
     process_rep_most_available_command(dataPath, instanceType);
 }
 
+static void MsgCmAgentModifyMostAvailable(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
+{
+    int instanceType;
+    int ret;
+
+    const cm_to_agent_modify_most_available *modifyMsg =
+        (const cm_to_agent_modify_most_available *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_modify_most_available));
+    if (modifyMsg == NULL) {
+        return;
+    }
+    ret = FindInstancePathAndType(modifyMsg->node,
+        modifyMsg->instanceId,
+        dataPath,
+        &instanceType);
+    if (ret != 0) {
+        write_runlog(ERROR,
+            "can't find the instance  node is %u, instance is %u\n",
+            modifyMsg->node,
+            modifyMsg->instanceId);
+        return;
+    }
+    process_modify_most_available_command(dataPath, instanceType, modifyMsg->oper);
+}
+
 static void MsgCmAgentNotify(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
     int instanceType;
@@ -1955,6 +2009,7 @@ void CmServerCmdProcessorInit(void)
     g_cmsCmdProcessor[MSG_CM_AGENT_SYNC]                        = MsgCmAgentSync;
     g_cmsCmdProcessor[MSG_CM_AGENT_REP_SYNC]                    = MsgCmAgentRepSync;
     g_cmsCmdProcessor[MSG_CM_AGENT_REP_MOST_AVAILABLE]          = MsgCmAgentRepMostAvailable;
+    g_cmsCmdProcessor[MSG_CM_AGENT_MODIFY_MOST_AVAILABLE]       = MsgCmAgentModifyMostAvailable;
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY]                      = MsgCmAgentNotify;
     g_cmsCmdProcessor[MSG_CM_AGENT_RESTART_BY_MODE]             = MsgCmAgentRestartByMode;
     g_cmsCmdProcessor[MSG_CM_AGENT_HEARTBEAT]                   = MsgCmAgentHeartbeat;

@@ -279,6 +279,7 @@ void get_config_param(const char *config_file, const char *srcParam, char *destP
 static void ReloadParametersFromConfigfile()
 {
     const int min_switch_rto = 60;
+    const uint32 default_value = 6;
     write_runlog(LOG, "reload cm_server parameters from config file.\n");
     int rcs;
     canonicalize_path(configDir);
@@ -333,11 +334,28 @@ static void ReloadParametersFromConfigfile()
         instance_heartbeat_timeout = INSTANCE_HEARTBEAT_TIMEOUT_FOR_E2E_RTO;
     }
     g_cm_agent_kill_instance_time = get_uint32_value_from_config(configDir, "agent_fault_timeout", 60);
+    g_cm_agent_set_most_available_sync_delay_time =
+        get_uint32_value_from_config(configDir, "cmserver_set_most_available_sync_delay_times", default_value);
     get_config_param(configDir, "enable_transaction_read_only", g_enableSetReadOnly, sizeof(g_enableSetReadOnly));
     if (!CheckBoolConfigParam(g_enableSetReadOnly)) {
         rcs = strcpy_s(g_enableSetReadOnly, sizeof(g_enableSetReadOnly), "on");
         securec_check_errno(rcs, (void)rcs);
         write_runlog(FATAL, "invalid value for parameter \" enable_transaction_read_only \" in %s.\n", configDir);
+    }
+    char szEnableSetMostAvailableSync[MAX_PATH_LEN] = {0};
+    get_config_param(configDir, "enable_set_most_available_sync",
+        szEnableSetMostAvailableSync, sizeof(szEnableSetMostAvailableSync));
+    if (szEnableSetMostAvailableSync[0] == '\0') {
+        write_runlog(WARNING,
+            "parameter \"enable_set_most_available_sync\" not provided, will use defaule value [%d].\n",
+            g_enableSetMostAvailableSync);
+    } else {
+        if (!CheckBoolConfigParam(szEnableSetMostAvailableSync)) {
+            write_runlog(FATAL, "invalid value for parameter \"enable_set_most_available_sync\" in %s, "
+                "will use default value [%d].\n", configDir, g_enableSetMostAvailableSync);
+        } else {
+            g_enableSetMostAvailableSync = IsBoolCmParamTrue(szEnableSetMostAvailableSync) ? true : false;
+        }
     }
     GetDdbArbiCfg(RELOAD_PARAMTER);
     GetDelayArbitTimeFromConf();

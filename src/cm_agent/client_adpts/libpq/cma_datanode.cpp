@@ -1477,6 +1477,104 @@ void *DNSyncCheckMain(void *arg)
 }
 #endif
 
+static void InitDnSyncAvailabletMsg(AgentToCmserverDnSyncAvailable *dnAvailableSyncMsg, uint32 index)
+{
+    errno_t rc = 0;
+    rc = memset_s(dnAvailableSyncMsg, sizeof(AgentToCmserverDnSyncAvailable),
+        0, sizeof(AgentToCmserverDnSyncAvailable));
+    securec_check_errno(rc, (void)rc);
+    dnAvailableSyncMsg->node = g_currentNode->node;
+    dnAvailableSyncMsg->instanceId = g_currentNode->datanode[index].datanodeId;
+    dnAvailableSyncMsg->instanceType = INSTANCE_TYPE_DATANODE;
+    dnAvailableSyncMsg->msg_type = (int32)MSG_AGENT_CM_DN_MOST_AVAILABLE;
+    dnAvailableSyncMsg->dnAvailableSyncStatus = false;
+    dnAvailableSyncMsg->dnSynLists[0] = '\0';
+    dnAvailableSyncMsg->syncStandbyNames[0] = '\0';
+    dnAvailableSyncMsg->syncCommit[0] = '\0';
+}
+
+static void GetSyncAvailableFromDn(AgentToCmserverDnSyncAvailable *dnAvailableSyncMsg,
+    uint32 idx, cltPqConn_t **curDnConn)
+{
+    const int32 rwTimeout = 3600;
+    const int report_sleep_times = 5;
+    int rc;
+    uint32 instd = g_currentNode->datanode[idx].datanodeId;
+    if ((*curDnConn) == NULL) {
+        char pidPath[MAX_PATH_LEN] = {0};
+        errno_t rc = snprintf_s(pidPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/postmaster.pid",
+            g_currentNode->datanode[idx].datanodeLocalDataPath);
+        securec_check_intval(rc, (void)rc);
+        (*curDnConn) = get_connection(pidPath, false, AGENT_CONN_DN_TIMEOUT, rwTimeout);
+        if ((*curDnConn) == NULL || (!IsConnOk(*curDnConn))) {
+            write_runlog(ERROR, "curDnConn is NULL, instd is %u, pidPath is %s.\n", instd, pidPath);
+            return;
+        }
+    }
+    bool isDnPrimary = g_dnReportMsg[idx].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY;
+    AgentToCmserverDnSyncList syncListMsg;
+    if (isDnPrimary && CheckDatanodeSyncList(instd, &syncListMsg, curDnConn) != 0) {
+        write_runlog(ERROR, "instd is %u, falied to get datanode synchronous_standby_names.\n", instd);
+        return;
+    }
+    rc = strcpy_s(dnAvailableSyncMsg->syncStandbyNames, DN_SYNC_LEN, syncListMsg.dnSynLists);
+    securec_check_errno(rc, (void)rc);
+
+    if (CheckDatanodeSyncCommit(instd, dnAvailableSyncMsg, curDnConn) != 0) {
+        write_runlog(ERROR, "instd is %u, falied to get datanode synchronous_commit.\n", instd);
+        return;
+    }
+
+    if (isDnPrimary && CheckDatanodeCurSyncLists(instd, dnAvailableSyncMsg, curDnConn) != 0) {
+        write_runlog(ERROR, "instd is %u, falied to get datanode current SyncLists.\n", instd);
+        return;
+    }
+
+    if (g_mostAvailableSync[idx]) {
+        dnAvailableSyncMsg->dnAvailableSyncStatus = true;
+    } else {
+        dnAvailableSyncMsg->dnAvailableSyncStatus = false;
+    }
+
+    write_runlog(DEBUG5, "dn(%u) will send syncAvailable msg to cms.\n", instd);
+    PushMsgToCmsSendQue((char *)dnAvailableSyncMsg,
+        (uint32)sizeof(AgentToCmserverDnSyncAvailable), "dn syncavailableMsg");
+
+    /* dn is not primary, sleep agent_report_interval*5 second */
+    if (!isDnPrimary) {
+        cm_sleep(agent_report_interval * report_sleep_times);
+    }
+}
+
+void *DNMostAvailableCheckMain(void *arg)
+{
+    AgentToCmserverDnSyncAvailable dnAvailableSyncMsg;
+    uint32 idx = *(uint32 *)arg;
+    pthread_t threadId = pthread_self();
+    write_runlog(LOG, "dn(%u) most available sync check thread start, threadid %lu.\n", idx, threadId);
+    int32 processStatus = 0;
+    uint32 shutdownSleepInterval = 5;
+    cltPqConn_t *curDnConn = NULL;
+    for (;;) {
+        if (g_shutdownRequest) {
+            cm_sleep(shutdownSleepInterval);
+            continue;
+        }
+        InitDnSyncAvailabletMsg(&dnAvailableSyncMsg, idx);
+        processStatus =
+            check_one_instance_status(DATANODE_BIN_NAME, g_currentNode->datanode[idx].datanodeLocalDataPath, NULL);
+        if (processStatus != PROCESS_RUNNING) {
+            write_runlog(DEBUG5, "%s :%d, dn(%u) is not running.\n",
+                __FUNCTION__, __LINE__, idx);
+        } else {
+            write_runlog(DEBUG5, "dn(%u) is running, will update sync available Msg from dn instance.\n", idx);
+            GetSyncAvailableFromDn(&dnAvailableSyncMsg, idx, &curDnConn);
+        }
+        cm_sleep(agent_report_interval);
+    }
+    return NULL;
+}
+
 static int GetHadrUserInfoCiphertext(cltPqConn_t* &healthConn, char *cipherText, uint32 cipherTextLen)
 {
     const char *sqlCommands = "select value from gs_global_config where name='hadr_user_info';";

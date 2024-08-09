@@ -31,6 +31,7 @@ void CreateDNStatusCheckThread(int* i);
 void CreateDNBackupStatusCheckThread(int* i);
 void CreateDNConnectionStatusCheckThread(int* i);
 void CreateDNCheckSyncListThread(int *idx);
+void CreateDNCheckAvailableSyncThread(int *idx);
 void CreateFaultDetectThread();
 void CreateConnCmsPThread();
 void CreateKerberosStatusCheckThread();

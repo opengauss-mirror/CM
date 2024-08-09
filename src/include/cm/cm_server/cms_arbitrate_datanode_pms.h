@@ -157,4 +157,5 @@ void DatanodeInstanceArbitrate(MsgRecvInfo* recvMsgInfo, const agent_to_cm_datan
 bool IsCurrentNodeDorado(uint32 node);
 void StopFakePrimaryResourceInstance(const DnArbCtx *ctx);
 bool IsInstanceIdMax(const DnArbCtx *ctx);
+uint32 GetAvaiSyncDdbInstId();
 #endif

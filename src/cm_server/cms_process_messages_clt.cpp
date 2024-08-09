@@ -297,6 +297,12 @@ void ProcessSwitchOverMsg(MsgRecvInfo* recvMsgInfo, uint32 i, int j, const cm_to
     const cm_instance_role_status *instInfo = &g_instance_role_group_ptr[i].instanceMember[j];
     instStatus->command_member[j].command_send_status = INSTANCE_COMMAND_SEND_STATUS_SENDING;
     instStatus->command_member[j].command_send_times = 0;
+    uint32 syncInstid = GetAvaiSyncDdbInstId();
+    if (syncInstid != 0) {
+        write_runlog(ERROR,
+            "primary dn(%u) most_available_sync is on, can not do switchover.\n", syncInstid);
+        return;
+    }
     if (instStatus->command_member[j].delaySwitchoverTime > 0) {
         write_runlog(LOG, "instId(%u) delayTime is %d, cannot do switchover.\n", instInfo->instanceId,
             instStatus->command_member[j].delaySwitchoverTime);

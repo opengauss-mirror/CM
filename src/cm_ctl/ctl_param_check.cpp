@@ -128,6 +128,8 @@ const char *g_cmsParamInfo[] = {
     "cms_enable_failover_on2nodes|bool|0,0|NULL|NULL|",
     "cms_enable_db_crash_recovery|bool|0,0|NULL|NULL|",
     "cms_network_isolation_timeout|int|10,2147483647|NULL|NULL|",
+    "enable_set_most_available_sync|bool|0,0|NULL|NULL|",
+    "cmserver_set_most_available_sync_delay_times|int|0,2147483647|NULL|NULL|",
 #ifndef ENABLE_PRIVATEGAUSS
     "wait_static_primary_times|int|5,2147483647|NULL|NULL|",
 #endif

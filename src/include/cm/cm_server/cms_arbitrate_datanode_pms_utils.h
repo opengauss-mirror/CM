@@ -77,4 +77,5 @@ void InitDnArbitInfo(DnArbitInfo *info);
 void CleanSwitchoverInfo(const DnArbCtx *ctx);
 status_t CheckSwitchOverDone(const DnArbCtx *ctx, int32 peerIdx);
 void ChangeStaticPrimaryByDynamicPrimary(const DnArbCtx *ctx);
+extern void ChooseMostAvailableSyncOnTobaCandicate(DnArbCtx *ctx, const CandicateCond *cadiCond);
 #endif

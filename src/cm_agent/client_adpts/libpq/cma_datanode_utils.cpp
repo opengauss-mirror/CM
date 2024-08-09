@@ -977,6 +977,86 @@ int CheckDatanodeSyncList(uint32 instd, AgentToCmserverDnSyncList *syncListMsg, 
     return 0;
 }
 
+int CheckDatanodeSyncCommit(uint32 instd, AgentToCmserverDnSyncAvailable *syncMsg, cltPqConn_t **curDnConn)
+{
+    int maxRows = 0;
+    int maxColums = 0;
+    const char *sqlCommands = "show synchronous_commit;";
+    cltPqResult_t *nodeResult = Exec((*curDnConn), sqlCommands);
+    if (nodeResult == NULL) {
+        write_runlog(ERROR, "instd is %u, CheckDatanodeSyncCommit fail return NULL!\n", instd);
+        CLOSE_CONNECTION((*curDnConn));
+    }
+    if ((ResultStatus(nodeResult) == CLTPQRES_CMD_OK) || (ResultStatus(nodeResult) == CLTPQRES_TUPLES_OK)) {
+        maxRows = Ntuples(nodeResult);
+        if (maxRows == 0) {
+            write_runlog(ERROR, "instd is %u, synchronous_commit information is empty.\n", instd);
+        } else {
+            int rc;
+            maxColums = Nfields(nodeResult);
+            if (maxColums != 1) {
+                write_runlog(ERROR, "instd is %u, CheckDatanodeSyncCommit fail! col is %d.\n", instd, maxColums);
+                CLEAR_AND_CLOSE_CONNECTION(nodeResult, (*curDnConn));
+            }
+            char *result = Getvalue(nodeResult, 0, 0);
+            if (result == NULL) {
+                write_runlog(ERROR, "instd is %u, synchronous_commit is NULL.\n", instd);
+                CLEAR_AND_CLOSE_CONNECTION(nodeResult, (*curDnConn));
+            }
+            rc = strcpy_s(syncMsg->syncCommit, DN_SYNC_LEN, result);
+            securec_check_errno(rc, (void)rc);
+            write_runlog(DEBUG1, "instd is %u, result=%s, len is %lu, report_msg->syncCommit=%s.\n", instd, result,
+                strlen(result), syncMsg->syncCommit);
+        }
+    } else {
+        write_runlog(ERROR, "instd is %u, CheckDatanodeSyncCommit fail Status=%d!\n",
+            instd, ResultStatus(nodeResult));
+    }
+    Clear(nodeResult);
+    return 0;
+}
+
+int CheckDatanodeCurSyncLists(uint32 instd, AgentToCmserverDnSyncAvailable *syncMsg, cltPqConn_t **curDnConn)
+{
+    int maxRows = 0;
+    int maxColums = 0;
+    const char *sqlCommands = "SELECT string_agg(substring(application_name FROM '\\[(.*?)\\]') , ',') "
+        " FROM pg_stat_replication "
+        " WHERE  state = 'Streaming' AND sync_state IN ('Sync', 'Quorum') ;";
+    cltPqResult_t *nodeResult = Exec((*curDnConn), sqlCommands);
+    if (nodeResult == NULL) {
+        write_runlog(ERROR, "instd is %u, CheckDatanodeCurSyncLists fail return NULL!\n", instd);
+        CLOSE_CONNECTION((*curDnConn));
+    }
+    if ((ResultStatus(nodeResult) == CLTPQRES_CMD_OK) || (ResultStatus(nodeResult) == CLTPQRES_TUPLES_OK)) {
+        maxRows = Ntuples(nodeResult);
+        if (maxRows == 0) {
+            write_runlog(ERROR, "instd is %u, curSyncLists information is empty.\n", instd);
+        } else {
+            int rc;
+            maxColums = Nfields(nodeResult);
+            if (maxColums != 1) {
+                write_runlog(ERROR, "instd is %u, CheckDatanodeCurSyncLists fail! col is %d.\n", instd, maxColums);
+                CLEAR_AND_CLOSE_CONNECTION(nodeResult, (*curDnConn));
+            }
+            char *result = Getvalue(nodeResult, 0, 0);
+            if (result == NULL) {
+                write_runlog(ERROR, "instd is %u, curSyncLists is NULL.\n", instd);
+                CLEAR_AND_CLOSE_CONNECTION(nodeResult, (*curDnConn));
+            }
+            rc = strcpy_s(syncMsg->dnSynLists, DN_SYNC_LEN, result);
+            securec_check_errno(rc, (void)rc);
+            write_runlog(DEBUG1, "instd is %u, result=%s, len is %lu, report_msg->dnSynLists=%s.\n", instd, result,
+                strlen(result), syncMsg->dnSynLists);
+        }
+    } else {
+        write_runlog(ERROR, "instd is %u, CheckDatanodeCurSyncLists fail Status=%d!\n",
+            instd, ResultStatus(nodeResult));
+    }
+    Clear(nodeResult);
+    return 0;
+}
+
 /* check whether query barrier id exists or not */
 int StandbyClusterCheckQueryBarrierID(cltPqConn_t* &conn, AgentToCmBarrierStatusReport *barrierInfo)
 {

@@ -157,6 +157,21 @@ void CreateDNCheckSyncListThread(int *idx)
 #endif
 }
 
+void CreateDNCheckAvailableSyncThread(int *idx)
+{
+    if (g_cm_server_num <= CMS_ONE_PRIMARY_ONE_STANDBY) {
+        write_runlog(LOG, "inst(%d) cm_server number is %u, not need to create availableSync thread.\n",
+            (*idx), g_cm_server_num);
+        return;
+    }
+    int err;
+    pthread_t thrId;
+    if ((err = pthread_create(&thrId, NULL, DNMostAvailableCheckMain, idx)) != 0) {
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
+        exit(-1);
+    }
+}
+
 void CreateDNConnectionStatusCheckThread(int* i)
 {
     int err;

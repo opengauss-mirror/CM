@@ -1114,8 +1114,43 @@ static bool CanbeCandicate(const DnArbCtx *ctx, int32 memIdx, const CandicateCon
     return true;
 }
 
+uint32 GetAvaiSyncDdbInstId()
+{
+    static char key[MAX_PATH_LEN] = "/most_available_sync";
+    char value[MAX_PATH_LEN] = {0};
+    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
+    if (GetKVFromDDb(key, MAX_PATH_LEN, value, MAX_PATH_LEN, &ddbResult) != CM_SUCCESS) {
+        write_runlog(ERROR, "[GetAvaiSyncDdbInstId] get key %s from ddb failed: %d.\n", key, (int)ddbResult);
+        return 0;
+    }
+    uint32 instID = (uint32)atoi(value);
+    return instID;
+}
+
+void ChooseMostAvailableSyncOnTobaCandicate(DnArbCtx *ctx, const CandicateCond *cadiCond)
+{
+    if (g_enableSetMostAvailableSync && g_cm_server_num > CMS_ONE_PRIMARY_ONE_STANDBY) {
+        uint32 instId = GetAvaiSyncDdbInstId();
+        if (instId != 0) {
+            write_runlog(WARNING, "[ChooseMostAvailableSyncOnTobaCandicate] instanceId(%u)"
+                "most_available_sync is on.\n", instId);
+            for (int32 i = 0; i < ctx->roleGroup->count; ++i) {
+                if (ctx->roleGroup->instanceMember[i].instanceId == instId) {
+                    write_runlog(WARNING, "[ChooseMostAvailableSyncOnTobaCandicate] instanceId(%u)"
+                        " most_available_sync is on, choose to be candidate.\n", instId);
+                    ctx->cond.candiIdx = i;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 static void ChooseStaticPrimaryTobeCandicate(DnArbCtx *ctx, const CandicateCond *cadiCond)
 {
+    if (ctx->cond.candiIdx != INVALID_INDEX) {
+        return;
+    }
     int32 staticPriIdx = ctx->cond.staticPriIdx;
     /* no static primary */
     if (CanbeCandicate(ctx, staticPriIdx, cadiCond)) {
@@ -1173,7 +1208,9 @@ static void GetCandicateIdx(DnArbCtx *ctx, const CandicateCond *cadiCond)
         write_runlog(LOG, "%s, instanceId(%u) standbyMaxTerm or standbyMaxLsn is invalid.\n", str, ctx->instId);
         return;
     }
-    /* static primary is the first choice */
+    /* if dcc most_available_sync is on, choose that dn*/
+    ChooseMostAvailableSyncOnTobaCandicate(ctx, cadiCond);
+    /* choose static primary  */
     ChooseStaticPrimaryTobeCandicate(ctx, cadiCond);
     /* static primary cannot be candicate */
     ChooseCandicateIdxFromOther(ctx, cadiCond);
@@ -1431,6 +1468,35 @@ static int32 GetFailoverMsgStaPriID(DnArbCtx *ctx)
     return INVALID_INDEX;
 }
 
+static bool CheckAvailSyncDdb(DnArbCtx *ctx)
+{
+    if (g_enableSetMostAvailableSync && g_cm_server_num > CMS_ONE_PRIMARY_ONE_STANDBY) {
+        uint32 instId = GetAvaiSyncDdbInstId();
+        if (instId != 0 && instId != ctx->instId) {
+            write_runlog(WARNING, "[CheckAvailSyncDdb], line %d: instance %u most_available_sync is on, "
+                "can not send failover message to %u\n", __LINE__, instId, ctx->instId);
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
+ * check whether most_available_sync is on
+ * if on:
+ * do not need to restart this dn, just restart another fake primary dn.
+ */
+static bool CheckRestart2AvaiSyncDdb(DnArbCtx *ctx)
+{
+    if (g_enableSetMostAvailableSync && g_cm_server_num > CMS_ONE_PRIMARY_ONE_STANDBY) {
+        uint32 instId = GetAvaiSyncDdbInstId();
+        if (instId != 0 && instId == ctx->instId) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool InstanceForceFailover(DnArbCtx *ctx)
 {
     bool res = InstanceForceFinishRedo(ctx);
@@ -1442,6 +1508,9 @@ static bool InstanceForceFailover(DnArbCtx *ctx)
     ArbiCond *cond = &(ctx->cond);
     /* redo_finish flag */
     if (!cond->hasDynamicPrimary && ctx->repGroup->finish_redo && ctx->localRep->local_status.redo_finished) {
+        if (!CheckAvailSyncDdb(ctx)) {
+            return false;
+        }
         /* candicate neets quarm */
         bool isMajority = cond->onlineCount > HALF_COUNT(cond->vaildCount) ? true : false;
         if (cond->candiIdx == ctx->memIdx && CanFailoverDn(isMajority) &&
@@ -1544,6 +1613,14 @@ static bool MoreDyPrimary(DnArbCtx *ctx, const char *typeName)
                 StopFakePrimaryResourceInstance(ctx);
             }
         } else {
+            /* dn most_available_sync is on, do not need to restart */
+            if (CheckRestart2AvaiSyncDdb(ctx)) {
+                write_runlog(LOG, "%s, line %d: instance %u most_available_sync is on, "
+                    "not need to restart.\n",
+                    typeName, __LINE__, ctx->instId);
+                ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+                return true;
+            }
             SendRestartMsg(ctx, typeName);
             write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
                 "send restart msg to instance(%u) that had been restarted.\n",
@@ -1604,6 +1681,14 @@ static bool MoreDyPrimary(DnArbCtx *ctx, const char *typeName)
                 StopFakePrimaryResourceInstance(ctx);
             }
         } else {
+            /* dn most_available_sync is on, do not need to restart */
+            if (CheckRestart2AvaiSyncDdb(ctx)) {
+                write_runlog(LOG, "%s, line %d: instance %u most_available_sync is on, "
+                    "not need to restart.\n",
+                    typeName, __LINE__, ctx->instId);
+                ctx->repGroup->arbitrate_status_member[ctx->memIdx].restarting = false;
+                return true;
+            }
             SendRestartMsg(ctx, typeName);
             write_runlog(LOG, "%s, line %d: more dynamic primary and their term(%u) are the most(%u), "
                 "send restart msg to instance(%u).\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
@@ -1819,6 +1904,11 @@ static void SendFailoverMsg(DnArbCtx *ctx, uint32 arbitInterval, bool isStaPrim,
         cond->arbitStaticInterval, cond->arbitInterval, g_delayArbiTime,
         cond->buildCount, cond->onlineCount, cond->vaildCandiCount, cond->vaildCount,
         cond->snameAzRedoDoneCount, cond->snameAzDnCount);
+    if (!CheckAvailSyncDdb(ctx)) {
+        write_runlog(LOG, "%s, Cannot failover (isDegrade=%d) instance %u, because most_available_sync is on.\n",
+            sfMsg->tyName, cond->isDegrade, ctx->instId);
+        return;
+    }
     if (ctx->cond.vaildCount <= 0) {
         write_runlog(LOG, "%s, line %d instd(%u) has invaildcount(%d).\n",
             sfMsg->tyName, __LINE__, ctx->instId, ctx->cond.vaildCount);
@@ -1970,6 +2060,11 @@ static void SendFailoverInQuarmBackup(DnArbCtx *ctx)
     if (cond->maxMemArbiTime <= dnArbitInterval) {
         write_runlog(LOG, "%s, line %d:Cannot failover instance %u, because time(%u) is smaller than %u.\n",
             sfMsg.tyName, __LINE__, ctx->instId, cond->maxMemArbiTime, cond->arbitInterval);
+        return;
+    }
+    if (!CheckAvailSyncDdb(ctx)) {
+        write_runlog(LOG, "%s, line %d:Cannot failover instance %u, because most_available_sync is on.\n",
+            sfMsg.tyName, __LINE__, ctx->instId);
         return;
     }
     for (int32 i = 0; i < GetInstanceCountsInGroup(ctx->groupIdx); ++i) {

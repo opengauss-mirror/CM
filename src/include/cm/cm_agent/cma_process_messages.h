@@ -40,7 +40,8 @@ void *ProcessRecvCmsMsgMain(void *arg);
 extern void process_notify_command(const char* data_dir, int instance_type, int role, uint32 term);
 extern void process_restart_command(const char* data_dir, int instance_type);
 extern int FindInstancePathAndType(uint32 node, uint32 instanceId, char* data_path, int* instance_type);
-extern void process_failover_command(const char* dataDir, int instance_type, uint32 instance_id, uint32 term);
+extern void process_failover_command(const char* dataDir, int instance_type,
+    uint32 instance_id, uint32 term, int32 staPrimId);
 extern void process_rep_most_available_command(const char* dataDir, int instance_type);
 extern void process_heartbeat_command(int cluster_status);
 #endif

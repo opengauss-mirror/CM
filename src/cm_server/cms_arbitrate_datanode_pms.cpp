@@ -122,8 +122,18 @@ static void SendLock2Messange(const DnArbCtx *ctx, const char *dhost, int dlen, 
     (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)&lock2MsgPtr, sizeof(cm_to_agent_lock2));
 }
 
+static void copy_cm_to_agent_failover_msg(cm_to_agent_failover* failover_msg_ptr,
+    cm_to_agent_failover_sta* staMsg, int32 staId)
+{
+    staMsg->msg_type = failover_msg_ptr->msg_type;
+    staMsg->node = failover_msg_ptr->node;
+    staMsg->instanceId = failover_msg_ptr->instanceId;
+    staMsg->term = failover_msg_ptr->term;
+    staMsg->staPrimId = staId;
+}
+
 static void send_failover_message(MsgRecvInfo* recvMsgInfo, uint32 node, uint32 instanceId, uint32 group_index,
-    int member_index, cm_to_agent_failover* failover_msg_ptr)
+    int member_index, cm_to_agent_failover* failover_msg_ptr, int32 staPrimId)
 {
     cm_instance_role_group* role_group = &g_instance_role_group_ptr[group_index];
     int count = role_group->count;
@@ -178,7 +188,14 @@ static void send_failover_message(MsgRecvInfo* recvMsgInfo, uint32 node, uint32 
             node_restarting, pass_term, dnReportStatus[i].sendFailoverTimes);
     }
 
-    (void)RespondMsg(recvMsgInfo, 'S', (char*)failover_msg_ptr, sizeof(cm_to_agent_failover));
+    if (undocumentedVersion != 0 && undocumentedVersion < FAILOVER_STAPRI_VERSION) {
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)failover_msg_ptr, sizeof(cm_to_agent_failover));
+    } else {
+        cm_to_agent_failover_sta staMsg;
+        copy_cm_to_agent_failover_msg(failover_msg_ptr, &staMsg, staPrimId);
+        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&staMsg), sizeof(cm_to_agent_failover_sta));
+    }
+
     dnReportStatus[member_index].arbitrateFlag = true;
     dnReportStatus[member_index].sendFailoverTimes++;
     cm_pending_notify_broadcast_msg(group_index, instanceId);
@@ -1404,6 +1421,16 @@ static bool InstanceForceFinishRedo(DnArbCtx *ctx)
     return false;
 }
 
+static int32 GetFailoverMsgStaPriID(DnArbCtx *ctx)
+{
+    ArbiCond *cond = &(ctx->cond);
+    if (cond->staticPriIdx != INVALID_INDEX) {
+        cm_instance_role_status *role = ctx->roleGroup->instanceMember;
+        return role[cond->staticPriIdx].instanceId;
+    }
+    return INVALID_INDEX;
+}
+
 static bool InstanceForceFailover(DnArbCtx *ctx)
 {
     bool res = InstanceForceFinishRedo(ctx);
@@ -1420,7 +1447,9 @@ static bool InstanceForceFailover(DnArbCtx *ctx)
         if (cond->candiIdx == ctx->memIdx && CanFailoverDn(isMajority) &&
             cond->redoDone > HALF_COUNT(cond->vaildCount)) {
             cm_to_agent_failover failoverMsg;
-            send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
+            int32 staPrimId = GetFailoverMsgStaPriID(ctx);
+            send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx,
+                ctx->memIdx, &failoverMsg, staPrimId);
             write_runlog(LOG, "[ForceFailover], line %d: Redo done, non force failover message sent to instance %u, "
                 "requested by cm_ctl, arbitrate_time=%u\n", __LINE__, ctx->instId, cond->maxMemArbiTime);
             return true;
@@ -1798,9 +1827,11 @@ static void SendFailoverMsg(DnArbCtx *ctx, uint32 arbitInterval, bool isStaPrim,
     ctx->repGroup->time = 0;
     ClearDnArbiCond(ctx->groupIdx, CLEAR_ARBI_TIME);
     cm_to_agent_failover failoverMsg;
+    int32 staPrimId = GetFailoverMsgStaPriID(ctx);
     if ((!cond->instMainta && !IsSyncListEmpty(ctx->groupIdx, ctx->instId, ctx->maintaMode)) || isStaPrim) {
         GroupStatusShow(sfMsg->tyName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
-        send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
+        send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx,
+            ctx->memIdx, &failoverMsg, staPrimId);
         write_runlog(LOG, "%s, line %d: Failover message has sent to instance %u in reduce standy condition(%d), %s.\n",
             sfMsg->tyName, __LINE__, ctx->instId, cond->isDegrade, sfMsg->sendMsg);
     } else {
@@ -1959,7 +1990,9 @@ static void SendFailoverInQuarmBackup(DnArbCtx *ctx)
     cm_to_agent_failover failoverMsg;
     if (!cond->instMainta || ctx->localRole->role == INSTANCE_ROLE_PRIMARY) {
         GroupStatusShow(sfMsg.tyName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
-        send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx, ctx->memIdx, &failoverMsg);
+        int32 staPrimId = GetFailoverMsgStaPriID(ctx);
+        send_failover_message(ctx->recvMsgInfo, ctx->node, ctx->instId, ctx->groupIdx,
+            ctx->memIdx, &failoverMsg, staPrimId);
         ctx->repGroup->lastFailoverDn = ctx->instId;
         write_runlog(LOG, "%s, line %d: Failover message has sent to instance %u, %s.\n",
             sfMsg.tyName, __LINE__, ctx->instId, sfMsg.sendMsg);

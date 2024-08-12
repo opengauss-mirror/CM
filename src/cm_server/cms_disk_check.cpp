@@ -492,6 +492,7 @@ bool ReadOnlyActRecordManuallySetReadOnly(DataNodeReadOnlyInfo *instance)
         "shared_disk_usage_for_data:%u, shared_disk_usage_for_log:%u, read_only_threshold:%u\n",
         __FUNCTION__, instance->instanceId, instance->dataDiskUsage,
         instance->vgdataDiskUsage, instance->vglogDiskUsage, g_readOnlyThreshold);
+    instance->ddbValue = 1;
     instance->finalState = false;
     return false;
 }

@@ -833,7 +833,16 @@ static void CheckDnDiskStatus(char *instanceManualStartPath, uint32 ii, int *ala
             g_dnDiskDamage[ii] = true;
             set_instance_not_exist_alarm_value(alarmReason, DISC_BAD_REASON);
         } else {
-            g_dnDiskDamage[ii] = false;
+            cdt = IsLinkPathDestoryedOrDamaged(g_currentNode->datanode[ii].datanodeLocalDataPath);
+            if (cdt) {
+                write_runlog(ERROR,
+                             "link path disc writable test failed, %s.\n",
+                             g_currentNode->datanode[ii].datanodeLocalDataPath);
+                g_dnDiskDamage[ii] = true;
+                set_instance_not_exist_alarm_value(alarmReason, DISC_BAD_REASON);
+            } else {
+                g_dnDiskDamage[ii] = false;
+            }
         }
         set_disc_check_state(0);
     } else {

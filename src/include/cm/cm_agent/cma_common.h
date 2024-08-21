@@ -78,6 +78,7 @@ int agentCheckPort(uint32 port);
 uint32 CheckDiskForLogPath(void);
 uint32 GetDiskUsageForPath(const char *pathName);
 uint32 GetDiskUsageForLinkPath(const char *pathName);
+bool IsLinkPathDestoryedOrDamaged(const char *pathName);
 int ExecuteSystemCmd(const char *cmd, int32 logLevel = ERROR, int32 *errCode = NULL);
 void CheckDnNicDown(uint32 index);
 void CheckDnDiskDamage(uint32 index);

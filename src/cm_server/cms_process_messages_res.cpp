@@ -800,6 +800,34 @@ void ProcessQueryOneResInst(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat 
     write_runlog(ERROR, "unknown res instId(%u).\n", destInstId);
 }
 
+void ProcessQueryDnStatusAndRole(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat *queryMsg)
+{
+    CmsToCtlDnStatSt ackMsg = {0};
+    ackMsg.msgType = (int) MSG_CTL_CM_QUERY_DN_ACK;
+
+    uint32 destInstId = queryMsg->instId;
+
+    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
+        (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
+        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
+            uint32 instId = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
+            int instanceType = g_instance_role_group_ptr[i].instanceMember[j].instanceType;
+            if (instId != destInstId) {
+                continue;
+            }
+            if (instanceType == INSTANCE_TYPE_DATANODE) {
+                const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
+                ackMsg.localStatus = instStatus->data_node_member[j].local_status.db_state;
+                ackMsg.dnLocalRole = instStatus->data_node_member[j].local_status.local_role;
+                (void)RespondMsg(recvMsgInfo, 'S', (char*)&(ackMsg), sizeof(ackMsg), DEBUG5);
+                break;               
+            }
+        }
+        (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
+    }
+    write_runlog(ERROR, "unknown res instId(%u).\n", destInstId);
+}
+
 static bool IsregIsNotUnknown(ResInstIsreg *isregList, uint32 isregCount)
 {
     for (uint32 i = 0; i < isregCount; ++i) {

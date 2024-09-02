@@ -29,5 +29,6 @@
 
 ResStatus GetResInstStatus(uint32 instId);
 status_t CheckResInstInfo(uint32 *nodeId, uint32 instId);
+bool GetDnStatusAndRole(uint32 instId);
 
 #endif  // CM_CTL_COMMON_RES_H

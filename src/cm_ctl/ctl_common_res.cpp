@@ -109,8 +109,9 @@ bool DnInfoCheckResult(CM_Conn *pCmsCon)
             cm_msg_type *msgTypePtr = (cm_msg_type*)recvMsg;
             if (msgTypePtr->msg_type == (int)MSG_CTL_CM_QUERY_DN_ACK) {
                 CmsToCtlDnStatSt *ackMsg = (CmsToCtlDnStatSt*)recvMsg;
-                if (ackMsg->dnLocalRole != INSTANCE_ROLE_PRIMARY || ackMsg->dnLocalRole != INSTANCE_ROLE_STANDBY ||
-                    ackMsg->dnLocalRole != INSTANCE_ROLE_CASCADE_STANDBY || ackMsg->localStatus != INSTANCE_HA_STATE_NORMAL) {
+                if ((ackMsg->dnLocalRole != INSTANCE_ROLE_PRIMARY && ackMsg->dnLocalRole != INSTANCE_ROLE_STANDBY &&
+                    ackMsg->dnLocalRole != INSTANCE_ROLE_CASCADE_STANDBY) ||
+                    ackMsg->localStatus != INSTANCE_HA_STATE_NORMAL) {
                     return false;
                 }
             }

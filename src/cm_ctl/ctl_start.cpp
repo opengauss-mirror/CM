@@ -1893,7 +1893,7 @@ static bool IsAllResInstStarted(uint32 nodeId)
             }
             if (GetResInstStatus(g_resStatus[i].status.resStat[j].cmInstanceId) != CM_RES_STAT_ONLINE) {
                 return false;
-            } else if (GetDnStatusAndRole(g_resStatus[i].status.resStat[j].cmInstanceId)) {
+            } else if (!GetDnStatusAndRole(g_resStatus[i].status.resStat[j].cmInstanceId)) {
                 return false;
             }
         }

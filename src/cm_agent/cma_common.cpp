@@ -1397,7 +1397,6 @@ uint32 GetDiskUsageForLinkPath(const char *pathName)
     struct dirent *entry;
 
     if ((dir = opendir(pgTblspcObsolutePath)) == nullptr) {
-        write_runlog(WARNING, "%s is not a valid directory.\n", pgTblspcObsolutePath);
         return GetMaxPercentFromDirList(v_linkPathInfo);
     }
 

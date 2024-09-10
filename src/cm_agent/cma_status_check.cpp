@@ -1432,7 +1432,14 @@ void CheckSharedDiskUsage(uint32 &vgdataPathUsage, uint32 &vglogPathUsage)
     if (fgets(result, sizeof(result)-1, fp) != NULL) {
         sscanf(result, "%lf", &percent2);
     }
-
+    
+    // If the value is greater than 0 and less than 1, consider it as 1.
+    if (percent1 > 0 && percent1 < 1) {
+        percent1 = 1;
+    }
+    if (percent2 > 0 && percent2 < 1) {
+        percent2 = 1;
+    }
     vgdataPathUsage = (uint)percent1;
     vglogPathUsage = (uint)percent2;
 

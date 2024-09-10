@@ -334,14 +334,13 @@ status_t CmaRhbInit(const RhbCtx *ctx)
 
         char plain[PASSWD_MAX_LEN + 1] = {0};
         CM_RETURN_IFERR(cm_verify_ssl_key_pwd(plain, PASSWD_MAX_LEN, CLIENT_CIPHER));
-        int32 ret = mes_set_param("SSL_PWD_PLAINTEXT", plain);
+        CM_RETURN_ERR_IF_INTERR(mes_set_param("SSL_PWD_PLAINTEXT", plain));
 
         const int32 tryTime = 3;
         for (int32 i = 0; i < tryTime; ++i) {
             rc = memset_s(plain, PASSWD_MAX_LEN + 1, 0, PASSWD_MAX_LEN + 1);
             securec_check_errno(rc, (void)rc);
         }
-        CM_RETURN_ERR_IF_INTERR(ret);
         write_runlog(LOG, "enable mes ssl.\n");
     } else {
         write_runlog(WARNING, "mes ssl not enable!.\n");

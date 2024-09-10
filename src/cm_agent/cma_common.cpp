@@ -1430,6 +1430,60 @@ uint32 GetDiskUsageForLinkPath(const char *pathName)
     return GetMaxPercentFromDirList(v_linkPathInfo);
 }
 
+bool IsLinkPathDestoryedOrDamaged(const char *pathName)
+{
+    const char *pgDirList[] = {"base", "global", "pg_xlog", "pg_tblspc"};
+    char entryAbsolutePath[MAX_PATH_LEN];
+    char pgTblspcAbsolutePath[MAX_PATH_LEN];
+    errno_t rc = 0;
+    bool cdt;
+
+    for (unsigned i = 0; i < sizeof(pgDirList) / sizeof(pgDirList[0]); i++) {
+        rc = memset_s(entryAbsolutePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+        securec_check_errno(rc, (void) rc);
+        rc = snprintf_s(entryAbsolutePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s", pathName, pgDirList[i]);
+        securec_check_intval(rc, (void)rc);
+        cdt = IsDirectoryDestoryed(entryAbsolutePath) || !agentCheckDisc(entryAbsolutePath);
+        if (cdt) {
+            write_runlog(ERROR, "disc writable test failed, %s.\n", entryAbsolutePath);
+            return true;
+        }
+    }
+
+    rc = memset_s(pgTblspcAbsolutePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void) rc);
+    rc = snprintf_s(pgTblspcAbsolutePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s", pathName, "pg_tblspc");
+    securec_check_intval(rc, (void)rc);
+    DIR *dir;
+    struct dirent *entry;
+
+    if ((dir = opendir(pgTblspcAbsolutePath)) == nullptr) {
+        write_runlog(ERROR, "disc writable test failed, %s.\n", pgTblspcAbsolutePath);
+        return true;
+    }
+    while ((entry = readdir(dir)) != nullptr) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        rc = memset_s(entryAbsolutePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+        securec_check_errno(rc, (void) rc);
+
+        if (entry->d_type == DT_LNK) {
+            rc = snprintf_s(entryAbsolutePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s",
+                pgTblspcAbsolutePath, entry->d_name);
+            securec_check_intval(rc, (void)rc);
+            cdt = IsDirectoryDestoryed(entryAbsolutePath) || !agentCheckDisc(entryAbsolutePath);
+            if (cdt) {
+                write_runlog(ERROR, "disc writable test failed, %s.\n", entryAbsolutePath);
+                (void)closedir(dir);
+                return true;
+            }
+        }
+    }
+    (void)closedir(dir);
+    return false;
+}
+
 void *DiskUsageCheckMain(void *arg)
 {
     thread_name = "DiskUsageCheck";

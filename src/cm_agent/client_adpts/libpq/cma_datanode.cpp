@@ -824,7 +824,7 @@ static void CheckDnDiskStatus(char *instanceManualStartPath, uint32 ii, int *ala
         stat(g_cmManualStartPath, &clusterStatBuf) != 0);
     if (cdt) {
         set_disc_check_state(g_currentNode->datanode[ii].datanodeId);
-        cdt = (IsDirectoryDestoryed(g_currentNode->datanode[ii].datanodeLocalDataPath) ||
+        cdt = (IsDirectoryDestroyed(g_currentNode->datanode[ii].datanodeLocalDataPath) ||
             !agentCheckDisc(g_currentNode->datanode[ii].datanodeLocalDataPath) || !agentCheckDisc(g_logBasePath));
         if (cdt) {
             write_runlog(ERROR,
@@ -833,7 +833,16 @@ static void CheckDnDiskStatus(char *instanceManualStartPath, uint32 ii, int *ala
             g_dnDiskDamage[ii] = true;
             set_instance_not_exist_alarm_value(alarmReason, DISC_BAD_REASON);
         } else {
-            g_dnDiskDamage[ii] = false;
+            cdt = IsLinkPathDestroyedOrDamaged(g_currentNode->datanode[ii].datanodeLocalDataPath);
+            if (cdt) {
+                write_runlog(ERROR,
+                             "link path disc writable test failed, %s.\n",
+                             g_currentNode->datanode[ii].datanodeLocalDataPath);
+                g_dnDiskDamage[ii] = true;
+                set_instance_not_exist_alarm_value(alarmReason, DISC_BAD_REASON);
+            } else {
+                g_dnDiskDamage[ii] = false;
+            }
         }
         set_disc_check_state(0);
     } else {

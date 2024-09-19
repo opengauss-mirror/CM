@@ -250,10 +250,10 @@ static status_t InitResName(const char *jsonResName, char *initResName, size_t m
     return CM_SUCCESS;
 }
 
-static inline uint32 GetResCmInstId()
+static inline uint32 GetResCmInstId(uint32 nodeId)
 {
     static uint32 curCmInstId = RES_INSTANCE_ID_MIN;
-    return ++curCmInstId;
+    return curCmInstId + nodeId;
 }
 
 static status_t InitOneAppResInstStat(const char *resName, const CusResInstConf *resInst, CmResStatInfo *instStat)
@@ -266,7 +266,7 @@ static status_t InitOneAppResInstStat(const char *resName, const CusResInstConf 
         return CM_ERROR;
     }
 
-    instStat->cmInstanceId = GetResCmInstId();
+    instStat->cmInstanceId = GetResCmInstId((uint32)resInst->nodeId);
     if (!IsResInstIdValid((int)instStat->cmInstanceId)) {
         write_runlog(ERROR, "[InitResStat] res(%s), cmInstId(%u) is invalid.\n", resName, instStat->cmInstanceId);
         return CM_ERROR;

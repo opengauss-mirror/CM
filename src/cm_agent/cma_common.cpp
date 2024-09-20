@@ -1431,7 +1431,7 @@ uint32 GetDiskUsageForLinkPath(const char *pathName)
 
 bool IsLinkPathDestroyedOrDamaged(const char *pathName)
 {
-    const char *pgDirList[] = {"base", "global", "pg_xlog", "pg_tblspc"};
+    const char *pgDirList[] = {"base", "global", "pg_xlog"};
     char entryAbsolutePath[MAX_PATH_LEN];
     char pgTblspcAbsolutePath[MAX_PATH_LEN];
     errno_t rc = 0;

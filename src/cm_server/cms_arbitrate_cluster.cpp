@@ -102,6 +102,8 @@ static volatile ThreadProcessStatus g_threadProcessStatus = THREAD_PROCESS_UNKNO
 
 static void PrintMaxNodeCluster(const MaxNodeCluster *maxNodeCluster, const char *str, int32 logLevel = LOG);
 
+static void PrintAllRhbStatus();
+
 static void InitClusterResInfo()
 {
     errno_t rc = memset_s(&g_clusterRes, sizeof(ClusterResInfo), 0, sizeof(ClusterResInfo));
@@ -338,8 +340,13 @@ static MaxClusterResStatus GetNodesConnStatByRhb(int idx1, int idx2, int timeout
         return MAX_CLUSTER_STATUS_INIT;
     }
 
-    if (IsRhbTimeout(g_curRhbStat.hbs[idx1][idx2], g_curRhbStat.baseTime, timeout) ||
-        IsRhbTimeout(g_curRhbStat.hbs[idx2][idx1], g_curRhbStat.baseTime, timeout)) {
+    bool RhbTimeOutDirect = IsRhbTimeout(g_curRhbStat.hbs[idx1][idx2], g_curRhbStat.baseTime, timeout);
+    bool RhbTimeOutForward = IsRhbTimeout(g_curRhbStat.hbs[idx2][idx1], g_curRhbStat.baseTime, timeout);
+    write_runlog(DEBUG1, "rhb timeout check result start node: %d, end node: %d, result: %d.\n",
+        idx1, idx2, RhbTimeOutDirect);
+    write_runlog(DEBUG1, "rhb timeout check result start node: %d, end node: %d, result: %d.\n",
+        idx2, idx1, RhbTimeOutForward);
+    if (RhbTimeOutDirect && RhbTimeOutForward) {
         return MAX_CLUSTER_STATUS_UNAVAIL;
     }
     return MAX_CLUSTER_STATUS_AVAIL;
@@ -449,21 +456,18 @@ static int32 FindNodeCluster(int32 startPoint, int32 maxNum, NodeCluster *nodeCl
     int32 j = 0;
     // maxNum is max node num in vis.
     for (int32 i = startPoint + 1; i < nodeCluster->maxNodeNum; ++i) {
-        if (nodeCluster->resultSet[i] + maxNum <= nodeCluster->clusterNum) {
-            write_runlog(DEBUG1, "startPoint=%d, result[%d]=%d, maxNum=%d, clusterNum=%d, don't compute maxCLuster.\n",
-                startPoint, i, nodeCluster->resultSet[i], maxNum, nodeCluster->clusterNum);
-            continue;
-        }
         if (!IsAllResAvailInNode(i)) {
             continue;
         }
         if (!CheckPoint2PointConn(startPoint, i)) {
             continue;
         }
+        write_runlog(DEBUG1, "Node %d and %d connect right.\n", startPoint, i);
         for (j = 0; j < maxNum; ++j) {
             if (!CheckPoint2PointConn(i, nodeCluster->visNode[j])) {
                 break;
             }
+            write_runlog(DEBUG1, "Node %d and %d connect right.\n", i, nodeCluster->visNode[j]);
         }
         if (j == maxNum) {  // it can connect with all node, and insert into visNode
             nodeCluster->visNode[maxNum] = i;
@@ -493,6 +497,7 @@ static void FindMaxNodeCluster(MaxNodeCluster *maxCluster)
     nodeCluster->clusterNum = -1;
     g_curRhbStat.baseTime = time(NULL);
     GetRhbStat(g_curRhbStat.hbs, &g_curRhbStat.hwl);
+    PrintAllRhbStatus();
     // assume that all meet the conditions.
     for (int32 i = nodeCluster->maxNodeNum - 1; i >= 0; --i) {
         if (!IsAllResAvailInNode(i) || !IsNodeRhbAlive(i)) {

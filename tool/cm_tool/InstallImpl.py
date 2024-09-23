@@ -41,6 +41,7 @@ class InstallImpl:
         self.localhostName = install.localhostName
         self.logger = install.logger
         self.clusterStopped = install.clusterStopped
+        self.primaryTermAbnormal = install.primaryTermAbnormal
 
     def executeCmdOnHost(self, host, cmd, isLocal = False):
         if host == self.localhostName:
@@ -263,6 +264,11 @@ class InstallImpl:
             self.logger.logExit("Failed to query cluster status." + errorDetail)
         self.logger.log(output)
         self.logger.log("Install CM tool success.")
+        if self.primaryTermAbnormal:
+            self.logger.warn("Term of primary is invalid or not maximal.\n"
+                "Hint: To avoid CM arbitration anomalies in this situation, "
+                "please restart the database.\n"
+                "Command : cm_ctl stop && cm_ctl start")
 
     @staticmethod
     def refreshStaticFile(envFile, xmlFile):

@@ -52,6 +52,7 @@ class Install:
         self.nodesInfo = dict()
         self.clusterStopped = False
         self.maxTerm = 0
+        self.primaryTermAbnormal = False
 
     def getLocalhostName(self):
         import socket
@@ -306,7 +307,8 @@ General options:
         if primaryCount != 1:
             self.logger.logExit("The number of primary is invalid.")
         if primaryTerm == 0 or primaryTerm < self.maxTerm:
-            self.logger.logExit("Term of primary is invalid or not maximal.\n"
+            self.primaryTermAbnormal = True
+            self.logger.warn("Term of primary is invalid or not maximal.\n"
                 "Hint: it seems that the cluster is newly installed, so it's "
                 "recommended to deploy CM tool while installing the cluster.")
 

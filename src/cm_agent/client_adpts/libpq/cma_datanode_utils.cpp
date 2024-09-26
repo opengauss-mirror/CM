@@ -267,10 +267,10 @@ static bool get_datanode_realtime_build(const char* realtime_build_status)
 constexpr int SQL_QUERY_REALTIME_BUILD_SUCCESS = 0;
 constexpr int SQL_QUERY_REALTIME_BUILD_FAILURE = -1;
 
-int check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
+void check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii)
 {
-    if (undocumentedVersion != 0) {
-        return SQL_QUERY_REALTIME_BUILD_SUCCESS;
+    if (undocumentedVersion != 0 || (g_onDemandRealTimeBuildStatus & 0x4)) {
+        return;
     }
 
     int max_rows = 0;
@@ -278,38 +278,47 @@ int check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_repo
 
     const char* sql_command = "show ss_enable_ondemand_realtime_build;";
     if (g_dnConn[ii] == NULL) {
-        return SQL_QUERY_REALTIME_BUILD_FAILURE;
+        return;
     }
     cltPqResult_t* node_result = Exec(g_dnConn[ii], sql_command);
     if (node_result == NULL) {
         write_runlog(ERROR, "query sql fail: %s\n", sql_command);
-        CLOSE_CONNECTION(g_dnConn[ii]);
-        return SQL_QUERY_REALTIME_BUILD_FAILURE;
+        Clear(node_result);
+        close_and_reset_connection(g_dnConn[ii]);
+        return;
     }
     if ((ResultStatus(node_result) == CLTPQRES_CMD_OK) || (ResultStatus(node_result) == CLTPQRES_TUPLES_OK)) {
         max_rows = Ntuples(node_result);
         if (max_rows == 0) {
             write_runlog(ERROR, "query sql fail: %s\n", sql_command);
-            CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
-            return SQL_QUERY_REALTIME_BUILD_FAILURE;
+            Clear(node_result);
+            close_and_reset_connection(g_dnConn[ii]);
+            return;
         } else {
             max_colums = Nfields(node_result);
             if (max_colums != 1) {
                 write_runlog(ERROR, "query sql fail: %s! col is %d\n", sql_command, max_colums);
-                CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
-                return SQL_QUERY_REALTIME_BUILD_FAILURE;
+                Clear(node_result);
+                close_and_reset_connection(g_dnConn[ii]);
+                return;
             }
 
-            report_msg->local_status.realtime_build_status =
-                get_datanode_realtime_build(Getvalue(node_result, 0, 0));
+            if (get_datanode_realtime_build(Getvalue(node_result, 0, 0))) {
+                g_onDemandRealTimeBuildStatus |= 0x5;
+            } else {
+                g_onDemandRealTimeBuildStatus |= 0x4;
+                g_onDemandRealTimeBuildStatus = ((g_onDemandRealTimeBuildStatus >> 1) << 1);
+            }
+            write_runlog(LOG, "ondemand_realtime_build_status by sql is %d\n", g_onDemandRealTimeBuildStatus);
         }
     } else {
         write_runlog(ERROR, "query sql fail: %s! Status=%d\n", sql_command, ResultStatus(node_result));
-        CLEAR_AND_CLOSE_CONNECTION(node_result, g_dnConn[ii]);
-        return SQL_QUERY_REALTIME_BUILD_FAILURE;
+        Clear(node_result);
+        close_and_reset_connection(g_dnConn[ii]);
+        return;
     }
     Clear(node_result);
-    return SQL_QUERY_REALTIME_BUILD_SUCCESS;
+    return;
 }
 
 /* DN instance status check SQL 1 */

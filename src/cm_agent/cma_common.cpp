@@ -34,6 +34,7 @@
 #include "cma_global_params.h"
 #include "cma_connect.h"
 #include "cma_network_check.h"
+#include "cma_instance_management.h"
 #include "cma_instance_management_res.h"
 #include "cma_common.h"
 
@@ -1525,4 +1526,56 @@ CmResConfList *CmaGetResConfByResName(const char *resName)
     }
     write_runlog(ERROR, "in local res conf, can't find res(%s).\n", resName);
     return NULL;
+}
+
+static void GetParameterValueFromConfigFile(const char* file_path, const char* paraName)
+{
+    char get_cmd[MAXPGPATH * 2];
+    char result[NAMEDATALEN] = {0};
+    int retry_cnt = 0;
+
+    int ret = snprintf_s(get_cmd,
+        sizeof(get_cmd),
+        MAXPGPATH * 2 - 1,
+        "grep \"^%s\" %s/postgresql.conf|awk -F= \'{print $2}\'|tail -1|grep -o \"[[:alnum:]]*\"",
+        paraName,
+        file_path);
+    securec_check_intval(ret, (void)ret);
+
+    while (retry_cnt < MAX_RETRY_TIME) {
+        if (!ExecuteCmdWithResult(get_cmd, result, NAMEDATALEN)) {
+            retry_cnt++;
+            continue;
+        }
+        result[strlen(result) - 1] = '\0';
+        write_runlog(LOG, "Get value of %s: %s\n", paraName, result);
+        if (strcmp(result, "on") == 0 || strcmp(result, "true") == 0 || strcmp(result, "1") == 0 ||
+            strcmp(result, "ON") == 0 || strcmp(result, "TRUE") == 0) {
+            /*
+             * The bit of g_onDemandRealTimeBuildStatus means:
+             *|Get By SQL | Get By File | Value|
+             *|0x    0    |      0      |  0   |
+             */
+            g_onDemandRealTimeBuildStatus |= 0x3;
+            return;
+        } else {
+            g_onDemandRealTimeBuildStatus |= 0x2;
+            return;
+        }
+    }
+
+    write_runlog(LOG, "The parameter %s is not found, use the default\n", paraName);
+    return;
+}
+
+void check_datanode_realtime_build_status_by_file(agent_to_cm_datanode_status_report *reportMsg, const char *dataPath)
+{
+    if (g_onDemandRealTimeBuildStatus & 0x2) {
+        return;
+    }
+
+    const char* paraName = "ss_enable_ondemand_realtime_build";
+    GetParameterValueFromConfigFile(dataPath, paraName);
+    write_runlog(LOG, "ondemand_realtime_build_status by file is %d\n", g_onDemandRealTimeBuildStatus);
+    reportMsg->local_status.realtime_build_status = (g_onDemandRealTimeBuildStatus & 0x1);
 }

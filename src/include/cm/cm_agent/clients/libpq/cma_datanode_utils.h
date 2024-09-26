@@ -42,6 +42,8 @@ extern THR_LOCAL cltPqConn_t *g_Conn;
 
 extern void check_parallel_redo_status_by_file(
     agent_to_cm_datanode_status_report *reportMsg, const char *redoStatePath);
+extern void check_datanode_realtime_build_status_by_file(
+    agent_to_cm_datanode_status_report *reportMsg, const char *dataPath);
 extern int check_datanode_status_by_SQL0(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
 extern int check_datanode_status_by_SQL1(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
 extern int check_datanode_status_by_SQL2(agent_to_cm_datanode_status_report *report_msg, uint32 ii);
@@ -77,6 +79,6 @@ void ShowPgThreadWaitStatus(cltPqConn_t* Conn, uint32 index, int instanceType);
 void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir);
 void ExecuteCascadeStandbyDnBuildCommand(const char *dataDir);
 void CleanStandbyClusterCnAlarm();
-extern int check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii);
+extern void check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii);
 
 #endif

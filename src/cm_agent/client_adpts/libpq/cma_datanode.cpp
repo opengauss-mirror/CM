@@ -246,6 +246,9 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
         rcs = snprintf_s(pid_path, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", dataPath);
         securec_check_intval(rcs, (void)rcs);
 
+        if (g_isStorageWithDMSorDSS) {
+            g_onDemandRealTimeBuildStatus = 0;
+        }
         g_dnConn[dataNodeIndex] = get_connection(pid_path, false, AGENT_CONN_DN_TIMEOUT);
         if (g_dnConn[dataNodeIndex] == NULL || (!IsConnOk(g_dnConn[dataNodeIndex]))) {
             char build_pid_path[MAXPGPATH];
@@ -265,6 +268,9 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
                 rcs = memset_s(&state, sizeof(state), 0, sizeof(state));
                 securec_check_errno(rcs, (void)rcs);
                 check_parallel_redo_status_by_file(reportMsg, redo_state_path);
+                if (g_isStorageWithDMSorDSS) {
+                    check_datanode_realtime_build_status_by_file(reportMsg, dataPath);
+                }
                 rcs = ReadDBStateFile(&state, gaussdbStatePath);
                 if (rcs == 0) {
                     reportMsg->connectStatus = AGENT_TO_INSTANCE_CONNECTION_OK;
@@ -286,6 +292,9 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
 
             if (dnProcess == PROCESS_RUNNING) {
                 check_parallel_redo_status_by_file(reportMsg, redo_state_path);
+                if (g_isStorageWithDMSorDSS) {
+                    check_datanode_realtime_build_status_by_file(reportMsg, dataPath);
+                }
                 rcs = getDNStatusFromStateFile(reportMsg, gaussdbStatePath);
                 if (rcs != 0) {
                     report_conn_fail_alarm(ALM_AT_Fault, INSTANCE_DN, reportMsg->instanceId);
@@ -304,6 +313,10 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
             }
             report_conn_fail_alarm(ALM_AT_Fault, INSTANCE_DN, reportMsg->instanceId);
             return -1;
+        }
+
+        if (g_isStorageWithDMSorDSS) {
+            check_datanode_realtime_build_status_by_file(reportMsg, dataPath);
         }
     }
 
@@ -381,8 +394,9 @@ if (!IsBoolCmParamTrue(g_agentEnableDcf)) {
     g_dnPhonyDeadTimes[dataNodeIndex] = 0;
 
     /* check datanode realtime build status by sending sql */
-    if (g_isStorageWithDMSorDSS && (check_datanode_realtime_build_status_by_sql(reportMsg, dataNodeIndex) != 0)) {
-        return -1;
+    if (g_isStorageWithDMSorDSS) {
+        check_datanode_realtime_build_status_by_sql(reportMsg, dataNodeIndex);
+        reportMsg->local_status.realtime_build_status = (g_onDemandRealTimeBuildStatus & 0x1);
     }
 
     return 0;

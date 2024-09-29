@@ -108,7 +108,7 @@ int find_node_in_dynamic_configure(uint32 node, uint32 instanceId, uint32 *group
     *group_index = 0;
     *member_index = 0;
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
+        for (int j = 0; j < Min(g_instance_role_group_ptr[i].count, CM_PRIMARY_STANDBY_MAX_NUM); j++) {
             if ((node == g_instance_role_group_ptr[i].instanceMember[j].node) &&
                 (instanceId == g_instance_role_group_ptr[i].instanceMember[j].instanceId)) {
                 *group_index = i;

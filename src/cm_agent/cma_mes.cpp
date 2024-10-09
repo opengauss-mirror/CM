@@ -152,6 +152,7 @@ static void InitBuffPool(mes_profile_t *pf)
     mpa->enable_inst_dimension = CM_TRUE;
     mpa->buf_pool_count = 1;
     mpa->buf_pool_attr[0].buf_size = AGENT_RHB_BUFF_SIZE;
+    mpa->buf_pool_attr[0].proportion = (double)1;
     mpa->buf_pool_attr[0].shared_pool_attr.queue_num = AGENT_RHB_MSG_SHARED_POOL_QUEUE_NUM;
     mpa->buf_pool_attr[0].priority_pool_attr[CMA_MES_PRIORITY].queue_num = AGENT_RHB_MSG_BUFF_QUEUE_NUM;
     mpa->max_buf_size[CMA_MES_PRIORITY] = mpa->buf_pool_attr[0].buf_size;

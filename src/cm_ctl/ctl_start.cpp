@@ -82,6 +82,7 @@ static int g_instance_start_status = CM_STATUS_UNKNOWN;
 static int g_node_start_status = CM_STATUS_UNKNOWN;
 static int g_dn_relation_start_status = CM_STATUS_UNKNOWN;
 static int g_resStartStatus = CM_STATUS_UNKNOWN;
+static int g_dn_status = INSTANCE_HA_STATE_UNKONWN;
 static StartExitCode g_startExitCode = CM_START_EXIT_INIT;
 
 static int startaz_try_heartbeat = START_AZ_TRY_HEARTBEAT;
@@ -1590,6 +1591,14 @@ static void* check_cluster_start_status(void* arg)
                 g_commandOperationNodeId, g_commandOperationInstanceId);
             g_startExitCode = CM_START_EXIT_SUCCESS;
             continue;
+        } else if (g_dn_status == INSTANCE_HA_STATE_READ_ONLY) {
+            write_runlog(ERROR,
+                "start cluster failed!\n\n"
+                "HINT: Some nodes are in ReadOnly mode.\n"
+                "To identify which nodes are ReadOnly, use the following command:\n"
+                "\'cm_ctl query -Cvipdw\'\n");
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else {
             count = 0;
         }
@@ -1850,6 +1859,7 @@ static int start_check_cluster()
                                 cnt_abnormal++;
                             }
                         } else if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_DATANODE) {
+                            g_dn_status = cm_to_ctl_instance_status_ptr->data_node_member.local_status.db_state;
                             int local_role = cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role;
                             if (local_role != INSTANCE_ROLE_PRIMARY && local_role != INSTANCE_ROLE_STANDBY &&
                                 local_role != INSTANCE_ROLE_DUMMY_STANDBY) {

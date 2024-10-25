@@ -1886,6 +1886,10 @@ static int start_check_cluster()
 
 static bool IsAllResInstStarted(uint32 nodeId)
 {
+    if (!IsCusResExist()) {
+        return true;
+    }
+    
     for (uint32 i = 0; i < CusResCount(); ++i) {
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].nodeId != nodeId) {

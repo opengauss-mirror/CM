@@ -25,6 +25,7 @@
 #include "cm/cm_elog.h"
 #include "cm_disk_rw.h"
 #include "cm_ddb_sharedisk_cmd.h"
+#include "cm_ddb_sharedisk_disklock.h"
 #include "cm_ddb_sharedisk.h"
 
 uint32 g_cmSdServerNum = 0;
@@ -279,23 +280,6 @@ static uint32 GetForceLockTimeOutCfg()
     return curForceLockTimeOut;
 }
 
-int ExecuteLockCmd(const char *cmd)
-{
-    int ret = system(cmd);
-    if (ret == -1) {
-        write_runlog(ERROR, "Fail to execute command %s, and errno=%d.\n", cmd, errno);
-        return -1;
-    }
-
-    write_runlog(DEBUG1, "execute command %s exit code %d.\n", cmd, ret);
-    if (WIFEXITED(ret)) {
-        return WEXITSTATUS(ret);
-    }
-
-    write_runlog(ERROR, "Fail to execute command %s, script exit code %d.\n", cmd, ret);
-    return -1;
-}
-
 static bool CheckDemoteDdbRole(SdArbitrateData *sdArbitrateData)
 {
     if (sdArbitrateData->lastDdbRole != DDB_ROLE_LEADER) {
@@ -335,14 +319,14 @@ static bool CheckDemoteDdbRole(SdArbitrateData *sdArbitrateData)
     return false;
 }
 
-static void CmNormalArbitrate(const char *lockCmd, SdArbitrateData *sdArbitrateData)
+static void CmNormalArbitrate(SdArbitrateData *sdArbitrateData, const char *scsiDev)
 {
-    int lockRst = ExecuteLockCmd(lockCmd);
-
+    int32 lockRst = cm_lock_disklock(scsiDev);
     write_runlog(DEBUG1,
-        "CmNormalArbitrate: execute lock cmd %s result %d. lockTime %ld, lockNotRefreshTimes %u, lockFailBeginTime "
-        "%ld\n", lockCmd, lockRst, sdArbitrateData->lockTime, sdArbitrateData->lockNotRefreshTimes,
-        sdArbitrateData->lockFailBeginTime);
+        "CmNormalArbitrate: cm_lock_disklock result %d. lockTime %ld, "
+        "lockNotRefreshTimes %u, lockFailBeginTime %ld\n",
+        lockRst, sdArbitrateData->lockTime,
+        sdArbitrateData->lockNotRefreshTimes, sdArbitrateData->lockFailBeginTime);
     if (lockRst == 0) {
         // get lock success, notify cmserver to primary
         sdArbitrateData->lockTime = 0;
@@ -371,16 +355,10 @@ static void CmNormalArbitrate(const char *lockCmd, SdArbitrateData *sdArbitrateD
                 ++sdArbitrateData->lockNotRefreshTimes;
             } else {
                 sdArbitrateData->lockNotRefreshTimes = 0;
-                char forceLockCmd[MAX_PATH_LEN] = {0};
-                errno_t rc = snprintf_s(forceLockCmd, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-                    "timeout -s SIGKILL %us cm_persist %s %ld %lu %d %ld > /dev/null 2>&1",
-                    DEFAULT_CMD_TIME_OUT, g_cmsArbitrateDiskHandler.scsiDev, g_cmsArbitrateDiskHandler.instId,
-                    g_cmsArbitrateDiskHandler.offset, (int)CMD_FORCE_LOCK, sdArbitrateData->lockTime);
-                securec_check_intval(rc, (void)rc);
-                lockRst = ExecuteLockCmd(forceLockCmd);
+                lockRst = cm_lockf_disklock(g_cmsArbitrateDiskHandler.scsiDev, lockRst);
                 g_dbRole = ((lockRst == 0) ? DDB_ROLE_LEADER : DDB_ROLE_FOLLOWER);
-                write_runlog(LOG, "CmNormalArbitrate: exe force lock cmd %s result %d, curForceLockTime %u.\n",
-                    forceLockCmd, lockRst, curForceLockTimeOut);
+                write_runlog(LOG, "CmNormalArbitrate: cm_disk_lockf_s result %d, curForceLockTime %u.\n",
+                    lockRst, curForceLockTimeOut);
             }
         }
         NotifyDdbRole(&sdArbitrateData->lastDdbRole);
@@ -434,56 +412,44 @@ static bool CheckSdDemote(SdArbitrateData *sdArbitrateData)
     return false;
 }
 
-static status_t ExePromoteCmd(const char *lockCmd, SdArbitrateData *sdArbitrateData)
+static status_t ExePromoteCmd(SdArbitrateData *sdArbitrateData, const char *scsiDev)
 {
-    int st = ExecuteLockCmd(lockCmd);
-    if (st != 0) {
-        write_runlog(WARNING, "ExePromoteCmd: Execute get lock cmd %s failed, lockResult %d!\n", lockCmd, st);
-        if (st >= BASE_VALID_LOCK_TIME && st <= MAX_VALID_LOCK_TIME) {
-            char forceLockCmd[MAX_PATH_LEN] = {0};
-            errno_t rc = snprintf_s(forceLockCmd,
-                MAX_PATH_LEN,
-                MAX_PATH_LEN - 1,
-                "timeout -s SIGKILL %us cm_persist %s %ld %lu %d %ld > /dev/null 2>&1",
-                DEFAULT_CMD_TIME_OUT,
-                g_cmsArbitrateDiskHandler.scsiDev,
-                g_cmsArbitrateDiskHandler.instId,
-                g_cmsArbitrateDiskHandler.offset,
-                (int)CMD_FORCE_LOCK,
-                st);
-            securec_check_intval(rc, (void)rc);
-            st = ExecuteLockCmd(forceLockCmd);
-            if (st != 0) {
-                write_runlog(WARNING, "ExePromoteCmd: Execute force lock cmd %s failed, result %d!\n", lockCmd, st);
+    int32 lockRst = cm_lock_disklock(scsiDev);
+    if (lockRst != 0) {
+        write_runlog(WARNING, "ExePromoteCmd: Execute get lock failed, lockResult %d!\n", lockRst);
+        if (lockRst >= BASE_VALID_LOCK_TIME && lockRst <= MAX_VALID_LOCK_TIME) {
+            lockRst = cm_lockf_disklock(scsiDev, lockRst);
+            if (lockRst != 0) {
+                write_runlog(WARNING, "ExePromoteCmd: Execute force lock cmd %s failed, result %d!\n",
+                    scsiDev, lockRst);
                 return CM_ERROR;
             }
             return CM_SUCCESS;
         }
-
         return CM_ERROR;
     }
 
     sdArbitrateData->lockTime = 0;
     sdArbitrateData->lockNotRefreshTimes = 0;
     sdArbitrateData->lockFailBeginTime = 0;
-    write_runlog(DEBUG1, "ExePromoteCmd: Execute get lock cmd %s success!\n", lockCmd);
+    write_runlog(DEBUG1, "ExePromoteCmd: Execute get lock cmd success!\n");
     return CM_SUCCESS;
 }
 
-static bool CheckSdPromote(const char *lockCmd, SdArbitrateData *sdArbitrateData)
+static bool CheckSdPromote(SdArbitrateData *sdArbitrateData, const char *scsiDev)
 {
     if (g_notifySd != DDB_ROLE_LEADER) {
         return false;
     }
 
     if (g_dbRole != DDB_ROLE_LEADER) {
-        (void)ExePromoteCmd(lockCmd, sdArbitrateData);
+        (void)ExePromoteCmd(sdArbitrateData, scsiDev);
         g_dbRole = DDB_ROLE_LEADER;
         NotifyDdbRole(&sdArbitrateData->lastDdbRole);
         return true;
     }
 
-    (void)ExePromoteCmd(lockCmd, sdArbitrateData);
+    (void)ExePromoteCmd(sdArbitrateData, scsiDev);
 
     if (!CheckResetTime()) {
         return true;
@@ -498,14 +464,14 @@ static bool CheckSdPromote(const char *lockCmd, SdArbitrateData *sdArbitrateData
     return false;
 }
 
-static bool HaveNotifySd(const char *lockCmd, SdArbitrateData *sdArbitrateData)
+static bool HaveNotifySd(SdArbitrateData *sdArbitrateData, const char *scsiDev)
 {
     bool res = false;
     (void)pthread_rwlock_wrlock(&g_notifySdLock);
     if (g_notifySd == DDB_ROLE_FOLLOWER) {
         res = CheckSdDemote(sdArbitrateData);
     } else if (g_notifySd == DDB_ROLE_LEADER) {
-        res = CheckSdPromote(lockCmd, sdArbitrateData);
+        res = CheckSdPromote(sdArbitrateData, scsiDev);
     }
     (void)pthread_rwlock_unlock(&g_notifySdLock);
     return res;
@@ -515,20 +481,26 @@ static void *GetShareDiskLockMain(void *arg)
 {
     thread_name = "GetShareDiskLockMain";
     write_runlog(LOG, "Starting get share disk lock thread.\n");
-    char lockCmd[MAX_PATH_LEN] = {0};
-    errno_t rc = snprintf_s(lockCmd,
-        MAX_PATH_LEN,
-        MAX_PATH_LEN - 1,
-        "timeout -s SIGKILL %us cm_persist %s %ld %lu %d > /dev/null 2>&1",
-        DEFAULT_CMD_TIME_OUT,
-        g_cmsArbitrateDiskHandler.scsiDev,
-        g_cmsArbitrateDiskHandler.instId,
-        g_cmsArbitrateDiskHandler.offset,
-        (int)CMD_LOCK);
-    securec_check_intval(rc, (void)rc);
+
+    uint64 lockAddr = g_cmsArbitrateDiskHandler.offset;
+    int64 instId = g_cmsArbitrateDiskHandler.instId;
+
+    int32 lockRst = cm_alloc_disklock(lockAddr, instId);
+    if (lockRst != 0) {
+        write_runlog(LOG, "Failed to allocate disk lock, lockRst is %d, instId is %ld, offset is %ld\n",
+            lockRst, instId, lockAddr);
+        return NULL;
+    }
+
+    lockRst = cm_init_disklock(lockAddr, instId);
+    if (lockRst != 0) {
+        write_runlog(LOG, "Failed to initialize disk lock, lockRst is %d, instId is %ld, offset is %ld\n",
+            lockRst, instId, lockAddr);
+        return NULL;
+    }
 
     SdArbitrateData sdArbitrateData;
-    rc = memset_s(&sdArbitrateData, sizeof(SdArbitrateData), 0, sizeof(SdArbitrateData));
+    errno_t rc = memset_s(&sdArbitrateData, sizeof(SdArbitrateData), 0, sizeof(SdArbitrateData));
     securec_check_errno(rc, (void)rc);
     struct timespec checkBegin = {0, 0};
     struct timespec checkEnd = {0, 0};
@@ -536,11 +508,11 @@ static void *GetShareDiskLockMain(void *arg)
 
     for (;;) {
         (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
-        if (!HaveNotifySd(lockCmd, &sdArbitrateData)) {
+        if (!HaveNotifySd(&sdArbitrateData, g_cmsArbitrateDiskHandler.scsiDev)) {
             if (sdArbitrateData.lockFailBeginTime == 0) {
                 sdArbitrateData.lockFailBeginTime = checkBegin.tv_sec;
             }
-            CmNormalArbitrate(lockCmd, &sdArbitrateData);
+            CmNormalArbitrate(&sdArbitrateData, g_cmsArbitrateDiskHandler.scsiDev);
         }
         (void)clock_gettime(CLOCK_MONOTONIC, &checkEnd);
         uint32 second = (uint32)(checkEnd.tv_sec - checkBegin.tv_sec);
@@ -554,6 +526,7 @@ static void *GetShareDiskLockMain(void *arg)
     }
     return NULL;
 }
+
 status_t InitDiskLockHandle(diskLrwHandler *sdLrwHandler, const DrvApiInfo *apiInfo)
 {
     int32 ret = strcpy_s(sdLrwHandler->scsiDev, MAX_PATH_LENGTH, apiInfo->sdConfig.devPath);

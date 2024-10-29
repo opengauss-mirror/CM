@@ -13,37 +13,24 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * share_disk_lock_api.h
+ * cm_ddb_sharedisk_disklock.h
  *
  *
  * IDENTIFICATION
- *    include/cm/cm_persist/share_disk_lock_api.h
+ *    include/cm/cm_adapter/cm_sharedisk/cm_ddb_sharedisk_disklock.h
  *
  * -------------------------------------------------------------------------
  */
-#ifndef SHARE_DISK_LOCK_API_H
-#define SHARE_DISK_LOCK_API_H
+#ifndef CM_DISKLOCK_H
+#define CM_DISKLOCK_H
 
-#include "share_disk_lock.h"
+#include "c.h"
+typedef unsigned char uchar;
+int cm_alloc_disklock(uint64 lock_addr, int64 inst_id);
+int cm_init_disklock(uint64 lock_addr, int64 inst_id);
+int cm_lock_disklock(const char *scsi_dev);
+int cm_unlock_disklock(const char *scsi_dev);
+int cm_lockf_disklock(const char *scsi_dev, int64 lock_time);
+void cm_destroy_disklock();
 
-#define MAX_PATH_LENGTH (1024)
-
-#ifndef NULL
-#define NULL ((void *)0)
-#endif
-
-#ifndef O_DIRECT
-#define O_DIRECT 0
-#endif
-
-
-typedef struct _DISK_LRW_HANDLER {
-    char scsiDev[MAX_PATH_LENGTH];
-    int64 instId;
-    uint32 offset;
-    dlock_t headerLock;
-    int fd;
-} diskLrwHandler;
-
-status_t InitDiskLockHandle(diskLrwHandler *sdLrwHandler, const char *scsi_dev, uint32 offset, int64 instId);
 #endif

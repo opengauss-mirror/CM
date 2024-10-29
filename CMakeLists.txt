@@ -16,8 +16,6 @@ not_support(ENABLE_HOTPATCH)
 
 include(build_config)
 
-add_subdirectory(src/cm_persist)
-
 include_directories(${COMM_INC})
 
 add_subdirectory(src)

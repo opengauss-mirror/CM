@@ -77,6 +77,8 @@ function update_dcc_dependency() {
         cp -rf ${cbb_home}/include/* ${PROJECT_ROOT_PATH}/common_lib/cbb/include/
         cp -rf ${CBB}/output/lib/libcbb.a ${PROJECT_ROOT_PATH}/common_lib/cbb/lib/
         cp -rf ${CBB}/output/lib/libcbb.so ${PROJECT_ROOT_PATH}/common_lib/cbb/lib/
+        cp -rf ${cbb_home}/include/cm_dlock.h ${PROJECT_ROOT_PATH}/src/cm_adapter/cm_sharedisk_adapter/
+        cp -rf ${cbb_home}/include/cm_scsi.h ${PROJECT_ROOT_PATH}/src/cm_adapter/cm_sharedisk_adapter/
         return
     fi
 

@@ -1589,12 +1589,6 @@ static void MsgCmQueryOneResInst(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgPr
     PROCESS_MSG_BY_TYPE(QueryOneResInstStat, queryMsg, ProcessQueryOneResInst);
 }
 
-void MsgCmQueryDnInfo(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
-{
-    QueryOneResInstStat *queryMsg = NULL;
-    PROCESS_MSG_BY_TYPE(QueryOneResInstStat, queryMsg, ProcessQueryDnStatusAndRole);
-}
-
 void ProcessCmRhbMsg(MsgRecvInfo *recvMsgInfo, const CmRhbMsg *rhbMsg)
 {
     write_runlog(DEBUG1, "[ProcessCmRhbMsg] receive rhb msg from nodeid: %u\n", rhbMsg->nodeId);
@@ -1715,7 +1709,6 @@ static void InitCmCtlCmdProc()
     g_cmdProc[MSG_CTL_CM_RHB_STATUS_REQ] = MsgShowStatus;
     g_cmdProc[MSG_CTL_CM_NODE_DISK_STATUS_REQ] = MsgShowStatus;
     g_cmdProc[MSG_CTL_CM_FLOAT_IP_REQ] = MsgShowStatus;
-    g_cmdProc[MSG_CTL_CM_QUERY_DN_INFO] = MsgCmQueryDnInfo;
 }
 
 static void InitCmAgentCmdProc()

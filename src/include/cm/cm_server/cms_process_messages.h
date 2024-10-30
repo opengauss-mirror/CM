@@ -157,7 +157,6 @@ void ProcessDnMostAvailableMsg(MsgRecvInfo* recvMsgInfo, AgentToCmserverDnSyncAv
 void ProcessResInstanceStatusMsg(MsgRecvInfo* recvMsgInfo, const CmsToCtlGroupResStatus *queryStatusPtr);
 void ProcessCmResLock(MsgRecvInfo* recvMsgInfo, CmaToCmsResLock *lockMsg);
 void ProcessQueryOneResInst(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat *queryMsg);
-void ProcessQueryDnStatusAndRole(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat *queryMsg);
 void ProcessCmRhbMsg(MsgRecvInfo* recvMsgInfo, const CmRhbMsg *rhbMsg);
 void ProcessResIsregMsg(MsgRecvInfo *recvMsgInfo, CmaToCmsIsregMsg *isreg);
 void ReleaseResLockOwner(const char *resName, uint32 instId);

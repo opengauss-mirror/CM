@@ -95,57 +95,6 @@ ResStatus GetResInstStatus(uint32 instId)
     return result;
 }
 
-bool DnInfoCheckResult(CM_Conn *pCmsCon)
-{
-    struct timespec timeBegin = {0, 0};
-    (void)clock_gettime(CLOCK_MONOTONIC, &timeBegin);
-    for (;;) {
-        if (cm_client_flush_msg(pCmsCon) == TCP_SOCKET_ERROR_EPIPE) {
-            break;
-        }
-        CM_BREAK_IF_TRUE(IsTimeOut(&timeBegin, "[DnInfoCheckResult]"));
-        char *recvMsg = recv_cm_server_cmd(pCmsCon);
-        while (recvMsg != NULL) {
-            cm_msg_type *msgTypePtr = (cm_msg_type*)recvMsg;
-            if (msgTypePtr->msg_type == (int)MSG_CTL_CM_QUERY_DN_ACK) {
-                CmsToCtlDnStatSt *ackMsg = (CmsToCtlDnStatSt*)recvMsg;
-                if ((ackMsg->dnLocalRole != INSTANCE_ROLE_PRIMARY && ackMsg->dnLocalRole != INSTANCE_ROLE_STANDBY &&
-                    ackMsg->dnLocalRole != INSTANCE_ROLE_CASCADE_STANDBY) ||
-                    ackMsg->localStatus != INSTANCE_HA_STATE_NORMAL) {
-                    return false;
-                }
-            }
-            write_runlog(DEBUG1, "unknown the msg type is %d.\n", msgTypePtr->msg_type);
-            recvMsg = recv_cm_server_cmd(pCmsCon);
-            CmUsleep(CTL_RECV_CYCLE);
-        }
-    }
-
-    return true;
-}
-
-bool GetDnStatusAndRole(uint32 instId)
-{
-    CM_Conn *pCmsCon = NULL;
-    if (ResInstCheckConCms(&pCmsCon) != CM_SUCCESS) {
-        write_runlog(DEBUG1, "connect cms primary failed.\n");
-        return false;
-    }
-    QueryOneResInstStat queryMsg = {0};
-    queryMsg.msgType = (int)MSG_CTL_CM_QUERY_DN_INFO;
-    queryMsg.instId = instId;
-
-    if (cm_client_send_msg(pCmsCon, 'C', (char*)&queryMsg, sizeof(queryMsg)) != 0) {
-        write_runlog(DEBUG1, "GetDnStatusAndRole send query one res inst msg to cms fail!\n");
-        FINISH_CONNECTION2(pCmsCon);
-        return false;
-    }
-    if (DnInfoCheckResult(pCmsCon)) {
-        return true;
-    }
-    return false;
-}
-
 status_t CheckResInstInfo(uint32 *nodeId, uint32 instId)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {

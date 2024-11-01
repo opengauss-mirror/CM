@@ -1914,10 +1914,6 @@ static int start_check_cluster()
 
 static bool IsAllResInstStarted(uint32 nodeId)
 {
-    if (!IsCusResExist()) {
-        return true;
-    }
-
     for (uint32 i = 0; i < CusResCount(); ++i) {
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].nodeId != nodeId) {
@@ -1926,13 +1922,9 @@ static bool IsAllResInstStarted(uint32 nodeId)
             if (GetResInstStatus(g_resStatus[i].status.resStat[j].cmInstanceId) != CM_RES_STAT_ONLINE) {
                 return false;
             }
-            // Confirm that the node (DN) is ready.
-            if (GetDnStatusAndRole(g_resStatus[i].status.resStat[j].cmInstanceId)) {
-                return true;
-            }
         }
     }
-    return false;
+    return true;
 }
 
 static int start_check_node(uint32 node_id_check)

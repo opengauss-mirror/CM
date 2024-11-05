@@ -27,6 +27,7 @@
 #ifdef __aarch64__
 #include <sys/sysinfo.h>
 #endif
+#include "cm_cipher.h"
 #include "alarm/alarm_log.h"
 #include "cm/pqsignal.h"
 #include "cm_json_config.h"
@@ -1653,6 +1654,11 @@ int main(int argc, char** argv)
         return -1;
     }
 
+    /* Initialize OPENSSL, and register a signal handler to clean up when use exit() */
+    if (RegistOpensslExitSignal(g_progname)) {
+        return -1;
+    }
+
     status = CmSSlConfigInit(true);
     if (status < 0) {
         (void)fprintf(stderr, "read ssl cerfication files when start!\n");
@@ -1813,6 +1819,7 @@ int main(int argc, char** argv)
     CreateFaultDetectThread();
     CreateConnCmsPThread();
     CreateCheckUpgradeModeThread();
+    CreateRhbCheckThreads();
     CreateVotingDiskThread();
     CreateCusResThread();
     int err = CreateSendAndRecvCmsMsgThread();
@@ -1865,8 +1872,6 @@ int main(int argc, char** argv)
         write_runlog(FATAL, "CreateLogFileCompressAndRemoveThread failed!\n");
         exit(-1);
     }
-
-    CreateRhbCheckThreads();
 
     server_loop();
     (void)cmagent_unlock();

@@ -102,4 +102,5 @@ bool EncryptInputKey(const char* pucPlainText, unsigned char* initrand, unsigned
 status_t CRYPT_encrypt(uint32 ulAlgId, unsigned char* pucKey, unsigned char* pucIV,
     const unsigned char* pucPlainText, int ulPlainLen, unsigned char* pucCipherText, int &pulCLen);
 
+int32 RegistOpensslExitSignal(const char* program);
 #endif

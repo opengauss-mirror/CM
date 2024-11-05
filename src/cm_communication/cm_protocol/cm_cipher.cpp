@@ -661,3 +661,22 @@ err:
     EVP_CIPHER_CTX_free(ctx);
     return CM_ERROR;
 }
+
+/*
+ * This function is mean to initial OPENSSL by cm_agent.
+ * It will initialize OPENSSL, and register a signal handler to clean up
+ * OpenSSL when the program exits. And do not use it in other places.
+ */
+int32 RegistOpensslExitSignal(const char* program)
+{
+    if (OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT, NULL) == 0) {
+        (void)fprintf(stderr, "[%s] OPENSSL_init_crypto failed!\n", program);
+        return -1;
+    }
+
+    if (atexit(OPENSSL_cleanup) != 0) {
+        (void)fprintf(stderr, "[%s] OPENSSL_cleanup atexit failed!\n", program);
+        return -1;
+    }
+    return 0;
+}

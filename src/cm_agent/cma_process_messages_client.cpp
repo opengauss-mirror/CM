@@ -349,11 +349,16 @@ static void ProcessRegResInst(const CmsNotifyAgentRegMsg *recvMsg)
     ResIsregStatus isreg = IsregOneResInst(local, recvMsg->resInstId);
     if (isreg == CM_RES_ISREG_REG) {
         write_runlog(LOG, "local res inst[%s:%u] has been reg.\n", recvMsg->resName, recvMsg->resInstId);
-    } else if ((isreg == CM_RES_ISREG_UNREG) || (isreg == CM_RES_ISREG_PENDING) || (isreg == CM_RES_ISREG_UNKNOWN)) {
-        write_runlog(LOG, "before reg res inst, need clean res inst first.\n");
+    } else if ((isreg == CM_RES_ISREG_UNREG) || (isreg == CM_RES_ISREG_UNKNOWN)) {
+        /* when CM Server get abnormal status in DSS, we should clean at first, register all vg later. */
+        write_runlog(LOG, "this res is abnormaly, before reg res inst, need clean res inst first.\n");
         if ((CheckOneResInst(local) == CUS_RES_CHECK_STAT_OFFLINE) || (CleanOneResInst(local) == CM_SUCCESS)) {
             (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
         }
+    } else if (isreg == CM_RES_ISREG_PENDING) {
+        /* when CM Server get PENDING status in DSS, we should reg again to register all vg. */
+        write_runlog(LOG, "partially register, will let reg again.\n");
+        (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
     } else if (isreg == CM_RES_ISREG_NOT_SUPPORT) {
         write_runlog(LOG, "res inst[%s:%u] don't support reg, not need reg.\n", recvMsg->resName, recvMsg->resInstId);
     } else {

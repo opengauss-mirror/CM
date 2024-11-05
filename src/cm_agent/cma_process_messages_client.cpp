@@ -359,6 +359,10 @@ static void ProcessRegResInst(const CmsNotifyAgentRegMsg *recvMsg)
         if ((CheckOneResInst(local) == CUS_RES_CHECK_STAT_OFFLINE) || (CleanOneResInst(local) == CM_SUCCESS)) {
             (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
         }
+    } else if (isreg == CM_RES_ISREG_PENDING) {
+        /* when CM Server get PENDING status in DSS, we should reg again to register all vg. */
+        write_runlog(LOG, "partially register, will let reg again.\n");
+        (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
     } else if (isreg == CM_RES_ISREG_NOT_SUPPORT) {
         write_runlog(LOG, "res inst[%s:%u] don't support reg, not need reg.\n", recvMsg->resName, recvMsg->resInstId);
     } else {

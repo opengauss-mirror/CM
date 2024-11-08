@@ -305,6 +305,14 @@ static void ParseVipResConfJson(const cJSON *resJson, OneCusResConfJson *resConf
         rc = memset_s(resConf->vipResConf.floatIp, CM_JSON_STR_LEN, 0, CM_JSON_STR_LEN);
         securec_check_errno(rc, (void)rc);
     }
+    if (GetValueStrFromJson(resConf->vipResConf.cmd, CM_JSON_STR_LEN, resJson, "cmd") != 0) {
+        rc = memset_s(resConf->vipResConf.cmd, CM_JSON_STR_LEN, 0, CM_JSON_STR_LEN);
+        securec_check_errno(rc, (void)rc);
+    }
+    if (GetValueStrFromJson(resConf->vipResConf.netMask, CM_JSON_STR_LEN, resJson, "netMask") != 0) {
+        rc = memset_s(resConf->vipResConf.netMask, CM_JSON_STR_LEN, 0, CM_JSON_STR_LEN);
+        securec_check_errno(rc, (void)rc);
+    }
 
     ParseAllBaseIp(resJson, &resConf->vipResConf);
 }

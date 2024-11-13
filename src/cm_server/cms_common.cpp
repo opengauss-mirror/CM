@@ -27,6 +27,7 @@
 #include "cms_global_params.h"
 #include "sys/epoll.h"
 #include "cms_ddb_adapter.h"
+#include "cm_ddb_sharedisk_disklock.h"
 #include "cms_common.h"
 static const int CMS_NETWORK_ISOLATION_TIMES = 20;
 static const int BOOL_STR_MAX_LEN = 10;
@@ -635,6 +636,8 @@ void get_parameters_from_configfile()
     g_agentNetworkTimeout = get_uint32_value_from_config(configDir, "agent_network_timeout", 6);
     g_ssDoubleClusterMode =
         (SSDoubleClusterMode)get_uint32_value_from_config(configDir, "ss_double_cluster_mode", SS_DOUBLE_NULL);
+    g_shareDiskLockType =
+        (SharediskLockType)get_uint32_value_from_config(configDir, "share_disk_lock_type", DISK_LOCK_MGR_NORMAL);
     GetDnArbitrateMode();
 #ifndef ENABLE_PRIVATEGAUSS
     g_waitStaticPrimaryTimes = get_uint32_value_from_config(configDir, "wait_static_primary_times", 6);

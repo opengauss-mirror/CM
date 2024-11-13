@@ -26,11 +26,26 @@
 
 #include "c.h"
 typedef unsigned char uchar;
-int cm_alloc_disklock(uint64 lock_addr, int64 inst_id);
-int cm_init_disklock(uint64 lock_addr, int64 inst_id);
-int cm_lock_disklock(const char *scsi_dev);
-int cm_unlock_disklock(const char *scsi_dev);
-int cm_lockf_disklock(const char *scsi_dev, int64 lock_time);
+
+typedef enum {
+    DISK_LOCK_MGR_NORMAL = 0,
+    DISK_LOCK_MGR_DORADO = 1
+} SharediskLockType;
+
+typedef struct DiskLockInfo {
+    const char* path;
+    int64 owner_id;
+    int64 inst_id;
+    time_t lock_time;
+    int lock_result;
+} disk_lock_info_t;
+
+extern SharediskLockType g_shareDiskLockType;
+void initializeDiskLockManager();
+int cm_init_disklock(const char *scsi_dev, uint64 lock_addr, int64 inst_id);
+disk_lock_info_t cm_lock_disklock();
+int cm_unlock_disklock();
+int cm_lockf_disklock();
 void cm_destroy_disklock();
 
 #endif

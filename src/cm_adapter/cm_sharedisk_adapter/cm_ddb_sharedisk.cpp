@@ -319,15 +319,15 @@ static bool CheckDemoteDdbRole(SdArbitrateData *sdArbitrateData)
     return false;
 }
 
-static void CmNormalArbitrate(SdArbitrateData *sdArbitrateData, const char *scsiDev)
+static void CmNormalArbitrate(SdArbitrateData *sdArbitrateData)
 {
-    int32 lockRst = cm_lock_disklock(scsiDev);
+    disk_lock_info_t lockInfo = cm_lock_disklock();
     write_runlog(DEBUG1,
         "CmNormalArbitrate: cm_lock_disklock result %d. lockTime %ld, "
         "lockNotRefreshTimes %u, lockFailBeginTime %ld\n",
-        lockRst, sdArbitrateData->lockTime,
+        lockInfo.lock_result, sdArbitrateData->lockTime,
         sdArbitrateData->lockNotRefreshTimes, sdArbitrateData->lockFailBeginTime);
-    if (lockRst == 0) {
+    if (lockInfo.lock_result == 0) {
         // get lock success, notify cmserver to primary
         sdArbitrateData->lockTime = 0;
         sdArbitrateData->lockNotRefreshTimes = 0;
@@ -337,12 +337,12 @@ static void CmNormalArbitrate(SdArbitrateData *sdArbitrateData, const char *scsi
         return;
     }
 
-    if (lockRst >= BASE_VALID_LOCK_TIME && lockRst <= MAX_VALID_LOCK_TIME) {
+    if (lockInfo.lock_time >= BASE_VALID_LOCK_TIME && lockInfo.lock_time <= MAX_VALID_LOCK_TIME) {
         g_dbRole = DDB_ROLE_FOLLOWER;
         sdArbitrateData->lockFailBeginTime = 0;
         // get lock failed, check lock time if refreshed by other process
-        if (sdArbitrateData->lockTime != lockRst) {
-            sdArbitrateData->lockTime = lockRst;
+        if (sdArbitrateData->lockTime != lockInfo.lock_time) {
+            sdArbitrateData->lockTime = lockInfo.lock_time;
             sdArbitrateData->lockNotRefreshTimes = 0;
         } else {
             const uint32 defaultNotRefreshTimes = 2;
@@ -355,7 +355,7 @@ static void CmNormalArbitrate(SdArbitrateData *sdArbitrateData, const char *scsi
                 ++sdArbitrateData->lockNotRefreshTimes;
             } else {
                 sdArbitrateData->lockNotRefreshTimes = 0;
-                lockRst = cm_lockf_disklock(g_cmsArbitrateDiskHandler.scsiDev, lockRst);
+                int32 lockRst = cm_lockf_disklock();
                 g_dbRole = ((lockRst == 0) ? DDB_ROLE_LEADER : DDB_ROLE_FOLLOWER);
                 write_runlog(LOG, "CmNormalArbitrate: cm_disk_lockf_s result %d, curForceLockTime %u.\n",
                     lockRst, curForceLockTimeOut);
@@ -412,16 +412,15 @@ static bool CheckSdDemote(SdArbitrateData *sdArbitrateData)
     return false;
 }
 
-static status_t ExePromoteCmd(SdArbitrateData *sdArbitrateData, const char *scsiDev)
+static status_t ExePromoteCmd(SdArbitrateData *sdArbitrateData)
 {
-    int32 lockRst = cm_lock_disklock(scsiDev);
-    if (lockRst != 0) {
-        write_runlog(WARNING, "ExePromoteCmd: Execute get lock failed, lockResult %d!\n", lockRst);
-        if (lockRst >= BASE_VALID_LOCK_TIME && lockRst <= MAX_VALID_LOCK_TIME) {
-            lockRst = cm_lockf_disklock(scsiDev, lockRst);
+    disk_lock_info_t lockInfo = cm_lock_disklock();
+    if (lockInfo.lock_result != 0) {
+        write_runlog(WARNING, "ExePromoteCmd: Execute get lock failed, lockResult %d!\n", lockInfo.lock_result);
+        if (lockInfo.lock_time >= BASE_VALID_LOCK_TIME && lockInfo.lock_time <= MAX_VALID_LOCK_TIME) {
+            int32 lockRst = cm_lockf_disklock();
             if (lockRst != 0) {
-                write_runlog(WARNING, "ExePromoteCmd: Execute force lock cmd %s failed, result %d!\n",
-                    scsiDev, lockRst);
+                write_runlog(WARNING, "ExePromoteCmd: Execute cm_lockf_disklock failed, result %d!\n", lockRst);
                 return CM_ERROR;
             }
             return CM_SUCCESS;
@@ -436,20 +435,20 @@ static status_t ExePromoteCmd(SdArbitrateData *sdArbitrateData, const char *scsi
     return CM_SUCCESS;
 }
 
-static bool CheckSdPromote(SdArbitrateData *sdArbitrateData, const char *scsiDev)
+static bool CheckSdPromote(SdArbitrateData *sdArbitrateData)
 {
     if (g_notifySd != DDB_ROLE_LEADER) {
         return false;
     }
 
     if (g_dbRole != DDB_ROLE_LEADER) {
-        (void)ExePromoteCmd(sdArbitrateData, scsiDev);
+        (void)ExePromoteCmd(sdArbitrateData);
         g_dbRole = DDB_ROLE_LEADER;
         NotifyDdbRole(&sdArbitrateData->lastDdbRole);
         return true;
     }
 
-    (void)ExePromoteCmd(sdArbitrateData, scsiDev);
+    (void)ExePromoteCmd(sdArbitrateData);
 
     if (!CheckResetTime()) {
         return true;
@@ -464,14 +463,14 @@ static bool CheckSdPromote(SdArbitrateData *sdArbitrateData, const char *scsiDev
     return false;
 }
 
-static bool HaveNotifySd(SdArbitrateData *sdArbitrateData, const char *scsiDev)
+static bool HaveNotifySd(SdArbitrateData *sdArbitrateData)
 {
     bool res = false;
     (void)pthread_rwlock_wrlock(&g_notifySdLock);
     if (g_notifySd == DDB_ROLE_FOLLOWER) {
         res = CheckSdDemote(sdArbitrateData);
     } else if (g_notifySd == DDB_ROLE_LEADER) {
-        res = CheckSdPromote(sdArbitrateData, scsiDev);
+        res = CheckSdPromote(sdArbitrateData);
     }
     (void)pthread_rwlock_unlock(&g_notifySdLock);
     return res;
@@ -481,18 +480,12 @@ static void *GetShareDiskLockMain(void *arg)
 {
     thread_name = "GetShareDiskLockMain";
     write_runlog(LOG, "Starting get share disk lock thread.\n");
+    initializeDiskLockManager();
 
     uint64 lockAddr = g_cmsArbitrateDiskHandler.offset;
     int64 instId = g_cmsArbitrateDiskHandler.instId;
 
-    int32 lockRst = cm_alloc_disklock(lockAddr, instId);
-    if (lockRst != 0) {
-        write_runlog(LOG, "Failed to allocate disk lock, lockRst is %d, instId is %ld, offset is %ld\n",
-            lockRst, instId, lockAddr);
-        return NULL;
-    }
-
-    lockRst = cm_init_disklock(lockAddr, instId);
+    int32 lockRst = cm_init_disklock(g_cmsArbitrateDiskHandler.scsiDev, lockAddr, instId);
     if (lockRst != 0) {
         write_runlog(LOG, "Failed to initialize disk lock, lockRst is %d, instId is %ld, offset is %ld\n",
             lockRst, instId, lockAddr);
@@ -508,11 +501,11 @@ static void *GetShareDiskLockMain(void *arg)
 
     for (;;) {
         (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
-        if (!HaveNotifySd(&sdArbitrateData, g_cmsArbitrateDiskHandler.scsiDev)) {
+        if (!HaveNotifySd(&sdArbitrateData)) {
             if (sdArbitrateData.lockFailBeginTime == 0) {
                 sdArbitrateData.lockFailBeginTime = checkBegin.tv_sec;
             }
-            CmNormalArbitrate(&sdArbitrateData, g_cmsArbitrateDiskHandler.scsiDev);
+            CmNormalArbitrate(&sdArbitrateData);
         }
         (void)clock_gettime(CLOCK_MONOTONIC, &checkEnd);
         uint32 second = (uint32)(checkEnd.tv_sec - checkBegin.tv_sec);

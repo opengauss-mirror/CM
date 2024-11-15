@@ -953,6 +953,10 @@ int ExecuteSystemCmd(const char *cmd, int32 logLevel, int32 *errCode)
         if (WEXITSTATUS(ret) == 0) {
             return SUCCESS_EXECUTE_CMD;
         }
+        // arping cmd return 1 is not error
+        if (strstr(cmd, "arping") != NULL && WEXITSTATUS(ret) == 1) {
+            return SUCCESS_EXECUTE_CMD;
+        }
     }
 
     write_runlog(logLevel, "Fail to execute command %s, script exit code %d.\n", cmd, WEXITSTATUS(ret));

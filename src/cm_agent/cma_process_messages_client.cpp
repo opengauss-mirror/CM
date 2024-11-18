@@ -353,15 +353,35 @@ static void ProcessRegResInst(const CmsNotifyAgentRegMsg *recvMsg)
         (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
     } else if (isreg == CM_RES_ISREG_REG) {
         write_runlog(LOG, "local res inst[%s:%u] has been reg.\n", recvMsg->resName, recvMsg->resInstId);
-    } else if ((isreg == CM_RES_ISREG_UNREG) || (isreg == CM_RES_ISREG_UNKNOWN)) {
+    } else if (isreg == CM_RES_ISREG_UNREG) {
         /* when CM Server get abnormal status in DSS, we should clean at first, register all vg later. */
         write_runlog(LOG, "This res is abnormaly, before reg res inst, need clean res inst first.\n");
         if ((CheckOneResInst(local) == CUS_RES_CHECK_STAT_OFFLINE) || (CleanOneResInst(local) == CM_SUCCESS)) {
             (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
         }
+    } else if (isreg == CM_RES_ISREG_UNKNOWN) {
+        bool isCleanRes = false;
+        /* We may get UNKNOWN status under adding VG process. */
+        (void)pthread_rwlock_wrlock(&(pending_status_rwlock));
+        if (g_isInVGAddProcess) {
+            /* If ResourceIsregCheck thread has dected the PENDING status. */
+            g_isRegUnderVGAddProcess= true;
+        } else {
+            isCleanRes = true;
+        }
+        (void)pthread_rwlock_unlock(&(pending_status_rwlock));
+        if (isCleanRes && (CheckOneResInst(local) == CUS_RES_CHECK_STAT_OFFLINE ||
+            CleanOneResInst(local) == CM_SUCCESS)) {
+            write_runlog(LOG, "This res is abnormaly, before reg res inst, need clean res inst first.\n");
+        }
+        /* We should reg whether dss is online or offline. */
+        (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
     } else if (isreg == CM_RES_ISREG_PENDING) {
         /* when CM Server get PENDING status in DSS, we should reg again to register all vg. */
         write_runlog(LOG, "partially register, will let reg again.\n");
+        (void)pthread_rwlock_wrlock(&(pending_status_rwlock));
+        g_isRegUnderVGAddProcess= true;
+        (void)pthread_rwlock_unlock(&(pending_status_rwlock));
         (void)RegOneResInst(local, recvMsg->resInstId, CM_TRUE);
     } else if (isreg == CM_RES_ISREG_NOT_SUPPORT) {
         write_runlog(LOG, "res inst[%s:%u] don't support reg, not need reg.\n", recvMsg->resName, recvMsg->resInstId);

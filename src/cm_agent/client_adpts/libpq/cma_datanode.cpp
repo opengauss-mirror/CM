@@ -652,8 +652,15 @@ int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval)
     errno_t rc = snprintf_s(
         pidPath, MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", g_currentNode->datanode[dnId].datanodeLocalDataPath);
     securec_check_intval(rc, (void)rc);
-    if (agentCheckTimeInterval < agentConnectDb) {
-        agentConnectDb = agentCheckTimeInterval;
+    if (!g_isStorageWithDMSorDSS) {
+         /* According the origin logic when we are not in shared storage mode. */
+        if (agentCheckTimeInterval < agentConnectDb) {
+            agentConnectDb = agentCheckTimeInterval;
+        }
+    } else {
+#define CONNECT_TIMEOUT_UNDER_SHEARD_STORAGE 1000
+        /* Due to the performance of DSS, we should wait for connection for more. */
+        agentConnectDb = CONNECT_TIMEOUT_UNDER_SHEARD_STORAGE;
     }
     const char sqlCommands[] = {
         "select local_role,static_connections,db_state,detail_information from pg_stat_get_stream_replications();"};

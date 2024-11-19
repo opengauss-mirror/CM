@@ -34,6 +34,8 @@
 #include <dirent.h>
 #include <limits.h>
 #include <sys/procfs.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include "openssl/x509.h"
 #include "openssl/hmac.h"
 #include "openssl/rand.h"
@@ -46,7 +48,8 @@
 #include "common/config/cm_config.h"
 #include "cm/cm_cipher.h"
 #include "cm/cm_misc.h"
-#include <arpa/inet.h>
+#include "cm/cm_ip.h"
+
 /*
  * ssh connect does not exit automatically when the network is fault,
  * this will cause cm_ctl hang for several hours,
@@ -834,6 +837,8 @@ cluster_msg_string cluster_msg_map_string[] = {
     {"MSG_CTL_CM_FLOAT_IP_REQ", (int32)MSG_CTL_CM_FLOAT_IP_REQ},
     {"MSG_CM_AGENT_FLOAT_IP_ACK", (int32)MSG_CM_AGENT_FLOAT_IP_ACK},
     {"MSG_AGENT_CM_ISREG_REPORT", (int32)MSG_AGENT_CM_ISREG_REPORT},
+    {"MSG_CMA_PING_DN_FLOAT_IP_FAIL", (int32)MSG_CMA_PING_DN_FLOAT_IP_FAIL},
+    {"MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP", (int32)MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP},
     {"MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED", (int32)MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED},
     {NULL, MSG_TYPE_BUTT},
 };
@@ -1339,7 +1344,9 @@ status_t IsReachableIP(char *ip)
         return CM_ERROR;
     }
     char cmd[MAXPGPATH] = {0};
-    int rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "timeout 2 ping -c 2 %s > /dev/null 2>&1", ip);
+    int rc;
+    const char *pingStr = GetPingStr(GetIpVersion(ip));
+    rc = snprintf_s(cmd, MAXPGPATH, MAXPGPATH - 1, "timeout 2 %s -c 2 %s > /dev/null 2>&1", pingStr, ip);
     securec_check_intval(rc, (void)rc);
     rc = system(cmd);
     return rc == 0 ? CM_SUCCESS : CM_ERROR;

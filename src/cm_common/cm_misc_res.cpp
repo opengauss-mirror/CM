@@ -34,15 +34,6 @@ static uint32 g_resCount = 0;
 static uint32 g_resNode[CM_MAX_RES_NODE_COUNT] = {0};
 static uint32 g_resNodeCount = 0;
 
-typedef enum IpTypeEn {
-    IP_TYPE_INIT = 0,
-    IP_TYPE_UNKNOWN = 1,
-    IP_TYPE_IPV4,
-    IP_TYPE_IPV6,
-    IP_TYPE_NEITHER,
-    IP_TYPE_CEIL,
-} IpType;
-
 typedef struct ResConfRangeSt {
     const char *param;
     int min;
@@ -504,107 +495,6 @@ status_t GetResNameByCmInstId(uint32 instId, char *resName, uint32 nameLen)
 
     write_runlog(LOG, "unknown cm_inst_id %u.\n", instId);
     return CM_ERROR;
-}
-
-static IpType GetIpType(const char *ip)
-{
-    if (CM_IS_EMPTY_STR(ip)) {
-        return IP_TYPE_NEITHER;
-    }
-    int32 ip4Cnt = 0;
-    int32 ip6Cnt = 0;
-    const int32 ip4CntTotal = 3;
-    const int32 ip6CntMax = 7;
-    const int32 ip6CntMin = 2;
-    uint32 ipLen = (uint32)strlen(ip);
-    for (uint32 i = 0; i < ipLen; ++i) {
-        if (ip[i] == '.') {
-            ++ip4Cnt;
-        } else if (ip[i] == ':') {
-            ++ip6Cnt;
-        }
-    }
-    if (ip6Cnt == 0 && ip4Cnt == ip4CntTotal) {
-        return IP_TYPE_IPV4;
-    }
-    if (ip4Cnt == 0 && (ip6Cnt >= ip6CntMin && ip6Cnt <= ip6CntMax)) {
-        return IP_TYPE_IPV6;
-    }
-    write_runlog(ERROR, "ip(%s) is invalid, and ip4Cnt=%d, ip6Cnd=%d.\n", ip, ip4Cnt, ip6Cnt);
-    return IP_TYPE_NEITHER;
-}
-
-static uint8 CheckIpV4PartlyValid(const char *ipPart)
-{
-    if (CM_is_str_all_digit(ipPart) != 0) {
-        write_runlog(ERROR, "ip(%s) is not digital.\n", ipPart);
-        return CM_FALSE;
-    }
-    const uint32 maxLen = 3;
-    uint32 ipLen = (uint32)strlen(ipPart);
-    if (ipLen > maxLen) {
-        return CM_FALSE;
-    }
-    if (ipPart[0] == '0' && ipLen > 1) {
-        write_runlog(ERROR, "ip(%s) first is 0.\n", ipPart);
-        return CM_FALSE;
-    }
-    const int32 maxValue = 255;
-    int32 value = (int32)CmAtoi(ipPart, 0);
-    if (value < 0 || value > maxValue) {
-        write_runlog(ERROR, "ip(%s) value(%d) is not in [%d: %d].\n", ipPart, value, 0, maxValue);
-        return CM_FALSE;
-    }
-    return CM_TRUE;
-}
-
-static uint8 CheckIpV4Valid(char *ip, uint32 ipLen)
-{
-    if (CM_IS_EMPTY_STR(ip)) {
-        return CM_FALSE;
-    }
-    char baseIp[CM_IP_LENGTH] = {0};
-    errno_t rc = strncpy_s(baseIp, CM_IP_LENGTH, ip, ipLen);
-    securec_check_errno(rc, (void)rc);
-
-    const char *ipPoint = ".";
-    char *savePtr = NULL;
-    // first
-    char *subStr = strtok_r(ip, ipPoint, &savePtr);
-    CM_RETFALSE_IFNOT(CheckIpV4PartlyValid(subStr));
-
-    int cnt = 1;
-    while (!CM_IS_EMPTY_STR(savePtr)) {
-        subStr = strtok_r(NULL, ipPoint, &savePtr);
-        CM_RETFALSE_IFNOT(CheckIpV4PartlyValid(subStr));
-        ++cnt;
-    }
-    const int maxIpv4Part = 4;
-    if (cnt != maxIpv4Part) {
-        write_runlog(ERROR, "ip(%s) is invalid, cnt=%d.\n", baseIp, cnt);
-        return CM_FALSE;
-    }
-
-    return CM_TRUE;
-}
-
-uint8 CheckIpValid(const char *ip)
-{
-    char tempIp[CM_IP_LENGTH] = {0};
-    errno_t rc = strcpy_s(tempIp, CM_IP_LENGTH, ip);
-    securec_check_errno(rc, (void)rc);
-
-    if (GetIpType(tempIp) != IP_TYPE_IPV4) {
-        write_runlog(ERROR, "ip(%s) is invalid, not ipV4.\n", ip);
-        return CM_FALSE;
-    }
-
-    if (CheckIpV4Valid(tempIp, CM_IP_LENGTH) == CM_FALSE) {
-        write_runlog(ERROR, "ipV4(%s) is invalid.\n", ip);
-        return CM_FALSE;
-    }
-
-    return CM_TRUE;
 }
 
 uint32 CusResCount()

@@ -66,9 +66,9 @@ bool CheckTrustAndNet()
     int ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
         SYSTEMQUOTE "source /etc/profile;pssh -i -t 10 -h %s "
             "\"pwd > /dev/null\" > /dev/null;" SYSTEMQUOTE, hosts_path);
+    
     securec_check_intval(ret, (void)ret);
     write_runlog(DEBUG1, "Check trust command: %s\n", command);
-
     ret = system(command);
     if (ret != 0) {
         return false;

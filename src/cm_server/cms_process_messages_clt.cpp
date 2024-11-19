@@ -29,6 +29,10 @@
 #include "cms_arbitrate_datanode.h"
 #include "cms_arbitrate_datanode_pms.h"
 #include "cms_az.h"
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include "cm_ip.h"
+#include "cm_msg_version_convert.h"
 
 const int KV_POS = 2;
 
@@ -1057,27 +1061,58 @@ void FlushCmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType)
     CmToAgentMsg(recvMsgInfo, msgType);
 }
 
+status_t GetAgentDataReportMsg(CM_StringInfo inBuffer, agent_to_cm_datanode_status_report *agentToCmDatanodeStatusPtr)
+{
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        const agent_to_cm_datanode_status_report_ipv4 *agent_to_cm_datanode_status_ptr_ipv4 =
+            (const agent_to_cm_datanode_status_report_ipv4 *)CmGetmsgbytes(inBuffer,
+                sizeof(agent_to_cm_datanode_status_report_ipv4));
+        if (agent_to_cm_datanode_status_ptr_ipv4 == NULL) {
+            write_runlog(ERROR, "MSG_AGENT_CM_DATA_INSTANCE_REPORT_STATUS is null. inBuffer->qtype: %d \n",
+                inBuffer->qtype);
+            return CM_ERROR;
+        }
+        AgentToCmDatanodeStatusReportV1ToV2(agent_to_cm_datanode_status_ptr_ipv4, agentToCmDatanodeStatusPtr);
+    } else {
+        const agent_to_cm_datanode_status_report *agent_to_cm_datanode_status_ptr =
+            (const agent_to_cm_datanode_status_report *)CmGetmsgbytes(inBuffer,
+                sizeof(agent_to_cm_datanode_status_report));
+        if (agent_to_cm_datanode_status_ptr == NULL) {
+            write_runlog(ERROR,
+                "MSG_AGENT_CM_DATA_INSTANCE_REPORT_STATUS is null. inBuffer->qtype: %d \n", inBuffer->qtype);
+            return CM_ERROR;
+        }
+        errno_t rc = memcpy_s(agentToCmDatanodeStatusPtr,
+            sizeof(agent_to_cm_datanode_status_report),
+            agent_to_cm_datanode_status_ptr,
+            sizeof(agent_to_cm_datanode_status_report));
+        securec_check_errno(rc, (void)rc);
+    }
+    return CM_SUCCESS;
+}
+
 void SetAgentDataReportMsg(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer)
 {
-    const agent_to_cm_datanode_status_report *agent_to_cm_datanode_status_ptr =
-        (const agent_to_cm_datanode_status_report *)CmGetmsgbytes(inBuffer, sizeof(agent_to_cm_datanode_status_report));
-    if (agent_to_cm_datanode_status_ptr == NULL) {
-        write_runlog(
-            ERROR, "MSG_AGENT_CM_DATA_INSTANCE_REPORT_STATUS is null. inBuffer->qtype: %d \n", inBuffer->qtype);
+    agent_to_cm_datanode_status_report agent_to_cm_datanode_status_ptr = {0};
+    if (GetAgentDataReportMsg(inBuffer, &agent_to_cm_datanode_status_ptr) != CM_SUCCESS) {
             return;
     }
+
+    agent_to_cm_datanode_status_ptr.local_status.disconn_host[CM_IP_LENGTH - 1] = '\0';
+    agent_to_cm_datanode_status_ptr.local_status.local_host[CM_IP_LENGTH - 1] = '\0';
+
     if (!g_inReload) {
-        if (agent_to_cm_datanode_status_ptr->instanceType != INSTANCE_TYPE_DATANODE) {
+        if (agent_to_cm_datanode_status_ptr.instanceType != INSTANCE_TYPE_DATANODE) {
             write_runlog(ERROR,
                 "Instance type %d not equal INSTANCE_TYPE_DATANODE(%d) ! Maybe the msg_type send by remote "
                 "cm_agent not match with local cm_server."
                 "Check whether the version of cm_agent and cm_server on node %u is the same as localhost. "
                 "msg_type=%d, node=%u, instanceId=%u, instanceType=%d, connectStatus=%d, processStatus=%d \n",
-                agent_to_cm_datanode_status_ptr->instanceType,
-                INSTANCE_TYPE_DATANODE, agent_to_cm_datanode_status_ptr->node,
-                agent_to_cm_datanode_status_ptr->msg_type, agent_to_cm_datanode_status_ptr->node,
-                agent_to_cm_datanode_status_ptr->instanceId, agent_to_cm_datanode_status_ptr->instanceType,
-                agent_to_cm_datanode_status_ptr->connectStatus, agent_to_cm_datanode_status_ptr->processStatus);
+                agent_to_cm_datanode_status_ptr.instanceType,
+                INSTANCE_TYPE_DATANODE, agent_to_cm_datanode_status_ptr.node,
+                agent_to_cm_datanode_status_ptr.msg_type, agent_to_cm_datanode_status_ptr.node,
+                agent_to_cm_datanode_status_ptr.instanceId, agent_to_cm_datanode_status_ptr.instanceType,
+                agent_to_cm_datanode_status_ptr.connectStatus, agent_to_cm_datanode_status_ptr.processStatus);
             return;
         }
         g_loopState.execStatus[0] = 0;
@@ -1085,12 +1120,12 @@ void SetAgentDataReportMsg(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer)
         struct timeval checkEnd = {0, 0};
         (void)gettimeofday(&checkBegin, NULL);
         if (g_single_node_cluster) {
-            datanode_instance_arbitrate_single(recvMsgInfo, agent_to_cm_datanode_status_ptr);
+            datanode_instance_arbitrate_single(recvMsgInfo, &agent_to_cm_datanode_status_ptr);
         } else if (g_multi_az_cluster) {
-            DatanodeInstanceArbitrate(recvMsgInfo, agent_to_cm_datanode_status_ptr);
+            DatanodeInstanceArbitrate(recvMsgInfo, &agent_to_cm_datanode_status_ptr);
         } else {
             /* datanode instances arbitrate for primary-standby-dummy cluster */
-            datanode_instance_arbitrate_for_psd(recvMsgInfo, agent_to_cm_datanode_status_ptr);
+            datanode_instance_arbitrate_for_psd(recvMsgInfo, &agent_to_cm_datanode_status_ptr);
         }
 
         (void)gettimeofday(&checkEnd, NULL);
@@ -1216,15 +1251,15 @@ static status_t SendMaintainFileToAllCms(const char *maintainFile)
         if (g_node[g_nodeIndexForCmServer[i]].node == g_currentNode->node) {
             continue;
         }
-        ret = snprintf_s(cmd,
-            CM_PATH_LENGTH,
-            CM_PATH_LENGTH - 1,
-            "scp %s %s@%s:%s",
-            maintainFile,
-            pw->pw_name,
-            g_node[g_nodeIndexForCmServer[i]].sshChannel[0],
-            maintainFile);
-        securec_check_intval(ret, (void)ret);
+        if (GetIpVersion(g_node[g_nodeIndexForCmServer[i]].sshChannel[0]) == AF_INET6) {
+            ret = snprintf_s(cmd, CM_PATH_LENGTH, CM_PATH_LENGTH - 1, "scp %s %s@[%s]:%s", maintainFile, pw->pw_name,
+                g_node[g_nodeIndexForCmServer[i]].sshChannel[0], maintainFile);
+                securec_check_intval(ret, (void)ret);
+        } else {
+            ret = snprintf_s(cmd, CM_PATH_LENGTH, CM_PATH_LENGTH - 1, "scp %s %s@%s:%s", maintainFile, pw->pw_name,
+                g_node[g_nodeIndexForCmServer[i]].sshChannel[0], maintainFile);
+            securec_check_intval(ret, (void)ret);
+        }
         ret = system(cmd);
         if (ret != -1 && WEXITSTATUS(ret) == 0) {
             write_runlog(LOG, "[switch] exec cmd(%s) success\n", cmd);
@@ -1438,15 +1473,15 @@ static status_t GetMaintainFromOtherCms(const char *kvFile)
     }
     ret = memset_s(cmd, sizeof(cmd), 0, sizeof(cmd));
     securec_check_errno(ret, (void)ret);
-    ret = snprintf_s(cmd,
-        CM_PATH_LENGTH,
-        CM_PATH_LENGTH - 1,
-        "scp %s@%s:%s %s > /dev/null 2>&1",
-        pw->pw_name,
-        g_node[index].sshChannel[0],
-        kvFile,
-        kvFile);
-    securec_check_intval(ret, (void)ret);
+    if (GetIpVersion(g_node[index].sshChannel[0]) == AF_INET6) {
+        ret = snprintf_s(cmd, CM_PATH_LENGTH, CM_PATH_LENGTH - 1, "scp %s@[%s]:%s %s > /dev/null 2>&1",
+            pw->pw_name, g_node[index].sshChannel[0], kvFile, kvFile);
+        securec_check_intval(ret, (void)ret);
+    } else {
+        ret = snprintf_s(cmd, CM_PATH_LENGTH, CM_PATH_LENGTH - 1, "scp %s@%s:%s %s > /dev/null 2>&1",
+            pw->pw_name, g_node[index].sshChannel[0], kvFile, kvFile);
+        securec_check_intval(ret, (void)ret);
+    }
     ret = system(cmd);
     if (ret != -1 && WEXITSTATUS(ret) == 0) {
         write_runlog(LOG, "[switch] exec cmd(%s) success.\n", cmd);

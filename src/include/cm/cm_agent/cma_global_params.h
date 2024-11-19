@@ -296,6 +296,7 @@ extern char g_enableMesSsl[BOOL_STR_MAX_LEN];
 extern uint32 g_sslCertExpireCheckInterval;
 extern uint32 g_cmaRhbItvl;
 extern CmResConfList g_resConf[CM_MAX_RES_INST_COUNT];
+extern IpType g_ipType;
 
 /* Whether we are in add avg process. */
 extern bool g_isInVGAddProcess;
@@ -307,6 +308,9 @@ extern pthread_rwlock_t pending_status_rwlock;
 bool &GetIsSharedStorageMode();
 
 #define FENCE_TIMEOUT (agent_connect_retries * (agent_connect_timeout + agent_report_interval))
+
+bool GetEnvSupportIpV6();
+void SetEnvSupportIpV6(bool val);
 
 #ifdef __aarch64__
 extern uint32 agent_process_cpu_affinity;

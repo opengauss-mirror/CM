@@ -530,17 +530,31 @@ keep_going: /* We will come back to here until there is
                     appendCMPQExpBuffer(&conn->errorMessage, "could not found localhost, localhost is null \n");
                     break;
                 }
+                
+                if (addr_cur->ai_family == AF_INET) {
+                    struct sockaddr_in localaddr;
 
-                struct sockaddr_in localaddr;
+                    rc = memset_s(&localaddr, sizeof(sockaddr_in), 0, sizeof(sockaddr_in));
+                    securec_check_errno(rc, (void)rc);
+                    localaddr.sin_family = AF_INET;
+                    localaddr.sin_addr.s_addr = inet_addr(conn->pglocalhost);
+                    /* Any local port will do. */
+                    localaddr.sin_port = 0;
 
-                rc = memset_s(&localaddr, sizeof(sockaddr_in), 0, sizeof(sockaddr_in));
-                securec_check_errno(rc, (void)rc);
-                localaddr.sin_family = AF_INET;
-                localaddr.sin_addr.s_addr = inet_addr(conn->pglocalhost);
-                /* Any local port will do. */
-                localaddr.sin_port = 0;
+                    rc = bind(conn->sock, (struct sockaddr*)&localaddr, sizeof(localaddr));
+                } else if (addr_cur->ai_family == AF_INET6) {
+                    struct sockaddr_in6 localaddr;
 
-                rc = bind(conn->sock, (struct sockaddr*)&localaddr, sizeof(localaddr));
+                    rc = memset_s(&localaddr, sizeof(sockaddr_in6), 0, sizeof(sockaddr_in6));
+                    securec_check_errno(rc, (void)rc);
+                    localaddr.sin6_family = AF_INET6;
+                    (void)inet_pton(AF_INET6, conn->pglocalhost, &(localaddr.sin6_addr));
+                    /* Any local port will do. */
+                    localaddr.sin6_port = 0; // Any local port will do.
+
+                    rc = bind(conn->sock, (struct sockaddr*)&localaddr, sizeof(localaddr));
+                }
+
                 if (rc != 0) {
                     appendCMPQExpBuffer(
                         &conn->errorMessage, "could not bind localhost:%s, result is %d \n", conn->pglocalhost, rc);

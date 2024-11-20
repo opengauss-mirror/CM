@@ -467,6 +467,69 @@ static status_t GetLockOwner(const char *resName, const char *lockName, uint32 &
     return CM_SUCCESS;
 }
 
+static char *GetOfficialId()
+{
+    static char officialId[MAX_PATH_LEN] = {0};
+
+    for (uint32 i = 0; i < g_node_num; i++) {
+        for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
+            if (g_node[i].datanode[j].datanodeRole == PRIMARY_DN) {
+                snprintf(officialId, MAX_PATH_LEN, "%d", g_node[i].datanode[j].datanodeId);
+                write_runlog(LOG, "officialIndex is %s.\n", officialId);
+                return officialId;
+            }
+        }
+    }
+
+    officialId[0] = '\0';
+    return officialId;
+}
+
+static status_t SetLockOwner4FirstReform()
+{
+    char key[MAX_PATH_LEN] = {0};
+    char resName[CM_MAX_RES_NAME] = {0};
+    char lockName[CM_MAX_LOCK_NAME] = {0};
+    char lockValue[MAX_PATH_LEN] = {0};
+    char officialId[MAX_PATH_LEN] = {0};
+    errno_t rc;
+
+    rc = strncpy_s(resName, CM_MAX_RES_NAME, "dms_res", strlen("dms_res"));
+    securec_check_errno(rc, (void)rc);
+    rc = strncpy_s(lockName, CM_MAX_LOCK_NAME, "dms_reformer_lock", strlen("dms_reformer_lock"));
+    securec_check_errno(rc, (void)rc);
+    GetResLockDdbKey(key, MAX_PATH_LEN, resName, lockName);
+
+    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVFromDDb(key, MAX_PATH_LEN, lockValue, MAX_PATH_LEN, &ddbResult);
+    if (st != CM_SUCCESS) {
+        if (ddbResult != CAN_NOT_FIND_THE_KEY) {
+            write_runlog(ERROR, "failed to get value with key(%s) in 1st reform, error info:%d.\n", key, (int)ddbResult);
+            return CM_ERROR;
+        }
+        write_runlog(LOG, "not exit res(%s) status, key:\"%s\" in ddb in 1st reform.\n", resName, key);
+    }
+
+    char *tempOfficialId = GetOfficialId();
+    if (tempOfficialId != NULL) {
+        rc = strncpy_s(officialId, MAX_PATH_LEN, tempOfficialId, MAX_PATH_LEN - 1);
+        officialId[MAX_PATH_LEN - 1] = '\0';
+        write_runlog(LOG, "get official id %s.\n", officialId);
+    } else {
+        write_runlog(ERROR, "can not get the official id.\n");
+    }
+
+    if (strlen(lockValue) == 0) {
+        status_t st = SetKV2Ddb(key, MAX_PATH_LEN, officialId, MAX_PATH_LEN, NULL);
+        if (st != CM_SUCCESS) {
+            write_runlog(ERROR, "[CLIENT] failed to set official id for key(%s).\n", key);
+            return CM_ERROR;
+        }
+        write_runlog(LOG, "[CLIENT] official id set for key(%s): %s\n", key, officialId);
+    }
+    return CM_SUCCESS;
+}
+
 static status_t SetNewLockOwner(const char *resName, const char *lockName, uint32 curLockOwner, uint32 resInstId)
 {
     char key[MAX_PATH_LEN] = {0};
@@ -595,6 +658,10 @@ static bool RealTimeBuildIsOff(const char *resName, const char* lockName, uint32
 
 static ClientError CmResLock(const CmaToCmsResLock *lockMsg)
 {
+    if (SetLockOwner4FirstReform() != CM_SUCCESS) {
+        write_runlog(LOG, "[%s], can not set lockowner in first reform.\n", __FUNCTION__);
+        return CM_RES_CLIENT_CANNOT_DO;        
+    }
     if (!IsResInstIdValid((int)lockMsg->cmInstId)) {
         write_runlog(ERROR, "[CLIENT] res(%s) (%s)lock new owner (%u) is invalid.\n",
             lockMsg->resName, lockMsg->lockName, lockMsg->cmInstId);

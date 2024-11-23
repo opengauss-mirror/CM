@@ -423,9 +423,7 @@ status_t GetGlobalResStatusIndex(const char *resName, uint32 &index)
 
 bool IsResInstIdValid(int instId)
 {
-    const int minDnInstId = 6000;
-    const int maxDnInstId = 7000;
-    if (instId > minDnInstId && instId < maxDnInstId) {
+    if (instId > MIN_DN_INST_ID && instId < MAX_DN_INST_ID) {
         return true;
     }
     if (instId > RES_INSTANCE_ID_MIN && instId < RES_INSTANCE_ID_MAX) {

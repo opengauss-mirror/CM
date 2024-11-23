@@ -27,6 +27,7 @@
 #include "cms_ddb_adapter.h"
 #include "cms_global_params.h"
 #include "cms_process_messages.h"
+#include "cm_misc_res.h"
 
 typedef struct ResStatReportInfoSt {
     uint32 nodeId;
@@ -467,21 +468,20 @@ static status_t GetLockOwner(const char *resName, const char *lockName, uint32 &
     return CM_SUCCESS;
 }
 
-static char *GetOfficialId()
+static uint32 GetOfficialId()
 {
-    static char officialId[MAX_PATH_LEN] = {0};
+    static uint32 officialId = -1;
 
     for (uint32 i = 0; i < g_node_num; i++) {
         for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
             if (g_node[i].datanode[j].datanodeRole == PRIMARY_DN) {
-                snprintf(officialId, MAX_PATH_LEN, "%d", g_node[i].datanode[j].datanodeId);
-                write_runlog(LOG, "officialIndex is %s.\n", officialId);
+                officialId = g_node[i].datanode[j].datanodeId;
+                write_runlog(LOG, "PRIMARY_DN is %d.\n", officialId);
                 return officialId;
             }
         }
     }
 
-    officialId[0] = '\0';
     return officialId;
 }
 
@@ -509,14 +509,19 @@ static status_t SetLockOwner4FirstReform()
         }
         write_runlog(LOG, "not exit res(%s) status, key:\"%s\" in ddb in 1st reform.\n", resName, key);
     }
-
-    char *tempOfficialId = GetOfficialId();
-    if (tempOfficialId != NULL) {
-        rc = strncpy_s(officialId, MAX_PATH_LEN, tempOfficialId, MAX_PATH_LEN - 1);
-        officialId[MAX_PATH_LEN - 1] = '\0';
-        write_runlog(LOG, "get official id %s.\n", officialId);
+    
+    uint32 tempOfficialId = GetOfficialId();
+    if (IsResInstIdValid(tempOfficialId)) {
+        if (IsOneResInstWork(resName, tempOfficialId)) {
+            snprintf(officialId, MAX_PATH_LEN, "%d", tempOfficialId);
+        } else {
+            write_runlog(ERROR, "res(%s) inst(%u) has been get out of cluster, can't do lock.\n",
+                resName, tempOfficialId);
+            return CM_ERROR;
+        }
     } else {
         write_runlog(ERROR, "can not get the official id.\n");
+        return CM_ERROR;
     }
 
     if (strlen(lockValue) == 0) {
@@ -660,7 +665,6 @@ static ClientError CmResLock(const CmaToCmsResLock *lockMsg)
 {
     if (SetLockOwner4FirstReform() != CM_SUCCESS) {
         write_runlog(LOG, "[%s], can not set lockowner in first reform.\n", __FUNCTION__);
-        return CM_RES_CLIENT_CANNOT_DO;        
     }
     if (!IsResInstIdValid((int)lockMsg->cmInstId)) {
         write_runlog(ERROR, "[CLIENT] res(%s) (%s)lock new owner (%u) is invalid.\n",

@@ -307,7 +307,7 @@ static int read_config_file_check(void)
 {
     int err_no = 0;
 
-    int status = read_config_file(g_cmStaticConfigurePath, &err_no, false, MALLOC_BY_NODE_MAXNUM);
+    int status = read_config_file(g_cmStaticConfigurePath, &err_no, false);
     if (status == 0) {
         if (g_nodeHeader.node == 0) {
             write_runlog(ERROR, "current node self is invalid  node =%u\n", g_nodeHeader.node);

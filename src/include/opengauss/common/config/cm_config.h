@@ -141,9 +141,6 @@
 #define ETCD_KEY_LENGTH 1024
 #define ETCD_VLAUE_LENGTH 1024
 
-#define MALLOC_BY_NODE_NUM 0
-#define MALLOC_BY_NODE_MAXNUM 1
-
 #define CASCADE_STANDBY_TYPE 3
 #define STATIC_CONFIG_FILE "cluster_static_config"
 #define DYNAMIC_DNROLE_FILE "cluster_dnrole_config"
@@ -447,8 +444,7 @@ extern char* g_local_node_name;
 extern char* g_lcname;
 
 extern int read_single_file(const char *file_path, int *err_no, uint32 nodeId, const char *dataPath);
-extern int read_config_file(const char* file_path, int* err_no,
-    bool inReload = false, int mallocByNodeNum = MALLOC_BY_NODE_NUM);
+extern int read_config_file(const char* file_path, int* err_no, bool inReload = false);
 extern int read_logic_cluster_name(const char* file_path, logicClusterList& lcList, int* err_no);
 extern int read_logic_cluster_config_files(const char* file_path, int* err_no);
 extern int read_lc_config_file(const char* file_path, int* err_no);

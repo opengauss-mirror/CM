@@ -61,6 +61,16 @@ CM支持以下操作系统：
 
 - openEuler-20.03-LTS（aarch64架构）
 
+- openEuler-20.03-LTS（x86_64架构）
+
+- openEuler-22.03-LTS（aarch64架构）
+
+- openEuler-22.03-LTS（x86_64架构）
+
+- openEuler-24.03-LTS（aarch64架构）
+
+- openEuler-24.03-LTS（x86_64架构）
+
 适配其他系统，参照博客[openGauss数据库编译指导](https://opengauss.org/zh/blogs/blogs.html?post/xingchen/opengauss_compile/)
 
 以下表格列举了编译CM的系统软件要求。

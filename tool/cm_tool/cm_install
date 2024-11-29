@@ -222,6 +222,8 @@ General options:
                     hostnamesInXML.append(paraValue)
                 elif paraName == 'cmDir':
                     self.cmDirs.append(paraValue)
+                elif paraName == 'cmServerLevel':
+                    cmDict['cmServerlevel'] = paraValue
                 elif paraName in cmDict.keys():
                     cmDict[paraName] = paraValue
         # check whether XML contains all nodes info

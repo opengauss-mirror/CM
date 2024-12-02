@@ -1700,6 +1700,12 @@ void MsgGetPingDnFloatIpFailedInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsg
         CmSendPingDnFloatIpFail, failedFloatIpInfo, ProcessPingDnFloatIpFailedMsg, recvMsgInfo, msgType);
 }
 
+void MsgInOnDemandStatus(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    write_runlog(LOG, "CM Server receiver in-ondemand msg.\n");
+    g_isInRedoStateUnderSwitchover = true;
+}
+
 static void InitCmCtlCmdProc()
 {
     // 32
@@ -1766,6 +1772,7 @@ static void InitCmAgentCmdProc()
     g_cmdProc[MSG_AGENT_CM_REQUEST_RES_STATUS_LIST] = MsgRequestResStatusList;
 
     g_cmdProc[MSG_CMA_PING_DN_FLOAT_IP_FAIL] = MsgGetPingDnFloatIpFailedInfo;
+    g_cmdProc[MSG_AGENT_ONDEMAND_STATUES_REPORT] = MsgInOnDemandStatus;
 }
 
 static void InitCmClientCmdProc()

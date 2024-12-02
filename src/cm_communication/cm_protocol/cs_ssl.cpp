@@ -1987,7 +1987,7 @@ static void CsSslDisconnect(ssl_link_t *link, int32 type, int32 *socket)
 
     if (link->tcp.closed) {
         CM_ASSERT(link->tcp.sock == CS_INVALID_SOCKET);
-    }else {
+    } else {
         /* Close tcp socket */
         CsTcpDisconnect(&(link->tcp), type, socket);
     }

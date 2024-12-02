@@ -104,7 +104,12 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
     ackMsg.pengding_command = instStatus->command_member[memberIndex].pengding_command;
 
     if (!CheckCanDoSwitchover(groupIndex, memberIndex, &(ackMsg.pengding_command), str)) {
-        ackMsg.command_result = CM_ANOTHER_COMMAND_RUNNING;
+        if (g_isInRedoStateUnderSwitchover) {
+            /* We have reciver in on-demand status report message from cm agent. */
+            ackMsg.command_result = CM_DN_IN_ONDEMAND_STATUE;
+        } else {
+            ackMsg.command_result = CM_ANOTHER_COMMAND_RUNNING;
+        }
         (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
         return;
     }
@@ -520,6 +525,12 @@ bool IsInCatchUpState(uint32 ptrIndex, int memberIndex)
 static bool CanDoSwitchoverInAllShard(MsgRecvInfo* recvMsgInfo, cm_to_ctl_command_ack *msg,
     const ctl_to_cm_switchover *swithoverPtr, const char *str)
 {
+    if (g_isInRedoStateUnderSwitchover) {
+        msg->command_result = CM_DN_IN_ONDEMAND_STATUE;
+        msg->pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
+        (void)RespondMsg(recvMsgInfo, 'S', (const char *)(msg), sizeof(cm_to_ctl_command_ack));
+        return false;
+    }
     int32 instType = 0;
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         instType = g_instance_role_group_ptr[i].instanceMember[0].instanceType;
@@ -807,6 +818,19 @@ static void SetSwitchoverInSwitchoverDone(uint32 groupIdx, int memIdx, bool isNe
     (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[groupIdx].lk_lock));
 }
 
+/* 
+ * This function is only used under on-demand recovery.
+ */
+static bool CanDoSwitchoverUnderOnDemandStatus()
+{
+    if (g_isInRedoStateUnderSwitchover) {
+        write_runlog(LOG, "We can not process switchover because cluster in on-demand redo status.\n");
+        return false;
+    }
+    return true;
+}
+
+
 /* *
  * @brief check cm_ctl switchover -a done
  *        if switchover DONE return true
@@ -826,6 +850,10 @@ static int SwitchoverDone(void)
     bool partlySwitchoverWithVoteAZ = false;
     uint32 instanceId = 0;
     const char *str = "[SwitchoverDone]";
+
+    if (!CanDoSwitchoverUnderOnDemandStatus()) {
+        return SWITCHOVER_CANNOT_RESPONSE;
+    }
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
         for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
@@ -2146,6 +2174,33 @@ void ProcessCtlToCmQueryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctl
     ctl_to_cm_query ctlToCmQryTmp;
     errno_t rc = memcpy_s(&ctlToCmQryTmp, sizeof(ctl_to_cm_query), ctlToCmQry, sizeof(ctl_to_cm_query));
     securec_check_errno(rc, (void)rc);
+    /* If this query is from switchover process, we will do process alone. */
+    if (ctlToCmQryTmp.detail == CLUSTER_QUERY_IN_SWITCHOVER && g_isInRedoStateUnderSwitchover) {
+        write_runlog(LOG, "getg_isInRedoStateUnderSwitchover true \n");
+        instStat.msg_type = MSG_CM_CTL_DATA;
+        instStat.node = 0;
+        instStat.instanceId = 0;
+        instStat.instance_type = INSTANCE_TYPE_PENDING;
+        instStat.member_index = 0;
+        instStat.is_central = 0;
+        instStat.fenced_UDF_status = INSTANCE_TYPE_PENDING;
+        if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+            cm_to_ctl_instance_status_ipv4 instStatIpv4 = {0};
+            CmToCtlInstanceStatusV2ToV1(&instStat, &instStatIpv4);
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&instStatIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+        } else {
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)&(instStat), sizeof(cm_to_ctl_instance_status));
+        }
+        instStat.msg_type = MSG_CM_CTL_DATA_END;
+        if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+            cm_to_ctl_instance_status_ipv4 instStatIpv4 = {0};
+            CmToCtlInstanceStatusV2ToV1(&instStat, &instStatIpv4);
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&instStatIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+        } else {
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)&(instStat), sizeof(cm_to_ctl_instance_status));
+        }
+        return;
+    }
 
     if ((ctlToCmQryTmp.node != 0) && (ctlToCmQryTmp.node != INVALID_NODE_NUM) &&
         (ctlToCmQryTmp.instanceId != INVALID_INSTACNE_NUM) && ctlToCmQryTmp.relation == 0) {

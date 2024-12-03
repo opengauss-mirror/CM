@@ -437,6 +437,8 @@ extern bool g_enableSetMostAvailableSync;
 /* thread count of thread pool */
 extern int cm_thread_count;
 
+extern volatile bool g_isInRedoStateUnderSwitchover;
+
 extern FILE* syslogFile;
 extern char* cm_server_dataDir;
 extern char sys_log_path[MAX_PATH_LEN];

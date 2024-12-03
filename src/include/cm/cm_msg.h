@@ -271,6 +271,7 @@ typedef enum CM_MessageType_st {
     MSG_AGENT_CM_DN_MOST_AVAILABLE = 184,
     MSG_CMA_PING_DN_FLOAT_IP_FAIL = 185,
     MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP = 186,
+    MSG_AGENT_ONDEMAND_STATUES_REPORT = 187,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -312,6 +313,8 @@ typedef enum CM_MessageType_st {
 #define INSTANCE_TYPE_FENCED_UDF 4
 #define INSTANCE_TYPE_UNKNOWN 5
 #define INSTANCE_TYPE_RESOURCE 6
+#define INSTANCE_TYPE_PENDING 7
+
 
 #define INSTANCE_WALSNDSTATE_STARTUP 0
 #define INSTANCE_WALSNDSTATE_BACKUP 1
@@ -357,6 +360,7 @@ const int INSTANCE_WALSNDSTATE_UNKNOWN = 6;
 #define SWITCHOVER_PARTLY_SUCCESS 4
 #define SWITCHOVER_ABNORMAL 5
 #define INVALID_COMMAND 6
+#define SWITCHOVER_CANNOT_RESPONSE 7
 
 
 #define UNKNOWN_BAD_REASON 0
@@ -1210,6 +1214,12 @@ typedef struct agent_to_cm_fenced_UDF_status_report_st {
     int status;
 } agent_to_cm_fenced_UDF_status_report;
 
+typedef struct agent_to_cm_ondemand_status_report {
+    int msg_type;
+    uint32 nodeid;
+    int status;
+} agent_to_cm_ondemand_status_report;
+
 typedef struct agent_to_cm_datanode_status_report_st {
     int msg_type;
     uint32 node;
@@ -1776,6 +1786,7 @@ typedef struct cm_to_ctl_central_node_status_st {
 #define CM_ANOTHER_COMMAND_RUNNING 1
 #define CM_INVALID_COMMAND 2
 #define CM_DN_NORMAL_STATE 3
+#define CM_DN_IN_ONDEMAND_STATUE 4
 
 typedef struct cm_to_ctl_command_ack_st {
     int msg_type;

@@ -100,6 +100,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     int unExpectedTime = 0;
     bool success = false;
     bool hasWarning = false;
+    bool switchoverFailed = false;
     char *receiveMsg = NULL;
     char inCompleteMsg[CM_MSG_ERR_INFORMATION_LENGTH] = {0};
     uint32 instanceId;
@@ -167,6 +168,13 @@ static int DoSwitchoverBase(const CtlOption *ctx)
                             "can not do switchover, another command(%d) is running.\n", ackMsg->pengding_command);
                         FINISH_CONNECTION();
                     }
+                    if (ackMsg->command_result == CM_DN_IN_ONDEMAND_STATUE) {
+                        write_runlog(ERROR,
+                            "Can not switchover right now.!\n\n"
+                            "HINT: cluster has entered a unexpected status, such as redo status.\n"
+                            "You can wait for a while.\n");
+                        FINISH_CONNECTION();
+                    }
                     if (ackMsg->command_result == CM_INVALID_COMMAND) {
                         write_runlog(ERROR, "can not do switchover at current role,"
                             "You can execute \"cm_ctl query -v\" and check\n");
@@ -177,6 +185,11 @@ static int DoSwitchoverBase(const CtlOption *ctx)
 
                 case MSG_CM_CTL_DATA:
                     GetCtlInstanceStatusFromRecvMsg(receiveMsg, &instStatusPtr);
+                    if (instStatusPtr.instance_type == INSTANCE_TYPE_PENDING) {
+                        switchoverFailed = true;
+                        success = true;
+                        break;
+                    }
                     if (instStatusPtr.instance_type == INSTANCE_TYPE_GTM) {
                         if ((instStatusPtr.gtm_member.local_status.local_role == oper.localRole) &&
                             (instStatusPtr.gtm_member.local_status.connect_status == CON_OK) &&
@@ -239,6 +252,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
         queryMsg.instance_type = instanceType;
         queryMsg.wait_seconds = g_waitSeconds;
         queryMsg.relation = 0;
+        queryMsg.detail = CLUSTER_QUERY_IN_SWITCHOVER;
         if (cm_client_send_msg(CmServer_conn, 'C', (char*)&queryMsg, sizeof(queryMsg)) != 0) {
             FINISH_CONNECTION();
         }
@@ -257,6 +271,16 @@ static int DoSwitchoverBase(const CtlOption *ctx)
             "HINT: Maybe the switchover action is continually running in the background.\n"
             "You can wait for a while and check the status of current cluster using "
             "\"cm_ctl query -Cv\".\n");
+        CMPQfinish(CmServer_conn);
+        CmServer_conn = NULL;
+        return -3;
+    }
+
+    if (switchoverFailed) {
+        write_runlog(ERROR,
+            "Can not switchover right now.!\n\n"
+            "HINT: cluster has entered a unexpected status, such as redo status.\n"
+            "You can wait for a while.\n");
         CMPQfinish(CmServer_conn);
         CmServer_conn = NULL;
         return -3;
@@ -566,6 +590,12 @@ static int DoSwitchoverAll(const CtlOption *ctx)
                             "can not do switchover, another command(%d) is running.\n",
                             ackMsg->pengding_command);
                         FINISH_CONNECTION();
+                    } else if (ackMsg->command_result == CM_DN_IN_ONDEMAND_STATUE) {
+                        write_runlog(ERROR,
+                            "Can not switchover right now.!\n\n"
+                            "HINT: cluster has entered a unexpected status, such as redo status.\n"
+                            "You can wait for a while.\n");
+                        FINISH_CONNECTION();
                     } else if (ackMsg->command_result == CM_INVALID_COMMAND) {
                         write_runlog(LOG, "execute invalid command on cluster.\n");
                         FINISH_CONNECTION();
@@ -615,6 +645,14 @@ static int DoSwitchoverAll(const CtlOption *ctx)
                             CmServer_conn = NULL;
                             return -3;
                         }
+                    } else if (msgBalanceCheckAck->switchoverDone == SWITCHOVER_CANNOT_RESPONSE) {
+                        write_runlog(ERROR,
+                            "Can not switchover right now.!\n\n"
+                            "HINT: cluster has entered a unexpected status, such as redo status.\n"
+                            "You can wait for a while.\n");
+                        CMPQfinish(CmServer_conn);
+                        CmServer_conn = NULL;
+                        return 1;
                     }
                     break;
 

@@ -69,35 +69,14 @@ const int SHARED_STORAGE_MODE_TIMEOUT = 120;
 
 const int CTL_RECV_CYCLE = 200000;
 
-#define FINISH_CONNECTION()        \
-    do {                           \
-        CMPQfinish(CmServer_conn); \
-        CmServer_conn = NULL;      \
-        return -1;                 \
-    } while (0)
-
-#define FINISH_CONNECTION0()       \
-    do {                           \
-        CMPQfinish(CmServer_conn); \
-        CmServer_conn = NULL;      \
-        return 0;                  \
-    } while (0)
-
-
-#define FINISH_CONNECTION_WITHOUT_EXIT() \
+#define FINISH_CONNECTION(conn, ret)     \
     do {                                 \
-        CMPQfinish(CmServer_conn);       \
-        CmServer_conn = NULL;            \
+        CMPQfinish(conn);                \
+        (conn) = NULL;                   \
+        return ret;                      \
     } while (0)
 
-#define FINISH_CONNECTION1()        \
-    do {                            \
-        CMPQfinish(CmServer_conn1); \
-        CmServer_conn1 = NULL;      \
-        return "Down";              \
-    } while (0)
-
-#define FINISH_CONNECTION2(conn) \
+#define FINISH_CONNECTION_WITHOUT_EXITCODE(conn) \
     do {                         \
         CMPQfinish(conn);        \
         (conn) = NULL;           \

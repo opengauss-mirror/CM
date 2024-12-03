@@ -86,7 +86,7 @@ status_t GetExecCmdResult(const char *option, int32 expCmd, CM_Conn *conn)
     for (;;) {
         ret = cm_client_flush_msg(conn);
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
-            FINISH_CONNECTION_WITHOUT_EXIT();
+            FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
             write_runlog(ERROR, "failed to execute cmd(%d), tcp socket error epipe.\n", expCmd);
             return CM_ERROR;
         }

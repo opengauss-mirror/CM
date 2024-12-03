@@ -332,7 +332,7 @@ static int32 SetQueryFloatIpMsg()
     CmShowStatReq req = { 0 };
     req.msgType = (int32)MSG_CTL_CM_FLOAT_IP_REQ;
     if (cm_client_send_msg(GetCmsConn(), 'C', (char*)(&req), sizeof(CmShowStatReq)) != 0) {
-        FINISH_CONNECTION_WITHOUT_EXIT();
+        FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
         write_runlog(ERROR, "ctl send show node disk msg to cms failed.\n");
         (void)printf(_("ctl send msg to cms failed.\n"));
         return 1;
@@ -374,7 +374,7 @@ int DoShowCommand()
     req.msgType = (int)MSG_CTL_CM_RHB_STATUS_REQ;
 
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)(&req), sizeof(CmShowStatReq)) != 0) {
-        FINISH_CONNECTION_WITHOUT_EXIT();
+        FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
         write_runlog(ERROR, "ctl send show rhb msg to cms failed.\n");
         (void)printf(_("ctl show send msg to cms failed.\n"));
         return 1;
@@ -384,7 +384,7 @@ int DoShowCommand()
 
     req.msgType = (int)MSG_CTL_CM_NODE_DISK_STATUS_REQ;
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)(&req), sizeof(CmShowStatReq)) != 0) {
-        FINISH_CONNECTION_WITHOUT_EXIT();
+        FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
         write_runlog(ERROR, "ctl send show node disk msg to cms failed.\n");
         (void)printf(_("ctl send msg to cms failed.\n"));
         return 1;
@@ -393,11 +393,11 @@ int DoShowCommand()
     GetExecCmdResult(NULL, (int)MSG_CTL_CM_NODE_DISK_STATUS_ACK);
 
     if (QueryCmsFloatIpMain() != 0) {
-        FINISH_CONNECTION_WITHOUT_EXIT();
+        FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
         write_runlog(ERROR, "Failed to show floatIp.\n");
         return -1;
     }
-    FINISH_CONNECTION_WITHOUT_EXIT();
+    FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
     return 0;
 }
 

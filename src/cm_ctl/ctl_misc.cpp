@@ -187,13 +187,13 @@ int do_set(void)
 
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&cm_ctl_cm_set_content, sizeof(ctl_to_cm_set));
     if (ret != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     for (;;) {
         ret = cm_client_flush_msg(CmServer_conn);
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
 
         receive_msg = recv_cm_server_cmd(CmServer_conn);
@@ -257,13 +257,13 @@ int do_get(void)
     cm_msg.msg_type = (int)MSG_CTL_CM_GET;
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&cm_msg, sizeof(cm_msg));
     if (ret != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     for (;;) {
         ret = cm_client_flush_msg(CmServer_conn);
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
 
         receive_msg = recv_cm_server_cmd(CmServer_conn);
@@ -752,7 +752,7 @@ int do_disable_cn()
 
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&ctl_to_cm_disable_cn_content, sizeof(ctl_to_cm_disable_cn));
     if (ret != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     for (;;) {
@@ -881,7 +881,7 @@ static status_t GetCmsBuildStepResult()
     for (;;) {
         if (CmServer_conn != NULL) {
             if (cm_client_flush_msg(CmServer_conn) == TCP_SOCKET_ERROR_EPIPE) {
-                FINISH_CONNECTION_WITHOUT_EXIT();
+                FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
             }
             receiveMsg = recv_cm_server_cmd(CmServer_conn);
         }
@@ -1051,10 +1051,10 @@ int DoBuild(const CtlOption *ctx)
     if (ctx->build.isNeedCmsBuild) {
         if (DoCmsBuild(buildMsg) != CM_SUCCESS) {
             write_runlog(LOG, "cm_ctl build cms failed.\n");
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
         write_runlog(LOG, "cm_ctl build cms success.\n");
-        FINISH_CONNECTION0();
+        FINISH_CONNECTION((CmServer_conn), 0);
     }
 
     write_runlog(DEBUG1, "send build msg to cm_server, node_id:%u, data_path:%s.\n", ctx->comm.nodeId, g_cmData);
@@ -1085,14 +1085,14 @@ int DoBuild(const CtlOption *ctx)
     }
 
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)&buildMsg, sizeof(ctl_to_cm_build)) != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     success = false;
     for (;;) {
         if (CmServer_conn != NULL) {
             if (cm_client_flush_msg(CmServer_conn) == TCP_SOCKET_ERROR_EPIPE) {
-                FINISH_CONNECTION_WITHOUT_EXIT();
+                FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
             }
             receiveMsg = recv_cm_server_cmd(CmServer_conn);
         }
@@ -1103,13 +1103,13 @@ int DoBuild(const CtlOption *ctx)
                     commandAckPtr = (cm_to_ctl_command_ack*)receiveMsg;
                     if ((commandAckPtr->command_result == CM_ANOTHER_COMMAND_RUNNING) && !tryFlag) {
                         write_runlog(ERROR, "another command(%d) is running.\n", commandAckPtr->pengding_command);
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     } else if (commandAckPtr->command_result == CM_INVALID_COMMAND) {
                         write_runlog(ERROR, "can not build at current role.\n");
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     } else if (commandAckPtr->command_result == CM_DN_NORMAL_STATE) {
                         write_runlog(LOG, "build successfully.\n");
-                        FINISH_CONNECTION0();
+                        FINISH_CONNECTION((CmServer_conn), 0);
                     }
                     sendBuildFlag = true;
                     break;
@@ -1141,7 +1141,7 @@ int DoBuild(const CtlOption *ctx)
                             write_runlog(ERROR,
                                 "build failed, please refer to the log of cm_agent(nodeid:%u) for detailed reasons.\n",
                                 ctx->comm.nodeId);
-                            FINISH_CONNECTION();
+                            FINISH_CONNECTION((CmServer_conn), -1);
                         }
 
                         if (!CheckBuildCond(instStatusPtr.data_node_member.local_status.local_role) &&
@@ -1158,7 +1158,7 @@ int DoBuild(const CtlOption *ctx)
                             } else {
                                 write_runlog(ERROR, "build failed, instance role is not standby or cascade standby.\n");
                             }
-                            FINISH_CONNECTION();
+                            FINISH_CONNECTION((CmServer_conn), -1);
                         }
                     }
                     break;
@@ -1173,7 +1173,7 @@ int DoBuild(const CtlOption *ctx)
 
                 case MSG_CM_CTL_BACKUP_OPEN:
                     write_runlog(ERROR, "disable do build in recovery mode.\n");
-                    FINISH_CONNECTION();
+                    FINISH_CONNECTION((CmServer_conn), -1);
 
                 default:
                     write_runlog(ERROR, "unknown the msg type is %d.\n", msgType->msg_type);
@@ -1188,7 +1188,7 @@ int DoBuild(const CtlOption *ctx)
                 waitTime--;
                 continue;
             } else {
-                FINISH_CONNECTION_WITHOUT_EXIT();
+                FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
                 do_conn_cmserver(false, 0);
                 if ((CmServer_conn != NULL) && !sendBuildFlag) {
                     write_runlog(LOG, "will send build msg again.\n");
@@ -1225,10 +1225,10 @@ int DoBuild(const CtlOption *ctx)
             "HINT: Maybe the build action is continually running in the background.\n"
             "You can wait for a while and check the status of current cluster using "
             "\"cm_ctl query -Cv\".\n");
-        FINISH_CONNECTION_WITHOUT_EXIT();
+        FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
         return -3;
     }
-    FINISH_CONNECTION_WITHOUT_EXIT();
+    FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
 
     /* sleep 6 util create node group finished */
     (void)sleep(6);
@@ -1254,12 +1254,12 @@ int do_setmode()
     msgsetmode.msg_type = (int)MSG_CTL_CM_SETMODE;
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&msgsetmode, sizeof(msgsetmode));
     if (ret != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     ret = cm_client_flush_msg(CmServer_conn);
     if (ret == TCP_SOCKET_ERROR_EPIPE) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
     char *receive_msg = recv_cm_server_cmd(CmServer_conn);
     if (receive_msg != NULL) {
@@ -1268,7 +1268,7 @@ int do_setmode()
             write_runlog(WARNING, "Postupgrade mode has been set.\n");
         } else {
             write_runlog(ERROR, "unknown the msg type is %d.\n", cm_msg_type_ptr->msg_type);
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
     }
 
@@ -1793,12 +1793,12 @@ int DoReload()
     ctlToCMReloadContent.msgType = (int)MSG_CTL_CM_RELOAD;
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&ctlToCMReloadContent, sizeof(CtlToCMReload));
     if (ret != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
     for (;;) {
         ret = cm_client_flush_msg(CmServer_conn);
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
         char *receive_msg = recv_cm_server_cmd(CmServer_conn);
         if (receive_msg != NULL) {
@@ -1807,10 +1807,10 @@ int DoReload()
                 reloadAckMsg = (CMToCtlReloadAck *)receive_msg;
                 if (reloadAckMsg->reloadOk && (KillAllCms(false) == CM_SUCCESS)) {
                     write_runlog(LOG, "cm_ctl reload success.\n");
-                    FINISH_CONNECTION0();
+                    FINISH_CONNECTION((CmServer_conn), 0);
                 } else {
                     write_runlog(LOG, "cm_ctl reload failed.\n");
-                    FINISH_CONNECTION();
+                    FINISH_CONNECTION((CmServer_conn), -1);
                 }
             } else {
                 write_runlog(ERROR, "unknown the msg type is %d.\n", cm_msg_type_ptr->msg_type);
@@ -2028,7 +2028,7 @@ static status_t SendDdbCmdMsgToCms(const char *cmd)
     securec_check_errno(rc, (void)rc);
 
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)(&sendMsg), sizeof(ExecDdbCmdMsg)) != 0) {
-        FINISH_CONNECTION_WITHOUT_EXIT();
+        FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
         write_runlog(ERROR, "ctl send exec ddb cmd msg to cms failed.\n");
         (void)printf(_("exec ddb cmd fail.\n"));
         return CM_ERROR;
@@ -2078,7 +2078,7 @@ void DoDccCmd(int argc, char **argv)
     GetExecCmdResult(argv[OPTION_POS], (int)EXEC_DDB_COMMAND_ACK);
 
     // close conn
-    FINISH_CONNECTION2(CmServer_conn);
+    FINISH_CONNECTION_WITHOUT_EXITCODE(CmServer_conn);
 
     return;
 }

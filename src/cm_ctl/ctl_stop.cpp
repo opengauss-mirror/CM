@@ -1087,7 +1087,7 @@ static int stop_cm_server_arbitration()
     ret = cm_client_send_msg(
         CmServer_conn, 'C', (char*)&ctl_to_cm_stop_arbitration_content, sizeof(ctl_to_cm_stop_arbitration_content));
     if (ret != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
         write_runlog(DEBUG1,
             "Halt arbitration to cm_server sent, msg delivery failed. "
             "Stopping without notifying cm_server.\n");

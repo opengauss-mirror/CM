@@ -167,7 +167,7 @@ int do_finish_redo(void)
     finish_redo_content.msg_type = (int)MSG_CTL_CM_FINISH_REDO;
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&finish_redo_content, sizeof(finish_redo_content));
     if (ret != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
     ret = wait_finish_redo_handler();
     if (ret != 0) {

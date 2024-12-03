@@ -1188,7 +1188,7 @@ static int32 SendDdbMsgAndGetDdbRes(
 {
     int32 ret = cm_client_send_msg(*curConn, 'C', (char *)sendOper, sizeof(CltSendDdbOper));
     if (ret != 0) {
-        FINISH_CONNECTION2((*curConn));
+        FINISH_CONNECTION_WITHOUT_EXITCODE((*curConn));
         return -1;
     }
     int32 tryTimes = WAIT_MSG_RES_TIMES;
@@ -1222,7 +1222,7 @@ status_t SendKVToCms(const char *key, const char *value, const char *threadName)
     do {
         ret = SendDdbMsgAndGetDdbRes(key, threadName, &sendOper, &curConn);
         if (ret == -1) {
-            FINISH_CONNECTION2(curConn);
+            FINISH_CONNECTION_WITHOUT_EXITCODE(curConn);
             return CM_ERROR;
         }
         if (ret != SUCCESS_SEND_MSG) {
@@ -1231,7 +1231,7 @@ status_t SendKVToCms(const char *key, const char *value, const char *threadName)
         }
         --tryTime;
     } while (ret != SUCCESS_SEND_MSG && (tryTime > 0));
-    FINISH_CONNECTION2(curConn);
+    FINISH_CONNECTION_WITHOUT_EXITCODE(curConn);
     if (ret != SUCCESS_SEND_MSG) {
         write_runlog(DEBUG1, "Failed to send msg(%s: %s) threadName is %s to cms.\n", key, value, threadName);
         return CM_ERROR;
@@ -1516,7 +1516,7 @@ int GetDatanodeRelationInfo(uint32 nodeId, const char *cmData, cm_to_ctl_get_dat
     ret = cm_client_send_msg(
         CmServer_conn, 'C', (char*)&cmDatanodeRelationInfoContent, sizeof(cmDatanodeRelationInfoContent));
     if (ret != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     for (;;) {
@@ -1525,7 +1525,7 @@ int GetDatanodeRelationInfo(uint32 nodeId, const char *cmData, cm_to_ctl_get_dat
         if (CmServer_conn != NULL) {
             ret = cm_client_flush_msg(CmServer_conn);
             if (ret == TCP_SOCKET_ERROR_EPIPE) {
-                FINISH_CONNECTION();
+                FINISH_CONNECTION((CmServer_conn), -1);
             }
             receiveMsg = recv_cm_server_cmd(CmServer_conn);
         }
@@ -1549,7 +1549,7 @@ int GetDatanodeRelationInfo(uint32 nodeId, const char *cmData, cm_to_ctl_get_dat
             write_runlog(ERROR,
                 "Get the datanode relation information timeout in %d.\n",
                 DEFAULT_GET_INFO_TIME);
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
     }
     CMPQfinish(CmServer_conn);

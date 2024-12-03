@@ -150,12 +150,12 @@ static int DoSwitchoverBase(const CtlOption *ctx)
 
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)&switchoverMsg, sizeof(ctl_to_cm_switchover)) != 0) {
         write_runlog(ERROR, "node(%u) send switchover msg to cms failed.\n", ctx->comm.nodeId);
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     for (;;) {
         if (cm_client_flush_msg(CmServer_conn) == TCP_SOCKET_ERROR_EPIPE) {
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
         receiveMsg = recv_cm_server_cmd(CmServer_conn);
         if (receiveMsg != NULL) {
@@ -166,19 +166,19 @@ static int DoSwitchoverBase(const CtlOption *ctx)
                     if (ackMsg->command_result == CM_ANOTHER_COMMAND_RUNNING) {
                         write_runlog(ERROR,
                             "can not do switchover, another command(%d) is running.\n", ackMsg->pengding_command);
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     }
                     if (ackMsg->command_result == CM_DN_IN_ONDEMAND_STATUE) {
                         write_runlog(ERROR,
                             "Can not switchover right now.!\n\n"
                             "HINT: cluster has entered a unexpected status, such as redo status.\n"
                             "You can wait for a while.\n");
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);;
                     }
                     if (ackMsg->command_result == CM_INVALID_COMMAND) {
                         write_runlog(ERROR, "can not do switchover at current role,"
                             "You can execute \"cm_ctl query -v\" and check\n");
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     }
                     SetSwitchoverOper(&oper, ackMsg->pengding_command, instanceId);
                     break;
@@ -205,7 +205,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
                         if ((instStatusPtr.data_node_member.local_status.local_role == INSTANCE_ROLE_PENDING) ||
                             (instStatusPtr.data_node_member.sender_status[0].peer_role == INSTANCE_ROLE_PENDING)) {
                             write_runlog(ERROR, "can not do switchover at current role.\n");
-                            FINISH_CONNECTION();
+                            FINISH_CONNECTION((CmServer_conn), -1);
                         }
                         if ((instStatusPtr.data_node_member.local_status.db_state != INSTANCE_HA_STATE_PROMOTING) &&
                             (instStatusPtr.data_node_member.local_status.db_state != INSTANCE_HA_STATE_WAITING) &&
@@ -230,7 +230,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
 
                 case MSG_CM_CTL_BACKUP_OPEN:
                     write_runlog(ERROR, "disable switchover in recovery mode.\n");
-                    FINISH_CONNECTION();
+                    FINISH_CONNECTION((CmServer_conn), -1);
 
                 default:
                     write_runlog(ERROR, "unknown the msg type is %d.\n", msgType->msg_type);
@@ -243,7 +243,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
 
         if (unExpectedTime >= UNEXPECTED_TIME) {
             write_runlog(ERROR, "failed to do switch-over. Wait the candidate to be promoted timeout.\n");
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
 
         queryMsg.msg_type = (int)MSG_CTL_CM_QUERY;
@@ -254,7 +254,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
         queryMsg.relation = 0;
         queryMsg.detail = CLUSTER_QUERY_IN_SWITCHOVER;
         if (cm_client_send_msg(CmServer_conn, 'C', (char*)&queryMsg, sizeof(queryMsg)) != 0) {
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
 
         (void)sleep(1);
@@ -293,7 +293,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
         (void)sleep(5);
         write_runlog(LOG, "switchover successfully.\n");
     }
-    FINISH_CONNECTION0();
+    FINISH_CONNECTION((CmServer_conn), 0);
 }
 
 /* This function switch all the standby instances with their master instances */
@@ -330,12 +330,12 @@ static int DoSwitchoverFull(const CtlOption *ctx)
     switchoverMsg.msg_type = (int)MSG_CTL_CM_SWITCHOVER_FULL;
     switchoverMsg.wait_seconds = g_waitSeconds;
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)&switchoverMsg, sizeof(switchoverMsg)) != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     for (;;) {
         if (cm_client_flush_msg(CmServer_conn) == TCP_SOCKET_ERROR_EPIPE) {
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
         receiveMsg = recv_cm_server_cmd(CmServer_conn);
         if (receiveMsg != NULL) {
@@ -350,10 +350,10 @@ static int DoSwitchoverFull(const CtlOption *ctx)
                     if (ackMsg->command_result == CM_ANOTHER_COMMAND_RUNNING) {
                         write_runlog(ERROR, "can not do switchover, another command(%d) is running.\n",
                             ackMsg->pengding_command);
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     } else if (ackMsg->command_result == CM_INVALID_COMMAND) {
                         write_runlog(ERROR, "execute invalid command.\n");
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     } else {
                         write_runlog(LOG, "cmserver is switching over all the master and standby pairs.\n");
                         waitSwitchoverFull = true;
@@ -366,10 +366,10 @@ static int DoSwitchoverFull(const CtlOption *ctx)
                         success = true;
                     } else if (msgSwitchoverFullCheckAck->switchoverDone == SWITCHOVER_FAIL) {
                         write_runlog(ERROR, "failed to do switch-over: unknown reason.\n");
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     } else if (msgSwitchoverFullCheckAck->switchoverDone == INVALID_COMMAND) {
                         write_runlog(ERROR, "execute invalid command.\n");
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     }
                     break;
 
@@ -390,7 +390,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
 
                 case MSG_CM_CTL_BACKUP_OPEN:
                     write_runlog(ERROR, "disable switchover in recovery mode.\n");
-                    FINISH_CONNECTION();
+                    FINISH_CONNECTION((CmServer_conn), -1);
 
                 default:
                     write_runlog(ERROR, "unknown the msg type is %d.\n", msgType->msg_type);
@@ -409,7 +409,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
             ret =
                 cm_client_send_msg(CmServer_conn, 'C', (char*)&msgSwitchoverFullCheck, sizeof(msgSwitchoverFullCheck));
             if (ret != 0) {
-                FINISH_CONNECTION();
+                FINISH_CONNECTION((CmServer_conn), -1);
             }
 
             (void)sleep(3);
@@ -425,7 +425,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
                 ret = cm_client_send_msg(
                     CmServer_conn, 'C', (char*)&msgSwitchoverFullTimeout, sizeof(msgSwitchoverFullTimeout));
                 if (ret != 0) {
-                    FINISH_CONNECTION();
+                    FINISH_CONNECTION((CmServer_conn), -1);
                 }
             } else {
                 timePass += 3;
@@ -460,7 +460,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
             (void)sleep(5);
             write_runlog(LOG, "switchover -A successfully.\n");
         }
-        FINISH_CONNECTION0();
+        FINISH_CONNECTION((CmServer_conn), 0);
     }
 }
 
@@ -471,7 +471,7 @@ static int BalanceResultReq(int &timePass, bool waitBalance, int &sendCheckCount
             cm_msg_type msgBalanceCheck;
             msgBalanceCheck.msg_type = (int)MSG_CTL_CM_BALANCE_CHECK;
             if (cm_client_send_msg(CmServer_conn, 'C', (char*)&msgBalanceCheck, sizeof(msgBalanceCheck)) != 0) {
-                FINISH_CONNECTION_WITHOUT_EXIT();
+                FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
             }
         }
 
@@ -486,7 +486,7 @@ static int BalanceResultReq(int &timePass, bool waitBalance, int &sendCheckCount
             cm_msg_type msgBalanceResultReq;
             msgBalanceResultReq.msg_type = (int)MSG_CTL_CM_BALANCE_RESULT;
             if (cm_client_send_msg(CmServer_conn, 'C', (char*)&msgBalanceResultReq, sizeof(msgBalanceResultReq)) != 0) {
-                FINISH_CONNECTION();
+                FINISH_CONNECTION((CmServer_conn), -1);
             }
         } else {
             timePass += 3;
@@ -540,7 +540,7 @@ static int DoSwitchoverAll(const CtlOption *ctx)
     switchoverMsg.msg_type = (int)MSG_CTL_CM_SWITCHOVER_ALL;
     switchoverMsg.wait_seconds = g_waitSeconds;
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)&switchoverMsg, sizeof(switchoverMsg)) != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     // when have try, the warn will cause try.
@@ -576,7 +576,7 @@ static int DoSwitchoverAll(const CtlOption *ctx)
         }
         if (CmServer_conn != NULL) {
             if (cm_client_flush_msg(CmServer_conn) == TCP_SOCKET_ERROR_EPIPE) {
-                FINISH_CONNECTION_WITHOUT_EXIT();
+                FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
             }
             receiveMsg = recv_cm_server_cmd(CmServer_conn);
         }
@@ -589,16 +589,16 @@ static int DoSwitchoverAll(const CtlOption *ctx)
                         write_runlog(ERROR,
                             "can not do switchover, another command(%d) is running.\n",
                             ackMsg->pengding_command);
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);;
                     } else if (ackMsg->command_result == CM_DN_IN_ONDEMAND_STATUE) {
                         write_runlog(ERROR,
                             "Can not switchover right now.!\n\n"
                             "HINT: cluster has entered a unexpected status, such as redo status.\n"
                             "You can wait for a while.\n");
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);;
                     } else if (ackMsg->command_result == CM_INVALID_COMMAND) {
                         write_runlog(LOG, "execute invalid command on cluster.\n");
-                        FINISH_CONNECTION();
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     } else {
                         if (!retryFlag) {
                             write_runlog(LOG, "cmserver is rebalancing the cluster automatically.\n");
@@ -753,7 +753,7 @@ static int DoSwitchoverAz(const char *azName, const CtlOption *ctx)
     securec_check_errno(rc, (void)rc);
     switchoverMsg.wait_seconds = g_waitSeconds;
     if (cm_client_send_msg(CmServer_conn, 'C', (char*)&switchoverMsg, sizeof(switchoverMsg)) != 0) {
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     int getCheckAckCount = 0;
@@ -971,7 +971,7 @@ static int DoSwitchoverQuick(const CtlOption *ctx)
     commandResult = getInstanceMsg.command_result;
     if (commandResult == CM_INVALID_COMMAND) {
         write_runlog(ERROR, "can not do quick switchover at current role.\n");
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     for (int i = 0; i < CM_PRIMARY_STANDBY_MAX_NUM; i++) {
@@ -1246,7 +1246,7 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
     ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&queryMsg, sizeof(queryMsg));
     if (ret != 0) {
         write_runlog(ERROR, "Failed to send message \"%s\" to the CM Server.\n", "MSG_CTL_CM_QUERY");
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
     CmSleep(1);
@@ -1257,7 +1257,7 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
         ret = cm_client_flush_msg(CmServer_conn);
         if (ret == TCP_SOCKET_ERROR_EPIPE) {
             write_runlog(ERROR, "Failed to flush message to the CM Server.\n");
-            FINISH_CONNECTION();
+            FINISH_CONNECTION((CmServer_conn), -1);
         }
 
         receiveMsg = recv_cm_server_cmd(CmServer_conn);
@@ -1272,7 +1272,7 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
                         } else {
                             *is_cluster_balance = false;
                         }
-                        FINISH_CONNECTION0();
+                        FINISH_CONNECTION((CmServer_conn), 0);
                     } else {
                         if (cm_to_ctl_cluster_status_ptr->switchedCount == 0) {
                             *is_cluster_balance = true;
@@ -1309,10 +1309,10 @@ static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
 
     if (wait_time <= 0) {
         write_runlog(ERROR, "Time out to get the needed response of the message MSG_CTL_CM_QUERY from CM Server.\n");
-        FINISH_CONNECTION();
+        FINISH_CONNECTION((CmServer_conn), -1);
     }
 
-    FINISH_CONNECTION0();
+    FINISH_CONNECTION((CmServer_conn), 0);
 }
 
 static void GetNeedQuickSwitchInstances(const cm_to_ctl_instance_status* cm_to_ctl_instance_status_ptr,

@@ -365,14 +365,14 @@ int do_query(void)
     CM_RETURN_IFERR(QueryEtcdAndCms());
 
     CM_RETURN_IFERR(QueryConnectCmsPrimary());
-    CM_RETURN_IFERR_EX(QueryResourceStatus(CmServer_conn), FINISH_CONNECTION2(CmServer_conn));
+    CM_RETURN_IFERR_EX(QueryResourceStatus(CmServer_conn), FINISH_CONNECTION_WITHOUT_EXITCODE(CmServer_conn));
 
     ctl_to_cm_query queryContent = {0};
-    CM_RETURN_IFERR_EX(SetCmQueryContent(&queryContent), FINISH_CONNECTION2(CmServer_conn));
-    CM_RETURN_IFERR_EX(SendCmQueryContent(CmServer_conn, &queryContent), FINISH_CONNECTION2(CmServer_conn));
-    CM_RETURN_IFERR_EX(ProcessMsgAndPrintStatus(CmServer_conn), FINISH_CONNECTION2(CmServer_conn));
+    CM_RETURN_IFERR_EX(SetCmQueryContent(&queryContent), FINISH_CONNECTION_WITHOUT_EXITCODE(CmServer_conn));
+    CM_RETURN_IFERR_EX(SendCmQueryContent(CmServer_conn, &queryContent), FINISH_CONNECTION_WITHOUT_EXITCODE(CmServer_conn));
+    CM_RETURN_IFERR_EX(ProcessMsgAndPrintStatus(CmServer_conn), FINISH_CONNECTION_WITHOUT_EXITCODE(CmServer_conn));
 
-    FINISH_CONNECTION2(CmServer_conn);
+    FINISH_CONNECTION_WITHOUT_EXITCODE(CmServer_conn);
     return 0;
 }
 
@@ -1010,12 +1010,12 @@ static const char* query_cm_server_directory(uint32 node_id)
     ret = cm_client_send_msg(
         CmServer_conn1, 'C', (char*)&cm_ctl_cm_query_cmserver_content, sizeof(cm_ctl_cm_query_cmserver_content));
     if (ret != 0) {
-        FINISH_CONNECTION1();
+        FINISH_CONNECTION((CmServer_conn1), "Down");
     }
 
     ret = cm_client_flush_msg(CmServer_conn1);
     if (ret == TCP_SOCKET_ERROR_EPIPE) {
-        FINISH_CONNECTION1();
+        FINISH_CONNECTION((CmServer_conn1), "Down");
     }
 
     CmSleep(1);
@@ -1037,7 +1037,7 @@ static const char* query_cm_server_directory(uint32 node_id)
         CmSleep(1);
     }
 
-    FINISH_CONNECTION1();
+    FINISH_CONNECTION((CmServer_conn1), "Down");
 }
 
 static const uint32 timeMaxLen = 10;

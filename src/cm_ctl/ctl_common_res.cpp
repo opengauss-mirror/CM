@@ -35,7 +35,7 @@ static status_t ResInstCheckConCms(CM_Conn **pCmsCon)
         return CM_ERROR;
     } else {
         if (CMPQstatus(*pCmsCon) != CONNECTION_OK) {
-            FINISH_CONNECTION2(*pCmsCon);
+            FINISH_CONNECTION_WITHOUT_EXITCODE(*pCmsCon);
             return CM_ERROR;
         }
     }
@@ -85,12 +85,12 @@ ResStatus GetResInstStatus(uint32 instId)
     ResInstCheckGetQueryMsg(&queryMsg, instId);
     if (cm_client_send_msg(pCmsCon, 'C', (char*)&queryMsg, sizeof(queryMsg)) != 0) {
         write_runlog(DEBUG1, "GetResInstStatus send query one res inst msg to cms fail!\n");
-        FINISH_CONNECTION2(pCmsCon);
+        FINISH_CONNECTION_WITHOUT_EXITCODE(pCmsCon);
         return CM_RES_STAT_UNKNOWN;
     }
 
     ResStatus result = ResInstCheckGetResult(pCmsCon);
-    FINISH_CONNECTION2(pCmsCon);
+    FINISH_CONNECTION_WITHOUT_EXITCODE(pCmsCon);
 
     return result;
 }

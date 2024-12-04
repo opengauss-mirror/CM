@@ -200,6 +200,7 @@ static bool IsCurResInMaxCluster(int32 resIdx, const NodeCluster *nodeCluster)
             return true;
         }
     }
+    write_runlog(DEBUG5, "res(%d) report is not in maxcluster.\n", resIdx);
     return false;
 }
 
@@ -210,6 +211,7 @@ bool IsCurResAvail(int32 resIdx, MaxClusterResType type, MaxClusterResStatus sta
         return (status == MAX_CLUSTER_STATUS_AVAIL);
     }
     if (IsMaxClusterHeartbeatTimeout(resIdx, type)) {
+        write_runlog(DEBUG5, "res(%d) report heartbeat timeout.\n", resIdx);
         return false;
     }
     if (IsCurResInMaxCluster(resIdx, &(g_lastCluster.nodeCluster))) {
@@ -460,11 +462,13 @@ static int32 FindNodeCluster(int32 startPoint, int32 maxNum, NodeCluster *nodeCl
             continue;
         }
         if (!CheckPoint2PointConn(startPoint, i)) {
+            write_runlog(DEBUG5, "Node %d and %d disconnect.\n", startPoint, i);
             continue;
         }
         write_runlog(DEBUG1, "Node %d and %d connect right.\n", startPoint, i);
         for (j = 0; j < maxNum; ++j) {
             if (!CheckPoint2PointConn(i, nodeCluster->visNode[j])) {
+                write_runlog(DEBUG5, "Node %d and %d disconnect.\n", i, nodeCluster->visNode[j]);
                 break;
             }
             write_runlog(DEBUG1, "Node %d and %d connect right.\n", i, nodeCluster->visNode[j]);

@@ -878,8 +878,8 @@ void ProcessQueryOneResInst(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat 
                 const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
                 int localStatus = instStatus->data_node_member[j].local_status.db_state;
                 int dnLocalRole = instStatus->data_node_member[j].local_status.local_role;
-                if (dnLocalRole != INSTANCE_ROLE_PRIMARY && dnLocalRole != INSTANCE_ROLE_STANDBY &&
-                    dnLocalRole != INSTANCE_ROLE_CASCADE_STANDBY && localStatus != INSTANCE_HA_STATE_NORMAL) {
+                if ((dnLocalRole != INSTANCE_ROLE_PRIMARY && dnLocalRole != INSTANCE_ROLE_STANDBY &&
+                    dnLocalRole != INSTANCE_ROLE_MAIN_STANDBY) || localStatus != INSTANCE_HA_STATE_NORMAL) {
                     ackMsg.instStat.status = CM_RES_STAT_UNKNOWN;
                 }
             }

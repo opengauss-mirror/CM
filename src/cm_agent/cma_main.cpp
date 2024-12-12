@@ -2043,7 +2043,7 @@ static status_t CheckEventTriggersItem(const cJSON *item)
 static void ParseEventTriggers(const char *value)
 {
     if (value == NULL || value[0] == 0) {
-        write_runlog(ERROR, "The value of event_triggers is empty.\n");
+        write_runlog(WARNING, "The value of event_triggers is empty.\n");
         return;
     }
     if (strlen(value) > MAX_PATH_LEN) {

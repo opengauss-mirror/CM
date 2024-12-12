@@ -386,41 +386,60 @@ static void ReloadParametersFromConfigfile()
     write_runlog(LOG,
         "reload cm_server parameters:\n"
         "  log_min_messages=%d, maxLogFileSize=%d, sys_log_path=%s, \n  alarm_component=%s, "
-        "alarm_report_interval=%d, \n"
-        "  instance_heartbeat_timeout=%u, coordinator_heartbeat_timeout=%u, "
-        "cmserver_ha_heartbeat_timeout=%u, cmserver_self_vote_timeout=%u,\n"
+        "alarm_report_interval=%d, instance_heartbeat_timeout=%u,\n  instance_keep_heartbeat_timeout=%u, "
+        "coordinator_heartbeat_timeout=%u, cmserver_ha_heartbeat_timeout=%u, cmserver_self_vote_timeout=%u,\n"
         "  cmserver_ha_status_interval=%u, cmserver_ha_connect_timeout=%u, "
-        "instance_failover_delay_timeout=%u, datastorage_threshold_check_interval=%d,\n"
-        "  max_datastorage_threshold_check=%d, enableSetReadOnly=%s, enableSetReadOnlyThreshold=%u, "
-        "switch_rto=%d, force_promote=%d, cluster_starting_aribt_delay=%u, "
-        "enable_e2e_rto=%u, g_delayArbiTime=%u, g_clusterArbiTime=%d.\n",
+        "instance_failover_delay_timeout=%u, datastorage_threshold_check_interval=%u,\n"
+        "  max_datastorage_threshold_check=%d, enableSetReadOnly=%s, enable_set_most_available_sync=%s, "
+        "disk_timeout=%u, agent_network_timeout=%u, ss_double_cluster_mode=%u, enableSetReadOnlyThreshold=%u, "
+        "ss_enable_check_sys_disk_usage=%u,\n  az_switchover_threshold=%d, az_check_and_arbitrate_interval=%d, "
+        "az_connect_check_interval=%d, az_connect_check_delay_time=%d,\n  phony_dead_effective_time=%d, "
+        "instance_phony_dead_restart_interval=%d, enable_az_auto_switchover=%d,\n"
+        "  cmserver_demote_delay_on_etcd_fault=%d, switch_rto=%d, force_promote=%d, "
+        "cluster_starting_aribt_delay=%u, enable_e2e_rto=%u,\n  agent_fault_timeout=%u, "
+        "cmserver_set_most_available_sync_delay_times=%u, g_delayArbiTime=%u, g_clusterArbiTime=%d, "
+        "wait_static_primary_times=%u, backup_open=%d.\n",
         log_min_messages, maxLogFileSize, sys_log_path, g_alarmComponentPath, g_alarmReportInterval,
-        instance_heartbeat_timeout, coordinator_heartbeat_timeout, g_ddbArbicfg.haHeartBeatTimeOut,
-        cmserver_self_vote_timeout, g_ddbArbicfg.haStatusInterval, cmserver_ha_connect_timeout,
-        instance_failover_delay_timeout, datastorage_threshold_check_interval,
-        max_datastorage_threshold_check, g_enableSetReadOnly, g_readOnlyThreshold,
-        switch_rto, force_promote, g_clusterStartingArbitDelay,
-        g_enableE2ERto, g_delayArbiTime, g_clusterArbiTime);
+        instance_heartbeat_timeout, instance_keep_heartbeat_timeout, coordinator_heartbeat_timeout,
+        g_ddbArbicfg.haHeartBeatTimeOut, cmserver_self_vote_timeout, g_ddbArbicfg.haStatusInterval,
+        cmserver_ha_connect_timeout, instance_failover_delay_timeout, datastorage_threshold_check_interval,
+        max_datastorage_threshold_check, g_enableSetReadOnly, szEnableSetMostAvailableSync, g_diskTimeout,
+        g_agentNetworkTimeout, g_ssDoubleClusterMode, g_readOnlyThreshold, g_ss_enable_check_sys_disk_usage,
+        az_switchover_threshold, az_check_and_arbitrate_interval, az1_and_az2_connect_check_interval,
+        az1_and_az2_connect_check_delay_time, phony_dead_effective_time, instance_phony_dead_restart_interval,
+        enable_az_auto_switchover, cmserver_demote_delay_on_etcd_fault, switch_rto, force_promote,
+        g_clusterStartingArbitDelay, g_enableE2ERto, g_cm_agent_kill_instance_time,
+        g_cm_agent_set_most_available_sync_delay_time, g_delayArbiTime, g_clusterArbiTime,
+        g_waitStaticPrimaryTimes, backup_open);
 #else
     write_runlog(LOG,
         "reload cm_server parameters:\n"
         "  log_min_messages=%d, maxLogFileSize=%d, sys_log_path=%s, \n  alarm_component=%s, "
-        "alarm_report_interval=%d, \n"
-        "  instance_heartbeat_timeout=%u, cmserver_ha_heartbeat_timeout=%u, "
-        "cmserver_self_vote_timeout=%u,\n"
-        "  cmserver_ha_status_interval=%u, cmserver_ha_connect_timeout=%u, instance_failover_delay_timeout=%u, "
-        "datastorage_threshold_check_interval=%d,\n"
-        "  max_datastorage_threshold_check=%d, enableSetReadOnly=%s, enableSetReadOnlyThreshold=%u, "
-        "switch_rto=%d, force_promote=%d, cluster_starting_aribt_delay=%u, enable_e2e_rto=%u, "
-        "g_delayArbiTime=%u, g_clusterArbiTime=%d, wait_static_primary_times=%u, backup_open=%d, "
-        "g_ssDoubleClusterMode=%d.\n",
+        "alarm_report_interval=%d, instance_heartbeat_timeout=%u,\n  instance_keep_heartbeat_timeout=%u, "
+        "cmserver_ha_heartbeat_timeout=%u, cmserver_self_vote_timeout=%u,\n  cmserver_ha_status_interval=%u, "
+        "cmserver_ha_connect_timeout=%u, instance_failover_delay_timeout=%u,\n"
+        "  datastorage_threshold_check_interval=%u, max_datastorage_threshold_check=%d, "
+        "enableSetReadOnly=%s,\n  enable_set_most_available_sync=%s, disk_timeout=%u, "
+        "agent_network_timeout=%u,\n  ss_double_cluster_mode=%u, enableSetReadOnlyThreshold=%u, "
+        "g_ss_enable_check_sys_disk_usage=%u,\n  az_switchover_threshold=%d, az_check_and_arbitrate_interval=%d, "
+        "az_connect_check_interval=%d,\n  az_connect_check_delay_time=%d, phony_dead_effective_time=%d, "
+        "instance_phony_dead_restart_interval=%d,\n  enable_az_auto_switchover=%d,"
+        "cmserver_demote_delay_on_etcd_fault=%d, switch_rto=%d,\n  force_promote=%d, "
+        "cluster_starting_aribt_delay=%u, enable_e2e_rto=%u,\n  agent_fault_timeout=%u, "
+        "cmserver_set_most_available_sync_delay_times=%u, g_delayArbiTime=%u,\n"
+        "  g_clusterArbiTime=%d, wait_static_primary_times=%u, backup_open=%d.\n",
         log_min_messages, maxLogFileSize, sys_log_path, g_alarmComponentPath, g_alarmReportInterval,
-        instance_heartbeat_timeout, g_ddbArbicfg.haHeartBeatTimeOut, cmserver_self_vote_timeout,
-        g_ddbArbicfg.haStatusInterval, cmserver_ha_connect_timeout, instance_failover_delay_timeout,
-        datastorage_threshold_check_interval, max_datastorage_threshold_check, g_enableSetReadOnly,
-        g_readOnlyThreshold, switch_rto, force_promote, g_clusterStartingArbitDelay,
-        g_enableE2ERto, g_delayArbiTime, g_clusterArbiTime, g_waitStaticPrimaryTimes, backup_open,
-        g_ssDoubleClusterMode);
+        instance_heartbeat_timeout, instance_keep_heartbeat_timeout, g_ddbArbicfg.haHeartBeatTimeOut,
+        cmserver_self_vote_timeout, g_ddbArbicfg.haStatusInterval, cmserver_ha_connect_timeout,
+        instance_failover_delay_timeout, datastorage_threshold_check_interval, max_datastorage_threshold_check,
+        g_enableSetReadOnly, szEnableSetMostAvailableSync, g_diskTimeout, g_agentNetworkTimeout,
+        g_ssDoubleClusterMode, g_readOnlyThreshold, g_ss_enable_check_sys_disk_usage, az_switchover_threshold,
+        az_check_and_arbitrate_interval, az1_and_az2_connect_check_interval, az1_and_az2_connect_check_delay_time,
+        phony_dead_effective_time, instance_phony_dead_restart_interval, enable_az_auto_switchover,
+        cmserver_demote_delay_on_etcd_fault, switch_rto, force_promote, g_clusterStartingArbitDelay,
+        g_enableE2ERto, g_cm_agent_kill_instance_time, g_cm_agent_set_most_available_sync_delay_time,
+        g_delayArbiTime, g_clusterArbiTime,
+        g_waitStaticPrimaryTimes, backup_open);
 #endif
 }
 

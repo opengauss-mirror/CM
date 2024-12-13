@@ -124,6 +124,11 @@ static const char *const IPV6_DADFAILED_FLAG = "dadfailed";
 static const char *const TIMEOUT_MECHA = "timeout -s SIGKILL";
 static const uint32 DEFAULT_CMD_TIMEOUT = 2;
 
+static const char *g_ipaddrCmd = "ip addr";
+static const char *const IP_CMD_DEFAULT = "ip";
+static const char *const IP_CMD_SUSE = "/sbin/ip";
+static const char *const IP_CMD_EULER = "/usr/sbin/ip";
+
 static const char *g_sudoPermCmd = "";
 static const char *const SUDO_PERM_CMD = "sudo";
 
@@ -575,6 +580,17 @@ static void InitIfconfigCmd()
     }
 }
 
+static void InitIpCmd()
+{
+    if (CmFileExist(IP_CMD_EULER)) {
+        g_ipaddrCmd = IP_CMD_EULER;
+    } else if (CmFileExist(IP_CMD_SUSE)) {
+        g_ipaddrCmd = IP_CMD_SUSE;
+    } else {
+        g_ipaddrCmd = IP_CMD_DEFAULT;
+    }
+}
+
 static void InitSudoPermCmd()
 {
     g_sudoPermCmd = "";
@@ -587,6 +603,7 @@ static status_t InitCmNetWorkInfo()
 {
     InitFloatIpMap();
     InitIfconfigCmd();
+    InitIpCmd();
     InitSudoPermCmd();
     g_instCnt = GetCurrentNodeInstNum();
     write_runlog(LOG, "current node has %u instance.\n", g_instCnt);
@@ -882,12 +899,26 @@ static void GetNicUpCmd(char *cmd, uint32 cmdLen, const NetworkInfo *netInfo, ui
     if (netInfo->netAddr[index].netMask[0] == '\0' || netInfo->netAddr[index].netName[0] == '\0') {
         return;
     }
+    OneCusResConfJson *resConf = NULL;
+    for (uint32 i = 0; i < g_confJson->resource.count; ++i) {
+        resConf = &g_confJson->resource.conf[i];
+        if (resConf->resType == CUSTOM_RESOURCE_VIP) {
+            break;
+        }
+    }
 
     errno_t rc = 0;
     if (netInfo->netAddr[index].family == AF_INET) {
-        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s:%u %s netmask %s up",
-            TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd,
-            netAddr->netName, netInfo->port, netInfo->ips[index], netAddr->netMask);
+        if (strcmp(resConf->vipResConf.cmd, "ip") == 0) {
+            rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s addr add %s/%s dev %s",
+                TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ipaddrCmd,
+                resConf->vipResConf.floatIp, resConf->vipResConf.netMask, netAddr->netName);
+        } else {
+            rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s:%u %s netmask %s up",
+                TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd,
+                netAddr->netName, netInfo->port, netInfo->ips[index], netAddr->netMask);
+        }
+        write_runlog(LOG, "Cmd is %s \n", cmd);
     } else if (netInfo->netAddr[index].family == AF_INET6) {
         if (!CheckIpV6Valid(netInfo, index, "[GetNicUpCmd]", LOG)) {
             return;
@@ -905,11 +936,27 @@ static void GetNicDownCmd(char *cmd, uint32 cmdLen, const NetworkInfo *netInfo, 
     if (netInfo->netAddr[index].netMask[0] == '\0' || netInfo->netAddr[index].netName[0] == '\0') {
         return;
     }
+    OneCusResConfJson *resConf = NULL;
+    for (uint32 i = 0; i < g_confJson->resource.count; ++i) {
+        resConf = &g_confJson->resource.conf[i];
+        if (resConf->resType == CUSTOM_RESOURCE_VIP) {
+            break;
+        }
+    }
+
     errno_t rc = 0;
     if (netInfo->netAddr[index].family == AF_INET) {
-        rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s:%u down",
-            TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd, netAddr->netName,
-            netInfo->port);
+        if (strcmp(resConf->vipResConf.cmd, "ip") == 0) {
+            rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s addr del %s/%s dev %s",
+                TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ipaddrCmd,
+                resConf->vipResConf.floatIp, resConf->vipResConf.netMask,
+                netAddr->netName);
+        } else {
+            rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s:%u %s netmask %s down",
+                TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd,
+                netAddr->netName, netInfo->port, netInfo->ips[index], netAddr->netMask);
+        }
+        write_runlog(LOG, "Cmd is %s \n", cmd);
     } else {
         rc = snprintf_s(cmd, cmdLen, cmdLen - 1, "%s %us %s %s %s inet6 del %s/%s",
             TIMEOUT_MECHA, DEFAULT_CMD_TIMEOUT, g_sudoPermCmd, g_ifconfigCmd,

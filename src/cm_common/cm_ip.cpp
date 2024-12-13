@@ -51,6 +51,7 @@ static const char *const IPV6_LOCAL_HOST_ARRAY[] = {"::1"};
 int32 GetIpVersion(const char *ip_address)
 {
     if (ip_address == NULL) {
+        write_runlog(ERROR, "[%s] ip is null.\n", __FUNCTION__);
         return -1;
     }
     
@@ -64,7 +65,7 @@ int32 GetIpVersion(const char *ip_address)
     if (inet_pton(AF_INET6, ip_address, &ipv6_addr) == 1) {
         return AF_INET6;
     }
-    write_runlog(ERROR, "[%s] invalid, get ip %s version faild", __FUNCTION__, ip_address);
+    write_runlog(ERROR, "[%s] invalid, get ip %s version faild.\n", __FUNCTION__, ip_address);
     return -1;
 }
 

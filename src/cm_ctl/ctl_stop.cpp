@@ -522,6 +522,65 @@ void stop_instance(uint32 nodeid, const char *datapath)
     }
 }
 
+int CheckClusterStopFileStatus()
+{
+    int ret;
+    char command[MAXPGPATH];
+
+    if (g_single_node_cluster) {
+        if (mpp_env_separate_file[0] == '\0') {
+            ret = snprintf_s(command,
+                MAXPGPATH,
+                MAXPGPATH - 1,
+                SYSTEMQUOTE "source /etc/profile; if [ -f %s ]; then exit 0;"
+                            "else exit 1; fi" SYSTEMQUOTE,
+                manual_start_file);
+        } else {
+            ret = snprintf_s(command,
+                MAXPGPATH,
+                MAXPGPATH - 1,
+                SYSTEMQUOTE "source /etc/profile; source %s; if [ -f %s ];"
+                            "then exit 0; else exit 1; fi" SYSTEMQUOTE,
+                mpp_env_separate_file,
+                manual_start_file);
+        }
+    } else {
+        if (mpp_env_separate_file[0] == '\0') {
+            ret = snprintf_s(command,
+                MAXPGPATH,
+                MAXPGPATH - 1,
+                SYSTEMQUOTE "source /etc/profile; pssh -i %s -h %s if [ -f %s ];"
+                            "then exit 0; else exit 1; fi" SYSTEMQUOTE,
+                PSSH_TIMEOUT_OPTION,
+                hosts_path,
+                manual_start_file);
+        } else {
+            ret = snprintf_s(command,
+                MAXPGPATH,
+                MAXPGPATH - 1,
+                SYSTEMQUOTE "source /etc/profile; pssh -i %s -h %s \"source %s;"
+                            "if [ -f %s ]; then exit 0; else exit 1; fi" SYSTEMQUOTE,
+                PSSH_TIMEOUT_OPTION,
+                hosts_path,
+                mpp_env_separate_file,
+                manual_start_file);
+        }
+    }
+    securec_check_intval(ret, (void)ret);
+
+    ret = system(command);
+    if (ret != 0) {
+        write_runlog(DEBUG1,
+            "Failed to check the stop_flag_file with executing the command: command=\"%s\", nodeId=%u.\n",
+            command,
+            g_currentNode->node);
+        return ret;
+    }
+
+    (void)unlink(hosts_path);
+    return CM_SUCCESS;
+}
+
 static void* check_cluster_stop_status(void* arg)
 {
     int i;
@@ -620,10 +679,21 @@ restop:
     if (g_cluster_stop_status == CM_STOP_STATUS_INIT) {
         if (shutdown_mode_num == FAST_MODE && g_waitSeconds >= caculate_default_timeout(STOP_COMMAND)) {
             shutdown_mode_num = IMMEDIATE_MODE;
-            g_isRestop = true;
-            stop_cluster();
-            g_isRestop = false;
-            goto restop;
+            if (CheckClusterStopFileStatus() != 0) {
+                write_runlog(ERROR,
+                    "stop cluster failed in (%d)s!\n\n"
+                    "HINT: cluster_manual_start is not exist, Maybe \"cm_ctl start\" was executed after stop.\n",
+                    g_waitSeconds);
+            } else {
+                g_isRestop = true;
+                write_runlog(ERROR,
+                    "stop cluster failed in (%d)s!\n\n"
+                    "HINT: The cluster will be stopped again.\n",
+                    g_waitSeconds);
+                stop_cluster();
+                g_isRestop = false;
+                goto restop;
+            }
         } else {
             write_runlog(ERROR,
                 "stop cluster failed in (%d)s!\n\n"

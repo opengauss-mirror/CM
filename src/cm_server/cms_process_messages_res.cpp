@@ -864,7 +864,7 @@ void ProcessQueryOneResInst(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat 
             (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
             ackMsg.instStat = g_resStatus[i].status.resStat[j];
             int instanceType = g_instance_role_group_ptr[i].instanceMember[j].instanceType;
-            if (instanceType == INSTANCE_TYPE_DATANODE) {
+            if (instanceType == INSTANCE_TYPE_DATANODE && ackMsg.instStat.status == CM_RES_STAT_ONLINE) {
                 const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
                 int localStatus = instStatus->data_node_member[j].local_status.db_state;
                 int dnLocalRole = instStatus->data_node_member[j].local_status.local_role;

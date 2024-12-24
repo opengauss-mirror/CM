@@ -239,13 +239,6 @@ char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 bool g_isStarting = false;
 char g_cmManualStartingPath[MAX_PATH_LEN] = {0};
 
-/* Whether we are in add avg process */
-bool g_isInVGAddProcess = false;
-bool g_isRegUnderVGAddProcess = false;
-
-/* Lock for pending status update, we dont wonder modify status under racing. */
-pthread_rwlock_t pending_status_rwlock = PTHREAD_RWLOCK_INITIALIZER;;
-
 bool &GetIsSharedStorageMode()
 {
     return g_isSharedStorageMode;

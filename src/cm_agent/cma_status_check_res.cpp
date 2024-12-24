@@ -93,26 +93,6 @@ static void CheckIsregList(ResInstIsreg *newIsregList, uint32 listLen, uint32 *n
             continue;
         }
         newIsregList[(*newIsregCount)].cmInstId = g_isregCheckList.checkList[i];
-        int regStatus = (int)IsregOneResInst(resConf, (uint32)destInstId);
-        /* If we dectected PENGDING (only happened under DSS). */
-        if (regStatus == CM_RES_ISREG_PENDING) {
-            (void)pthread_rwlock_wrlock(&(pending_status_rwlock));
-            /* If we get CM_RES_ISREG_PENDING, we must had add VG in process, we should mark it. */
-            if (g_isRegUnderVGAddProcess) {
-                /* 
-                * If CMA had already process the reg message, 
-                * we should not mark this value again, ignore this check. 
-                */
-                write_runlog(LOG, "Recent partial register has done, so ingnore this epoch.\n");
-                g_isRegUnderVGAddProcess = false;
-                g_isInVGAddProcess = false;
-            } else {
-                /* If CMA had not already process the reg message, we shound mark and wait process. */
-                write_runlog(LOG, "Detected the PENDING status, it should be done by Reg operation.\n");
-                g_isInVGAddProcess = true;
-            }
-            (void)pthread_rwlock_unlock(&(pending_status_rwlock));
-        }
         newIsregList[(*newIsregCount)].isreg = (int)IsregOneResInst(resConf, (uint32)destInstId);
         ++(*newIsregCount);
     }

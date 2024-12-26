@@ -1434,6 +1434,9 @@ void CheckSharedDiskUsage(uint32 &vgdataPathUsage, uint32 &vglogPathUsage)
     fp = popen("dsscmd lsvg | awk 'NR==2 || NR==3 {print $NF}'", "r");
     if (fp == NULL) {
         write_runlog(ERROR, "Failed to exec command(dsscmd lsvg).\n");
+        vgdataPathUsage = 0;
+        vglogPathUsage = 0;
+        return;
     }
 
     if (fgets(result, sizeof(result)-1, fp) != NULL) {

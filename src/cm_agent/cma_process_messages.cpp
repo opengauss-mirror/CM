@@ -369,7 +369,8 @@ static bool IsClusterInRedoState()
     const char* expectedString = "in on-demand redo";
     char *foundString;
 
-    fp = popen("pg_controldata +data -I 64 | grep 'Cluster status:' | awk '{for (i=NF-2;i<=NF;i++) printf \"%s \", $i; printf \"\\n\"}'", "r");
+    fp = popen("pg_controldata +data | grep 'Cluster status:' | "
+               "awk '{for (i=NF-2;i<=NF;i++) printf \"%s \", $i; printf \"\\n\"}'", "r");
     if (fp == NULL) {
         write_runlog(LOG, "Failed to exec command(pg_controldata +data).\n");
         return false;

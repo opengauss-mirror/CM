@@ -26,6 +26,7 @@
 
 #include "c.h"
 typedef unsigned char uchar;
+typedef unsigned int bool32;
 
 typedef enum {
     DISK_LOCK_MGR_NORMAL = 0,

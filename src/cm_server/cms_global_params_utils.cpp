@@ -600,7 +600,8 @@ status_t CmsCanArbitrate(CmsArbitrateStatus *cmsSt, const char *str)
     cmsSt->isDdbHealth = IsDdbHealth(DDB_PRE_CONN);
     cmsSt->cmsRole = g_HA_status->local_role;
     bool isResult =
-        (cmsSt->cmsRole != CM_SERVER_PRIMARY) || !(cmsSt->isDdbHealth) || (cmsSt->upgradeMode != MAINTENANCE_MODE_NONE);
+        (cmsSt->cmsRole != CM_SERVER_PRIMARY) || !(cmsSt->isDdbHealth) ||
+        (cmsSt->upgradeMode != MAINTENANCE_MODE_NONE) || g_isPauseArbitration;
     if (isResult) {
         int32 logLevel = (g_HA_status->local_role != CM_SERVER_PRIMARY) ? DEBUG1 : LOG;
         write_runlog(logLevel, "%s cannot arbitrate reduce or increase, in the condition that ddb is health is %d "

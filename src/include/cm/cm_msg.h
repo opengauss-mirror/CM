@@ -269,6 +269,8 @@ typedef enum CM_MessageType_st {
     MSG_CTL_CM_FLOAT_IP_ACK = 182,
     MSG_CM_AGENT_MODIFY_MOST_AVAILABLE = 183,
     MSG_AGENT_CM_DN_MOST_AVAILABLE = 184,
+    MSG_CMA_PING_DN_FLOAT_IP_FAIL = 185,
+    MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP = 186,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;

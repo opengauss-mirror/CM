@@ -135,6 +135,7 @@ const char *g_cmsParamInfo[] = {
 #endif
     "ss_double_cluster_mode|int|0,2|NULL|NULL|",
     "share_disk_lock_type|int|0,1|NULL|NULL|",
+    "upgrade_from|int|0,4294967295|NULL|For upgrading, specify which version we are upgrading from.|",
 };
 
 const char *g_valueTypeStr[] = {

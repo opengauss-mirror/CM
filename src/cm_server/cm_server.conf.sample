@@ -91,4 +91,5 @@ share_disk_lock_type = 0					 # share disk lock type,  Valid value: 0-1, 0 is no
 enable_set_most_available_sync = off     # whether allow cm_server to manage dn most_available_sync
                                          # default off
 cmserver_set_most_available_sync_delay_times = 6 # delay times when cm_server need to send modify most_available_sync command.
+upgrade_from = 0                         # the version number of the cluster before upgrade
 ############### must leave a new line at the end ###################

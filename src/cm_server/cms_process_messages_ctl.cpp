@@ -1376,7 +1376,7 @@ static status_t FillCm2CtlRsp4InstGroup(MsgRecvInfo* recvMsgInfo, const ctl_to_c
 
 static void ProcessCtlToCmOneTypeQryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry, int type)
 {
-    cm_to_ctl_instance_status cmToCtlStatusContent;
+    cm_to_ctl_instance_status cmToCtlStatusContent = {0};
     cm_to_ctl_instance_status_ipv4 cmToCtlStatusContentIpv4 = {0};
     uint32 ii;
     int jj;
@@ -1452,7 +1452,7 @@ static void ProcessCtlToCmOneInstanceQueryMsg(
 {
     uint32 groupIndex = 0;
     int memberIndex = 0;
-    cm_to_ctl_instance_status statusMsg;
+    cm_to_ctl_instance_status statusMsg = {0};
     errno_t rc;
 
     if (find_node_in_dynamic_configure(node, instanceId, &groupIndex, &memberIndex) != 0) {
@@ -2167,7 +2167,7 @@ static void HdlCtlToCmClusRestStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_
  */
 void ProcessCtlToCmQueryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry)
 {
-    cm_to_ctl_instance_status instStat;
+    cm_to_ctl_instance_status instStat = {0};
     cm_to_ctl_cluster_status clusterStat;
     bool isQryDone = false;
 
@@ -2433,7 +2433,7 @@ void process_ctl_to_cm_get_datanode_relation_msg(
     int member_index = 0;
     int instanceType;
     int ret;
-    cm_to_ctl_get_datanode_relation_ack ack;
+    cm_to_ctl_get_datanode_relation_ack ack = {0};
 
     ret = find_node_in_dynamic_configure(info_ptr->node,
         info_ptr->instanceId, &group_index, &member_index);

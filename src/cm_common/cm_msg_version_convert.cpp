@@ -46,8 +46,8 @@ void CmToAgentLock2V2ToV1(const cm_to_agent_lock2 *v2, cm_to_agent_lock2_ipv4 *v
     v1->instanceId = v2->instanceId;
     v1->msg_type = v2->msg_type;
     v1->node = v2->node;
-    errno_t rc = snprintf_s(v1->disconn_host, HOST_LENGTH, HOST_LENGTH - 1, "%s", v2->disconn_host);
-    securec_check_intval(rc, (void)rc);
+    errno_t rc = strncpy_s(v1->disconn_host, HOST_LENGTH, v2->disconn_host, HOST_LENGTH - 1);
+    securec_check_errno(rc, (void)rc);
     v1->disconn_port = v2->disconn_port;
 }
 
@@ -73,13 +73,13 @@ void CmLocalReplconninfoV2ToV1(const cm_local_replconninfo *v2, cm_local_replcon
 {
     v1->buildReason = v2->buildReason;
     v1->db_state = v2->db_state;
-    errno_t rc = snprintf_s(v1->disconn_host, HOST_LENGTH, HOST_LENGTH - 1, "%s", v2->disconn_host);
-    securec_check_intval(rc, (void)rc);
+    errno_t rc = strncpy_s(v1->disconn_host, HOST_LENGTH, v2->disconn_host, HOST_LENGTH - 1);
+    securec_check_errno(rc, (void)rc);
     v1->disconn_mode = v2->disconn_mode;
     v1->disconn_port = v2->disconn_port;
     v1->last_flush_lsn = v2->last_flush_lsn;
-    rc = snprintf_s(v1->local_host, HOST_LENGTH, HOST_LENGTH - 1, "%s", v2->local_host);
-    securec_check_intval(rc, (void)rc);
+    rc = strncpy_s(v1->local_host, HOST_LENGTH, v2->local_host, HOST_LENGTH - 1);
+    securec_check_errno(rc, (void)rc);
     v1->local_port = v2->local_port;
     v1->local_role = v2->local_role;
     v1->redo_finished = v2->redo_finished;

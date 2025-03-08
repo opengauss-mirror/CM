@@ -302,6 +302,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
     int ret;
     int timePass = 0;
     bool denied = false;
+    bool inOnDemand = false;
     bool success = false;
     bool timeout = false;
     bool hasWarning = false;
@@ -354,6 +355,13 @@ static int DoSwitchoverFull(const CtlOption *ctx)
                     } else if (ackMsg->command_result == CM_INVALID_COMMAND) {
                         write_runlog(ERROR, "execute invalid command.\n");
                         FINISH_CONNECTION((CmServer_conn), -1);
+                    } else if (ackMsg->command_result == CM_DN_IN_ONDEMAND_STATUE) { 
+                        write_runlog(ERROR,
+                            "Can not switchover right now.!\n\n"
+                            "HINT: cluster has entered a unexpected status, such as redo status.\n"
+                            "You can wait for a while.\n");
+                        FINISH_CONNECTION((CmServer_conn), -1);
+                        inOnDemand = true;
                     } else {
                         write_runlog(LOG, "cmserver is switching over all the master and standby pairs.\n");
                         waitSwitchoverFull = true;
@@ -397,7 +405,7 @@ static int DoSwitchoverFull(const CtlOption *ctx)
                     break;
             }
         }
-        if (success || denied || timeout) {
+        if (success || denied || timeout || inOnDemand) {
             break;
         }
 
@@ -452,6 +460,9 @@ static int DoSwitchoverFull(const CtlOption *ctx)
     } else if (timeout) {
         write_runlog(ERROR, "'switchover -A' command timeout.\n");
         return -3;
+    } else if (inOnDemand) {
+        write_runlog(ERROR, "'switchover -A' command failed due to in ondemand recovery.\n");
+        return -4;
     } else {
         if (hasWarning) {
             write_runlog(WARNING, "switchover incomplete.\n");

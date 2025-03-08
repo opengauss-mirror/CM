@@ -101,17 +101,6 @@ static void AgentSendHeartbeat()
     PushMsgToCmsSendQue((char *)&hbMsg, (uint32)sizeof(agent_to_cm_heartbeat), "cma heartbeat");
 }
 
-/* Report the in on-demand-status by msg, notify the CM server no need to wait switchover complated. */
-static void AgentSendOnDemandStatus()
-{
-    agent_to_cm_ondemand_status_report reportMsg = {0};
-    reportMsg.msg_type = (int)MSG_AGENT_ONDEMAND_STATUES_REPORT;
-    reportMsg.nodeid = g_nodeId;
-    reportMsg.status = INSTANCE_ROLE_NORMAL;
-    write_runlog(LOG, "Node(%u) ondemand status send to cms.\n", reportMsg.nodeid);
-    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_ondemand_status_report), "ondemand status");
-}
-
 bool FindIndexByLocalPath(const char* data_path, uint32* node_index)
 {
     uint32 i = 0;
@@ -362,39 +351,6 @@ static void ExeSwitchoverZengineCmd(const char *dataDir)
     return;
 }
 
-static bool IsClusterInRedoState() 
-{
-    FILE *fp;
-    char buffer[1024];
-    const char* expectedString = "in on-demand redo";
-    char *foundString;
-
-    fp = popen("pg_controldata +data | grep 'Cluster status:' | "
-               "awk '{for (i=NF-2;i<=NF;i++) printf \"%s \", $i; printf \"\\n\"}'", "r");
-    if (fp == NULL) {
-        write_runlog(LOG, "Failed to exec command(pg_controldata +data).\n");
-        return false;
-    }
-
-    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-        foundString = buffer; 
-        break;
-    }
-    pclose(fp);
-
-    if (foundString == NULL)
-        return false;
-    char *end = foundString + strlen(foundString) - 1;
-
-    /* clean the special format. */
-    while (end > foundString && (*end == '\n' || *end == '\r' || *end == '\t' || *end == ' ')) {
-        *end = '\0';
-        end --; 
-    }
-    
-    return strcmp(foundString, expectedString) == 0;
-}
-
 static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint32 instanceId, uint32 term, bool doFast)
 {
     char command[MAXPGPATH];
@@ -430,11 +386,6 @@ static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint
                 return;
             }
             lcName = get_logicClusterName_by_dnInstanceId(instanceId);
-            if (g_isStorageWithDMSorDSS && IsClusterInRedoState()) {
-                write_runlog(LOG, "The cluster is in on-demand status, report it and dont switchover!\n");
-                AgentSendOnDemandStatus();
-                return;
-            }
             if (doFast) {
                 rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
                     SYSTEMQUOTE "%s switchover -D  %s  -T %u -f>> \"%s\" 2>&1 &" SYSTEMQUOTE,

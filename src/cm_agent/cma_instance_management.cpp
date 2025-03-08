@@ -1813,6 +1813,9 @@ void *agentStartAndStopMain(void *arg)
         exit(-1);
     }
 
+    int index = -1;
+    AddThreadActivity(&index, threadId);
+
     for (;;) {
         if (g_exitFlag) {
             write_runlog(LOG, "receive exit request in cma startAndStop.\n");
@@ -1860,7 +1863,7 @@ void *agentStartAndStopMain(void *arg)
                 write_runlog(ERROR, "could not remove gauss replace file, errno[%d].\n", errno);
             }
         }
-
+        UpdateThreadActivity(index);
         cm_sleep(1);
     }
 }

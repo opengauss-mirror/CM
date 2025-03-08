@@ -1113,6 +1113,9 @@ void* DNStatusCheckMain(void *arg)
     securec_check_intval(ret, (void)ret);
     int32 running = PROCESS_UNKNOWN;
 
+    int index = -1;
+    AddThreadActivity(&index, threadId);
+
     for (;;) {
         set_thread_state(threadId);
         struct stat instance_stat_buf = {0};
@@ -1262,6 +1265,7 @@ void* DNStatusCheckMain(void *arg)
         check_dn_sql5_timer = (check_dn_sql5_timer > 0) ? (check_dn_sql5_timer - 1) : g_check_dn_sql5_interval;
         dn_restart_count_check_time++;
         dn_restart_count_check_time_in_hour++;
+        UpdateThreadActivity(index);
     }
 }
 

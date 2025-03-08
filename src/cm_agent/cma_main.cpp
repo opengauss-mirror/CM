@@ -1846,6 +1846,7 @@ int main(int argc, char** argv)
     }
     CreateKerberosStatusCheckThread();
     CreateDiskUsageCheckThread();
+    CreateOnDemandRedoCheckThread();
 
 #ifdef ENABLE_MULTIPLE_NODES
     err = CreateCheckNodeStatusThread();

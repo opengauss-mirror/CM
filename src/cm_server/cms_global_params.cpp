@@ -336,6 +336,13 @@ char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 uint32 g_waitStaticPrimaryTimes = 6;
 uint32 g_realtimeBuildStatus = 0;
 
+/* The global time structure of ondemand redo check. */
+int g_onDemandStatus[MAX_ONDEMAND_NODE_STATUS] = {0};
+time_t g_onDemandStatusTime[MAX_ONDEMAND_NODE_STATUS] = {0};
+
+pthread_rwlock_t g_ondemandStatusCheckRwlock = PTHREAD_RWLOCK_INITIALIZER;
+
+
 bool isLargerNode()
 {
     if (IsInteractWithDdb(false, true)) {
@@ -1258,16 +1265,6 @@ void CleanCommand(uint32 groupIndex, int memberIndex)
 {
     cm_instance_command_status *curCmd =
         &g_instance_group_report_status_ptr[groupIndex].instance_status.command_member[memberIndex];
-    write_runlog(LOG, "Clean Command:%d, %d\n.", curCmd->pengding_command, curCmd->command_status);
-    if (g_isInRedoStateUnderSwitchover && curCmd->pengding_command == MSG_CM_AGENT_SWITCHOVER &&
-            curCmd->command_status == INSTANCE_COMMAND_WAIT_EXEC_ACK) {
-        /* 
-         * We will clean g_isInRedoStateUnderSwitchover status in swtichover under cluster  
-         * is in on-demand status.
-         */
-        g_isInRedoStateUnderSwitchover = false;
-        write_runlog(LOG, "Clean on-demand status by Clean Command\n.");
-    }
     if (curCmd->command_status != INSTANCE_NONE_COMMAND || curCmd->pengding_command != MSG_CM_AGENT_BUTT) {
         write_runlog(LOG,
             "instance %u will clean pending command, command_status=%d, pengding_command=%d, time_out=%d, "

@@ -104,16 +104,16 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
     ackMsg.pengding_command = instStatus->command_member[memberIndex].pengding_command;
 
     if (!CheckCanDoSwitchover(groupIndex, memberIndex, &(ackMsg.pengding_command), str)) {
-        if (g_isInRedoStateUnderSwitchover) {
-            /* We have reciver in on-demand status report message from cm agent. */
-            ackMsg.command_result = CM_DN_IN_ONDEMAND_STATUE;
-        } else {
-            ackMsg.command_result = CM_ANOTHER_COMMAND_RUNNING;
-        }
+        ackMsg.command_result = CM_ANOTHER_COMMAND_RUNNING;
         (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
         return;
     }
-
+    /* If the cluester is in OnDemand Recovery. */
+    if (isInOnDemandStatus()) {
+        ackMsg.command_result = CM_DN_IN_ONDEMAND_STATUE;
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
+        return;
+    }
     // tell cm_ctl will switchover to primary or standby
     ackMsg.pengding_command = localRole;
     write_runlog(LOG, "ackMsg.pengding_command: %d\n", localRole);
@@ -525,7 +525,7 @@ bool IsInCatchUpState(uint32 ptrIndex, int memberIndex)
 static bool CanDoSwitchoverInAllShard(MsgRecvInfo* recvMsgInfo, cm_to_ctl_command_ack *msg,
     const ctl_to_cm_switchover *swithoverPtr, const char *str)
 {
-    if (g_isInRedoStateUnderSwitchover) {
+    if (isInOnDemandStatus()) {
         msg->command_result = CM_DN_IN_ONDEMAND_STATUE;
         msg->pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
         (void)RespondMsg(recvMsgInfo, 'S', (const char *)(msg), sizeof(cm_to_ctl_command_ack));
@@ -823,7 +823,7 @@ static void SetSwitchoverInSwitchoverDone(uint32 groupIdx, int memIdx, bool isNe
  */
 static bool CanDoSwitchoverUnderOnDemandStatus()
 {
-    if (g_isInRedoStateUnderSwitchover) {
+    if (isInOnDemandStatus()) {
         write_runlog(LOG, "We can not process switchover because cluster in on-demand redo status.\n");
         return false;
     }

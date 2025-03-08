@@ -1366,3 +1366,37 @@ void ProcessPingDnFloatIpFailedMsg(MsgRecvInfo *recvMsgInfo, CmSendPingDnFloatIp
         instId);
     NotifyPrimaryDnToResetFailedFloatIp(recvMsgInfo, failedFloatIpInfo, groupIdx);
 }
+
+static void RefreshOnDemandRecoveryStatus(unsigned int nodeId, time_t hbs, int status)
+{
+    time_t nowTime = time(NULL);
+    /* Step 1: the filtration of the timeout message, we wont handle this. */
+    if (difftime(nowTime, hbs) >= ONDEMADN_STATUS_CHECK_TIMEOUT) {
+        write_runlog(
+            WARNING, "[RefreshOnDemandRecoveryStatus] node[%u] report timeout "
+                "report time: %s, but cm_server time: %s , msg status: %d. \n", 
+                    nodeId, ctime(&nowTime), ctime(&hbs), status);
+        return;
+    }
+    
+    /* 
+     * Step 2: Lock the struct, and compare whether we need modify the status.
+     * If we message time is less than global record, it must late by network cause.
+     */
+    (void)pthread_rwlock_wrlock(&(g_ondemandStatusCheckRwlock));
+    if (hbs > g_onDemandStatusTime[nodeId]) {
+        /* We need to refresh the status. */
+        int rc = memcpy_s(&g_onDemandStatusTime[nodeId], sizeof(time_t),
+                    &hbs, sizeof(time_t));
+        securec_check_errno(rc, (void)rc)
+        g_onDemandStatus[nodeId] = status;
+    }
+    (void)pthread_rwlock_unlock(&(g_ondemandStatusCheckRwlock));
+}
+
+void ProcessOndemandStatusMsg(MsgRecvInfo *recvMsgInfo, agent_to_cm_ondemand_status_report* onDemandStatusReport)
+{
+    write_runlog(DEBUG1, "CM Server receiver node %u ondemand status report msg.\n", onDemandStatusReport->nodeId);
+    RefreshOnDemandRecoveryStatus(onDemandStatusReport->nodeId, onDemandStatusReport->reportTime, 
+                                    onDemandStatusReport->onDemandStatus);
+}

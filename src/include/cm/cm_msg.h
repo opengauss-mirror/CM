@@ -395,6 +395,12 @@ const int INSTANCE_WALSNDSTATE_UNKNOWN = 6;
 
 #define CM_DDB_CLUSTER_INFO_CMD "--cluster_info"
 
+/* The ondemand recovery status. */
+#define IN_ONDEMAND_RECOVERY 0
+#define NOT_IN_ONDEMAND_RECOVERY 1
+/* Unexpect status of pg_controldata, such as DSS down. */
+#define UNEXPECT_ONDEMAND_RECOVERY 2
+
 
 extern int g_gtmPhonyDeadTimes;
 extern int g_dnPhonyDeadTimes[CM_MAX_DATANODE_PER_NODE];
@@ -1216,8 +1222,9 @@ typedef struct agent_to_cm_fenced_UDF_status_report_st {
 
 typedef struct agent_to_cm_ondemand_status_report {
     int msg_type;
-    uint32 nodeid;
-    int status;
+    uint32 nodeId;
+    int onDemandStatus;
+    time_t reportTime;
 } agent_to_cm_ondemand_status_report;
 
 typedef struct agent_to_cm_datanode_status_report_st {

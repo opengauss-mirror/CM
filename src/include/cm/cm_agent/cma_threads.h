@@ -48,6 +48,7 @@ int CreateProcessSendCmsMsgThread();
 int CreateProcessRecvCmsMsgThread();
 void CreateVotingDiskThread();
 void CreateDiskUsageCheckThread();
+void CreateOnDemandRedoCheckThread();
 int CreateCheckNetworkThread(void);
 
 #endif

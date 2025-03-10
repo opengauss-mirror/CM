@@ -164,7 +164,8 @@ void ResetResNodeStat();
 void ProcessDnFloatIpMsg(MsgRecvInfo *recvMsgInfo, CmaDnFloatIpInfo *floatIp);
 void GetFloatIpSet(CmFloatIpStatAck *ack, size_t maxMsgLen, size_t *curMsgLen);
 void ProcessPingDnFloatIpFailedMsg(MsgRecvInfo *recvMsgInfo, CmSendPingDnFloatIpFail *failedFloatIpInfo);
-
+void ProcessOndemandStatusMsg(MsgRecvInfo *recvMsgInfo, agent_to_cm_ondemand_status_report* ondemandStatusReport);
+bool isInOnDemandStatus();
 #ifdef ENABLE_MULTIPLE_NODES
 void SetCmdStautus(int32 ret);
 #endif

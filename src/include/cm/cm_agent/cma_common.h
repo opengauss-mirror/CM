@@ -92,8 +92,10 @@ int ProcessGsGucDnCommand(const CmToAgentGsGucSyncList *msgTypeDoGsGuc);
 void ExecuteCrossClusterCnBuildCommand(const char *dataDir, char *userInfo);
 void PrintInstanceStack(const char* dataPath, bool isPrintedOnce);
 void *DiskUsageCheckMain(void *arg);
+void *PGControlDataCheckMain(void *arg);
 void CheckDiskForCNDataPath();
 void CheckDiskForDNDataPath();
+void PGDataControlCheck();
 bool FindDnIdxInCurNode(uint32 instId, uint32 *dnIdx, const char *str);
 CmResConfList *CmaGetResConfByResName(const char *resName);
 #endif

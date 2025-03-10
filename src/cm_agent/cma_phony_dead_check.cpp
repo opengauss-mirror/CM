@@ -156,6 +156,7 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
     int i = -1;
     bool isPhonyDead = true;
     uint32 agentCheckTimeInterval;
+    pthread_t threadId = pthread_self();
     for (i = 0; i < (int)g_currentNode->datanodeCount; i++) {
         if (g_currentNode->datanode[i].datanodeId == instanceId) {
             break;
@@ -169,6 +170,10 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
 
     struct timeval checkBegin, checkEnd;
     uint32 expired_time = 0;
+
+    int index = -1;
+    AddThreadActivity(&index, threadId);
+    
     for (;;) {
         if (g_shutdownRequest || agent_phony_dead_check_interval == 0) {
             cm_sleep(5);
@@ -196,6 +201,7 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
         if (expired_time < agentCheckTimeInterval) {
             cm_sleep(agentCheckTimeInterval - expired_time);
         }
+        UpdateThreadActivity(index);
     }
     return NULL;
 }

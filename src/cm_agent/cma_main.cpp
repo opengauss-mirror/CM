@@ -57,6 +57,9 @@
 const char *g_libnetManualStart = "libnet_manual_start";
 #endif
 
+#define ACTIVITY_TIMEOUT 120
+#define STACK_CAPTURE_TIMEOUT 30
+
 cm_instance_central_node_msg g_ccnNotify;
 
 char g_agentDataDir[CM_PATH_LENGTH] = {0};
@@ -80,6 +83,11 @@ pthread_rwlock_t g_datanodesFailoverLock;
 pthread_rwlock_t g_gtmsFailoverLock;
 pthread_rwlock_t g_cnDropLock;
 pthread_rwlock_t g_coordinatorsCancelLock;
+
+ThreadActivity *threadActivities;
+int activities_index;
+pthread_rwlock_t activitiesMutex;
+time_t lastStackCaptureTime = 0;
 
 bool g_poolerPingEndRequest = false;
 
@@ -1023,6 +1031,49 @@ void switch_system_call_log(const char *file_name)
     return;
 }
 
+void CheckGDBAndCaptureStack()
+{
+    if (system("which gdb > /dev/null 2>&1") == 0) {
+        char command[MAX_PATH_LEN];
+        char timestamp[MAX_PATH_LEN];
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm_info);
+        errno_t rc = snprintf_s(command, MAX_PATH_LEN, MAX_PATH_LEN - 1, "gstack %d >> %s/cm_agent_stack-%s.log",
+            getpid(), sys_log_path, timestamp);
+        securec_check_intval(rc, (void)rc);
+        system(command);
+        write_runlog(LOG, "Captured stack trace using gstack for process %d.\n", getpid());
+    } else {
+        write_runlog(LOG, "gdb not found, skipping stack capture.\n");
+    }
+}
+
+void CheckActivityTimeout(int index)
+{
+    time_t currentTime = time(NULL);
+    if (difftime(currentTime, threadActivities[index].lastActiveTime) > ACTIVITY_TIMEOUT) {
+        write_runlog(WARNING, "Thread ID: %lu has timed out.\n",
+            threadActivities[index].threadId);
+        if (difftime(currentTime, lastStackCaptureTime) > STACK_CAPTURE_TIMEOUT) {
+            CheckGDBAndCaptureStack();
+            lastStackCaptureTime = currentTime;
+        } else {
+            write_runlog(WARNING, "Stack capture skipped for Thread ID: %lu, last capture was within 30 seconds.\n",
+                threadActivities[index].threadId);
+        }
+    }
+}
+
+void CheckAllThreadActivities()
+{
+    for (int i = 0; i < activities_index; i++) {
+        pthread_rwlock_wrlock(&activitiesMutex);
+        CheckActivityTimeout(i);
+        pthread_rwlock_unlock(&activitiesMutex);
+    }
+}
+
 void server_loop(void)
 {
     int pid;
@@ -1117,6 +1168,9 @@ void server_loop(void)
             ReloadParametersFromConfigfile();
             g_gotParameterReload = 0;
         }
+        
+        CheckAllThreadActivities();
+
         CmUsleep(AGENT_RECV_CYCLE);
         recv_count++;
         msgPoolCount++;
@@ -1594,6 +1648,29 @@ static void InitAgentGlobalVariable()
     }
 }
 
+void InitActivity()
+{
+    threadActivities = (ThreadActivity*)malloc(MAX_THREADS * sizeof(ThreadActivity));
+    (void)pthread_rwlock_init(&activitiesMutex, NULL);
+    activities_index = 0;
+}
+
+void AddThreadActivity(int *index, pthread_t threadId)
+{
+    pthread_rwlock_wrlock(&activitiesMutex);
+    *index = activities_index++;
+    threadActivities[*index].threadId = threadId;
+    threadActivities[*index].lastActiveTime = time(NULL);
+    pthread_rwlock_unlock(&activitiesMutex);
+}
+
+void UpdateThreadActivity(int index)
+{
+    pthread_rwlock_wrlock(&activitiesMutex);
+    threadActivities[index].lastActiveTime = time(NULL);
+    pthread_rwlock_unlock(&activitiesMutex);
+}
+
 int main(int argc, char** argv)
 {
     uid_t uid = getuid();
@@ -1753,6 +1830,9 @@ int main(int argc, char** argv)
     InitAgentGlobalVariable();
 
     CmServerCmdProcessorInit();
+
+    InitActivity();
+
     status = CreateCheckNetworkThread();
     if (status != 0) {
         exit(status);

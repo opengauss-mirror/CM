@@ -84,6 +84,9 @@ void *VotingDiskMain(void *arg)
     }
     VotingDiskNodeInfo nodeInfo;
 
+    int index = -1;
+    AddThreadActivity(&index, threadId);
+
     for (;;) {
         if (g_shutdownRequest) {
             cm_sleep(5);
@@ -91,6 +94,7 @@ void *VotingDiskMain(void *arg)
         }
         nodeInfo.nodeTime = time(NULL);
         UpdateVotingDiskStatus(&nodeInfo);
+        UpdateThreadActivity(index);
         cm_sleep(1);
     }
 

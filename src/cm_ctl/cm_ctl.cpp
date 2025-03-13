@@ -81,6 +81,7 @@ bool g_dataPathQuery = false;
 bool g_ipQuery = false;
 bool g_availabilityZoneCommand = false;
 bool switchover_all_quick = false;
+bool g_kickStatQuery = false;
 int do_force = 0;
 int g_fencedUdfQuery = 0;
 int shutdown_level = 0;  // cm_ctl stop single instance, single node or all nodes
@@ -198,7 +199,7 @@ const int RES_LIST_INST_INPUT = 30;
 const int ErrorCode = -2;
 
 // short and long Options corresponds to CtlCommand.Need to change the options here, if options of the commands are added or modified
-static const char* g_allowedOptions = "aAb:B:cCD:dE:fFgil:I:j:k:L:m:M:n:NP:pqrRsSt:T:vwxz:";
+static const char* g_allowedOptions = "aAb:B:cCD:dE:fFgil:I:j:k:L:m:M:n:NP:OpqrRsSt:T:vwxz:";
 static const vector<vector<int>> g_allowedActionOptions = {
         {}, // no command
         { 'L' }, // "restart" command
@@ -207,7 +208,7 @@ static const vector<vector<int>> g_allowedActionOptions = {
         { 'z', 'n', 'D', 'q', 'f', 'a', 'A', 't' }, // "switchover" command
         {'c', 'n', 'D', 't', 'f', 'b', 'j'}, // "build" command
         {}, // CM_REMOVE_COMMAND -- no corresponding commands need user to input in the commandline
-        {'z', 'n', 'D', 'R', 'l', 'v', 'w', 'C', 's', 'S', 'd', 'i', 'F', 'L', 'x', 'p', 'r', 't', 'g', MINORITY_AZ}, // "query" command
+        {'z', 'n', 'D', 'R', 'l', 'v', 'w', 'C', 's', 'S', 'd', 'i', 'F', 'L', 'x', 'p', 'r', 't', 'g', 'O', MINORITY_AZ}, // "query" command
         {'I', 'n', 'k', 1, 2, 3, CMS_P_MODE, CM_SET_PARAM, CM_AGENT_MODE, CM_SERVER_MODE}, // "set" command
         {1, 2, 3}, // "get" command
         {}, // CM_STARTCM_COMMAND -- no corresponding commands need user to input in the commandline
@@ -1946,6 +1947,9 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
         case 'i':
             g_ipQuery = true;
             break;
+        case 'O':
+            g_kickStatQuery = true;
+            break;
 #ifdef ENABLE_MULTIPLE_NODES
         case 'L':
             MatchCmdArgL();
@@ -2198,6 +2202,8 @@ static void DoQueryCommand(int *status)
 {
     if (backup_process_query) {
         *status = do_global_barrier_query();
+    } else if (g_kickStatQuery) {
+        *status = DoKickOutStatQuery();
     } else {
         *status = do_query();
     }

@@ -1507,6 +1507,11 @@ static void MsgGlobalBarrierQuery(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgP
     ProcessCtlToCmQueryBarrierMsg(recvMsgInfo);
 }
 
+static void MsgKickStatQuery(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    ProcessCtlToCmQueryKickStatMsg(recvMsgInfo);
+}
+
 static void MsgDnSyncList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
@@ -1744,6 +1749,7 @@ static void InitCmCtlCmdProc()
     g_cmdProc[MSG_CTL_CM_RHB_STATUS_REQ] = MsgShowStatus;
     g_cmdProc[MSG_CTL_CM_NODE_DISK_STATUS_REQ] = MsgShowStatus;
     g_cmdProc[MSG_CTL_CM_FLOAT_IP_REQ] = MsgShowStatus;
+    g_cmdProc[MSG_CTL_CM_NODE_KICK_COUNT] = MsgKickStatQuery;
 }
 
 static void InitCmAgentCmdProc()

@@ -249,11 +249,7 @@ class InstallImpl:
 
     def startCluster(self):
         self.logger.log("Starting cluster.")
-        if self.primaryTermAbnormal:
-            self.logger.warn("Term of primary is invalid , restart the cluster.")
-            startCmd = "source %s; cm_ctl stop; cm_ctl start" % self.envFile
-        else:
-            startCmd = "source %s; cm_ctl start" % self.envFile
+        startCmd = "source %s; cm_ctl start" % self.envFile
         status, output = subprocess.getstatusoutput(startCmd)
         if status != 0:
             self.logger.debug("Command: " + startCmd)
@@ -272,6 +268,11 @@ class InstallImpl:
             self.logger.logExit("Failed to query cluster status." + errorDetail)
         self.logger.log(output)
         self.logger.log("Install CM tool success.")
+        if self.primaryTermAbnormal:
+            self.logger.warn("Term of primary is invalid or not maximal.\n"
+                "Hint: To avoid CM arbitration anomalies in this situation, "
+                "please restart the database.\n"
+                "Command : cm_ctl stop && cm_ctl start")
 
     @staticmethod
     def refreshStaticFile(envFile, xmlFile):

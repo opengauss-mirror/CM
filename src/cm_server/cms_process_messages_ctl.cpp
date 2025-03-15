@@ -28,6 +28,7 @@
 #include "cms_common.h"
 #include "cm_ip.h"
 #include "cm_msg_version_convert.h"
+#include "cms_arbitrate_datanode.h"
 
 /**
  * @brief
@@ -371,6 +372,13 @@ void ProcessCtlToCmBuildMsg(MsgRecvInfo* recvMsgInfo, ctl_to_cm_build *buildMsg)
     }
 
     if (ackMsg.command_result == CM_INVALID_COMMAND) {
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
+        return;
+    }
+
+    if (find_primary_term(groupIndex) == InvalidTerm) {
+        write_runlog(DEBUG1, "primary term is invalid, can't do build.\n");
+        ackMsg.command_result = CM_INVALID_PRIMARY_TERM;
         (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
         return;
     }

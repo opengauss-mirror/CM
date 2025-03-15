@@ -90,6 +90,23 @@ static bool DnPhonyDeadProcessE2E(int dnId, int phonyDead)
     return false;
 }
 
+static int CheckDataPathModifyTime(char *dataPath)
+{
+    struct stat datapathState = {0};
+    if (stat(dataPath, &datapathState) != 0) {
+        write_runlog(WARNING, "find datapathj %s failed\n", dataPath);
+        return -1;
+    }
+    time_t now = time(NULL);
+    if (now - datapathState.st_mtime < agent_phony_dead_check_interval) {
+        return 0;
+    }
+    write_runlog(WARNING,
+                 "find datapath %s, it does not modify for long time (%lu:%lu)\n",
+                 dataPath, now, datapathState.st_mtime);
+    return -1;
+}
+
 static bool DnPhonyDeadStatusCheck(int dnId, uint32 *agentCheckTimeInterval)
 {
     uint32 i = (uint32)dnId;
@@ -145,6 +162,9 @@ static bool DnPhonyDeadStatusCheck(int dnId, uint32 *agentCheckTimeInterval)
                 write_runlog(WARNING, "dn_%u phony dead, immediate shutdown\n", g_currentNode->datanode[i].datanodeId);
                 immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
             }
+        }
+        if (rc != 0) {
+            rc = CheckDataPathModifyTime(g_currentNode->datanode[i].datanodeLocalDataPath);
         }
         return (rc == 0) ? false : true;
     }

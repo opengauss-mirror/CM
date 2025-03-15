@@ -1787,6 +1787,7 @@ typedef struct cm_to_ctl_central_node_status_st {
 #define CM_INVALID_COMMAND 2
 #define CM_DN_NORMAL_STATE 3
 #define CM_DN_IN_ONDEMAND_STATUE 4
+#define CM_INVALID_PRIMARY_TERM 5
 
 typedef struct cm_to_ctl_command_ack_st {
     int msg_type;

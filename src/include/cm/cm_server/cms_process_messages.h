@@ -114,6 +114,7 @@ void process_agent_to_cm_fenced_UDF_status_report_msg(
     const agent_to_cm_fenced_UDF_status_report* agent_to_cm_fenced_UDF_status_ptr);
 void ProcessCtlToCmQueryGlobalBarrierMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtlToCmQueryBarrierMsg(MsgRecvInfo* recvMsgInfo);
+void ProcessCtlToCmQueryKickStatMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtl2CmOneInstanceBarrierQueryMsg(
     MsgRecvInfo* recvMsgInfo, uint32 node, uint32 instanceId, int instanceType);
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))

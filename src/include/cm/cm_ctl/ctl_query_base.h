@@ -54,10 +54,10 @@
 #define CYCLE_BREAK (1)
 #define CYCLE_RETURN (2)
 
-
 int ProcessDataBeginMsg(const char *receiveMsg, bool *recDataEnd);
 void DoProcessNodeEndMsg(const char *receiveMsg);
 status_t SetCmQueryContent(ctl_to_cm_query *cmQueryContent);
+void ProcessKickOutCountMsg(const char *receiveMsg);
 uint32 GetDnIpMaxLen();
 uint32 GetCnIpMaxLen();
 uint32 GetGtmIpMaxLen();

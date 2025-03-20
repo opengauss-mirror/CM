@@ -101,26 +101,21 @@ typedef struct ErrBufCtx_ {
     char fmtLogTime[FORMATTED_TS_LEN];
 } ErrBufCtx;
 
-static pthread_key_t g_key;
-static pthread_once_t g_keyOnce = PTHREAD_ONCE_INIT;
-
-void MakeKey(void)
-{
-    (void)pthread_key_create(&g_key, free);
-}
-
+static pthread_key_t g_cm_log_key = PTHREAD_KEYS_MAX;
 static ErrBufCtx *GetErrBufCtx()
 {
-    (void)pthread_once(&g_keyOnce, MakeKey);
+    if (g_cm_log_key == PTHREAD_KEYS_MAX) {
+        (void)pthread_key_create(&g_cm_log_key, free);
+    }
 
-    void *errCtx = pthread_getspecific(g_key);
+    void *errCtx = pthread_getspecific(g_cm_log_key);
     if (errCtx == NULL) {
         errCtx = malloc(sizeof(ErrBufCtx));
         if (errCtx == NULL) {
             (void)printf("FATAL: out of memory! g_errCtx requested size: %lu.\n", sizeof(ErrBufCtx));
             exit(1);
         }
-        (void)pthread_setspecific(g_key, errCtx);
+        (void)pthread_setspecific(g_cm_log_key, errCtx);
     }
 
     return (ErrBufCtx *)errCtx;

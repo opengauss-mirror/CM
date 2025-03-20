@@ -1017,7 +1017,8 @@ static void PrintKickOutResult(int32 resIdx, const MaxNodeCluster *maxCluster)
     }
 
     MaxClusterResStatus nodeStatus = GetResNodeStat(g_node[nodeIdx].node, LOG);
-    if (!IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus)) {
+    if (!IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus) ||
+        !IsAllResAvailInNode(resIdx) || !IsNodeRhbAlive(resIdx)) {
         write_runlog(LOG, "kick out result: node(%u) res inst manual stop or report timeout.\n", g_node[nodeIdx].node);
         RecordKickout(KICKOUT_TYPE_RES);
         return;

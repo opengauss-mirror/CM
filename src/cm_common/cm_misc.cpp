@@ -72,6 +72,63 @@ conn_option_t g_sslOption;
 ArbitrateParamsOn2Nodes g_paramsOn2Nodes = {"", false, false, 20};
 static const int VAILD_IP_ADDR = 1;
 
+const char *g_valueTypeStr[] = {
+    "bool",
+    "enum",
+    "integer",
+    "string",
+    "NULL",
+};
+
+const char *g_boolValueList[] = {
+    "true",
+    "false",
+    "on",
+    "off",
+    "yes",
+    "no",
+    "0",
+    "1",
+    "y",
+    "n",
+    "t",
+    "f",
+    "NULL",
+};
+
+const char *g_boolTrueValueList[] = {
+    "true",
+    "on",
+    "yes",
+    "1",
+    "y",
+    "t",
+    "NULL",
+};
+
+const char *g_boolFalseValueList[] = {
+    "false",
+    "no",
+    "off",
+    "0",
+    "n",
+    "f",
+    "NULL",
+};
+
+const char *g_ddbLogLevelList[] {
+    "RUN_ERR",
+    "RUN_WAR",
+    "RUN_INF",
+    "DEBUG_ERR",
+    "DEBUG_WAR",
+    "DEBUG_INF",
+    "TRACE",
+    "PROFILE",
+    "OPER",
+    "NULL",
+};
+
 bool CmFileExist(const char *file_path)
 {
     int32 ret;
@@ -1373,4 +1430,26 @@ bool IsNeedCheckFloatIp()
         return true;
     }
     return false;
+}
+
+bool IsStringInList(const char *str, const char * const *strList, uint32 listNums)
+{
+    if (str == NULL) {
+        return false;
+    }
+    for (uint32 i = 0; i < listNums; i++) {
+        if (strcasecmp(strList[i], str) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+uint32 GetArrayLength(const char* arr[]) {
+    uint32 len = 0;
+    while (arr[len] != NULL) {
+        len++;
+    }
+    return len;
 }

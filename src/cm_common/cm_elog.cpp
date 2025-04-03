@@ -990,50 +990,6 @@ void get_log_level(const char* config_file)
     return;  /* default value warning */
 }
 
-/* used for cm_agent */
-void get_build_mode(const char* config_file)
-{
-    char buf[BUF_LEN];
-
-    if (config_file == NULL) {
-        return;
-    }
-
-    FILE *fd = fopen(config_file, "r");
-    if (fd == NULL) {
-        (void)printf("FATAL can not open config file: %s errno:%s\n", config_file, strerror(errno));
-        exit(1);
-    }
-
-    while (!feof(fd)) {
-        errno_t rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
-        securec_check_errno(rc, (void)rc);
-        (void)fgets(buf, BUF_LEN, fd);
-
-        /* skip # comment */
-        if (is_comment_line(buf) == 1) {
-            continue;
-        }
-
-        /* check all lines */
-        if (strstr(buf, "incremental_build") != NULL) {
-            if ((strstr(buf, "on") != NULL) || (strstr(buf, "true") != NULL) || (strstr(buf, "yes") != NULL) ||
-                (strstr(buf, "1") != NULL)) {
-                incremental_build = true;
-            } else if ((strstr(buf, "off") != NULL) || (strstr(buf, "false") != NULL) || (strstr(buf, "no") != NULL) ||
-                (strstr(buf, "0") != NULL)) {
-                incremental_build = false;
-            } else {
-                incremental_build = true;
-                write_runlog(FATAL, "invalid value for parameter \"incremental_build\" in %s.\n", config_file);
-            }
-        }
-    }
-
-    (void)fclose(fd);
-    return;
-}
-
 /* used for cm_agent and cm_server */
 void get_log_file_size(const char* config_file)
 {

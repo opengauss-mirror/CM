@@ -153,7 +153,6 @@ void switchLogFile(void);
 
 void get_log_paramter(const char* confDir);
 int get_cm_thread_count(const char* config_file);
-void get_build_mode(const char* config_file);
 /* trim blank characters on both ends */
 char* trim(char* src);
 int is_comment_line(const char* str);

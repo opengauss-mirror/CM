@@ -1374,3 +1374,28 @@ bool IsNeedCheckFloatIp()
     }
     return false;
 }
+
+bool IsStringInList(const char *str, const char * const *strList, uint32 listNums)
+{
+    if (str == NULL) {
+        return false;
+    }
+    for (uint32 i = 0; i < listNums; i++) {
+        if (strcasecmp(strList[i], str) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+uint32 GetArrayLength(const char* arr[]) {
+    if (arr == NULL) {
+        return 0;
+    }
+    uint32 length = 0;
+    for (const char **p = arr; *p != NULL; p++) {
+        length++;
+    }
+    return length;
+}

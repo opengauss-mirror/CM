@@ -101,23 +101,34 @@ function update_dcc_dependency() {
     echo "there is no DCC source[${DCC}], and no 3rd path, we skip update dcc libs."
 }
 
-# use gcc7.3
+# prepare gccenv
 function gcc_env() {
+ #   if [[ -d "${THIRD}/buildtools/gcc10.3" ]]; then
+ #       GCC_VERSION=10.3
+ #   else
+ #       GCC_VERSION=7.3
+ #   fi
+#
+ #   GCC=$GCC_VERSION
+
     if [ "${THIRD}" == "library" ]; then
         export CC=$(which gcc)
         export CXX=$(which g++)
         return
     fi
+
     if [ X"${sys_tools}" = X"ON" ]; then
         export GCC_INSTALL_HOME=$(gcc -v 2>&1 | grep prefix | awk -F'prefix=' '{print $2}' |awk -F' ' '{print $1}')
     else
         export GCC_INSTALL_HOME="${THIRD}/buildtools/gcc${GCC}/gcc"
         export PATH=${GCC_INSTALL_HOME}/bin:${PATH}
     fi
+
     if [ ! -d "${GCC_INSTALL_HOME}" ]; then
         echo "No gcc path"
         exit 1
     fi
+
     export CC=$GCC_INSTALL_HOME/bin/gcc
     export CXX=$GCC_INSTALL_HOME/bin/g++
     export LD_LIBRARY_PATH=${GCC_INSTALL_HOME}/lib64:${LD_LIBRARY_PATH}

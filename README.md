@@ -131,6 +131,7 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
 | -3rd  | ${Code directory}/binarylibs | [binarylibs path]                      | 指定binarylibs路径。该路径必须是绝对路径。        |
 | -o  | ${Code directory}/output | [output path]                      | 指定最终编译结果的输出路径。        |
 | -pkg  | 请勿使用此选项。             | -                                      | 将代码编译结果压缩至安装包。                      |
+| --gcc | 10.3                         | [7.3; 10.3]                            | 指定gcc版本                                      |
 
 > **注意** 
 >
@@ -151,7 +152,7 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
 举例： 
 
 ```shell
-[user@linux CM]$ sh build.sh       # 编译安装release版本的openGauss。需代码目录下有binarylibs或者其软链接，否则将会失败。
+[user@linux CM]$ sh build.sh -3rd /sda/binarylibs      # 编译安装release版本的openGauss。
 [user@linux CM]$ sh build.sh -m debug -3rd /sda/binarylibs    # 编译安装debug版本的openGauss
 ```
 

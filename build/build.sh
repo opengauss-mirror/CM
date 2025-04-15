@@ -17,21 +17,26 @@ export MULTIPLE_NODES="ON"
 export OPEN_SOURCE_MODE="inc"
 export LIBPQ="ON"
 export KRB="OFF"
-export GCC="7.3"
+export GCC="10.3"
 export PRIVATEGAUSS="ON"
 export ALARM="ON"
 
 export DCC="${PROJECT_ROOT_PATH}/../DCC"
 export CBB="${PROJECT_ROOT_PATH}/../CBB"
-export PKG_NAME_PRE="Package_ddes_cm"
+export PKG_NAME_PRE="openGauss-CM"
 
-export SYMBOLS_NAME_PRE="Symbols_ddes_cm"
+export SYMBOLS_NAME_PRE="openGauss-CM-Symbol"
 export PKG_PREFIX_NAME=""
 export VERSION="DEFAULT"
 export USE_LSE="OFF"
 
+source ${PROJECT_ROOT_PATH}/build/get_PlatForm_str.sh
+declare package_pre_name
+declare package_name
+declare sha256_name
+
 function help() {
-    echo "$0 [-m {release|debug|memcheck|cov}] [-3rd \${THIRD_BINARY_PATH}] [-o \${OUTPUT_PATH}] [--pkg] [--single]
+    echo "$0 [-m {release|debug|memcheck|cov}] [-3rd \${THIRD_BINARY_PATH}] [-o \${OUTPUT_PATH}] [--pkg] [--single] [--gcc {10.3|7.3}]
         default: $0 -m ${VERSION_MODE} -3rd \"${THIRD}\" -o \"${OUT_PATH}\""
 }
 
@@ -107,25 +112,60 @@ function update_dcc_dependency() {
     echo "there is no DCC source[${DCC}], and no 3rd path, we skip update dcc libs."
 }
 
-# prepare gccenv
-function gcc_env() {
- #   if [[ -d "${THIRD}/buildtools/gcc10.3" ]]; then
- #       GCC_VERSION=10.3
- #   else
- #       GCC_VERSION=7.3
- #   fi
-#
- #   GCC=$GCC_VERSION
-
-    if [ "${THIRD}" == "library" ]; then
-        export CC=$(which gcc)
-        export CXX=$(which g++)
-        return
+function get_os_version()
+{
+    PLAT_FORM_STR=$(sh "${PROJECT_ROOT_PATH}/build/get_PlatForm_str.sh")
+    if [ "${PLAT_FORM_STR}"x == "Failed"x ]; then
+        echo "We only support openEuler(aarch64), EulerOS(aarch64), FusionOS, CentOS, UOS, H3Linux, NingOS platform."
+        exit 1;
     fi
 
-    if [ X"${sys_tools}" = X"ON" ]; then
-        export GCC_INSTALL_HOME=$(gcc -v 2>&1 | grep prefix | awk -F'prefix=' '{print $2}' |awk -F' ' '{print $1}')
+    PLATFORM=32
+    bit=$(getconf LONG_BIT)
+    if [ "$bit" -eq 64 ]; then
+        PLATFORM=64
+    fi
+
+    if [ X$(echo $PLAT_FORM_STR | grep "centos") != X"" ]; then
+        dist_version="CentOS"
+    elif [ X$(echo $PLAT_FORM_STR | grep "openeuler") != X"" ]; then
+        dist_version="openEuler"
+    elif [ X$(echo $PLAT_FORM_STR | grep "fusionos") != X"" ]; then
+        dist_version="FusionOS"
+    elif [ X$(echo $PLAT_FORM_STR | grep "euleros") != X"" ]; then
+        dist_version="EulerOS"
+    elif [ X$(echo $PLAT_FORM_STR | grep "ubuntu") != X"" ]; then
+        dist_version="Ubuntu"
+    elif [ X$(echo $PLAT_FORM_STR | grep "asianux") != X"" ]; then
+        dist_version="Asianux"
+    elif [ X$(echo $PLAT_FORM_STR | grep "kylin") != X"" ]; then
+        dist_version="Kylin"
+    elif [ X$(echo $PLAT_FORM_STR | grep "uos") != X"" ]; then
+        dist_version="UOS"
+    elif [ X$(echo $PLAT_FORM_STR | grep "h3linux") != X"" ]; then
+        dist_version="H3Linux"
+    elif [ X$(echo $PLAT_FORM_STR | grep "ningos") != X"" ]; then
+        dist_version="NingOS"
     else
+        echo "We only support openEuler(aarch64), EulerOS(aarch64), FusionOS, CentOS, Ubuntu(x86), UOS, H3Linux, NingOS platform."
+        echo "Kernel is $kernel"
+        exit 1
+    fi
+
+    os_version=$(cat /etc/os-release | grep -w VERSION_ID | awk -F '"' '{print $2}')
+
+    PLATFORM_ARCH=$(uname -m)
+    version_string=$(grep VERSION "${PROJECT_ROOT_PATH}/build/cm.ver" | cut -d'"' -f2)
+    package_pre_name="${version_string}-${dist_version}${os_version}-${PLATFORM_ARCH}"
+    package_name="${PKG_NAME_PRE}-${package_pre_name}.tar.gz"
+    sha256_name="${PKG_NAME_PRE}-${package_pre_name}.sha256"
+    symbol_name="${SYMBOLS_NAME_PRE}-${package_pre_name}.tar.gz"
+}
+
+# default gcc10.3
+function gcc_env() {
+    if [ -n "${THIRD}" ] && [ -d "${THIRD}" ]; then
+        export GCC_PATH="${THIRD}/buildtools/gcc${GCC}"
         export GCC_INSTALL_HOME="${THIRD}/buildtools/gcc${GCC}/gcc"
         export PATH=${GCC_INSTALL_HOME}/bin:${PATH}
     fi
@@ -137,7 +177,7 @@ function gcc_env() {
 
     export CC=$GCC_INSTALL_HOME/bin/gcc
     export CXX=$GCC_INSTALL_HOME/bin/g++
-    export LD_LIBRARY_PATH=${GCC_INSTALL_HOME}/lib64:${LD_LIBRARY_PATH}
+    export LD_LIBRARY_PATH=${GCC_INSTALL_HOME}/lib64:${LD_LIBRARY_PATH}:${GCC_PATH}/isl/lib:${GCC_PATH}/mpc/lib/:${GCC_PATH}/mpfr/lib:${GCC_PATH}/gmp/lib:$LD_LIBRARY_PATH
 }
 
 function compile_open_source() {
@@ -172,13 +212,15 @@ function pre_build() {
         export GCC_VERSION=${GCC}
     fi
 
+    get_os_version
+
     gcc_env
 }
 
 function pkg() {
     echo "pkg cm start"
-    local bin_tar="${PKG_NAME_PRE}.tar.gz"
-    local sym_tar="${SYMBOLS_NAME_PRE}.tar.gz"
+    local bin_tar="${package_name}"
+    local sym_tar="${symbol_name}"
     if [ "x${PKG_PREFIX_NAME}" != "x" ]; then
         local bin_tar="${PKG_PREFIX_NAME}.tar.gz"
         local sym_tar="${PKG_PREFIX_NAME}-symbol.tar.gz"
@@ -190,6 +232,7 @@ function pkg() {
     if [ -d symbols ]; then
         tar --owner=root --group=root -czf "${sym_tar}" symbols
     fi
+    sha256sum "${bin_tar}" | awk -F" " '{print $1}' > "${sha256_name}"
 }
 
 function seperate_symbols() {

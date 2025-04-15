@@ -114,6 +114,7 @@ void process_agent_to_cm_fenced_UDF_status_report_msg(
     const agent_to_cm_fenced_UDF_status_report* agent_to_cm_fenced_UDF_status_ptr);
 void ProcessCtlToCmQueryGlobalBarrierMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtlToCmQueryBarrierMsg(MsgRecvInfo* recvMsgInfo);
+void ProcessCtlToCmQueryKickStatMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtl2CmOneInstanceBarrierQueryMsg(
     MsgRecvInfo* recvMsgInfo, uint32 node, uint32 instanceId, int instanceType);
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
@@ -164,7 +165,8 @@ void ResetResNodeStat();
 void ProcessDnFloatIpMsg(MsgRecvInfo *recvMsgInfo, CmaDnFloatIpInfo *floatIp);
 void GetFloatIpSet(CmFloatIpStatAck *ack, size_t maxMsgLen, size_t *curMsgLen);
 void ProcessPingDnFloatIpFailedMsg(MsgRecvInfo *recvMsgInfo, CmSendPingDnFloatIpFail *failedFloatIpInfo);
-
+void ProcessOndemandStatusMsg(MsgRecvInfo *recvMsgInfo, agent_to_cm_ondemand_status_report* ondemandStatusReport);
+bool isInOnDemandStatus();
 #ifdef ENABLE_MULTIPLE_NODES
 void SetCmdStautus(int32 ret);
 #endif

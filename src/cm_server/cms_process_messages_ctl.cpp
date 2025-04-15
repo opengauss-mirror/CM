@@ -28,6 +28,7 @@
 #include "cms_common.h"
 #include "cm_ip.h"
 #include "cm_msg_version_convert.h"
+#include "cms_arbitrate_datanode.h"
 
 /**
  * @brief
@@ -104,16 +105,16 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
     ackMsg.pengding_command = instStatus->command_member[memberIndex].pengding_command;
 
     if (!CheckCanDoSwitchover(groupIndex, memberIndex, &(ackMsg.pengding_command), str)) {
-        if (g_isInRedoStateUnderSwitchover) {
-            /* We have reciver in on-demand status report message from cm agent. */
-            ackMsg.command_result = CM_DN_IN_ONDEMAND_STATUE;
-        } else {
-            ackMsg.command_result = CM_ANOTHER_COMMAND_RUNNING;
-        }
+        ackMsg.command_result = CM_ANOTHER_COMMAND_RUNNING;
         (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
         return;
     }
-
+    /* If the cluester is in OnDemand Recovery. */
+    if (isInOnDemandStatus()) {
+        ackMsg.command_result = CM_DN_IN_ONDEMAND_STATUE;
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
+        return;
+    }
     // tell cm_ctl will switchover to primary or standby
     ackMsg.pengding_command = localRole;
     write_runlog(LOG, "ackMsg.pengding_command: %d\n", localRole);
@@ -375,6 +376,13 @@ void ProcessCtlToCmBuildMsg(MsgRecvInfo* recvMsgInfo, ctl_to_cm_build *buildMsg)
         return;
     }
 
+    if (find_primary_term(groupIndex) == InvalidTerm) {
+        write_runlog(DEBUG1, "primary term is invalid, can't do build.\n");
+        ackMsg.command_result = CM_INVALID_PRIMARY_TERM;
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ackMsg));
+        return;
+    }
+
     if ((IsSendBuild(instStatus->data_node_member[memberIndex].local_status.local_role)) &&
         (instStatus->data_node_member[memberIndex].local_status.db_state == INSTANCE_HA_STATE_NORMAL) &&
         (buildMsg->force_build != CM_CTL_FORCE_BUILD)) {
@@ -525,7 +533,7 @@ bool IsInCatchUpState(uint32 ptrIndex, int memberIndex)
 static bool CanDoSwitchoverInAllShard(MsgRecvInfo* recvMsgInfo, cm_to_ctl_command_ack *msg,
     const ctl_to_cm_switchover *swithoverPtr, const char *str)
 {
-    if (g_isInRedoStateUnderSwitchover) {
+    if (isInOnDemandStatus()) {
         msg->command_result = CM_DN_IN_ONDEMAND_STATUE;
         msg->pengding_command = (int)MSG_CM_AGENT_SWITCHOVER;
         (void)RespondMsg(recvMsgInfo, 'S', (const char *)(msg), sizeof(cm_to_ctl_command_ack));
@@ -823,7 +831,7 @@ static void SetSwitchoverInSwitchoverDone(uint32 groupIdx, int memIdx, bool isNe
  */
 static bool CanDoSwitchoverUnderOnDemandStatus()
 {
-    if (g_isInRedoStateUnderSwitchover) {
+    if (isInOnDemandStatus()) {
         write_runlog(LOG, "We can not process switchover because cluster in on-demand redo status.\n");
         return false;
     }
@@ -1376,7 +1384,7 @@ static status_t FillCm2CtlRsp4InstGroup(MsgRecvInfo* recvMsgInfo, const ctl_to_c
 
 static void ProcessCtlToCmOneTypeQryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry, int type)
 {
-    cm_to_ctl_instance_status cmToCtlStatusContent;
+    cm_to_ctl_instance_status cmToCtlStatusContent = {0};
     cm_to_ctl_instance_status_ipv4 cmToCtlStatusContentIpv4 = {0};
     uint32 ii;
     int jj;
@@ -1452,7 +1460,7 @@ static void ProcessCtlToCmOneInstanceQueryMsg(
 {
     uint32 groupIndex = 0;
     int memberIndex = 0;
-    cm_to_ctl_instance_status statusMsg;
+    cm_to_ctl_instance_status statusMsg = {0};
     errno_t rc;
 
     if (find_node_in_dynamic_configure(node, instanceId, &groupIndex, &memberIndex) != 0) {
@@ -2167,7 +2175,7 @@ static void HdlCtlToCmClusRestStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_
  */
 void ProcessCtlToCmQueryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry)
 {
-    cm_to_ctl_instance_status instStat;
+    cm_to_ctl_instance_status instStat = {0};
     cm_to_ctl_cluster_status clusterStat;
     bool isQryDone = false;
 
@@ -2433,7 +2441,7 @@ void process_ctl_to_cm_get_datanode_relation_msg(
     int member_index = 0;
     int instanceType;
     int ret;
-    cm_to_ctl_get_datanode_relation_ack ack;
+    cm_to_ctl_get_datanode_relation_ack ack = {0};
 
     ret = find_node_in_dynamic_configure(info_ptr->node,
         info_ptr->instanceId, &group_index, &member_index);

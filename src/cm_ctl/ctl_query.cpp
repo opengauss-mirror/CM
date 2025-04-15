@@ -59,6 +59,7 @@ extern bool g_paralleRedoState;
 extern bool g_dataPathQuery;
 extern bool g_availabilityZoneCommand;
 extern bool g_ipQuery;
+extern bool g_kickStatQuery;
 extern int g_fencedUdfQuery;
 extern int g_waitSeconds;
 extern uint32 g_nodeIndexForCmServer[CM_PRIMARY_STANDBY_NUM];
@@ -187,6 +188,68 @@ int do_global_barrier_query(void)
             }
         }
         CmSleep(1);
+        wait_time--;
+    }
+    return 0;
+}
+
+int DoKickOutStatQuery(void)
+{
+    ctl_to_cm_kick_stat_query cm_ctl_cm_query_content;
+    cm_ctl_cm_query_content.msg_type = (int)MSG_CTL_CM_NODE_KICK_COUNT;
+    ctl_to_cm_kick_stat_query_ack *cm_ctl_cm_query_content_ack;
+    int ret;
+    
+    do_conn_cmserver(false, 0);
+    if (CmServer_conn == NULL) {
+        write_runlog(ERROR,
+            "can't connect to cm_server.\n"
+            "Maybe cm_server is not running, or timeout expired. Please try again.\n");
+        return -1;
+    }
+
+    ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&cm_ctl_cm_query_content,
+        sizeof(ctl_to_cm_kick_stat_query));
+    if (ret != 0) {
+        CMPQfinish(CmServer_conn);
+        CmServer_conn = NULL;
+        return -1;
+    }
+    CmSleep(1);
+
+    int wait_time = GLOBAL_BARRIER_WAIT_SECONDS * 1000;
+    while (wait_time > 0) {
+        ret = cm_client_flush_msg(CmServer_conn);
+        if (ret == TCP_SOCKET_ERROR_EPIPE) {
+            CMPQfinish(CmServer_conn);
+            CmServer_conn = NULL;
+            return -1;
+        }
+
+        char *receiveMsg = recv_cm_server_cmd(CmServer_conn);
+        if (receiveMsg != NULL) {
+            cm_ctl_cm_query_content_ack = (ctl_to_cm_kick_stat_query_ack*) receiveMsg;
+            int kickout_due_to_disk = 0;
+            int kickout_due_to_resource = 1;
+            int kickout_due_to_disconnection = 2;
+            if (cm_ctl_cm_query_content_ack->msg_type == MSG_CTL_CM_NODE_KICK_COUNT_ACK) {
+                (void)fprintf(g_logFilePtr,
+                    "[   Node Kickout Statistics (Last Hour)   ]\n\n");
+                (void)fprintf(g_logFilePtr,
+                    "Kicked out due to disk heartbeat timeout count                   : %d\n",
+                    cm_ctl_cm_query_content_ack->kickCount[kickout_due_to_disk]);
+                (void)fprintf(g_logFilePtr,
+                    "Kicked out due to res inst manual stop or report timeout count   : %d\n",
+                    cm_ctl_cm_query_content_ack->kickCount[kickout_due_to_resource]);
+                (void)fprintf(g_logFilePtr,
+                    "Kicked out due to node disconnected count                        : %d\n",
+                    cm_ctl_cm_query_content_ack->kickCount[kickout_due_to_disconnection]);
+                (void)fprintf(g_logFilePtr,
+                    "Please check the cmserver logs for more details on the kickout reasons.\n");
+                (void)fprintf(g_logFilePtr,
+                    "Note: Kickout counts will be reset if the cm_server restarts or switches the primary node.\n");
+            }
+        }
         wait_time--;
     }
     return 0;

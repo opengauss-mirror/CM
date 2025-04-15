@@ -36,6 +36,7 @@
 #include "cma_global_params.h"
 #include "cma_common.h"
 #include "cma_network_check.h"
+#include "cma_main.h"
 
 const uint32 INVALID_PORT = 0xFFFFFFFF;
 
@@ -1353,10 +1354,14 @@ static uint8 IsAllFloatIpDown()
 void *CmaCheckNetWorkMain(void *arg)
 {
     thread_name = "CheckNetWork";
-    write_runlog(LOG, "CmaCheckNetWorkMain will start, and threadId is %llu.\n", (unsigned long long)pthread_self());
-    (void)pthread_detach(pthread_self());
+    pthread_t threadId = pthread_self();
+    write_runlog(LOG, "CmaCheckNetWorkMain will start, and threadId is %llu.\n", (unsigned long long)threadId);
+    (void)pthread_detach(threadId);
     uint32 sleepInterval = 1;
     bool networkRes = false;
+    int index = -1;
+    AddThreadActivity(&index, threadId);
+
     for (;;) {
         if ((g_exitFlag || g_shutdownRequest) && IsAllFloatIpDown()) {
             cm_sleep(sleepInterval);
@@ -1365,6 +1370,7 @@ void *CmaCheckNetWorkMain(void *arg)
         networkRes = CheckNetworkStatus();
         CheckNetworkValidCnt(networkRes);
         DoNetworkOper();
+        UpdateThreadActivity(index);
         cm_sleep(sleepInterval);
     }
     ReleaseSource();

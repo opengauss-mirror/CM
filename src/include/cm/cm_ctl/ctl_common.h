@@ -202,6 +202,7 @@ status_t do_start(void);
 int DoStop(void);
 int do_query(void);
 int do_global_barrier_query(void);
+int DoKickOutStatQuery(void);
 int DoSwitchover(const CtlOption *ctx);
 int do_finish_redo(void);
 #ifdef ENABLE_MULTIPLE_NODES

@@ -95,6 +95,16 @@ void ProcessCtlToCmQueryBarrierMsg(MsgRecvInfo* recvMsgInfo)
     (void)RespondMsg(recvMsgInfo, 'S', (char *)(&globalBarrierInfo), sizeof(cm_to_ctl_cluster_global_barrier_info));
 }
 
+void ProcessCtlToCmQueryKickStatMsg(MsgRecvInfo* recvMsgInfo)
+{
+    ctl_to_cm_kick_stat_query_ack ackMsg = {0};
+    ackMsg.msg_type = (int) MSG_CTL_CM_NODE_KICK_COUNT_ACK;
+    errno_t rc = memcpy_s(ackMsg.kickCount, sizeof(ackMsg.kickCount),
+        reason_counts, sizeof(reason_counts));
+    securec_check_errno(rc, (void)rc);
+    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(ctl_to_cm_kick_stat_query_ack));
+}
+
 void ProcessSharedStorageMsg(MsgRecvInfo* recvMsgInfo)
 {
     errno_t rc;

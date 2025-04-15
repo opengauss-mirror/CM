@@ -104,6 +104,16 @@ void CreateDiskUsageCheckThread()
     }
 }
 
+void CreateOnDemandRedoCheckThread()
+{
+    int err;
+    pthread_t thr_id;
+    if ((err = pthread_create(&thr_id, NULL, PGControlDataCheckMain, NULL)) != 0) {
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
+        exit(-1);
+    }
+}
+
 void CreateStartAndStopThread()
 {
     int err;

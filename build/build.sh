@@ -174,6 +174,7 @@ function gcc_env() {
         echo "No gcc path"
         exit 1
     fi
+
     export CC=$GCC_INSTALL_HOME/bin/gcc
     export CXX=$GCC_INSTALL_HOME/bin/g++
     export LD_LIBRARY_PATH=${GCC_INSTALL_HOME}/lib64:${LD_LIBRARY_PATH}:${GCC_PATH}/isl/lib:${GCC_PATH}/mpc/lib/:${GCC_PATH}/mpfr/lib:${GCC_PATH}/gmp/lib:$LD_LIBRARY_PATH

@@ -34,6 +34,7 @@
 #include "cm_rhb.h"
 #include "cm_voting_disk.h"
 #include "cm/cm_msg_common.h"
+#include "cms_arbitrate_cluster.h"
 
 #define CM_MAX_SENDER_NUM 2
 #define CM_MSG_ERR_INFORMATION_LENGTH 1024
@@ -272,6 +273,8 @@ typedef enum CM_MessageType_st {
     MSG_CMA_PING_DN_FLOAT_IP_FAIL = 185,
     MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP = 186,
     MSG_AGENT_ONDEMAND_STATUES_REPORT = 187,
+    MSG_CTL_CM_NODE_KICK_COUNT = 188,
+    MSG_CTL_CM_NODE_KICK_COUNT_ACK = 189,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -394,6 +397,12 @@ const int INSTANCE_WALSNDSTATE_UNKNOWN = 6;
 #define SSL_DISABLE (2)
 
 #define CM_DDB_CLUSTER_INFO_CMD "--cluster_info"
+
+/* The ondemand recovery status. */
+#define IN_ONDEMAND_RECOVERY 0
+#define NOT_IN_ONDEMAND_RECOVERY 1
+/* Unexpect status of pg_controldata, such as DSS down. */
+#define UNEXPECT_ONDEMAND_RECOVERY 2
 
 
 extern int g_gtmPhonyDeadTimes;
@@ -567,6 +576,15 @@ typedef struct ctl_to_cm_disable_cn_ack_st {
     bool disable_ok;
     char errMsg[CM_MSG_ERR_INFORMATION_LENGTH];
 } ctl_to_cm_disable_cn_ack;
+
+typedef struct ctl_to_cm_kick_stat_query_st {
+    int msg_type;
+} ctl_to_cm_kick_stat_query;
+
+typedef struct ctl_to_cm_kick_stat_query_ack_st {
+    int msg_type;
+    int kickCount[KICKOUT_TYPE_COUNT];
+} ctl_to_cm_kick_stat_query_ack;
 
 typedef enum arbitration_mode_en {
     UNKNOWN_ARBITRATION = 0,
@@ -1216,8 +1234,9 @@ typedef struct agent_to_cm_fenced_UDF_status_report_st {
 
 typedef struct agent_to_cm_ondemand_status_report {
     int msg_type;
-    uint32 nodeid;
-    int status;
+    uint32 nodeId;
+    int onDemandStatus;
+    time_t reportTime;
 } agent_to_cm_ondemand_status_report;
 
 typedef struct agent_to_cm_datanode_status_report_st {
@@ -1787,6 +1806,7 @@ typedef struct cm_to_ctl_central_node_status_st {
 #define CM_INVALID_COMMAND 2
 #define CM_DN_NORMAL_STATE 3
 #define CM_DN_IN_ONDEMAND_STATUE 4
+#define CM_INVALID_PRIMARY_TERM 5
 
 typedef struct cm_to_ctl_command_ack_st {
     int msg_type;
@@ -1952,6 +1972,11 @@ typedef struct kerberos_group_report_status_st {
     pthread_rwlock_t lk_lock;
     cm_to_ctl_kerberos_status_query kerberos_status;
 } kerberos_group_report_status;
+
+typedef struct cm_to_ctl_kick_count_st {
+    int msg_type;
+    int kickCount[KICKOUT_TYPE_COUNT];
+} cm_to_ctl_kick_count;
 
 
 /* ----------------

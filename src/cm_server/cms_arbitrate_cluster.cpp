@@ -87,6 +87,11 @@ typedef struct CurCmRhbStatSt {
     time_t hbs[MAX_RHB_NUM][MAX_RHB_NUM];
 } CurCmRhbStat;
 
+
+KickoutEvent kickout_events[MAX_KICKOUT_HISTORY];
+int event_count = 0;
+int reason_counts[KICKOUT_TYPE_COUNT] = {0};
+
 static CurCmRhbStat g_curRhbStat = {0};
 static const int32 CHECK_DELAY_IN_ROLE_CHANGING = 10;
 
@@ -969,6 +974,37 @@ static void PrintAllRhbStatus()
     }
 }
 
+void RecordKickout(KickoutType type)
+{
+    if (event_count >= MAX_KICKOUT_HISTORY) {
+        write_runlog(WARNING, "Event buffer full, cannot record more events.\n");
+        return;
+    }
+    kickout_events[event_count].timestamp = time(NULL);
+    kickout_events[event_count].reason = type;
+    event_count++;
+    reason_counts[type]++;
+}
+
+void UpdateKickoutCounts()
+{
+    time_t now = time(NULL);
+    int i = 0;
+
+    while (i < event_count && difftime(now, kickout_events[i].timestamp) > ONE_HOUR_IN_SECONDS) {
+        KickoutType reason = kickout_events[i].reason;
+        reason_counts[reason]--;
+        i++;
+    }
+
+    if (i > 0) {
+        for (int j = i; j < event_count; j++) {
+            kickout_events[j - i] = kickout_events[j];
+        }
+        event_count -= i;
+    }
+}
+
 static void PrintKickOutResult(int32 resIdx, const MaxNodeCluster *maxCluster)
 {
     uint32 nodeIdx = g_clusterRes.map[resIdx].nodeIdx;
@@ -976,12 +1012,15 @@ static void PrintKickOutResult(int32 resIdx, const MaxNodeCluster *maxCluster)
     MaxClusterResStatus heartbeatStatus = GetDiskHeartbeatStat(nodeIdx, g_diskTimeout, LOG);
     if (!IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_VOTE_DISK, heartbeatStatus)) {
         write_runlog(LOG, "kick out result: node(%u) disk heartbeat timeout.\n", g_node[nodeIdx].node);
+        RecordKickout(KICKOUT_TYPE_DISK);
         return;
     }
 
     MaxClusterResStatus nodeStatus = GetResNodeStat(g_node[nodeIdx].node, LOG);
-    if (!IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus)) {
+    if (!IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus) ||
+        !IsAllResAvailInNode(resIdx) || !IsNodeRhbAlive(resIdx)) {
         write_runlog(LOG, "kick out result: node(%u) res inst manual stop or report timeout.\n", g_node[nodeIdx].node);
+        RecordKickout(KICKOUT_TYPE_RES);
         return;
     }
 
@@ -992,6 +1031,7 @@ static void PrintKickOutResult(int32 resIdx, const MaxNodeCluster *maxCluster)
         if (!CheckPoint2PointConn(resIdx, maxCluster->nodeCluster.cluster[i])) {
             write_runlog(LOG, "kick out result: (index=%d,nodeId=%u) disconnect with (index=%d,nodeId=%u).\n",
                 resIdx, GetNodeByPoint(resIdx), i, GetNodeByPoint(i));
+            RecordKickout(KICKOUT_TYPE_DISCONN);
             continue;
         }
     }
@@ -1094,6 +1134,7 @@ void *MaxNodeClusterArbitrateMain(void *arg)
     }
     g_curRhbStat.baseTime = time(NULL);
     GetRhbStat(g_curRhbStat.hbs, &g_curRhbStat.hwl);
+
     for (;;) {
         if (got_stop) {
             g_threadProcessStatus = THREAD_PROCESS_STOP;
@@ -1121,6 +1162,7 @@ void *MaxNodeClusterArbitrateMain(void *arg)
         FindMaxNodeCluster(&g_curCluster);
 
         CompareCurLastMaxNodeCluster(&g_lastCluster, &g_curCluster);
+        UpdateKickoutCounts();
         cm_sleep(sleepInterval);
     }
     g_threadProcessStatus = THREAD_PROCESS_STOP;

@@ -25,6 +25,9 @@
 #ifndef CMS_ARBITRATE_CLUSTER_H
 #define CMS_ARBITRATE_CLUSTER_H
 
+#define MAX_KICKOUT_HISTORY 600
+#define ONE_HOUR_IN_SECONDS 3600
+
 typedef enum MaxClusterResStatusE {
     MAX_CLUSTER_STATUS_INIT = 0, // no message
     MAX_CLUSTER_STATUS_UNKNOWN,
@@ -43,6 +46,22 @@ typedef enum MaxClusterResTypeE {
 } MaxClusterResType;
 
 struct MsgRecvInfo;
+
+typedef enum {
+    KICKOUT_TYPE_DISK,
+    KICKOUT_TYPE_RES,
+    KICKOUT_TYPE_DISCONN,
+    KICKOUT_TYPE_COUNT
+} KickoutType;
+
+typedef struct {
+    time_t timestamp;
+    KickoutType reason;
+} KickoutEvent;
+
+extern int event_count;
+extern int reason_counts[KICKOUT_TYPE_COUNT];
+
 void SetDelayArbiClusterTime();
 void NotifyResRegOrUnreg();
 void CheckMaxClusterHeartbeartValue();

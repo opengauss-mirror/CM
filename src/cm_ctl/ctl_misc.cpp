@@ -1107,6 +1107,9 @@ int DoBuild(const CtlOption *ctx)
                     } else if (commandAckPtr->command_result == CM_INVALID_COMMAND) {
                         write_runlog(ERROR, "can not build at current role.\n");
                         FINISH_CONNECTION((CmServer_conn), -1);
+                    } else if (commandAckPtr->command_result == CM_INVALID_PRIMARY_TERM) {
+                        write_runlog(ERROR, "can not build, primary term is invalid.\n");
+                        FINISH_CONNECTION((CmServer_conn), -1);
                     } else if (commandAckPtr->command_result == CM_DN_NORMAL_STATE) {
                         write_runlog(LOG, "build successfully.\n");
                         FINISH_CONNECTION((CmServer_conn), 0);

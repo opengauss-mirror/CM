@@ -1503,6 +1503,8 @@ void *DiskUsageCheckMain(void *arg)
     thread_name = "DiskUsageCheck";
     pthread_t threadId = pthread_self();
     write_runlog(LOG, "Disk usage check thread start, threadid %lu.\n", threadId);
+    int index = -1;
+    AddThreadActivity(&index, threadId);
 
     for (;;) {
         if (g_shutdownRequest) {
@@ -1513,6 +1515,24 @@ void *DiskUsageCheckMain(void *arg)
         CheckDiskForCNDataPath();
 #endif
         CheckDiskForDNDataPath();
+        UpdateThreadActivity(index);
+        cm_sleep(1);
+    }
+    return NULL;
+}
+
+void *PGControlDataCheckMain(void *arg)
+{
+    thread_name = "PGDataControlCheck";
+    pthread_t threadId = pthread_self();
+    write_runlog(LOG, "PG Control Data check thread start, threadid %lu.\n", threadId);
+
+    for (;;) {
+        if (g_shutdownRequest || !g_isStorageWithDMSorDSS) {
+            cm_sleep(5);
+            continue;
+        }
+        PGDataControlCheck();
         cm_sleep(1);
     }
     return NULL;

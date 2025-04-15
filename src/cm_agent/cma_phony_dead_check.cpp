@@ -90,6 +90,23 @@ static bool DnPhonyDeadProcessE2E(int dnId, int phonyDead)
     return false;
 }
 
+static int CheckDataPathModifyTime(char *dataPath)
+{
+    struct stat datapathState = {0};
+    if (stat(dataPath, &datapathState) != 0) {
+        write_runlog(WARNING, "find datapathj %s failed\n", dataPath);
+        return -1;
+    }
+    time_t now = time(NULL);
+    if (now - datapathState.st_mtime < agent_phony_dead_check_interval) {
+        return 0;
+    }
+    write_runlog(WARNING,
+                 "find datapath %s, it does not modify for long time (%lu:%lu)\n",
+                 dataPath, now, datapathState.st_mtime);
+    return -1;
+}
+
 static bool DnPhonyDeadStatusCheck(int dnId, uint32 *agentCheckTimeInterval)
 {
     uint32 i = (uint32)dnId;
@@ -146,6 +163,9 @@ static bool DnPhonyDeadStatusCheck(int dnId, uint32 *agentCheckTimeInterval)
                 immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
             }
         }
+        if (rc != 0) {
+            rc = CheckDataPathModifyTime(g_currentNode->datanode[i].datanodeLocalDataPath);
+        }
         return (rc == 0) ? false : true;
     }
 }
@@ -156,6 +176,7 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
     int i = -1;
     bool isPhonyDead = true;
     uint32 agentCheckTimeInterval;
+    pthread_t threadId = pthread_self();
     for (i = 0; i < (int)g_currentNode->datanodeCount; i++) {
         if (g_currentNode->datanode[i].datanodeId == instanceId) {
             break;
@@ -169,6 +190,10 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
 
     struct timeval checkBegin, checkEnd;
     uint32 expired_time = 0;
+
+    int index = -1;
+    AddThreadActivity(&index, threadId);
+    
     for (;;) {
         if (g_shutdownRequest || agent_phony_dead_check_interval == 0) {
             cm_sleep(5);
@@ -196,6 +221,7 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
         if (expired_time < agentCheckTimeInterval) {
             cm_sleep(agentCheckTimeInterval - expired_time);
         }
+        UpdateThreadActivity(index);
     }
     return NULL;
 }

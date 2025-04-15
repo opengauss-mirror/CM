@@ -57,6 +57,8 @@ const int cn_repair_retry_times = 3;
 /* interval set to 10s to reduce invalid log */
 const uint32 g_check_dn_sql5_interval = 10;
 
+#define MAX_THREADS 99
+
 typedef long pgpid_t;
 
 /* These global variables are used to compressed traces */
@@ -105,6 +107,11 @@ const TriggerTypeStringMap triggerTypeStringMap[EVENT_COUNT] = {
     {EVENT_FAILOVER, "on_failover"},
     {EVENT_SWITCHOVER, "on_switchover"}
 };
+
+typedef struct {
+    pthread_t threadId;
+    time_t lastActiveTime;
+} ThreadActivity;
 
 extern void GetEventTrigger();
 
@@ -247,6 +254,12 @@ extern pthread_rwlock_t g_datanodesFailoverLock;
 extern pthread_rwlock_t g_gtmsFailoverLock;
 extern int g_gtmMode;
 extern char *g_eventTriggers[EVENT_COUNT];
+extern ThreadActivity *threadActivities;
+extern int activities_index;
+extern pthread_rwlock_t activitiesMutex;
+
+extern void AddThreadActivity(int *index, pthread_t threadId);
+extern void UpdateThreadActivity(int index);
 extern void ExecuteEventTrigger(const EventTriggerType triggerType, int32 staPrimId = -1);
 
 extern int node_match_find(const char *node_type, const char *node_port, const char *node_host, const char *node_port1,

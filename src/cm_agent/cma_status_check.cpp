@@ -1113,6 +1113,9 @@ void* DNStatusCheckMain(void *arg)
     securec_check_intval(ret, (void)ret);
     int32 running = PROCESS_UNKNOWN;
 
+    int index = -1;
+    AddThreadActivity(&index, threadId);
+
     for (;;) {
         set_thread_state(threadId);
         struct stat instance_stat_buf = {0};
@@ -1262,6 +1265,7 @@ void* DNStatusCheckMain(void *arg)
         check_dn_sql5_timer = (check_dn_sql5_timer > 0) ? (check_dn_sql5_timer - 1) : g_check_dn_sql5_interval;
         dn_restart_count_check_time++;
         dn_restart_count_check_time_in_hour++;
+        UpdateThreadActivity(index);
     }
 }
 
@@ -1494,6 +1498,71 @@ void CheckDiskForDNDataPath()
         securec_check_errno(rc, (void)rc);
         (void)pthread_rwlock_unlock(&(g_dnReportMsg[ii].lk_lock));
     }
+}
+
+/* 
+ * This function is used to ensure whether the status modify;
+ */
+static int IsClusterInRedoState() 
+{
+    FILE *fp;
+    char buffer[1024] = {0};
+    const char* expectedString = "in on-demand redo";
+    char *foundString = NULL;
+
+    fp = popen("pg_controldata +data | grep 'Cluster status:' | "
+               "awk '{for (i=NF-2;i<=NF;i++) printf \"%s \", $i; printf \"\\n\"}'", "r");
+    if (fp == NULL) {
+        write_runlog(LOG, "Failed to exec command(pg_controldata +data).\n");
+        return UNEXPECT_ONDEMAND_RECOVERY;
+    }
+
+    if (fgets(buffer, sizeof(buffer), fp) == NULL) {
+        pclose(fp);
+        return UNEXPECT_ONDEMAND_RECOVERY;
+    }
+    pclose(fp);
+
+    foundString = buffer;
+
+    char *end = foundString + strlen(foundString) - 1;
+    while (end >= foundString && (*end == '\n' || *end == '\r' || *end == '\t' || *end == ' ')) {
+        *end = '\0';
+        end--; 
+    }
+    /* If we found nothing, it must be something wrong with gaussdb or DSS. */
+    if (*foundString == '\0') {
+        return UNEXPECT_ONDEMAND_RECOVERY;
+    }
+
+    if (!strcmp(foundString, expectedString)) {
+        return IN_ONDEMAND_RECOVERY;
+    } else {
+        return NOT_IN_ONDEMAND_RECOVERY;
+    }
+}
+
+
+/* Report the in on-demand-status by msg, notify the CM server no need to wait switchover complated. */
+static void AgentSendOnDemandStatus(int onDemandStatus)
+{
+    agent_to_cm_ondemand_status_report reportMsg = {0};
+    reportMsg.msg_type = (int)MSG_AGENT_ONDEMAND_STATUES_REPORT;
+    reportMsg.onDemandStatus = onDemandStatus;
+    reportMsg.reportTime = time(NULL);
+    reportMsg.nodeId = g_nodeHeader.node;
+    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_ondemand_status_report), "ondemand status");
+    write_runlog(DEBUG1, "Node(%u) ondemand status send to cms, status is: %d\n", reportMsg.nodeId, onDemandStatus);
+}
+
+/*
+ * This function is main entry for pgdata charge.
+ * It can be extended in the future.
+ */
+void PGDataControlCheck()
+{
+    int clusterStatusUnderOnDemand = IsClusterInRedoState();
+    AgentSendOnDemandStatus(clusterStatusUnderOnDemand);
 }
 
 static void PingPeerIP(int* count, const char localIP[CM_IP_LENGTH], const char peerIP[CM_IP_LENGTH])

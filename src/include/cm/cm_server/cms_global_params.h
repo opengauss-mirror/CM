@@ -234,8 +234,8 @@ typedef enum ThreadProcessStatusE {
 
 #define AUTHENTICATION_TIMEOUT 60
 #define RELOADWAIT_TIMEOUT 60
-#define MAX_DN_NUM 1024
-#define MAX_INSTANCE_NUM 2048
+#define MAX_DN_NUM 9
+#define MAX_INSTANCE_NUM 9
 
 #define CAN_NOT_SEND_SYNC_lIST 1
 #define NOT_NEED_TO_SEND_SYNC_LIST 2

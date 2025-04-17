@@ -282,11 +282,22 @@ void groupByDirectoryAndPattern(LogFile* logFile, LogFile* sortLogFile, const ch
         for (uint32 jj = 0; jj < (uint32)(cnt - 1); jj++) {
             rc = snprintf_s(outpath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s%s", sortLogFile[jj].fileName, ".gz");
             securec_check_intval(rc, (void)rc);
+
+            struct stat orig_stat;
+            mode_t orig_mode = 0;
+            if (stat(sortLogFile[jj].fileName, &orig_stat) == 0) {
+                // Get original file permissions
+                orig_mode = orig_stat.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+            } else {
+                write_runlog(WARNING, "Cannot get file mode for %s, use default\n", sortLogFile[jj].fileName);
+                // Default permissions: 644
+                orig_mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+            }
             if (GZCompress(sortLogFile[jj].fileName, MAX_PATH_LEN, outpath, MAX_PATH_LEN) == 0) {
                 write_runlog(LOG, "Compressed log file, file name: %s\n", sortLogFile[jj].fileName);
                 ++numCompressed;
-                /* Compress successful then remove the source trace, and chmod */
-                (void)chmod(outpath, S_IRUSR);
+                /* Compress successful then remove the source trace, and change the file permissions */
+                (void)chmod(outpath, orig_mode);
                 delLogFile(sortLogFile[jj].fileName);
             }
         }

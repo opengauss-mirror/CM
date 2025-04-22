@@ -106,12 +106,14 @@ status_t StartOneResInst(CmResConfList *conf)
 
     ret = CusResCmdExecute(conf->script, oper, (uint32)conf->checkInfo.timeOut, CM_FALSE);
     if (ret == 0) {
+        conf->checkInfo.startCount++;
         write_runlog(LOG, "StartOneResInst: run start script (%s %s) successfully.\n", conf->script, oper);
     } else if (ret == CUS_RES_START_FAIL_DEPEND_NOT_ALIVE) {
         write_runlog(LOG, "StartOneResInst: res(%s) inst(%u) can't do restart, cause depend resource inst not alive.\n",
             conf->resName, conf->cmInstanceId);
         return CM_ERROR;
     } else {
+        conf->checkInfo.startCount++;
         write_runlog(ERROR, "StartOneResInst: run start script (%s %s) failed, ret=%d.\n", conf->script, oper, ret);
     }
 
@@ -350,6 +352,7 @@ static inline void RestartOneResInst(CmResConfList *conf)
     if ((stat != CM_RES_ISREG_REG) && (stat != CM_RES_ISREG_NOT_SUPPORT)) {
         write_runlog(LOG, "cur inst(%u) isreg stat=(%u), and reg failed, restart failed.\n",
             conf->cmInstanceId, (uint32)stat);
+        conf->checkInfo.startCount++;
         return;
     }
     (void)StartOneResInst(conf);
@@ -385,7 +388,6 @@ static void ProcessOfflineInstance(CmResConfList *conf)
         return;
     }
     RestartOneResInst(conf);
-    conf->checkInfo.startCount++;
     conf->checkInfo.startTime = curTime;
     write_runlog(LOG, "res(%s) inst(%u) has been restart (%d) times, restart more than (%d) time will manually stop.\n",
         conf->resName, conf->cmInstanceId, conf->checkInfo.startCount, conf->checkInfo.restartTimes);

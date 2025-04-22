@@ -58,7 +58,7 @@ const char *g_libnetManualStart = "libnet_manual_start";
 #endif
 
 #define ACTIVITY_TIMEOUT 120
-#define STACK_CAPTURE_TIMEOUT 30
+#define STACK_CAPTURE_TIMEOUT 120
 
 cm_instance_central_node_msg g_ccnNotify;
 

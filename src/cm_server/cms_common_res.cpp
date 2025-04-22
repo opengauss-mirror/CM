@@ -572,8 +572,10 @@ void SendRegMsgToCma(uint32 destNodeId, int resMode, uint32 resInstId, const cha
 
     if (resMode == 0) {
         (void)BroadcastMsg('S', (char *)(&sendMsg), sizeof(CmsNotifyAgentRegMsg), LOG);
+        write_runlog(LOG, "Broadcast res(%s) reg msg (resMode = %d) to cma.\n", resName, resMode);
     } else if (resMode == 1) {
         (void)SendToAgentMsg(destNodeId, 'S', (char *)(&sendMsg), sizeof(CmsNotifyAgentRegMsg), LOG);
+        write_runlog(LOG, "Send to node(%d) res(%s) reg msg (resMode = %d) to cma.\n", destNodeId, resName, resMode);
     } else {
         write_runlog(ERROR, "%s, unknown resMode(%d).\n", __FUNCTION__, resMode);
     }

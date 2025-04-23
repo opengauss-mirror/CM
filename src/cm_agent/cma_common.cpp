@@ -37,7 +37,6 @@
 #include "cma_instance_management.h"
 #include "cma_instance_management_res.h"
 #include "cma_common.h"
-#include "cm_misc_base.h"
 
 void save_thread_id(pthread_t thrId)
 {
@@ -295,9 +294,11 @@ void get_connection_mode(char *config_file)
         return;
     }
     if (strlen(dstStr) != 0) {
-        if (IsBoolCmParamTrue(dstStr)) {
+        if (strcasecmp(dstStr, "on") == 0 || strcasecmp(dstStr, "yes") == 0 || strcasecmp(dstStr, "true") == 0 ||
+            strcasecmp(dstStr, "1") == 0) {
             enable_xc_maintenance_mode = true;
-        } else if (IsBoolCmParamFalse(dstStr)) {
+        } else if (strcasecmp(dstStr, "off") == 0 || strcasecmp(dstStr, "no") == 0 ||
+                   strcasecmp(dstStr, "false") == 0 || strcasecmp(dstStr, "0") == 0) {
             enable_xc_maintenance_mode = false;
         } else {
             enable_xc_maintenance_mode = true;
@@ -322,9 +323,11 @@ void get_start_mode(char *config_file)
         return;
     }
     if (strlen(dstStr) != 0) {
-        if (IsBoolCmParamTrue(dstStr)) {
+        if (strcasecmp(dstStr, "on") == 0 || strcasecmp(dstStr, "yes") == 0 || strcasecmp(dstStr, "true") == 0 ||
+            strcasecmp(dstStr, "1") == 0) {
             security_mode = true;
-        } else if (IsBoolCmParamFalse(dstStr)) {
+        } else if (strcasecmp(dstStr, "off") == 0 || strcasecmp(dstStr, "no") == 0 ||
+            strcasecmp(dstStr, "false") == 0 || strcasecmp(dstStr, "0") == 0) {
             security_mode = false;
         } else {
             security_mode = true;
@@ -337,35 +340,6 @@ void get_start_mode(char *config_file)
 
     return;
 }
-
-/* used for cm_agent */
-void get_build_mode(char* config_file)
-{
-    const char *srcStr = "incremental_build";
-    char dstStr[10] = {'\0'};
-
-    /* read parameter from cm_agent.conf by accurate parameter name */
-    if (get_config_param(config_file, srcStr, dstStr, sizeof(dstStr)) < 0) {
-        write_runlog(ERROR, "get_config_param() get incremental_build fail.\n");
-        return;
-    }
-    if (strlen(dstStr) != 0) {
-        if (IsBoolCmParamTrue(dstStr)) {
-            incremental_build = true;
-        } else if (IsBoolCmParamFalse(dstStr)) {
-            incremental_build = false;
-        } else {
-            incremental_build = true;
-            write_runlog(FATAL, "invalid value for parameter \"incremental_build\" in %s.\n", config_file);
-        }
-    } else {
-        incremental_build = true;
-        write_runlog(FATAL, "Get config parameter \"incremental_build\" value failed!\n");
-    }
-
-    return;
-}
-
 void ReloadParametersFromConfig()
 {
     write_runlog(LOG, "reload cm_agent parameters from config file.\n");
@@ -415,9 +389,6 @@ void ReloadParametersFromConfigfile()
     if (get_config_param(configDir, "security_mode", g_enableOnlineOrOffline, sizeof(g_enableOnlineOrOffline)) < 0) {
         write_runlog(ERROR, "get_config_param() get security_mode fail.\n");
     }
-    if (get_config_param(configDir, "incremental_build", g_enableIncrementalBuild, sizeof(g_enableIncrementalBuild)) < 0) {
-        write_runlog(ERROR, "get_config_param() get incremental_build fail.\n");
-    }
 
     if (get_config_param(configDir, "unix_socket_directory", g_unixSocketDirectory, sizeof(g_unixSocketDirectory)) <
         0) {
@@ -447,7 +418,7 @@ void ReloadParametersFromConfigfile()
         "  agent_connect_retries=%u, agent_check_interval=%u, agent_kill_instance_timeout=%u, \n"
         "  agent_phony_dead_check_interval=%u, enable_gtm_phony_dead_check=%u, disk_timeout=%u, \n"
         "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, "
-        "upgrade_from=%u,\n  enable_cn_auto_repair=%s, enable_log_compress=%s, security_mode=%d,\n"
+        "upgrade_from=%u,\n  enable_cn_auto_repair=%s, enable_log_compress=%s, security_mode=%s,\n"
         "  incremental_build=%d, unix_socket_directory=%s, "
 #ifndef ENABLE_MULTIPLE_NODES
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s,\n"
@@ -477,7 +448,7 @@ void ReloadParametersFromConfigfile()
         undocumentedVersion,
         g_enableCnAutoRepair,
         g_enableLogCompress,
-        security_mode,
+        g_enableOnlineOrOffline,
         incremental_build,
         g_unixSocketDirectory,
         g_enableE2ERto,

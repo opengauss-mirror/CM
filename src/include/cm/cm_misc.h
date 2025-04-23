@@ -144,12 +144,6 @@ typedef struct DbStateRoleString_t {
 #define ERROR_LIMIT_LEN 256
 #endif
 
-extern const char *g_valueTypeStr[];
-extern const char *g_boolValueList[];
-extern const char *g_boolTrueValueList[];
-extern const char *g_boolFalseValueList[];
-extern const char *g_ddbLogLevelList[];
-
 typedef struct ResStatusCheckInfoSt {
     long checkTime;
     long startTime;
@@ -250,8 +244,6 @@ extern void print_environ(void);
 extern const char* CmGetmsgtype(const CM_StringInfo msg, int datalen);
 extern const char* CmGetmsgbytes(CM_StringInfo msg, int datalen);
 extern const char* CmGetmsgbytesPtr(const CM_Result *msg, int datalen);
-extern bool IsStringInList(const char *str, const char * const *strList, uint32 listNums);
-extern uint32 GetArrayLength(const char* arr[]);
 
 /**
  * @brief

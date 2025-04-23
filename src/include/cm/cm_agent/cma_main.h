@@ -132,11 +132,6 @@ void sortLogFileByTimeAsc(LogFile* logFile, int low, int high);
 void get_start_mode(char* config_file);
 
 /*
- *        get the mode of the build
- */
-void get_build_mode(char* config_file);
-
-/*
  *        used for connection mode or option between cm_agent and cn/dn.
  */
 void get_connection_mode(char* config_file);

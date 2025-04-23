@@ -184,22 +184,20 @@ int GetHomePath(char *outputEnvValue, uint32 envValueLen, int32 logLevel)
     return 0;
 }
 
-bool IsBoolCmParamTrue(const char *value)
+bool IsBoolCmParamTrue(const char *param)
 {
-    uint32 listNums = GetArrayLength(g_boolTrueValueList) / sizeof(g_boolTrueValueList[0]);
-    return IsStringInList(value, g_boolTrueValueList, listNums);
-}
-
-bool IsBoolCmParamFalse(const char *value)
-{
-    uint32 listNums = GetArrayLength(g_boolFalseValueList) / sizeof(g_boolFalseValueList[0]);
-    return IsStringInList(value, g_boolFalseValueList, listNums);
+    return (strcasecmp(param, "on") == 0) || (strcasecmp(param, "yes") == 0) || (strcasecmp(param, "true") == 0) ||
+           (strcasecmp(param, "1") == 0);
 }
 
 bool CheckBoolConfigParam(const char* value)
 {
-    uint32 listNums = GetArrayLength(g_boolValueList) / sizeof(g_boolValueList[0]);;
-    return IsStringInList(value, g_boolValueList, listNums);
+    if (strcasecmp(value, "on") == 0 || strcasecmp(value, "yes") == 0 || strcasecmp(value, "true") == 0 ||
+        strcasecmp(value, "1") == 0 || strcasecmp(value, "off") == 0 || strcasecmp(value, "no") == 0 ||
+        strcasecmp(value, "false") == 0 || strcasecmp(value, "0") == 0) {
+        return true;
+    }
+    return false;
 }
 
 bool IsSharedStorageMode()

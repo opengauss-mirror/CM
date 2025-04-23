@@ -59,7 +59,6 @@ char g_cmLibnetManualStartPath[MAX_PATH_LEN] = {0};
 char g_cmResumingCnStopPath[MAX_PATH_LEN] = {0};
 /* on is online off is offline */
 char g_enableOnlineOrOffline[BOOL_STR_MAX_LEN] = {0};
-char g_enableIncrementalBuild[BOOL_STR_MAX_LEN] = {0};
 char g_unixSocketDirectory[MAXPGPATH] = {'\0'};
 char g_votingDiskPath[MAX_PATH_LEN] = {0};
 char g_enableCnAutoRepair[BOOL_STR_MAX_LEN] = {0};

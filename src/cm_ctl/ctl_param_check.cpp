@@ -138,6 +138,36 @@ const char *g_cmsParamInfo[] = {
     "upgrade_from|int|0,4294967295|NULL|For upgrading, specify which version we are upgrading from.|",
 };
 
+const char *g_valueTypeStr[] = {
+    "bool",
+    "enum",
+    "integer",
+    "string",
+};
+
+const char *g_boolValueList[] = {
+    "true",
+    "false",
+    "on",
+    "off",
+    "yes",
+    "no",
+    "0",
+    "1",
+};
+
+const char *g_ddbLogLevelList[] {
+    "RUN_ERR",
+    "RUN_WAR",
+    "RUN_INF",
+    "DEBUG_ERR",
+    "DEBUG_WAR",
+    "DEBUG_INF",
+    "TRACE",
+    "PROFILE",
+    "OPER"
+};
+
 using UnitType = enum UnitTypeEn {
     UNIT_ERROR = -1,
     UNIT_KB,
@@ -456,6 +486,17 @@ static status_t ParseParamInfo(const char *infoStr, ParamEnumEntry &varList)
     return CM_SUCCESS;
 }
 
+static bool IsStringInList(const char *str, const char * const *strList, uint32 listNums)
+{
+    for (uint32 i = 0; i < listNums; i++) {
+        if (strcmp(strList[i], str) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static bool IsValueInRange(const char *listValue, const char *value)
 {
     int ret;
@@ -481,7 +522,7 @@ static bool IsValueInRange(const char *listValue, const char *value)
 static status_t CheckBoolTypeValue(const char *param, const char *value)
 {
     /* the length of value list */
-    uint32 listNums = GetArrayLength(g_boolValueList) / sizeof(g_boolValueList[0]);
+    uint32 listNums = lengthof(g_boolValueList);
     if (IsStringInList(value, g_boolValueList, listNums)) {
         return CM_SUCCESS;
     }
@@ -800,8 +841,7 @@ static status_t CheckDdbLogLevel(const char *param, const char *value)
     }
 
     while (ptr != NULL) {
-        uint32 listNums = GetArrayLength(g_ddbLogLevelList) / sizeof(g_ddbLogLevelList[0]);
-        if (!IsStringInList(ptr, g_ddbLogLevelList, listNums)) {
+        if (!IsStringInList(ptr, g_ddbLogLevelList, (uint32)lengthof(g_ddbLogLevelList))) {
             write_runlog(ERROR, "The %s is outside the valid range for parameter \"%s\".\n", ptr, param);
             return CM_ERROR;
         }

@@ -94,6 +94,7 @@ void *UpdateResStatusListMain(void *arg)
         if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
             if (g_resStatListStatus == THREAD_PROCESS_READY) {
                 GetResStatAndSetThreadStat(THREAD_PROCESS_RUNNING, oldResVersion);
+                CleanAllResStatusReportInter();
             }
             if (g_resStatListStatus == THREAD_PROCESS_RUNNING) {
                 SaveLatestResStat(oldResVersion);

@@ -53,6 +53,7 @@ typedef struct CmConstTextT {
 #define CM_IS_EMPTY(text) (((text)->str == NULL) || ((text)->len == 0))
 #define CM_IS_QUOTE_CHAR(c1) ((c1) == '\'' || (c1) == '"' || (c1) == '`')
 #define CM_IS_QUOTE_STRING(c1, c2) ((c1) == (c2) && CM_IS_QUOTE_CHAR(c1))
+#define CM_IS_DIGITAL_LETER(c)        ((c) >= '0' && ((c) <= '9'))
 
 #define CM_TEXT_CLEAR(text) ((text)->len = 0)
 
@@ -116,11 +117,16 @@ bool8 CmTextStrEqualIns(const text_t *text, const char *str);
 bool8 CmFetchText(text_t *text, char splitChar, char encloseChar, text_t *sub);
 void CmSplitText(const text_t *text, char splitChar, char encloseChar, text_t *left, text_t *right);
 void CmRemoveBrackets(text_t *text);
+void CmRemoveSquareBrackets(text_t *text);
 void CmTrimText(text_t *text);
 void CmLtrimText(text_t *text);
 void CmRtrimText(text_t *text);
 bool8 IsCmBracketText(const text_t *text);
 status_t CmText2Str(const text_t *text, char *buf, uint32 bufSize);
 void CmTrimStr(char *str);
+status_t CmText2Uint16(const text_t *textSrc, uint16 *value);
+status_t CmStr2Uint16(const char *str, uint16 *value);
+status_t CmCheckIsNumber(const char *str);
+bool CmIsErr(const char *err);
 
 #endif

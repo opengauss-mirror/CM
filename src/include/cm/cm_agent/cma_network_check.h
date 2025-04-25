@@ -65,5 +65,7 @@ NetworkOper GetFloatIpOper(uint32 dnIdx);
 DnFloatIp *GetDnFloatIpByDnIdx(uint32 dnIdx);
 const char *GetOperMapString(NetworkOper oper);
 bool8 CheckNetworkStatusByIps(const char (*ips)[CM_IP_LENGTH], uint32 cnt);
+void SetNeedResetFloatIp(const CmSendPingDnFloatIpFail *recvMsg, uint32 dnIdx);
+bool CheckSupportIpV6();
 
 #endif

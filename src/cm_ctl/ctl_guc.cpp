@@ -760,7 +760,6 @@ static status_t ListRemoteConfMain(staticNodeConfig *node, const char *cmd)
             return CM_SUCCESS;
         }
     }
-
     return CM_ERROR;
 }
 

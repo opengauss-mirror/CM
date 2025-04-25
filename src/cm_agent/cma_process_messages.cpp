@@ -23,7 +23,8 @@
  */
 #include "securec.h"
 #include "cm/cm_elog.h"
-#include "cm/cm_msg.h"
+#include "cm_msg_version_convert.h"
+#include "cm_ip.h"
 #include "cm/cm_util.h"
 #include "cma_common.h"
 #include "cma_global_params.h"
@@ -1702,14 +1703,28 @@ static void MsgCmAgentLockNoPrimary(const AgentMsgPkg *msg, char *dataPath, cons
 static void MsgCmAgentLockChosenPrimary(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
 {
     int ret;
-    const cm_to_agent_lock2 *msgTypeLock2Ptr =
-        (const cm_to_agent_lock2 *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_lock2));
-    if (msgTypeLock2Ptr == NULL) {
-        return;
+    errno_t rc;
+    cm_to_agent_lock2 msgTypeLock = {0};
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        const cm_to_agent_lock2_ipv4 *msgTypeLock2PtrIpv4 =
+            (const cm_to_agent_lock2_ipv4 *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_lock2_ipv4));
+        if (msgTypeLock2PtrIpv4 == NULL) {
+            return;
+        }
+        CmToAgentLock2V1ToV2(msgTypeLock2PtrIpv4, &msgTypeLock);
+    } else {
+        const cm_to_agent_lock2 *msgTypeLock2Ptr =
+            (const cm_to_agent_lock2 *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_lock2));
+        if (msgTypeLock2Ptr == NULL) {
+            return;
+        }
+        rc = memcpy_s(&msgTypeLock, sizeof(cm_to_agent_lock2), msgTypeLock2Ptr, sizeof(cm_to_agent_lock2));
+        securec_check_errno(rc, (void)rc);
     }
-    ret = ProcessLockChosenPrimaryCmd(msgTypeLock2Ptr);
+    
+    ret = ProcessLockChosenPrimaryCmd(&msgTypeLock);
     if (ret != 0) {
-        write_runlog(ERROR, "set lock2 to instance %u failed.\n", msgTypeLock2Ptr->instanceId);
+        write_runlog(ERROR, "set lock2 to instance %u failed.\n", msgTypeLock.instanceId);
     }
 }
 
@@ -1879,6 +1894,44 @@ static void MsgCmAgentIsregCheckListChanged(const AgentMsgPkg *msg, char *dataPa
     ProcessIsregCheckListChanged(recvMsg);
 }
 
+void ProcessResetFloatIpFromCms(const CmSendPingDnFloatIpFail *recvMsg)
+{
+    write_runlog(LOG,
+        "[%s] nodeId(%u) instId(%u) receive floatIp from cms, count %u.\n",
+        __FUNCTION__,
+        recvMsg->baseInfo.node,
+        recvMsg->baseInfo.instId,
+        recvMsg->failedCount);
+    
+    uint32 dnIdx = 0;
+    bool ret = FindDnIdxInCurNode(recvMsg->baseInfo.instId, &dnIdx, "[ProcessResetFloatIpFromCms]");
+    if (!ret) {
+        write_runlog(ERROR,
+            "[%s] cannot do the network oper in instId(%u), because it cannot be found in current node.\n",
+            __FUNCTION__,
+            recvMsg->baseInfo.instId);
+        return;
+    }
+    SetNeedResetFloatIp(recvMsg, dnIdx);
+}
+
+void MsgCmAgentResetFloatIpAck(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+{
+    const CmSendPingDnFloatIpFail *recvMsg =
+        (const CmSendPingDnFloatIpFail *)CmGetMsgBytesPtr(msg, sizeof(CmSendPingDnFloatIpFail));
+    if (recvMsg == NULL) {
+        return;
+    }
+    if (!IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
+        write_runlog(DEBUG1,
+            "[%s] agent_backup_open=%d, cannot reset floatIp oper.\n",
+            __FUNCTION__,
+            (int32)agent_backup_open);
+        return;
+    }
+    ProcessResetFloatIpFromCms(recvMsg);
+}
+
 #ifdef ENABLE_MULTIPLE_NODES
 static void MsgCmAgentNotifyCn(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
@@ -2031,6 +2084,7 @@ void CmServerCmdProcessorInit(void)
     g_cmsCmdProcessor[MSG_CM_RES_REG]                           = MsgCmAgentResArbitrate;
     g_cmsCmdProcessor[MSG_CM_AGENT_FLOAT_IP_ACK]                = MsgCmAgentFloatIpAck;
     g_cmsCmdProcessor[MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED]    = MsgCmAgentIsregCheckListChanged;
+    g_cmsCmdProcessor[MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP] = MsgCmAgentResetFloatIpAck;
 #ifdef ENABLE_MULTIPLE_NODES
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN]                   = MsgCmAgentNotifyCn;
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN_CENTRAL_NODE]      = MsgCmAgentNotifyCnCentralNode;

@@ -26,7 +26,8 @@
 #include "cms_disk_check.h"
 #include "cms_ddb_adapter.h"
 #include "cms_common.h"
-
+#include "cm_ip.h"
+#include "cm_msg_version_convert.h"
 
 /**
  * @brief
@@ -213,12 +214,28 @@ static status_t ExeScpCommand(uint32 index)
     int ret;
     errno_t rc;
     char command[MAX_PATH_LEN] = { 0 };
-
     for (uint32 i = 0; i < g_node[index].sshCount; ++i) {
-        rc = snprintf_s(command, MAX_PATH_LEN, MAX_PATH_LEN - 1, "scp -r %s/gstor/data %s@%s:%s/gstor",
-            g_currentNode->cmDataPath, pw->pw_name, g_node[index].sshChannel[i], g_node[index].cmDataPath);
-        securec_check_intval(rc, (void)rc);
-
+        if (GetIpVersion(g_node[index].sshChannel[i]) == AF_INET6) {
+            rc = snprintf_s(command,
+                MAX_PATH_LEN,
+                MAX_PATH_LEN - 1,
+                "scp -r %s/gstor/data %s@[%s]:%s/gstor",
+                g_currentNode->cmDataPath,
+                pw->pw_name,
+                g_node[index].sshChannel[i],
+                g_node[index].cmDataPath);
+            securec_check_intval(rc, (void)rc);
+        } else {
+            rc = snprintf_s(command,
+                MAX_PATH_LEN,
+                MAX_PATH_LEN - 1,
+                "scp -r %s/gstor/data %s@%s:%s/gstor",
+                g_currentNode->cmDataPath,
+                pw->pw_name,
+                g_node[index].sshChannel[i],
+                g_node[index].cmDataPath);
+            securec_check_intval(rc, (void)rc);
+        }
         ret = system(command);
         if (ret != -1 && WEXITSTATUS(ret) == 0) {
             write_runlog(LOG, "exec cmd(%s) success\n", command);
@@ -1287,6 +1304,7 @@ static void FillCm2CtlRsp4DnGroup(uint32 ii, uint32 jj, cm_to_ctl_instance_statu
 static status_t FillCm2CtlRsp4InstGroup(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
     uint32 ii, int type, uint32 group_index, cm_to_ctl_instance_status *cmToCtlStatusContent)
 {
+    cm_to_ctl_instance_status_ipv4 cmToCtlStatusContentIpv4 = {0};
     for (int jj = 0; jj < g_instance_role_group_ptr[ii].count; jj++) {
         if (g_instance_role_group_ptr[ii].instanceMember[jj].instanceType != type) {
             break;
@@ -1316,15 +1334,22 @@ static status_t FillCm2CtlRsp4InstGroup(MsgRecvInfo* recvMsgInfo, const ctl_to_c
         write_runlog(DEBUG5, "send the instance query result (node =%u  instanceid =%u)\n",
             g_instance_role_group_ptr[ii].instanceMember[jj].node,
             g_instance_role_group_ptr[ii].instanceMember[jj].instanceId);
-        (void)RespondMsg(
-            recvMsgInfo, 'S', (char *)cmToCtlStatusContent, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
+        if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+            CmToCtlInstanceStatusV2ToV1(cmToCtlStatusContent, &cmToCtlStatusContentIpv4);
+            (void)RespondMsg(
+                recvMsgInfo, 'S', (char *)&(cmToCtlStatusContentIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+        } else {
+            (void)RespondMsg(
+                recvMsgInfo, 'S', (char *)cmToCtlStatusContent, sizeof(cm_to_ctl_instance_status));
+        }
     }
     return CM_SUCCESS;
 }
 
 static void ProcessCtlToCmOneTypeQryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry, int type)
 {
-    cm_to_ctl_instance_status cmToCtlStatusContent;
+    cm_to_ctl_instance_status cmToCtlStatusContent = {0};
+    cm_to_ctl_instance_status_ipv4 cmToCtlStatusContentIpv4 = {0};
     uint32 ii;
     int jj;
     uint32 group_index = 0;
@@ -1377,6 +1402,12 @@ static void ProcessCtlToCmOneTypeQryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_c
     cmToCtlStatusContent.msg_type = MSG_CM_CTL_NODE_END;
     cmToCtlStatusContent.instance_type = type;
 
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        CmToCtlInstanceStatusV2ToV1(&cmToCtlStatusContent, &cmToCtlStatusContentIpv4);
+        (void)RespondMsg(
+            recvMsgInfo, 'S', (char *)&(cmToCtlStatusContentIpv4), sizeof(cm_to_ctl_instance_status_ipv4), DEBUG5);
+        return;
+    }
     (void)RespondMsg(recvMsgInfo, 'S', (char *)&(cmToCtlStatusContent), sizeof(cm_to_ctl_instance_status), DEBUG5);
 }
 
@@ -1393,7 +1424,7 @@ static void ProcessCtlToCmOneInstanceQueryMsg(
 {
     uint32 groupIndex = 0;
     int memberIndex = 0;
-    cm_to_ctl_instance_status statusMsg;
+    cm_to_ctl_instance_status statusMsg = {0};
     errno_t rc;
 
     if (find_node_in_dynamic_configure(node, instanceId, &groupIndex, &memberIndex) != 0) {
@@ -1485,8 +1516,13 @@ static void ProcessCtlToCmOneInstanceQueryMsg(
     }
     write_runlog(DEBUG5, "send the instance query result (node=%u, instanceId=%u)\n", node, instanceId);
 
-    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&statusMsg), sizeof(statusMsg));  // XXXX:DEBUG5
-
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        cm_to_ctl_instance_status_ipv4 statusIpv4 = {0};
+        CmToCtlInstanceStatusV2ToV1(&statusMsg, &statusIpv4);
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&statusIpv4), sizeof(statusIpv4)); // XXXX:DEBUG5
+    } else {
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&statusMsg), sizeof(statusMsg));  // XXXX:DEBUG5
+    }
     return;
 }
 
@@ -1803,7 +1839,13 @@ static void HdlCtlToCmStartStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_que
     }
     /* Send CN status information in end message. */
     instStat->msg_type = MSG_CM_CTL_DATA_END;
-    (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        cm_to_ctl_instance_status_ipv4 instStatIpv4 = {0};
+        CmToCtlInstanceStatusV2ToV1(instStat, &instStatIpv4);
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&instStatIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+    } else {
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
+    }
 }
 
 static void HdlCtlToCmLogicCpleDetStatQry(MsgRecvInfo* recvMsgInfo, cm_to_ctl_instance_status *instStat,
@@ -1932,15 +1974,89 @@ static void HdlCtlToCmNonBalOrLgcCpleDetStatQry(MsgRecvInfo* recvMsgInfo, const 
     (void)RespondMsg(recvMsgInfo, 'S', (char *)clusterStat, sizeof(cm_to_ctl_cluster_status));
     if (clusterStat->inReloading) {
         instStat->msg_type = MSG_CM_CTL_DATA_END;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
+        if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+            cm_to_ctl_instance_status_ipv4 instStatIpv4 = {0};
+            CmToCtlInstanceStatusV2ToV1(instStat, &instStatIpv4);
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&instStatIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+        } else {
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
+        }
         *isQryDone = true;
         return;
     }
 }
 
-static status_t HdlCtlToCmClusDetStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
+status_t HdlCtlToCmClusDetstatQryForRelation(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
+    cm_to_ctl_instance_status *instStat, cm_to_ctl_instance_status_ipv4 *instStatIpv4)
+{
+    uint32 group_index_in = 0;
+    uint32 group_index = 0;
+    int member_index = 0;
+    int ret = find_node_in_dynamic_configure(
+        ctlToCmQry->node,
+        ctlToCmQry->instanceId,
+        &group_index_in,
+        &member_index);
+    if (ret != 0) {
+        write_runlog(LOG, "can't find the instance(nodeId=%u, instanceId=%u)\n", ctlToCmQry->node,
+            ctlToCmQry->instanceId);
+        return CM_ERROR;
+    }
+    for (uint32 i = 0; i < g_node_num; i++) {
+        bool find = false;
+        ret = find_node_in_dynamic_configure(ctlToCmQry->node,
+            ctlToCmQry->instanceId,
+            &group_index,
+            &member_index);
+        if (ret != 0) {
+            write_runlog(LOG, "can't find the instance(nodeId=%u, instanceId=%u)\n", ctlToCmQry->node,
+                ctlToCmQry->instanceId);
+            return CM_ERROR;
+        }
+        uint32 node_id = g_node[i].node;
+        for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
+            uint32 datanode_id = g_node[i].datanode[j].datanodeId;
+            ret = find_node_in_dynamic_configure(node_id, datanode_id, &group_index, &member_index);
+            if (ret != 0) {
+                write_runlog(LOG, "can't find the instance(nodeId=%u, instanceId=%u)\n", node_id, datanode_id);
+                return CM_ERROR;
+            }
+            if (group_index == group_index_in) {
+                ProcessCtlToCmOneInstanceQueryMsg(recvMsgInfo, node_id, datanode_id, INSTANCE_TYPE_DATANODE);
+                find = true;
+                break;
+            }
+        }
+        if (!find) {
+            continue;
+        }
+        instStat->msg_type = MSG_CM_CTL_DATA;
+        instStat->node = node_id;
+        instStat->instanceId = 0;
+        instStat->instance_type = INSTANCE_TYPE_FENCED_UDF;
+        instStat->member_index = 0;
+        instStat->is_central = 0;
+        instStat->fenced_UDF_status = g_fenced_UDF_report_status_ptr[i].status;
+        if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+            CmToCtlInstanceStatusV2ToV1(instStat, instStatIpv4);
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStatIpv4, sizeof(cm_to_ctl_instance_status_ipv4));
+
+            instStatIpv4->msg_type = MSG_CM_CTL_NODE_END;
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStatIpv4, sizeof(cm_to_ctl_instance_status_ipv4));
+        } else {
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
+
+            instStat->msg_type = MSG_CM_CTL_NODE_END;
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
+        }
+    }
+    return CM_SUCCESS;
+}
+
+status_t HdlCtlToCmClusDetStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry,
     cm_to_ctl_instance_status *instStat)
 {
+    cm_to_ctl_instance_status_ipv4 instStatIpv4 = {0};
     for (uint32 i = 0; i < g_node_num && ctlToCmQry->relation == 0; i++) {
         if ((ctlToCmQry->node != 0) && (ctlToCmQry->node != INVALID_NODE_NUM) && (ctlToCmQry->node != (i + 1))) {
             continue;
@@ -1968,58 +2084,25 @@ static status_t HdlCtlToCmClusDetStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_
             instStat->member_index = 0;
             instStat->is_central = 0;
             instStat->fenced_UDF_status = g_fenced_UDF_report_status_ptr[i].status;
-            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
+
+            if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+                CmToCtlInstanceStatusV2ToV1(instStat, &instStatIpv4);
+                (void)RespondMsg(recvMsgInfo, 'S', (char *)(&instStatIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+            } else {
+                (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
+            }
         }
 
-        instStat->msg_type = MSG_CM_CTL_NODE_END;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
-    }
-
-    if (ctlToCmQry->relation == 1) {
-        uint32 group_index_in = 0;
-        uint32 group_index = 0;
-        int member_index = 0;
-        int ret = find_node_in_dynamic_configure(ctlToCmQry->node, ctlToCmQry->instanceId,
-            &group_index_in, &member_index);
-        if (ret != 0) {
-            write_runlog(LOG, "can't find the instance(nodeId=%u, instanceId=%u)\n", ctlToCmQry->node,
-                ctlToCmQry->instanceId);
-            return CM_ERROR;
-        }
-        for (uint32 i = 0; i < g_node_num; i++) {
-            bool find = false;
-            ret = find_node_in_dynamic_configure(ctlToCmQry->node, ctlToCmQry->instanceId, &group_index, &member_index);
-            for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
-                ret = find_node_in_dynamic_configure(
-                    g_node[i].node, g_node[i].datanode[j].datanodeId, &group_index, &member_index);
-                if (ret != 0) {
-                    write_runlog(LOG, "can't find the instance(nodeId=%u, instanceId=%u)\n", g_node[i].node,
-                        g_node[i].datanode[j].datanodeId);
-                    return CM_ERROR;
-                }
-                if (group_index != group_index_in) {
-                    continue;
-                }
-                ProcessCtlToCmOneInstanceQueryMsg(recvMsgInfo, g_node[i].node, g_node[i].datanode[j].datanodeId,
-                    INSTANCE_TYPE_DATANODE);
-                find = true;
-                break;
-            }
-            if (!find) {
-                continue;
-            }
-            instStat->msg_type = MSG_CM_CTL_DATA;
-            instStat->node = g_node[i].node;
-            instStat->instanceId = 0;
-            instStat->instance_type = INSTANCE_TYPE_FENCED_UDF;
-            instStat->member_index = 0;
-            instStat->is_central = 0;
-            instStat->fenced_UDF_status = g_fenced_UDF_report_status_ptr[i].status;
-            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
-
+        if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+            instStatIpv4.msg_type = MSG_CM_CTL_NODE_END;
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&instStatIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+        } else {
             instStat->msg_type = MSG_CM_CTL_NODE_END;
             (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
         }
+    }
+    if (ctlToCmQry->relation == 1) {
+        return HdlCtlToCmClusDetstatQryForRelation(recvMsgInfo, ctlToCmQry, instStat, &instStatIpv4);
     }
     return CM_SUCCESS;
 }
@@ -2038,7 +2121,13 @@ static void HdlCtlToCmClusRestStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_
         instStat->member_index = 0;
         instStat->is_central = 0;
         instStat->fenced_UDF_status = g_fenced_UDF_report_status_ptr[i].status;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));  // XXXX:DEBUG5
+        if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+            cm_to_ctl_instance_status_ipv4 instStatIpv4 = {0};
+            CmToCtlInstanceStatusV2ToV1(instStat, &instStatIpv4);
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)(&instStatIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+        } else {
+            (void)RespondMsg(recvMsgInfo, 'S', (char *)instStat, sizeof(cm_to_ctl_instance_status));
+        }
     }
 }
 
@@ -2050,7 +2139,7 @@ static void HdlCtlToCmClusRestStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_
  */
 void ProcessCtlToCmQueryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctlToCmQry)
 {
-    cm_to_ctl_instance_status instStat;
+    cm_to_ctl_instance_status instStat = {0};
     cm_to_ctl_cluster_status clusterStat;
     bool isQryDone = false;
 
@@ -2097,7 +2186,13 @@ void ProcessCtlToCmQueryMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_query *ctl
     }
 
     instStat.msg_type = MSG_CM_CTL_DATA_END;
-    (void)RespondMsg(recvMsgInfo, 'S', (char*)&(instStat), sizeof(cm_to_ctl_instance_status));
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        cm_to_ctl_instance_status_ipv4 instStatIpv4 = {0};
+        CmToCtlInstanceStatusV2ToV1(&instStat, &instStatIpv4);
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&instStatIpv4), sizeof(cm_to_ctl_instance_status_ipv4));
+    } else {
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)&(instStat), sizeof(cm_to_ctl_instance_status));
+    }
     return;
 }
 
@@ -2283,7 +2378,7 @@ void process_ctl_to_cm_get_datanode_relation_msg(
     int member_index = 0;
     int instanceType;
     int ret;
-    cm_to_ctl_get_datanode_relation_ack ack;
+    cm_to_ctl_get_datanode_relation_ack ack = {0};
 
     ret = find_node_in_dynamic_configure(info_ptr->node,
         info_ptr->instanceId, &group_index, &member_index);
@@ -2340,7 +2435,13 @@ void process_ctl_to_cm_get_datanode_relation_msg(
             g_instance_group_report_status_ptr[group_index].instance_status.gtm_member[i];
     }
 
-    (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ack), sizeof(ack));
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        cm_to_ctl_get_datanode_relation_ack_ipv4 ackIpv4;
+        CmToCtlGetDatanodeRelationAckV2ToV1(&ack, &ackIpv4);
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackIpv4), sizeof(ackIpv4));
+    } else {
+        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ack), sizeof(ack));
+    }
 
     return;
 }

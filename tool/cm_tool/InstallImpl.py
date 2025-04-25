@@ -83,6 +83,8 @@ class InstallImpl:
             if host == self.localhostName:
                 continue
             # copy cm pacakage to other hosts
+            if ":" in host:
+                host = "[" + host + "]"
             scpCmd = "scp %s %s:%s" % (self.cmpkg, host, self.toolPath)
             status, output = subprocess.getstatusoutput(scpCmd)
             if status != 0:
@@ -206,6 +208,8 @@ class InstallImpl:
             if host == self.localhostName:
                 continue
             # copy cronContentTmpFile to other host
+            if ":" in host:
+                host = "[" + host + "]"
             scpCmd = "scp %s %s:%s" % (cronContentTmpFile, host, self.tmpPath)
             status, output = subprocess.getstatusoutput(scpCmd)
             if status != 0:
@@ -423,7 +427,14 @@ class InstallImpl:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (createCertPathCmd, status, output)
                 self.logger.debug(errorDetail)
                 self.logger.logExit("Failed to create path of CA for CM on host %s." % host)
-            scpCmd = "scp {certPath}/* {host}:{certPath}".format(certPath=certPath, host=host)
+            # Determine if the host is an IPv6 address and format accordingly
+            if ":" in host:
+                formatted_host = "[{}]".format(host)
+            else:
+                formatted_host = host
+        
+            # Create the scp command with the formatted host
+            scpCmd = "scp {certPath}/* {host}:{certPath}".format(certPath=certPath, host=formatted_host)
             status, output = subprocess.getstatusoutput(scpCmd)
             if status != 0:
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (scpCmd, status, output)

@@ -29,6 +29,7 @@
 #include "cm_misc_res.h"
 
 typedef struct DnFloatIpT {
+    pthread_rwlock_t rwlock;
     uint32 instId;
     const char *dataPath;
     // float ip and manage ip
@@ -37,6 +38,8 @@ typedef struct DnFloatIpT {
     char dnFloatIp[MAX_FLOAT_IP_COUNT][CM_IP_LENGTH];
     char floatIpName[MAX_FLOAT_IP_COUNT][CM_MAX_RES_NAME];
     uint32 dnFloatIpPort;
+    uint32 needResetFloatIpCnt;
+    char needResetFloatIp[MAX_FLOAT_IP_COUNT][CM_IP_LENGTH];
 } DnFloatIp;
 
 typedef bool8 (*findNodeInfoByNodeIdx)(uint32 instId, uint32 *nodeIdx, uint32 *dnIdx, const char *str);

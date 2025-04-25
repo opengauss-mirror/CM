@@ -34,15 +34,15 @@
 #define ETCD_CLOCK_THRESHOLD 3
 #define SWITCHOVER_SEND_CHECK_RATE 30
 
-#define PROCESS_MSG_BY_TYPE(struct_name, strunct_ptr, function_name)                                              \
-    do {                                                                                                          \
-        (strunct_ptr) = reinterpret_cast<struct_name *>(                                                          \
+#define PROCESS_MSG_BY_TYPE(struct_name, strunct_ptr, function_name, recvMsgInfo, msgType) \
+    do { \
+        (strunct_ptr) = reinterpret_cast<struct_name *>( \
             reinterpret_cast<void *>(const_cast<char *>(CmGetmsgbytes(&recvMsgInfo->msg, sizeof(struct_name))))); \
-        if ((strunct_ptr) != NULL) {                                                                              \
-            (function_name)(recvMsgInfo, (strunct_ptr));                                                          \
-        } else {                                                                                                  \
-            write_runlog(ERROR, "CmGetmsgbytes failed, msg_type=%d.\n", msgType);                                 \
-        }                                                                                                         \
+        if ((strunct_ptr) != NULL) { \
+            (function_name)(recvMsgInfo, (strunct_ptr)); \
+        } else { \
+            write_runlog(ERROR, "CmGetmsgbytes failed, msg_type=%d.\n", msgType); \
+        } \
     } while (0)
 
 typedef struct CmdMsgProc_t {
@@ -164,6 +164,7 @@ void ReleaseResLockOwner(const char *resName, uint32 instId);
 void ResetResNodeStat();
 void ProcessDnFloatIpMsg(MsgRecvInfo *recvMsgInfo, CmaDnFloatIpInfo *floatIp);
 void GetFloatIpSet(CmFloatIpStatAck *ack, size_t maxMsgLen, size_t *curMsgLen);
+void ProcessPingDnFloatIpFailedMsg(MsgRecvInfo *recvMsgInfo, CmSendPingDnFloatIpFail *failedFloatIpInfo);
 
 #ifdef ENABLE_MULTIPLE_NODES
 void SetCmdStautus(int32 ret);

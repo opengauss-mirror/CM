@@ -1439,6 +1439,10 @@ void GetAgentConfigEx()
         (void)fprintf(stderr, "get_config_param() get security_mode fail.\n");
     }
 
+    if (get_config_param(configDir, "incremental_build", g_enableIncrementalBuild, sizeof(g_enableIncrementalBuild)) < 0) {
+        (void)fprintf(stderr, "get_config_param() get incremental_build fail.\n");
+    }
+
     if (get_config_param(configDir, "unix_socket_directory", g_unixSocketDirectory, sizeof(g_unixSocketDirectory)) <
         0) {
         (void)fprintf(stderr, "get_config_param() get unix_socket_directory fail.\n");

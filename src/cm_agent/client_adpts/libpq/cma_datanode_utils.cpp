@@ -273,6 +273,10 @@ void check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_rep
         return;
     }
 
+    if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+        return;
+    }
+
     int max_rows = 0;
     int max_colums = 0;
 

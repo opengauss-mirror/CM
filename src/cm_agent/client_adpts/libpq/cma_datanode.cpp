@@ -65,7 +65,11 @@ static int ProcessStatusFromStateFile(agent_to_cm_datanode_status_report *report
         case CASCADE_STANDBY_MODE:
             reportMsg->local_status.local_role = INSTANCE_ROLE_CASCADE_STANDBY;
             write_runlog(LOG, "get local_role from DB state file: CASCADE_STANDBY_MODE.\n");
-            return -1;
+            break;
+        case MAIN_STANDBY_MODE:
+            reportMsg->connectStatus = INSTANCE_ROLE_MAIN_STANDBY;
+            write_runlog(LOG, "get local_role from DB state file: MAIN_STANDBY_MODE.\n");
+            break;
         default:
             reportMsg->connectStatus = AGENT_TO_INSTANCE_CONNECTION_BAD;
             write_runlog(ERROR, "invalid local_role from DB state file: %d.\n", state->mode);

@@ -52,7 +52,9 @@ typedef enum {
     STANDBY_MODE,
     CASCADE_STANDBY_MODE,
     PENDING_MODE,
-    RECOVERY_MODE
+    RECOVERY_MODE,
+    STANDBY_CLUSTER_MODE,
+    MAIN_STANDBY_MODE
 } ServerMode;
 
 typedef enum {

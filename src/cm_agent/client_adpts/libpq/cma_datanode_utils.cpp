@@ -630,8 +630,8 @@ static void GetLpInfoByStr(char *channel, DnLocalPeer *lpInfo, uint32 instId)
 {
     char localIpStr[CM_IP_LENGTH];
     char peerIpStr[CM_IP_LENGTH];
-    char *peerStr = NULL;
-    char *localStr = strtok_r(channel, "<--", &peerStr);
+    char *remain = NULL;
+    char *localStr = strtok_r(channel, "<--", &remain);
     errno_t rc;
     if (localStr == NULL) {
         write_runlog(ERROR, "[GetLpInfoByStr] line: %d, instance ID is %u, channel is %s.\n",
@@ -648,6 +648,7 @@ static void GetLpInfoByStr(char *channel, DnLocalPeer *lpInfo, uint32 instId)
         return;
     }
 
+    char *peerStr = strtok_r(remain, "<--", &remain);
     // Parse peer IP and port
     if (ParseIpAndPort(peerStr, peerIpStr, &lpInfo->peerPort) == 0) {
         rc = strcpy_s(lpInfo->peerIp, CM_IP_LENGTH, peerIpStr);

@@ -23,6 +23,8 @@
  */
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <stdio.h>
+#include <string.h>
 #include <arpa/inet.h>
 #include "cms_global_params.h"
 #include "sys/epoll.h"
@@ -30,6 +32,7 @@
 #include "cms_common.h"
 static const int CMS_NETWORK_ISOLATION_TIMES = 20;
 static const int BOOL_STR_MAX_LEN = 10;
+
 void ExecSystemSsh(uint32 remoteNodeid, const char *cmd, int *result, const char *resultPath)
 {
     int rc;
@@ -234,16 +237,24 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
         return false;
     }
 
-    struct sockaddr_in peerAddr = {0};
-    socklen_t sockLen = sizeof(sockaddr_in);
+    struct sockaddr_storage peerAddr;
+    socklen_t sockLen = sizeof(peerAddr);
     int ret = getpeername(con->port->sock, (struct sockaddr*)&peerAddr, &sockLen);
     if (ret < 0) {
         write_runlog(ERROR, "getpeername failed, sockfd=%d, remote_type=%d.\n", con->port->sock, remote_type);
         return false;
     }
-    char* peerIP = inet_ntoa(peerAddr.sin_addr);
-    if (peerIP == NULL) {
-        write_runlog(ERROR, "inet_ntoa failed, sockfd=%d, remote_type=%d.\n", con->port->sock, remote_type);
+
+    char peerIP[INET6_ADDRSTRLEN]; // INET6_ADDRSTRLEN is sufficient for both IPv4 and IPv6
+    if (peerAddr.ss_family == AF_INET) {
+        struct sockaddr_in *ipv4 = (struct sockaddr_in*)&peerAddr;
+        inet_ntop(AF_INET, &(ipv4->sin_addr), peerIP, INET_ADDRSTRLEN);
+    } else if (peerAddr.ss_family == AF_INET6) {
+        struct sockaddr_in6 *ipv6 = (struct sockaddr_in6*)&peerAddr;
+        inet_ntop(AF_INET6, &(ipv6->sin6_addr), peerIP, INET6_ADDRSTRLEN);
+    } else {
+        write_runlog(ERROR, "Unknown address family for peer, sockfd=%d, remote_type=%d.\n",
+            con->port->sock, remote_type);
         return false;
     }
 
@@ -251,7 +262,7 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
         case CM_AGENT:
             for (i = 0; i < g_node_num; i++) {
                 for (j = 0; j < g_node[i].cmAgentListenCount; j++) {
-                    if (strncmp(g_node[i].cmAgentIP[j], peerIP, SP_HOST) == 0) {
+                    if (strcmp(g_node[i].cmAgentIP[j], peerIP) == 0) {
                         return true;
                     }
                 }
@@ -261,7 +272,7 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
         case CM_CTL:
             for (i = 0; i < g_node_num; i++) {
                 for (j = 0; j < g_node[i].cmAgentListenCount; j++) {
-                    if (strncmp(g_node[i].cmAgentIP[j], peerIP, SP_HOST) == 0) {
+                    if (strcmp(g_node[i].cmAgentIP[j], peerIP) == 0) {
                         return true;
                     }
                 }
@@ -270,12 +281,11 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
 
         case CM_SERVER:
             for (i = 0; i < g_currentNode->cmServerPeerHAListenCount; i++) {
-                if (strncmp(g_currentNode->cmServerPeerHAIP[i], peerIP, SP_HOST) == 0) {
+                if (strcmp(g_currentNode->cmServerPeerHAIP[i], peerIP) == 0) {
                     return true;
                 }
             }
             break;
-
         default:
             break;
     }

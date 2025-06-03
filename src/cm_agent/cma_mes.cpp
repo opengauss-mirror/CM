@@ -33,8 +33,11 @@
 #define AGENT_RHB_PORT_INC (2)
 #define AGENT_RHB_MSG_BUFF_POOL_NUM (1)
 #define AGENT_RHB_MSG_BUFF_QUEUE_NUM (8)
-#define AGENT_RHB_BUFF_POOL_COUNT (10)
-#define AGENT_RHB_BUFF_POOL_SIZE (1024)
+#define AGENT_RHB_MSG_SHARED_POOL_QUEUE_NUM (1)
+#define AGENT_RHB_BUFF_COUNT (10)
+#define AGENT_RHB_BUFF_SIZE (1024)
+#define AGENT_MES_MSG_EXTRA_SIZE (3 * 1024) // compress head:2k, mes head:64 and other
+#define AGENT_MES_MSG_POOL_METADATA_SIZE (1024 * 1024)
 #define AGENT_RHB_CHECK_SID (0)
 
 const uint32 CMA_MES_PRIORITY = 0;
@@ -144,11 +147,27 @@ typedef enum RhbMsgCmd_ {
 
 static void InitBuffPool(mes_profile_t *pf)
 {
-    pf->buffer_pool_attr[CMA_MES_PRIORITY].pool_count = AGENT_RHB_MSG_BUFF_POOL_NUM;
-    pf->buffer_pool_attr[CMA_MES_PRIORITY].queue_count = AGENT_RHB_MSG_BUFF_QUEUE_NUM;
-    pf->buffer_pool_attr[CMA_MES_PRIORITY].buf_attr[0].count = AGENT_RHB_BUFF_POOL_COUNT;
-    pf->buffer_pool_attr[CMA_MES_PRIORITY].buf_attr[0].size = AGENT_RHB_BUFF_POOL_SIZE;
     pf->priority_cnt = 1;
+    mes_msg_pool_attr_t *mpa = &pf->msg_pool_attr;
+    mpa->enable_inst_dimension = CM_TRUE;
+    mpa->buf_pool_count = 1;
+    mpa->buf_pool_attr[0].buf_size = AGENT_RHB_BUFF_SIZE;
+    mpa->buf_pool_attr[0].proportion = (double)1;
+    mpa->buf_pool_attr[0].shared_pool_attr.queue_num = AGENT_RHB_MSG_SHARED_POOL_QUEUE_NUM;
+    mpa->buf_pool_attr[0].priority_pool_attr[CMA_MES_PRIORITY].queue_num = AGENT_RHB_MSG_BUFF_QUEUE_NUM;
+    mpa->max_buf_size[CMA_MES_PRIORITY] = mpa->buf_pool_attr[0].buf_size;
+    mes_msg_pool_minimum_info_t minimum_info = { 0 };
+    uint64 metadata_size = 0;
+    int ret = mes_get_message_pool_minimum_info(pf, CM_FALSE, &minimum_info);
+    if (ret != 0) {
+        write_runlog(WARNING, "get minimum buff size failed, ret(%d), set metadata size to 1M.\n", ret);
+        metadata_size = AGENT_MES_MSG_POOL_METADATA_SIZE;
+    } else {
+        metadata_size = minimum_info.metadata_size;
+    }
+    uint64 estimated_size = ((mpa->buf_pool_attr[0].buf_size + AGENT_MES_MSG_EXTRA_SIZE) * AGENT_RHB_BUFF_COUNT) +
+        metadata_size;
+    mpa->total_size = estimated_size;
 }
 
 static void InitTaskWork(mes_profile_t *pf)
@@ -173,7 +192,7 @@ static void initPfile(mes_profile_t *pf, const RhbCtx *ctx)
 
     InitTaskWork(pf);
     InitBuffPool(pf);
-    pf->frag_size = AGENT_RHB_BUFF_POOL_SIZE;
+    pf->frag_size = AGENT_RHB_BUFF_SIZE;
     pf->max_wait_time = CM_MAX_WAIT_TIME;
     pf->connect_timeout = CM_CONNECT_TIMEOUT;
     pf->socket_timeout = CM_SOCKET_TIMEOUT;

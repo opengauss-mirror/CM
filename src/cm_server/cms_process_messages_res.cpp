@@ -157,6 +157,16 @@ static void CleanResReportInter(const CmResourceStatus *resStat)
     }
 }
 
+void CleanAllResStatusReportInter()
+{
+    write_runlog(LOG, "cms will clean res status report.\n");
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        for (uint32 j = 0; j < g_resInstReport[i].instCount; ++j) {
+            g_resInstReport[i].resReport[j].statReportInter = 0;
+        }
+    }
+}
+
 static bool8 IsNodeCriticalResReportTimeout(uint32 nodeId)
 {
     for (uint32 i = 0; i < CusResCount(); ++i) {

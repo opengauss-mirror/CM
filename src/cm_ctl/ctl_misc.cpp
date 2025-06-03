@@ -33,7 +33,7 @@
 #include "cm/cm_misc.h"
 #include "ctl_common.h"
 #include "ctl_process_message.h"
-#include "cm/cm_msg.h"
+#include "cm_msg_version_convert.h"
 #include "cm/libpq-int.h"
 #include "cm/cm_agent/cma_main.h"
 
@@ -708,6 +708,7 @@ int do_disable_cn()
     ctl_to_cm_disable_cn ctl_to_cm_disable_cn_content = {0};
     ctl_to_cm_disable_cn_ack* ctl_to_cm_disable_cn_ack_ptr = NULL;
     cm_to_ctl_instance_status* cm_to_ctl_instance_status_ptr = NULL;
+    cm_to_ctl_instance_status_ipv4* cm_to_ctl_instance_status_ptr_ipv4 = NULL;
     ctl_to_cm_query cm_ctl_cm_query_content = {0};
     int wait_time = DEFAULT_WAIT;
     int sendQueryCount = 0;
@@ -781,9 +782,16 @@ int do_disable_cn()
                     break;
                 case MSG_CM_CTL_DATA:
                     getQueryCount++;
-                    cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status*)receive_msg;
-                    if (cm_to_ctl_instance_status_ptr->coordinatemember.status == INSTANCE_ROLE_DELETED) {
-                        success = true;
+                    if (undocumentedVersion !=0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+                        cm_to_ctl_instance_status_ptr_ipv4 = (cm_to_ctl_instance_status_ipv4*)receive_msg;
+                        if (cm_to_ctl_instance_status_ptr_ipv4->coordinatemember.status == INSTANCE_ROLE_DELETED) {
+                            success = true;
+                        }
+                    } else {
+                        cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status*)receive_msg;
+                        if (cm_to_ctl_instance_status_ptr->coordinatemember.status == INSTANCE_ROLE_DELETED) {
+                            success = true;
+                        }
                     }
                     break;
                 default:
@@ -1028,7 +1036,9 @@ int DoBuild(const CtlOption *ctx)
     cm_msg_type *msgType = NULL;
     ctl_to_cm_build buildMsg = {0};
     cm_to_ctl_command_ack *commandAckPtr = NULL;
-    cm_to_ctl_instance_status *instStatusPtr = NULL;
+    cm_to_ctl_instance_status instStatusPtr = {0};
+    cm_to_ctl_instance_status_ipv4 *instStatusPtrIpv4 = NULL;
+    errno_t rc;
 
     do_conn_cmserver(false, 0);
     if (CmServer_conn == NULL) {
@@ -1106,34 +1116,43 @@ int DoBuild(const CtlOption *ctx)
 
                 case MSG_CM_CTL_DATA:
                     getQueryCount++;
-                    instStatusPtr = (cm_to_ctl_instance_status*)receiveMsg;
-                    if (instStatusPtr->instance_type == INSTANCE_TYPE_GTM) {
-                        if (instStatusPtr->gtm_member.local_status.local_role == INSTANCE_ROLE_STANDBY) {
+                    if (undocumentedVersion !=0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+                        instStatusPtrIpv4 = (cm_to_ctl_instance_status_ipv4*)receiveMsg;
+                        CmToCtlInstanceStatusV1ToV2(instStatusPtrIpv4, &instStatusPtr);
+                    } else {
+                        rc = memcpy_s(&instStatusPtr,
+                            sizeof(cm_to_ctl_instance_status),
+                            receiveMsg,
+                            sizeof(cm_to_ctl_instance_status));
+                        securec_check_errno(rc, (void)rc);
+                    }
+                    if (instStatusPtr.instance_type == INSTANCE_TYPE_GTM) {
+                        if (instStatusPtr.gtm_member.local_status.local_role == INSTANCE_ROLE_STANDBY) {
                             success = true;
                         }
-                    } else if (instStatusPtr->instance_type == INSTANCE_TYPE_DATANODE) {
-                        if ((CheckBuildCond(instStatusPtr->data_node_member.local_status.local_role)) &&
-                            (instStatusPtr->data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL)) {
+                    } else if (instStatusPtr.instance_type == INSTANCE_TYPE_DATANODE) {
+                        if ((CheckBuildCond(instStatusPtr.data_node_member.local_status.local_role)) &&
+                            (instStatusPtr.data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL)) {
                             success = true;
                         }
 
-                        if ((instStatusPtr->data_node_member.local_status.local_role == INSTANCE_ROLE_UNKNOWN) &&
-                            (instStatusPtr->data_node_member.local_status.db_state == INSTANCE_HA_STATE_BUILD_FAILED)) {
+                        if ((instStatusPtr.data_node_member.local_status.local_role == INSTANCE_ROLE_UNKNOWN) &&
+                            (instStatusPtr.data_node_member.local_status.db_state == INSTANCE_HA_STATE_BUILD_FAILED)) {
                             write_runlog(ERROR,
                                 "build failed, please refer to the log of cm_agent(nodeid:%u) for detailed reasons.\n",
                                 ctx->comm.nodeId);
                             FINISH_CONNECTION();
                         }
 
-                        if (!CheckBuildCond(instStatusPtr->data_node_member.local_status.local_role) &&
-                            instStatusPtr->data_node_member.local_status.db_state != INSTANCE_HA_STATE_BUILDING) {
+                        if (!CheckBuildCond(instStatusPtr.data_node_member.local_status.local_role) &&
+                            instStatusPtr.data_node_member.local_status.db_state != INSTANCE_HA_STATE_BUILDING) {
                             dnRoleAbnormal++;
                         } else {
                             dnRoleAbnormal = 0;
                         }
 
                         if (dnRoleAbnormal > MAX_INSTANCE_ROLE_ABNORMAL_TIMES) {
-                            if (instStatusPtr->data_node_member.local_status.db_state ==
+                            if (instStatusPtr.data_node_member.local_status.db_state ==
                                 INSTANCE_HA_STATE_MANUAL_STOPPED) {
                                 write_runlog(ERROR, "build failed, instance is stopped.\n");
                             } else {
@@ -1496,9 +1515,9 @@ int CalcDcfVoterNum(const cm_to_ctl_instance_status* cmToCtlInstanceStatusPtr, i
 
 int ProcessRecvMsg(int *voterNum)
 {
-    char* receiveMsg = NULL;
-    cm_msg_type* cmMsgTypePtr = NULL;
-    cm_to_ctl_instance_status* cmToCtlInstanceStatusPtr = NULL;
+    char *receiveMsg = NULL;
+    cm_msg_type *cmMsgTypePtr = NULL;
+    cm_to_ctl_instance_status cmToCtlInstanceStatusPtr = {0};
     const int microSecond = 1000;
     int voterDnNum = 0;
     int ret;
@@ -1512,14 +1531,14 @@ int ProcessRecvMsg(int *voterNum)
         }
         receiveMsg = recv_cm_server_cmd(CmServer_conn);
         while (receiveMsg != NULL) {
-            cmMsgTypePtr = (cm_msg_type*)receiveMsg;
+            cmMsgTypePtr = (cm_msg_type *)receiveMsg;
             switch (cmMsgTypePtr->msg_type) {
                 case MSG_CM_CTL_DATA_BEGIN:
                 case MSG_CM_CTL_NODE_END:
                     break;
                 case MSG_CM_CTL_DATA:
-                    cmToCtlInstanceStatusPtr = (cm_to_ctl_instance_status*)receiveMsg;
-                    if (CalcDcfVoterNum(cmToCtlInstanceStatusPtr, &voterDnNum) != 0) {
+                    GetCtlInstanceStatusFromRecvMsg(receiveMsg, &cmToCtlInstanceStatusPtr);
+                    if (CalcDcfVoterNum(&cmToCtlInstanceStatusPtr, &voterDnNum) != 0) {
                         return -1;
                     }
                     break;

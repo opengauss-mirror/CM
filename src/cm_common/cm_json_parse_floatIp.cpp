@@ -27,6 +27,7 @@
 #include "cm_elog.h"
 #include "cm_misc.h"
 #include "cm_json_config.h"
+#include "cm_ip.h"
 
 static const ParseFloatIpFunc *g_parseFuc = NULL;
 
@@ -45,11 +46,11 @@ static bool IsBaseIpInDnFloatIp(const char *baseIp, const char *floatIp, uint32 
         return true;
     }
     for (uint32 i = 0; i < dnFloatIp->dnFloatIpCount; ++i) {
-        if (strcmp(baseIp, dnFloatIp->baseIp[i]) == 0) {
+        if (IsEqualIp(baseIp, dnFloatIp->baseIp[i])) {
             write_runlog(LOG, "instId(%u) baseIp(%s) may be existed in floatIp.\n", dnFloatIp->instId, baseIp);
             return true;
         }
-        if (strcmp(floatIp, dnFloatIp->dnFloatIp[i]) == 0) {
+        if (IsEqualIp(floatIp, dnFloatIp->dnFloatIp[i])) {
             write_runlog(LOG, "instId(%u) floatIp(%s) may be existed in floatIp.\n", dnFloatIp->instId, floatIp);
             return true;
         }
@@ -120,12 +121,12 @@ static void CheckDnInstInItem(const VipCusResConfJson *vipConf, const char *floa
             continue;
         }
         if (CM_IS_EMPTY_STR(vipConf->baseIpList.conf[i].baseIp) ||
-            CheckIpValid(vipConf->baseIpList.conf[i].baseIp) == CM_FALSE) {
+            !CheckIpValid(vipConf->baseIpList.conf[i].baseIp)) {
             continue;
         }
         baseIp = vipConf->baseIpList.conf[i].baseIp;
         check_input_for_security(baseIp);
-        if (strcmp(baseIp, floatIp) == 0) {
+        if (IsEqualIp(baseIp, floatIp)) {
             continue;
         }
         GenDnFloat(nodeIdx, dnIdx, baseIp, floatIp, floatIpName);
@@ -147,7 +148,7 @@ void ParseVipConf(int32 logLevel)
             continue;
         }
         if (CM_IS_EMPTY_STR(g_confJson->resource.conf[i].vipResConf.floatIp) ||
-            CheckIpValid(g_confJson->resource.conf[i].vipResConf.floatIp) == CM_FALSE) {
+            !CheckIpValid(g_confJson->resource.conf[i].vipResConf.floatIp)) {
             continue;
         }
         rc = memset_s(floatIp, MAX_PATH_LEN, 0, MAX_PATH_LEN);

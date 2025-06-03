@@ -29,6 +29,8 @@
 #include "cms_common.h"
 #include "cms_disk_check.h"
 #include "cms_alarm.h"
+#include "cm_ip.h"
+#include "cm_msg_version_convert.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cms_arbitrate_gtm.h"
 #endif
@@ -106,7 +108,7 @@ static void SendLock1Message(const DnArbCtx *ctx)
 static void SendLock2Messange(const DnArbCtx *ctx, const char *dhost, int dlen, uint32 dport,
     uint32 primaryTerm)
 {
-    cm_to_agent_lock2 lock2MsgPtr;
+    cm_to_agent_lock2 lock2MsgPtr = {0};
     lock2MsgPtr.msg_type = (int)MSG_CM_AGENT_LOCK_CHOSEN_PRIMARY;
     if (g_clusterType == V3SingleInstCluster) {
         lock2MsgPtr.node = primaryTerm;
@@ -114,12 +116,18 @@ static void SendLock2Messange(const DnArbCtx *ctx, const char *dhost, int dlen, 
         lock2MsgPtr.node = ctx->node;
     }
     lock2MsgPtr.instanceId = ctx->instId;
-    errno_t rc = snprintf_s(lock2MsgPtr.disconn_host, (size_t)HOST_LENGTH, dlen, "%s", dhost);
+    errno_t rc = snprintf_s(lock2MsgPtr.disconn_host, (size_t)CM_IP_LENGTH, dlen, "%s", dhost);
     securec_check_intval(rc, (void)rc);
     lock2MsgPtr.disconn_port = dport;
     write_runlog(LOG, "send lock2 message to instance(%u: %u), dhost=%s, dport=%u.\n",
         ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, ctx->cond.vaildPrimIdx), dhost, dport);
-    (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)&lock2MsgPtr, sizeof(cm_to_agent_lock2));
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        cm_to_agent_lock2_ipv4 lock2MsgPtrIpv4;
+        CmToAgentLock2V2ToV1(&lock2MsgPtr, &lock2MsgPtrIpv4);
+        (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)&lock2MsgPtrIpv4, sizeof(cm_to_agent_lock2_ipv4));
+    } else {
+        (void)RespondMsg(ctx->recvMsgInfo, 'S', (char *)&lock2MsgPtr, sizeof(cm_to_agent_lock2));
+    }
 }
 
 static void copy_cm_to_agent_failover_msg(cm_to_agent_failover* failover_msg_ptr,

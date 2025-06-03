@@ -30,6 +30,7 @@
 #include "alarm/alarm_log.h"
 #include "cm/pqsignal.h"
 #include "cm_json_config.h"
+#include "cm_ip.h"
 #include "cma_global_params.h"
 #include "cma_common.h"
 #include "cma_threads.h"
@@ -549,6 +550,11 @@ int read_config_file_check(void)
         g_cnDnPairsCount = countCnAndDn();
 
         initialize_cm_server_node_index();
+        int family = GetIpVersion(g_currentNode->sshChannel[0]);
+        if (family != AF_INET && family != AF_INET6) {
+            (void)fprintf(stderr, "ip(%s) is invalid, nodeId=%u.\n", g_currentNode->sshChannel[0], g_nodeHeader.node);
+            return -1;
+        }
         rc = snprintf_s(g_cmAgentLogPath,
             MAX_PATH_LEN,
             MAX_PATH_LEN - 1,
@@ -1652,6 +1658,7 @@ int main(int argc, char** argv)
         (void)fprintf(stderr, "can not get current user name.\n");
         return -1;
     }
+    SetEnvSupportIpV6(CheckSupportIpV6());
 
     status = CmSSlConfigInit(true);
     if (status < 0) {

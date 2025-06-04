@@ -262,6 +262,9 @@ int get_config_param(const char *config_file, const char *srcParam, char *destPa
         subStr = strtok_r(subStr, "\r", &saveptr1);
 
         char *trimStr = trim(subStr);
+        if (strcmp(trimStr, "''") == 0) {
+            trimStr = "";
+        }
         if (trimStr == NULL || strlen(trimStr) + 1 > (size_t)destLen) {
 #ifdef ENABLE_UT
             (void)fclose(fd);
@@ -410,13 +413,15 @@ void ReloadParametersFromConfigfile()
         "reload cm_agent parameters:\n"
         "  log_min_messages=%d, maxLogFileSize=%d, sys_log_path=%s, \n  alarm_component=%s, "
         "alarm_report_interval=%d, dilatation_shard_count_for_disk_capacity_alarm:%u, \n"
-        "  agent_heartbeat_timeout=%u, agent_report_interval=%u, agent_connect_timeout=%u, agent_connect_retries=%u, "
-        "agent_check_interval=%u, agent_kill_instance_timeout=%u,\n"
-        "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, upgrade_from=%u,\n"
-        "  enableLogCompress=%s, security_mode=%s, incremental_build=%d, unix_socket_directory=%s, "
+        "  agent_heartbeat_timeout=%u, agent_report_interval=%u, agent_connect_timeout=%u, \n"
+        "  agent_connect_retries=%u, agent_check_interval=%u, agent_kill_instance_timeout=%u, \n"
+        "  agent_phony_dead_check_interval=%u, enable_gtm_phony_dead_check=%u, disk_timeout=%u, \n"
+        "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, "
+        "upgrade_from=%u,\n  enable_cn_auto_repair=%s, enable_log_compress=%s, security_mode=%s,\n"
+        "  incremental_build=%d, unix_socket_directory=%s, "
 #ifndef ENABLE_MULTIPLE_NODES
-        "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s, "
-        "db_service_vip=%s, enable_fence_dn=%s, ss_double_cluster_mode=%d, agent_backup_open=%d\n",
+        "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s,\n"
+        "  db_service_vip=%s, enable_fence_dn=%s, ss_double_cluster_mode=%d, agent_backup_open=%d\n",
 #else
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s\n",
 #endif
@@ -432,11 +437,15 @@ void ReloadParametersFromConfigfile()
         agent_connect_retries,
         agent_check_interval,
         agent_kill_instance_timeout,
+        agent_phony_dead_check_interval,
+        enable_gtm_phony_dead_check,
+        g_diskTimeout,
         log_threshold_check_interval,
         log_max_size,
         log_max_count,
         log_saved_days,
         undocumentedVersion,
+        g_enableCnAutoRepair,
         g_enableLogCompress,
         g_enableOnlineOrOffline,
         incremental_build,

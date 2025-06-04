@@ -689,7 +689,7 @@ static status_t DrvDccSetParam(const char *key, const char *value)
         return CM_ERROR;
     }
     if (IsFilterParameter(key)) {
-        write_runlog(ERROR, "key_value is [%s, %s], not need set param.\n", key, value);
+        write_runlog(WARNING, "key_value is [%s, %s], not need set param.\n", key, value);
         return CM_SUCCESS;
     }
     const char *dccKey = key + strlen("ddb_");

@@ -852,7 +852,8 @@ static void DnStatusFinalProcessing(DnStatus* pkgDnStatus, uint32 dnId)
     if (pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_NORMAL ||
         pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_NEED_REPAIR ||
         pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_UNKONWN ||
-        pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_DEMOTING) {
+        (pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_DEMOTING && 
+         !g_isStorageWithDMSorDSS)) {
         g_dnRoleForPhonyDead[dnId] = pkgDnStatus->reportMsg.local_status.local_role;
     } else {
         g_dnRoleForPhonyDead[dnId] = INSTANCE_ROLE_INIT;

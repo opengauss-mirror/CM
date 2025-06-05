@@ -134,6 +134,7 @@ const char *g_cmsParamInfo[] = {
     "wait_static_primary_times|int|5,2147483647|NULL|NULL|",
 #endif
     "ss_double_cluster_mode|int|0,2|NULL|NULL|",
+    "share_disk_lock_type|int|0,1|NULL|NULL|",
 };
 
 const char *g_valueTypeStr[] = {

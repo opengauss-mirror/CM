@@ -320,7 +320,7 @@ static int read_config_header(FILE *fd)
     return 0;
 }
 
-static int alloc_node_buffer(bool inReload, int mallocByNodeNum)
+static int alloc_node_buffer(bool inReload)
 {
     int rcs = 0;
     if (inReload) {
@@ -328,25 +328,15 @@ static int alloc_node_buffer(bool inReload, int mallocByNodeNum)
     }
 
     if (g_node == NULL) {
-        if (mallocByNodeNum == MALLOC_BY_NODE_NUM) {
-            g_node = (staticNodeConfig *)malloc(sizeof(staticNodeConfig) * g_nodeHeader.nodeCount);
-        } else {
-            g_node = (staticNodeConfig *)malloc(sizeof(staticNodeConfig) * CM_NODE_MAXNUM);
-        }
+        g_node = (staticNodeConfig *)malloc(sizeof(staticNodeConfig) * g_nodeHeader.nodeCount);
         if (g_node == NULL) {
             return OUT_OF_MEMORY;
         }
     }
 
     /* g_node size may be larger than SECUREC_STRING_MAX_LEN in large cluster. */
-    if (mallocByNodeNum == MALLOC_BY_NODE_NUM) {
-        rcs = memset_s(g_node,
-            sizeof(staticNodeConfig) * g_nodeHeader.nodeCount,
-            0,
-            sizeof(staticNodeConfig) * g_nodeHeader.nodeCount);
-    } else {
-        rcs = memset_s(g_node, sizeof(staticNodeConfig) * CM_NODE_MAXNUM, 0, sizeof(staticNodeConfig) * CM_NODE_MAXNUM);
-    }
+    rcs = memset_s(g_node, sizeof(staticNodeConfig) * g_nodeHeader.nodeCount,
+        0, sizeof(staticNodeConfig) * g_nodeHeader.nodeCount);
     if (rcs != EOK && rcs != ERANGE) {
         (void)printf("FATAL at %s : %d : Initialize is failed, error num is: %d.\n", __FUNCTION__, __LINE__, rcs);
         free(g_node);
@@ -853,12 +843,12 @@ static int ReadAllNodes(FILE *fd, ReadConfigContext *ctx)
     return ret;
 }
 
-static int ReadConfigContent(FILE *fd, bool inReload, int mallocByNodeNum, ReadConfigContext *ctx)
+static int ReadConfigContent(FILE *fd, bool inReload, ReadConfigContext *ctx)
 {
     int ret = read_config_header(fd);
     RETURN_IFERR(ret);
 
-    ret = alloc_node_buffer(inReload, mallocByNodeNum);
+    ret = alloc_node_buffer(inReload);
     RETURN_IFERR(ret);
 
     ret = ReadAllNodes(fd, ctx);
@@ -867,7 +857,7 @@ static int ReadConfigContent(FILE *fd, bool inReload, int mallocByNodeNum, ReadC
     return ret;
 }
 
-int read_config_file(const char *file_path, int *err_no, bool inReload, int mallocByNodeNum)
+int read_config_file(const char *file_path, int *err_no, bool inReload)
 {
     ReadConfigContext ctx;
     ctx.datanodeMirrorIDInit = false;
@@ -883,7 +873,7 @@ int read_config_file(const char *file_path, int *err_no, bool inReload, int mall
         return OPEN_FILE_ERROR;
     }
 
-    int32 rcs = ReadConfigContent(fd, inReload, mallocByNodeNum, &ctx);
+    int32 rcs = ReadConfigContent(fd, inReload, &ctx);
     if (rcs != 0) {
         (void)fclose(fd);
         fd = NULL;

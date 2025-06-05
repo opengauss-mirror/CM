@@ -285,16 +285,6 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
     return false;
 }
 
-void GetUpgradeVersionFromCmaConfig()
-{
-    char cmAgentConfigFile[MAX_PATH_LEN] = {0};
-    int rc = snprintf_s(cmAgentConfigFile, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/cm_agent/cm_agent.conf",
-        g_currentNode->cmDataPath);
-    securec_check_intval(rc, (void)rc);
-    undocumentedVersion = get_uint32_value_from_config(cmAgentConfigFile, "upgrade_from", 0);
-    write_runlog(LOG, "undocumentedVersion=%u\n", undocumentedVersion);
-}
-
 #ifdef ENABLE_MULTIPLE_NODES
 /*
  * When network is disconnected, cn status change to down after instance_heartbeat_timeout,
@@ -568,7 +558,7 @@ void get_parameters_from_configfile()
     GetAlarmConfig(g_alarmConfigDir);
     get_log_paramter(configDir);
     GetStringFromConf(configDir, sys_log_path, sizeof(sys_log_path), "log_dir");
-    GetUpgradeVersionFromCmaConfig();
+    undocumentedVersion = get_uint32_value_from_config(configDir, "upgrade_from", 0);
 #ifdef ENABLE_MULTIPLE_NODES
     get_paramter_coordinator_heartbeat_timeout();
 #endif

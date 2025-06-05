@@ -21,6 +21,8 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include "cm/cm_elog.h"
 #include "cms_alarm.h"
 #include "cms_ddb.h"
@@ -926,45 +928,67 @@ static status_t IsPeerCmsReachableOn2Nodes()
         return CM_ERROR;
     }
 
-    // create socket
-    int socketFd = socket(AF_INET, SOCK_STREAM, 0);
-    if (socketFd == -1) {
-        write_runlog(ERROR, "could not create socket.\n");
-        return CM_ERROR;
-    }
-
+    int socketFd = -1;
+    struct addrinfo hints;
+    struct addrinfo *result;
+    struct addrinfo *rp;
     struct timeval tv = { 0, 0 };
-    tv.tv_sec = CM_TCP_TIMEOUT;
-    (void)setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
-    (void)setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
+    status_t ret = CM_ERROR;
 
-    struct sockaddr_in sockAddr;
-    status_t ret = CM_SUCCESS;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;    // Allow IPv4 or IPv6
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = 0;
+
     for (uint32 i = 0; i < g_cm_server_num; i++) {
         if (g_node[i].cmServerId == g_currentNode->cmServerId) {
             continue;
         }
 
-        // got peer cms info
-        sockAddr.sin_addr.s_addr = inet_addr(g_node[i].cmServerLocalHAIP[0]);
-        sockAddr.sin_family = AF_INET;
-        sockAddr.sin_port = htons(g_node[i].cmServerLocalHAPort);
-
-        // Connect to peer cms dcc ip:port
-        if (connect(socketFd , (struct sockaddr *)&sockAddr , sizeof(sockAddr)) < 0) {
-            write_runlog(LOG, "could not connect to peer cms %s:%d.\n",
-                g_node[i].cmServerLocalHAIP[0], g_node[i].cmServerLocalHAPort);
-            ret = CM_ERROR;
-        } else {
-            write_runlog(DEBUG1, "connect to peer cms %s:%d successfuly.\n",
-                g_node[i].cmServerLocalHAIP[0], g_node[i].cmServerLocalHAPort);
-            ret = CM_SUCCESS;
+        // Resolve peer cms hostname to IP addresses
+        int addrStatus = getaddrinfo(g_node[i].cmServerLocalHAIP[0], NULL, &hints, &result);
+        if (addrStatus != 0) {
+            write_runlog(ERROR, "getaddrinfo: %s\n", gai_strerror(addrStatus));
+            continue;
         }
 
-        break;
+        for (rp = result; rp != NULL; rp = rp->ai_next) {
+            socketFd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+            if (socketFd == -1) {
+                write_runlog(ERROR, "could not create socket.\n");
+                continue;
+            }
+
+            tv.tv_sec = CM_TCP_TIMEOUT;
+            setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+            setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+            if (connect(socketFd, rp->ai_addr, rp->ai_addrlen) == -1) {
+                write_runlog(LOG, "could not connect to peer cms.\n");
+                ret = CM_ERROR;
+            }
+            char addrStr[INET6_ADDRSTRLEN];
+            void *addr;
+            if (rp->ai_family == AF_INET) {
+                struct sockaddr_in *ipv4 = (struct sockaddr_in *)rp->ai_addr;
+                addr = &(ipv4->sin_addr);
+            } else { // AF_INET6
+                struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)rp->ai_addr;
+                addr = &(ipv6->sin6_addr);
+            }
+            inet_ntop(rp->ai_family, addr, addrStr, sizeof(addrStr));
+            write_runlog(DEBUG1, "connect to peer cms %s successfuly.\n", addrStr);
+            ret = CM_SUCCESS;
+            close(socketFd);
+            break; // Connected successfully, break out of loop
+        }
+
+        freeaddrinfo(result);
+        if (ret == CM_SUCCESS) {
+            break; // Connected successfully, break out of loop
+        }
     }
 
-    close(socketFd);
     return ret;
 }
 

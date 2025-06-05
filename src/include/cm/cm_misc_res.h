@@ -63,6 +63,15 @@ const uint32 CM_MAX_VIP_COUNT = 16;
 
 #define CM_DOMAIN_SOCKET "agent.socket"
 
+typedef enum IpTypeEn {
+    IP_TYPE_INIT = 0,
+    IP_TYPE_UNKNOWN = 1,
+    IP_TYPE_IPV4,
+    IP_TYPE_IPV6,
+    IP_TYPE_NEITHER,
+    IP_TYPE_CEIL,
+} IpType;
+
 typedef enum {
     CM_RES_ISREG_INIT = 0,
     CM_RES_ISREG_REG  = 1,
@@ -111,7 +120,6 @@ bool IsOneResInstWork(const char *resName, uint32 cmInstId);
 bool IsReadConfJsonSuccess(int ret);
 const char *ReadConfJsonFailStr(int ret);
 status_t GetResNameByCmInstId(uint32 instId, char *resName, uint32 nameLen);
-uint8 CheckIpValid(const char *ip);
 uint32 CusResCount();
 bool IsCusResExist();
 const char *GetIsregStatus(int isreg);

@@ -25,6 +25,8 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/vfs.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include "cma_connect.h"
 #include "cma_global_params.h"
 #include "cma_common.h"
@@ -38,6 +40,8 @@
 #include "cma_coordinator.h"
 #endif
 #include "cma_status_check.h"
+#include "cm_ip.h"
+#include "cm_msg_version_convert.h"
 
 /*
  * dilatation status. If the cluster in dilatation status, we query  coordinate and report status for every loop. Or,
@@ -770,13 +774,19 @@ void kerberos_status_check_and_report()
 
 static void SendDnReportMsg(const DnStatus *pkgDnStatus, uint32 datanodeId)
 {
-    agent_to_cm_datanode_status_report reportMsg = {0};
-    errno_t rc = memcpy_s(&reportMsg, sizeof(agent_to_cm_datanode_status_report),
-        &pkgDnStatus->reportMsg, sizeof(agent_to_cm_datanode_status_report));
-    securec_check_errno(rc, (void)rc);
-
-    write_runlog(DEBUG5, "dn(%u) reportMsg will send to cms.\n", datanodeId);
-    PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_datanode_status_report), "dn report");
+    if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+        agent_to_cm_datanode_status_report_ipv4 reportMsg = {0};
+        AgentToCmDatanodeStatusReportV2ToV1(&pkgDnStatus->reportMsg, &reportMsg);
+        write_runlog(DEBUG5, "dn(%u) reportMsg will send to cms.\n", datanodeId);
+        PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_datanode_status_report_ipv4), "dn report");
+    } else {
+        agent_to_cm_datanode_status_report reportMsg = {0};
+        errno_t rc = memcpy_s(&reportMsg, sizeof(agent_to_cm_datanode_status_report),
+            &pkgDnStatus->reportMsg, sizeof(agent_to_cm_datanode_status_report));
+        securec_check_errno(rc, (void)rc);
+        write_runlog(DEBUG5, "dn(%u) reportMsg will send to cms.\n", datanodeId);
+        PushMsgToCmsSendQue((char *)&reportMsg, (uint32)sizeof(agent_to_cm_datanode_status_report), "dn report");
+    }
 }
 
 static void SendBarrierMsg(const DnStatus *pkgDnStatus, uint32 datanodeId)
@@ -1487,11 +1497,13 @@ static void PingPeerIP(int* count, const char localIP[CM_IP_LENGTH], const char 
 {
     char command[MAXPGPATH] = {0};
     char buf[MAXPGPATH];
+    int rc;
     uint32 tryTimes = 3;
 
-    int rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
-        "ping -c 1 -w 1 -I %s %s > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
-        localIP, peerIP);
+    const char *pingStr = GetPingStr(GetIpVersion(peerIP));
+    rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+        "%s -c 1 -w 1 -I %s %s > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
+        pingStr, localIP, peerIP);
     securec_check_intval(rc, (void)rc);
     write_runlog(DEBUG1, "ping command is: %s.\n", command);
 

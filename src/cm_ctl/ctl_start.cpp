@@ -23,14 +23,19 @@
  * -------------------------------------------------------------------------
  */
 #include <signal.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <string.h>
 #include "common/config/cm_config.h"
 #include "cm/libpq-fe.h"
 #include "cm/cm_misc.h"
 #include "ctl_common.h"
-#include "cm/cm_msg.h"
+#include "cm_msg_version_convert.h"
 #include "cm/libpq-int.h"
 #include "cm_ddb_adapter.h"
 #include "ctl_common_res.h"
+#include "cm_ip.h"
 
 #define EXPECTED_CLUSTER_START_TIME 120
 #define ETCD_START_WAIT 90
@@ -82,6 +87,7 @@ static int g_instance_start_status = CM_STATUS_UNKNOWN;
 static int g_node_start_status = CM_STATUS_UNKNOWN;
 static int g_dn_relation_start_status = CM_STATUS_UNKNOWN;
 static int g_resStartStatus = CM_STATUS_UNKNOWN;
+static int g_dn_status = INSTANCE_HA_STATE_UNKONWN;
 static StartExitCode g_startExitCode = CM_START_EXIT_INIT;
 
 static int startaz_try_heartbeat = START_AZ_TRY_HEARTBEAT;
@@ -731,12 +737,13 @@ static bool CheckLibosKniIsOk()
         write_runlog(DEBUG1, "%s cheack failed by exec command:%s.\n", checkItem[idx++], checkIpCmd);
         return false;
     }
-
+    const char *ping_ip = *g_currentNode->cmAgentIP;
+    const char *pingStr = GetPingStr(GetIpVersion(ping_ip));
     rc = snprintf_s(checPingCmd,
         MAXPGPATH,
         MAXPGPATH - 1,
-        "ping -c 1 -w 1 %s  > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
-        g_currentNode->cmAgentIP);
+        "%s -c 1 -w 1 %s  > /dev/null;if [ $? == 0 ];then echo success;else echo fail;fi;",
+        pingStr, ping_ip);
     securec_check_intval(rc, (void)rc);
     write_runlog(DEBUG1, "cheak_libnet ping command is %s.\n", checPingCmd);
     cmdCount = strlen(checPingCmd);
@@ -1590,6 +1597,14 @@ static void* check_cluster_start_status(void* arg)
                 g_commandOperationNodeId, g_commandOperationInstanceId);
             g_startExitCode = CM_START_EXIT_SUCCESS;
             continue;
+        } else if (g_dn_status == INSTANCE_HA_STATE_READ_ONLY) {
+            write_runlog(ERROR,
+                "start cluster failed!\n\n"
+                "HINT: Some nodes are in ReadOnly mode.\n"
+                "To identify which nodes are ReadOnly, use the following command:\n"
+                "\'cm_ctl query -Cvipdw\'\n");
+            g_startExitCode = CM_START_EXIT_SUCCESS;
+            continue;
         } else {
             count = 0;
         }
@@ -1830,11 +1845,24 @@ static int start_check_cluster()
                     // The cluster status is degrade, not normal, whether a cn is deleted and all other instances are
                     // normal.
                     if (cluster_status == CM_STATUS_DEGRADE) {
-                        cm_to_ctl_instance_status* cm_to_ctl_instance_status_ptr = NULL;
-                        cm_to_ctl_instance_status_ptr = (cm_to_ctl_instance_status*)receive_msg;
+                        cm_to_ctl_instance_status cm_to_ctl_instance_status_ptr = {0};
+                        cm_to_ctl_instance_status_ipv4 *cm_to_ctl_instance_status_ptr_ipv4 = NULL;
+                        if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+                            cm_to_ctl_instance_status_ptr_ipv4 = (cm_to_ctl_instance_status_ipv4 *)receive_msg;
+                            CmToCtlInstanceStatusV1ToV2(
+                                cm_to_ctl_instance_status_ptr_ipv4,
+                                &cm_to_ctl_instance_status_ptr);
+                        } else {
+                            errno_t rc = memcpy_s(
+                                &cm_to_ctl_instance_status_ptr,
+                                sizeof(cm_to_ctl_instance_status_ptr),
+                                receive_msg,
+                                sizeof(cm_to_ctl_instance_status_ptr));
+                            securec_check_errno(rc, (void)rc);
+                        }
 
-                        if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_COORDINATE) {
-                            int status = cm_to_ctl_instance_status_ptr->coordinatemember.status;
+                        if (cm_to_ctl_instance_status_ptr.instance_type == INSTANCE_TYPE_COORDINATE) {
+                            int status = cm_to_ctl_instance_status_ptr.coordinatemember.status;
 
                             if (status == INSTANCE_ROLE_DELETED) {
                                 cnt_deleted++;
@@ -1843,14 +1871,14 @@ static int start_check_cluster()
                             if (status != INSTANCE_ROLE_NORMAL && status != INSTANCE_ROLE_DELETED) {
                                 cnt_abnormal++;
                             }
-                        } else if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_GTM) {
-                            int local_role = cm_to_ctl_instance_status_ptr->gtm_member.local_status.local_role;
+                        } else if (cm_to_ctl_instance_status_ptr.instance_type == INSTANCE_TYPE_GTM) {
+                            int local_role = cm_to_ctl_instance_status_ptr.gtm_member.local_status.local_role;
 
                             if (local_role != INSTANCE_ROLE_PRIMARY && local_role != INSTANCE_ROLE_STANDBY) {
                                 cnt_abnormal++;
                             }
-                        } else if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_DATANODE) {
-                            int local_role = cm_to_ctl_instance_status_ptr->data_node_member.local_status.local_role;
+                        } else if (cm_to_ctl_instance_status_ptr.instance_type == INSTANCE_TYPE_DATANODE) {
+                            int local_role = cm_to_ctl_instance_status_ptr.data_node_member.local_status.local_role;
                             if (local_role != INSTANCE_ROLE_PRIMARY && local_role != INSTANCE_ROLE_STANDBY &&
                                 local_role != INSTANCE_ROLE_DUMMY_STANDBY) {
                                 cnt_abnormal++;
@@ -1889,7 +1917,7 @@ static bool IsAllResInstStarted(uint32 nodeId)
     if (!IsCusResExist()) {
         return true;
     }
-    
+
     for (uint32 i = 0; i < CusResCount(); ++i) {
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].nodeId != nodeId) {
@@ -1990,16 +2018,29 @@ static int start_check_node(uint32 node_id_check)
 
                 receive_msg = recv_cm_server_cmd(CmServer_conn);
                 while (receive_msg != NULL) {
-                    cm_msg_type_ptr = (cm_msg_type*)receive_msg;
+                    cm_msg_type_ptr = (cm_msg_type *)receive_msg;
                     switch (cm_msg_type_ptr->msg_type) {
                         case MSG_CM_CTL_DATA_BEGIN:
                             break;
                         case MSG_CM_CTL_DATA: {
-                            cm_to_ctl_instance_status *cm_to_ctl_instance_status_ptr =
-                                (cm_to_ctl_instance_status *)receive_msg;
-                            if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_COORDINATE &&
-                                g_node[node_id_check].node == cm_to_ctl_instance_status_ptr->node &&
-                                cm_to_ctl_instance_status_ptr->coordinatemember.status == INSTANCE_ROLE_DELETED) {
+                            cm_to_ctl_instance_status cm_to_ctl_instance_status_ptr = {0};
+                            cm_to_ctl_instance_status_ipv4 *cm_to_ctl_instance_status_ptr_ipv4 = NULL;
+                            if (undocumentedVersion != 0 && undocumentedVersion < SUPPORT_IPV6_VERSION) {
+                                cm_to_ctl_instance_status_ptr_ipv4 = (cm_to_ctl_instance_status_ipv4 *)receive_msg;
+                                CmToCtlInstanceStatusV1ToV2(
+                                    cm_to_ctl_instance_status_ptr_ipv4,
+                                    &cm_to_ctl_instance_status_ptr);
+                            } else {
+                                errno_t rc = memcpy_s(
+                                    &cm_to_ctl_instance_status_ptr,
+                                    sizeof(cm_to_ctl_instance_status_ptr),
+                                    receive_msg,
+                                    sizeof(cm_to_ctl_instance_status_ptr));
+                                securec_check_errno(rc, (void)rc);
+                            }
+                            if (cm_to_ctl_instance_status_ptr.instance_type == INSTANCE_TYPE_COORDINATE &&
+                                g_node[node_id_check].node == cm_to_ctl_instance_status_ptr.node &&
+                                cm_to_ctl_instance_status_ptr.coordinatemember.status == INSTANCE_ROLE_DELETED) {
                                 cnt_deleted++;
                             }
                             rec_data_end = true;

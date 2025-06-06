@@ -197,7 +197,7 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
         agentCheckTimeInterval = agent_phony_dead_check_interval;
         (void)gettimeofday(&checkBegin, NULL);
         isPhonyDead = DnPhonyDeadStatusCheck(i, &agentCheckTimeInterval);
-        if (isPhonyDead) {
+        if (isPhonyDead && !g_isPauseArbitration) {
             g_dnPhonyDeadTimes[i]++;
         } else {
             g_dnPhonyDeadTimes[i] = 0;

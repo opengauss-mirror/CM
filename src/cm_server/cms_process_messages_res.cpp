@@ -27,6 +27,7 @@
 #include "cms_ddb_adapter.h"
 #include "cms_global_params.h"
 #include "cms_process_messages.h"
+#include "cm_misc_res.h"
 
 typedef struct ResStatReportInfoSt {
     uint32 nodeId;
@@ -467,6 +468,73 @@ static status_t GetLockOwner(const char *resName, const char *lockName, uint32 &
     return CM_SUCCESS;
 }
 
+static uint32 GetOfficialId()
+{
+    static uint32 officialId = -1;
+
+    for (uint32 i = 0; i < g_node_num; i++) {
+        for (uint32 j = 0; j < g_node[i].datanodeCount; j++) {
+            if (g_node[i].datanode[j].datanodeRole == PRIMARY_DN) {
+                officialId = g_node[i].datanode[j].datanodeId;
+                write_runlog(LOG, "PRIMARY_DN is %d.\n", officialId);
+                return officialId;
+            }
+        }
+    }
+
+    return officialId;
+}
+
+static status_t SetLockOwner4FirstReform()
+{
+    char key[MAX_PATH_LEN] = {0};
+    char resName[CM_MAX_RES_NAME] = {0};
+    char lockName[CM_MAX_LOCK_NAME] = {0};
+    char lockValue[MAX_PATH_LEN] = {0};
+    char officialId[MAX_PATH_LEN] = {0};
+    errno_t rc;
+
+    rc = strncpy_s(resName, CM_MAX_RES_NAME, "dms_res", strlen("dms_res"));
+    securec_check_errno(rc, (void)rc);
+    rc = strncpy_s(lockName, CM_MAX_LOCK_NAME, "dms_reformer_lock", strlen("dms_reformer_lock"));
+    securec_check_errno(rc, (void)rc);
+    GetResLockDdbKey(key, MAX_PATH_LEN, resName, lockName);
+
+    DDB_RESULT ddbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVFromDDb(key, MAX_PATH_LEN, lockValue, MAX_PATH_LEN, &ddbResult);
+    if (st != CM_SUCCESS) {
+        if (ddbResult != CAN_NOT_FIND_THE_KEY) {
+            write_runlog(ERROR, "failed to get value with key(%s) in 1st reform, error info:%d.\n", key, (int)ddbResult);
+            return CM_ERROR;
+        }
+        write_runlog(LOG, "not exit res(%s) status, key:\"%s\" in ddb in 1st reform.\n", resName, key);
+    }
+    
+    uint32 tempOfficialId = GetOfficialId();
+    if (IsResInstIdValid(tempOfficialId)) {
+        if (IsOneResInstWork(resName, tempOfficialId)) {
+            snprintf(officialId, MAX_PATH_LEN, "%d", tempOfficialId);
+        } else {
+            write_runlog(ERROR, "res(%s) inst(%u) has been get out of cluster, can't do lock.\n",
+                resName, tempOfficialId);
+            return CM_ERROR;
+        }
+    } else {
+        write_runlog(ERROR, "can not get the official id.\n");
+        return CM_ERROR;
+    }
+
+    if (strlen(lockValue) == 0) {
+        status_t st = SetKV2Ddb(key, MAX_PATH_LEN, officialId, MAX_PATH_LEN, NULL);
+        if (st != CM_SUCCESS) {
+            write_runlog(ERROR, "[CLIENT] failed to set official id for key(%s).\n", key);
+            return CM_ERROR;
+        }
+        write_runlog(LOG, "[CLIENT] official id set for key(%s): %s\n", key, officialId);
+    }
+    return CM_SUCCESS;
+}
+
 static status_t SetNewLockOwner(const char *resName, const char *lockName, uint32 curLockOwner, uint32 resInstId)
 {
     char key[MAX_PATH_LEN] = {0};
@@ -595,6 +663,9 @@ static bool RealTimeBuildIsOff(const char *resName, const char* lockName, uint32
 
 static ClientError CmResLock(const CmaToCmsResLock *lockMsg)
 {
+    if (SetLockOwner4FirstReform() != CM_SUCCESS) {
+        write_runlog(LOG, "[%s], can not set lockowner in first reform.\n", __FUNCTION__);
+    }
     if (!IsResInstIdValid((int)lockMsg->cmInstId)) {
         write_runlog(ERROR, "[CLIENT] res(%s) (%s)lock new owner (%u) is invalid.\n",
             lockMsg->resName, lockMsg->lockName, lockMsg->cmInstId);
@@ -802,38 +873,20 @@ void ProcessQueryOneResInst(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat 
             }
             (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
             ackMsg.instStat = g_resStatus[i].status.resStat[j];
+            int instanceType = g_instance_role_group_ptr[i].instanceMember[j].instanceType;
+            if (instanceType == INSTANCE_TYPE_DATANODE) {
+                const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
+                int localStatus = instStatus->data_node_member[j].local_status.db_state;
+                int dnLocalRole = instStatus->data_node_member[j].local_status.local_role;
+                if ((dnLocalRole != INSTANCE_ROLE_PRIMARY && dnLocalRole != INSTANCE_ROLE_STANDBY &&
+                    dnLocalRole != INSTANCE_ROLE_MAIN_STANDBY) || localStatus != INSTANCE_HA_STATE_NORMAL) {
+                    ackMsg.instStat.status = CM_RES_STAT_UNKNOWN;
+                }
+            }
             (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
             (void)RespondMsg(recvMsgInfo, 'S', (char*)&(ackMsg), sizeof(ackMsg), DEBUG5);
             return;
         }
-    }
-    write_runlog(ERROR, "unknown res instId(%u).\n", destInstId);
-}
-
-void ProcessQueryDnStatusAndRole(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat *queryMsg)
-{
-    CmsToCtlDnStatSt ackMsg = {0};
-    ackMsg.msgType = (int) MSG_CTL_CM_QUERY_DN_ACK;
-
-    uint32 destInstId = queryMsg->instId;
-
-    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
-        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-            uint32 instId = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
-            int instanceType = g_instance_role_group_ptr[i].instanceMember[j].instanceType;
-            if (instId != destInstId) {
-                continue;
-            }
-            if (instanceType == INSTANCE_TYPE_DATANODE) {
-                const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
-                ackMsg.localStatus = instStatus->data_node_member[j].local_status.db_state;
-                ackMsg.dnLocalRole = instStatus->data_node_member[j].local_status.local_role;
-                (void)RespondMsg(recvMsgInfo, 'S', (char*)&(ackMsg), sizeof(ackMsg), DEBUG5);
-                break;               
-            }
-        }
-        (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
     }
     write_runlog(ERROR, "unknown res instId(%u).\n", destInstId);
 }

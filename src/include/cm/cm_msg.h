@@ -271,8 +271,6 @@ typedef enum CM_MessageType_st {
     MSG_AGENT_CM_DN_MOST_AVAILABLE = 184,
     MSG_CMA_PING_DN_FLOAT_IP_FAIL = 185,
     MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP = 186,
-    MSG_CTL_CM_QUERY_DN_INFO = 187,
-    MSG_CTL_CM_QUERY_DN_ACK = 188,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -2202,11 +2200,6 @@ typedef struct CmsToCtlOneResInstStatSt {
     CmResStatInfo instStat;
 } CmsToCtlOneResInstStat;
 
-typedef struct CmsToCtlDnStatSt {
-    int msgType;
-    int localStatus;
-    int dnLocalRole;
-} CmsToCtlDnStatSt;
 
 typedef struct CmsToCtlGroupResStatusSt {
     int msgType;

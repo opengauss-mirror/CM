@@ -71,6 +71,11 @@ typedef struct _init_node_ {
     char methodStr[MAX_PATH_LEN];
 } InitNodeMsg;
 
+typedef struct {
+    int index;
+    time_t time;
+} onDemandStatusItem;
+
 CltCmdProc g_cmdProc[MSG_CM_TYPE_CEIL] = {0};
 
 static bool judgeHAStatus(const int* normalStandbyDn, const int* dnNum, int azIndex, uint32 groupIndex)
@@ -591,6 +596,66 @@ static void PrintClusterStatus(uint32 groupIdx, int32 groupDnNum, int normalStan
         nodeMsg->primaryStr, nodeMsg->standbyStr, nodeMsg->casNorStr, nodeMsg->casStr,
         syncList, nodeMsg->norPrimInCurSL, nodeMsg->normStdbInCurSL,
         nodeMsg->primInVA, voteAzList, nodeMsg->curStatus, (int)current_cluster_az_status);
+}
+
+static void swap(onDemandStatusItem *a, onDemandStatusItem *b)
+{
+    onDemandStatusItem temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+static void sort_by_time(onDemandStatusItem sortedIndices[], int size)
+{
+    for (int i = 0; i < size - 1; i++) {
+        for (int j = 0; j < size - 1 - i; j++) {
+            if (sortedIndices[j].time < sortedIndices[j + 1].time) {
+                swap(&sortedIndices[j], &sortedIndices[j + 1]);
+            }
+        }
+    }
+}
+
+/* When cm Server recive a switchover request, should determind by the report status. */
+bool isInOnDemandStatus()
+{
+    time_t nowTime = time(NULL);
+    onDemandStatusItem sortedIndices[MAX_ONDEMAND_NODE_STATUS];
+    (void)pthread_rwlock_wrlock(&(g_ondemandStatusCheckRwlock));
+    for (int i = 0; i < MAX_ONDEMAND_NODE_STATUS; i++) {
+        sortedIndices[i].index = i;
+        sortedIndices[i].time = g_onDemandStatusTime[i];
+    }
+    sort_by_time(sortedIndices, MAX_ONDEMAND_NODE_STATUS);
+    for (int i = 0; i < MAX_ONDEMAND_NODE_STATUS; i++) {
+        write_runlog(DEBUG1,
+            "Sorted Redo Status:Index: %d, Status: %d, Time: %ld\n", sortedIndices[i].index, 
+                g_onDemandStatus[sortedIndices[i].index], sortedIndices[i].time);
+    }
+    /*
+     * Because of the sort of current status, we can sure that the list of indices must 
+     * contain the all seq of status. So if we get this first NOT_IN_ONDEMAND_RECOVERY
+     * or IN_ONDEMAND_RECOVERY status, we can confer the clust status. If we get 
+     * UNKNOW_ONDEMAND_RECOVERY, maybe the node had something wrong, it should be handled
+     * by other judgement strategy.
+     */
+    for (int i = 0; i < MAX_ONDEMAND_NODE_STATUS; i++) {
+        /* If we find timeout message, no need to judge. */
+        if (difftime(nowTime, sortedIndices[i].time) >= ONDEMADN_STATUS_CHECK_TIMEOUT) {
+            break;
+        }
+        int status = g_onDemandStatus[sortedIndices[i].index];
+        if (status == IN_ONDEMAND_RECOVERY || status == NOT_IN_ONDEMAND_RECOVERY) {
+            (void)pthread_rwlock_unlock(&(g_ondemandStatusCheckRwlock));
+            write_runlog(DEBUG1,
+                "Final Pick up Redo Status:Index: %d, Status: %d, Time: %s.\n", 
+                    sortedIndices[i].index, g_onDemandStatus[sortedIndices[i].index], 
+                        ctime(&sortedIndices[i].time));
+            return status == IN_ONDEMAND_RECOVERY;
+        }
+    }
+    (void)pthread_rwlock_unlock(&(g_ondemandStatusCheckRwlock));
+    return false;
 }
 
 static void SetNodeMsgMethodStr(InitNodeMsg *nodeMsg, const char *str)
@@ -1700,6 +1765,13 @@ void MsgGetPingDnFloatIpFailedInfo(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsg
         CmSendPingDnFloatIpFail, failedFloatIpInfo, ProcessPingDnFloatIpFailedMsg, recvMsgInfo, msgType);
 }
 
+void MsgInOnDemandStatus(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    agent_to_cm_ondemand_status_report* ondemandStatusReport = NULL;
+    PROCESS_MSG_BY_TYPE(
+        agent_to_cm_ondemand_status_report, ondemandStatusReport, ProcessOndemandStatusMsg, recvMsgInfo, msgType);   
+}
+
 static void InitCmCtlCmdProc()
 {
     // 32
@@ -1766,6 +1838,7 @@ static void InitCmAgentCmdProc()
     g_cmdProc[MSG_AGENT_CM_REQUEST_RES_STATUS_LIST] = MsgRequestResStatusList;
 
     g_cmdProc[MSG_CMA_PING_DN_FLOAT_IP_FAIL] = MsgGetPingDnFloatIpFailedInfo;
+    g_cmdProc[MSG_AGENT_ONDEMAND_STATUES_REPORT] = MsgInOnDemandStatus;
 }
 
 static void InitCmClientCmdProc()

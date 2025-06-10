@@ -212,6 +212,7 @@ bool g_needIncTermToDdbAgain = false;
 bool g_clusterStarting = false;
 bool g_isSharedStorageMode = false;
 bool g_enableSetMostAvailableSync = false;
+volatile bool g_isInRedoStateUnderSwitchover = false;
 volatile bool g_needReloadSyncStandbyMode = false;
 
 volatile uint32 g_refreshDynamicCfgNum = 0;
@@ -334,6 +335,13 @@ bool g_isPauseArbitration = false;
 char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 uint32 g_waitStaticPrimaryTimes = 6;
 uint32 g_realtimeBuildStatus = 0;
+
+/* The global time structure of ondemand redo check. */
+int g_onDemandStatus[MAX_ONDEMAND_NODE_STATUS] = {0};
+time_t g_onDemandStatusTime[MAX_ONDEMAND_NODE_STATUS] = {0};
+
+pthread_rwlock_t g_ondemandStatusCheckRwlock = PTHREAD_RWLOCK_INITIALIZER;
+
 
 bool isLargerNode()
 {

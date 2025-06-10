@@ -237,6 +237,9 @@ typedef enum ThreadProcessStatusE {
 #define MAX_DN_NUM 1024
 #define MAX_INSTANCE_NUM 2048
 
+/* ondemand status check timeout */
+#define ONDEMADN_STATUS_CHECK_TIMEOUT 6
+
 #define CAN_NOT_SEND_SYNC_lIST 1
 #define NOT_NEED_TO_SEND_SYNC_LIST 2
 #define NEED_TO_SEND_SYNC_LIST 3
@@ -244,6 +247,7 @@ typedef enum ThreadProcessStatusE {
 const int DEFAULT_PHONY_DEAD_EFFECTIVE_TIME = 5;
 
 #define MAX_SEND_FAILOVER_TIMES (10)
+#define MAX_ONDEMAND_NODE_STATUS 9
 
 #define WITHOUT_CN_CLUSTER(str)                                                                \
     do {                                                                                       \
@@ -437,6 +441,8 @@ extern bool g_enableSetMostAvailableSync;
 /* thread count of thread pool */
 extern int cm_thread_count;
 
+extern volatile bool g_isInRedoStateUnderSwitchover;
+
 extern FILE* syslogFile;
 extern char* cm_server_dataDir;
 extern char sys_log_path[MAX_PATH_LEN];
@@ -483,6 +489,14 @@ extern char g_cmManualPausePath[MAX_PATH_LEN];
 extern uint32 g_waitStaticPrimaryTimes;
 extern SSDoubleClusterMode g_ssDoubleClusterMode;
 extern uint32 g_realtimeBuildStatus;
+
+/* The global time structure of ondemand redo check. */
+extern int g_onDemandStatus[MAX_ONDEMAND_NODE_STATUS];
+extern time_t g_onDemandStatusTime[MAX_ONDEMAND_NODE_STATUS];
+
+/* The rwlock of ondemand redo check. */
+extern pthread_rwlock_t g_ondemandStatusCheckRwlock;
+
 
 extern void clean_init_cluster_state();
 extern void instance_delay_arbitrate_time_out_direct_clean(uint32 group_index, int member_index,

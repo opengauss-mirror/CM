@@ -298,6 +298,13 @@ extern uint32 g_cmaRhbItvl;
 extern CmResConfList g_resConf[CM_MAX_RES_INST_COUNT];
 extern IpType g_ipType;
 
+/* Whether we are in add avg process. */
+extern bool g_isInVGAddProcess;
+extern bool g_isRegUnderVGAddProcess;
+
+/* Lock for pending status update, we dont wonder modify status under racing. */
+extern pthread_rwlock_t pending_status_rwlock;
+
 bool &GetIsSharedStorageMode();
 
 #define FENCE_TIMEOUT (agent_connect_retries * (agent_connect_timeout + agent_report_interval))

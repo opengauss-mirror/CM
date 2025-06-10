@@ -121,6 +121,7 @@ extern const char* g_progname;
 extern CM_Conn* CmServer_conn;
 extern uint32 g_commandOperationInstanceId;
 extern char manual_pause_file[MAXPGPATH];
+extern char manual_walrecord_file[MAXPGPATH];
 
 static int StartResInstCheck(uint32 instId)
 {
@@ -265,6 +266,7 @@ status_t do_start(void)
 
     (void)clock_gettime(CLOCK_MONOTONIC, &g_startTime);
     (void)getPauseStatus();
+    (void)getWalrecordMode();
     /* start the whole cluster */
     if (g_commandOperationInstanceId == 0 && g_command_operation_azName == NULL && g_commandOperationNodeId == 0) {
 #ifdef ENABLE_MULTIPLE_NODES
@@ -1873,7 +1875,6 @@ static int start_check_cluster()
                             }
                         } else if (cm_to_ctl_instance_status_ptr.instance_type == INSTANCE_TYPE_GTM) {
                             int local_role = cm_to_ctl_instance_status_ptr.gtm_member.local_status.local_role;
-
                             if (local_role != INSTANCE_ROLE_PRIMARY && local_role != INSTANCE_ROLE_STANDBY) {
                                 cnt_abnormal++;
                             }
@@ -2068,8 +2069,9 @@ static int start_check_node(uint32 node_id_check)
             return CM_STATUS_UNKNOWN;
         }
     }
+
     for (ii = 0; ii < g_node[node_id_check].datanodeCount; ii++) {
-        if (IsCmSharedStorageMode() && SetOfflineNode(node_id_check, pCmsCon)) {
+        if (g_enableWalRecord && IsCmSharedStorageMode() && SetOfflineNode(node_id_check, pCmsCon)) {
             continue;
         }
         cnt_base++;
@@ -2139,13 +2141,13 @@ static int start_check_node(uint32 node_id_check)
             cnt++;
         }
     }
-
     /* resource */
-    ++cnt_base;
+    if (!g_enableWalRecord) {
+        ++cnt_base;
+    }
     if (IsAllResInstStarted(g_node[node_id_check].node)) {
         ++cnt;
     }
-
     if (cnt < cnt_base) {
         if (cnt_base == cnt + cnt_deleted && cnt_deleted >= 1) {
             return CM_STATUS_NORMAL_WITH_CN_DELETED;
@@ -2335,4 +2337,14 @@ void getPauseStatus()
     } else {
         g_isPauseArbitration = false;
     }
+}
+
+void getWalrecordMode()
+{
+    struct stat statBuf = { 0 };
+    if (stat(manual_walrecord_file, &statBuf) == 0) {
+        g_enableWalRecord = true;
+    } else {
+        g_enableWalRecord = false;
+    }   
 }

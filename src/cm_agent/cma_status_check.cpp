@@ -1007,6 +1007,23 @@ void InitDNStatus(DnStatus *dnStatus, int i)
     InitDnFloatIpMsg(&(dnStatus->floatIpInfo), i);
 }
 
+void InitWrFloatIp(CmaWrFloatIp* wrFloatIp, int32 index)
+{
+    wrFloatIp->msgType = MSG_AGENT_CM_WR_FLOAT_IP;
+    wrFloatIp->node = g_nodeId;
+    wrFloatIp->instId = RES_INSTANCE_ID_MIN + g_currentNode ->node;
+    wrFloatIp->count = 0;
+    for (uint32 i = 0; i < MAX_FLOAT_IP_COUNT; i++) {
+        wrFloatIp->netState[i] = NETWORK_STATE_UNKNOWN;
+    }
+}
+
+void ReportCmsWrFloatIp(CmaWrFloatIp* wrFloatIp, int32 index)
+{
+    wrFloatIp->node = g_nodeId;
+    PushMsgToCmsSendQue((char *)wrFloatIp, (uint32)sizeof(CmaWrFloatIp), "wr float ip");
+}
+
 static void ChangeLocalRoleInBackup(int dnIdx, int *localDnRole)
 {
     if (*localDnRole == INSTANCE_ROLE_PRIMARY) {
@@ -1121,7 +1138,7 @@ void* DNStatusCheckMain(void *arg)
         struct stat instance_stat_buf = {0};
         struct stat cluster_stat_buf = {0};
 
-        if (g_shutdownRequest || g_exitFlag) {
+        if (g_shutdownRequest || g_exitFlag || g_enableWalRecord) {
             cm_sleep(5);
             continue;
         }
@@ -1267,6 +1284,37 @@ void* DNStatusCheckMain(void *arg)
         dn_restart_count_check_time_in_hour++;
         UpdateThreadActivity(index);
     }
+}
+
+void* WRFloatIpCheckMain(void *arg)
+{
+    CmaWrFloatIp wrFloatIp;
+    int32 i = *(int32*)arg;
+    write_runlog(LOG, "WRFloatIpCheckMain: start to check wr float ip status.\n");
+
+    for (;;) {
+        if (g_shutdownRequest || !IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
+            cm_sleep(SHUTDOWN_SLEEP_TIME);
+            continue;
+        }
+
+        if (!g_enableWalRecord) {
+            continue;
+        }
+        InitWrFloatIp(&wrFloatIp, g_nodeId);
+        DnFloatIp *dnFloatIp = GetDnFloatIpByDnIdx(i);
+        wrFloatIp.count = dnFloatIp->dnFloatIpCount;
+        NetworkState state[MAX_FLOAT_IP_COUNT];
+        GetFloatIpNicStatus(dnFloatIp->instId, CM_INSTANCE_TYPE_DN, state, MAX_FLOAT_IP_COUNT);
+        for (uint32 k = 0; k < wrFloatIp.count; k++) {
+            wrFloatIp.netState[k] = state[k];
+        }
+        ReportCmsWrFloatIp(&wrFloatIp, g_nodeId);
+        NetworkOper oper = GetFloatIpOper(g_nodeId);
+        SetNicOper(dnFloatIp->instId, CM_INSTANCE_TYPE_DN, NETWORK_TYPE_FLOATIP, oper);
+        cm_sleep(agnet_report_wrFloatip_interval);
+    }
+
 }
 
 /* kerberos status check */
@@ -1617,7 +1665,7 @@ void* DNConnectionStatusCheckMain(void *arg)
     write_runlog(LOG, "dn(%d) connection status check thread start, threadid %lu.\n", i, threadId);
     for (;;) {
         set_thread_state(threadId);
-        if (g_shutdownRequest) {
+        if (g_shutdownRequest || g_enableWalRecord) {
             cm_sleep(5);
             continue;
         }

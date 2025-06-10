@@ -195,7 +195,7 @@ void *DNPhonyDeadStatusCheckMain(void * const arg)
     AddThreadActivity(&index, threadId);
     
     for (;;) {
-        if (g_shutdownRequest || agent_phony_dead_check_interval == 0) {
+        if (g_shutdownRequest || agent_phony_dead_check_interval == 0 || g_enableWalRecord) {
             cm_sleep(5);
             continue;
         }

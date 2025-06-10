@@ -33,6 +33,7 @@ extern struct cm_conn *CmServer_conn;
 extern struct cm_conn *CmServer_conn1;
 extern struct cm_conn *CmServer_conn2;
 extern FILE *g_logFilePtr;
+extern bool g_enableWalRecord;
 struct cm_conn *GetCmsConn();
 
 #endif

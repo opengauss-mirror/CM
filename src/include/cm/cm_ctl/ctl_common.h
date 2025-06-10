@@ -197,6 +197,7 @@ extern bool g_isRestop;
 extern DdbConn *g_sess;
 extern TlsAuthPath g_tlsPath;
 extern bool g_isPauseArbitration;
+extern bool g_enableWalRecord;
 
 status_t do_start(void);
 int DoStop(void);
@@ -296,5 +297,7 @@ bool CheckTrustAndNet();
 bool IsTimeOut(const cmTime_t *lastTime, const char *str);
 void RemoveStartingFile();
 void getPauseStatus();
+void getWalrecordMode();
+
 
 #endif

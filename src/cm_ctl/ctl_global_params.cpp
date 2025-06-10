@@ -33,6 +33,7 @@ CM_Conn *CmServer_conn2 = NULL;
 
 // the fd of fprintf
 FILE *g_logFilePtr = stdout;
+bool g_enableWalRecord = false;
 
 CM_Conn *GetCmsConn()
 {

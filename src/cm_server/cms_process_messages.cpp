@@ -984,6 +984,18 @@ int CheckDataNodeStatus(uint32 i, const int *statusDnFail)
     return ret;
 }
 
+bool CheckResourceStatus()
+{
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            if (g_resStatus[i].status.resStat[j].status != INSTANCE_HA_STATE_NORMAL) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void CheckClusterStatus()
 {
     uint32 cn_count = 0;
@@ -1009,7 +1021,7 @@ void CheckClusterStatus()
             if (ret == -1) {
                 return;
             }
-        } else if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_DATANODE) {
+        } else if (g_instance_role_group_ptr[i].instanceMember[0].instanceType == INSTANCE_TYPE_DATANODE && !g_enableWalRecord) {
             ret = CheckDataNodeStatus(i, statusDnFail);
             if (ret == -1) {
                 return;
@@ -1031,6 +1043,10 @@ void CheckClusterStatus()
         }
     }
 
+    if (!CheckResourceStatus()) {
+        g_HA_status->status = CM_STATUS_DEGRADE;
+    }
+    
     clean_init_cluster_state();
     /*
      * In master standby cluster, if the count of normal etcd instance is less than a half of total, cluster status is
@@ -1777,6 +1793,15 @@ void MsgInOnDemandStatus(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgP
         agent_to_cm_ondemand_status_report, ondemandStatusReport, ProcessOndemandStatusMsg, recvMsgInfo, msgType);   
 }
 
+void MsgWrFloatIp(MsgRecvInfo *recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    if (!g_enableWalRecord) {
+        return;
+    }
+    CmaWrFloatIp *wrFloatIp;
+    PROCESS_MSG_BY_TYPE(CmaWrFloatIp, wrFloatIp, ProcessWrFloatIpMsg, recvMsgInfo, msgType);
+}
+
 static void InitCmCtlCmdProc()
 {
     // 32
@@ -1845,6 +1870,7 @@ static void InitCmAgentCmdProc()
 
     g_cmdProc[MSG_CMA_PING_DN_FLOAT_IP_FAIL] = MsgGetPingDnFloatIpFailedInfo;
     g_cmdProc[MSG_AGENT_ONDEMAND_STATUES_REPORT] = MsgInOnDemandStatus;
+    g_cmdProc[MSG_AGENT_CM_WR_FLOAT_IP] = MsgWrFloatIp;
 }
 
 static void InitCmClientCmdProc()

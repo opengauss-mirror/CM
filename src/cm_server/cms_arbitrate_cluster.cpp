@@ -507,11 +507,12 @@ static void FindMaxNodeCluster(MaxNodeCluster *maxCluster)
     g_curRhbStat.baseTime = time(NULL);
     GetRhbStat(g_curRhbStat.hbs, &g_curRhbStat.hwl);
     PrintAllRhbStatus();
-    // assume that all meet the conditions.
+
     for (int32 i = nodeCluster->maxNodeNum - 1; i >= 0; --i) {
-        if (!IsAllResAvailInNode(i) || !IsNodeRhbAlive(i)) {
+        if (!IsAllResAvailInNode(i) || (!g_enableWalRecord && !IsNodeRhbAlive(i))) {
             continue;
         }
+
         nodeCluster->visNode[0] = i;  // first node
         (void)FindNodeCluster(i, 1, nodeCluster);
         nodeCluster->resultSet[i] = nodeCluster->clusterNum;

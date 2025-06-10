@@ -31,6 +31,8 @@
 
 using namespace std;
 
+#define INVALID_INSTANCE_ID 0xFFFFFFFF
+
 typedef struct SyncGroup_t {
     char syncNames[DN_SYNC_LEN];
     uint32 exepctSyncNum;
@@ -1224,6 +1226,68 @@ static void ArbitateFloatIp(MsgRecvInfo *recvMsgInfo, const CmaDnFloatIpInfo *fl
     }
 }
 
+uint32 GetLockOwnerInstanceId()
+{
+    const char* target_lock = "wr cm lock";
+    uint32 ownerInstanceId = INVALID_INSTANCE_ID;
+    bool found_lock = false;
+
+    FILE* fp = popen("cm_ctl ddb --get / --prefix", "r");
+    if (!fp) {
+        write_runlog(ERROR, "Failed to execute ddb command.\n");
+        return INVALID_INSTANCE_ID;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\n")] = '\0';
+
+        if (strstr(line, target_lock)) {
+            found_lock = true;
+            continue;  
+        }
+
+        if (found_lock) {
+            ownerInstanceId = (uint32)strtoul(line, NULL, 10);
+            break;
+        }
+    }
+
+    pclose(fp);
+    return ownerInstanceId;
+}
+
+void NofityCmaDoFloatIpOper(MsgRecvInfo *recvMsgInfo, const CmaWrFloatIp *floatIp, NetworkOper oper)
+{
+    CmsWrFloatIpAck ack = {{0}};
+    ack.msgType = MSG_CMS_NOTIFY_WR_FLOAT_IP;
+    ack.oper = (int32)oper;
+    ack.node = floatIp->node;
+    (void)RespondMsg(recvMsgInfo, 'S', (const char *)(&ack), sizeof(CmsWrFloatIpAck));
+}
+
+void ArbitateWrFloatIp(MsgRecvInfo *recvMsgInfo, const CmaWrFloatIp *wrFloatIp)
+{
+    uint32 ownerInstanceId = GetLockOwnerInstanceId();
+    if (ownerInstanceId == wrFloatIp->instId) {
+        for (uint32 i = 0; i < wrFloatIp->count; i++) {
+            if (wrFloatIp->netState[i] != (int32)NETWORK_STATE_UP) {
+                NofityCmaDoFloatIpOper(recvMsgInfo, wrFloatIp, NETWORK_OPER_UP);
+                write_runlog(LOG, "cms notify cma do float ip up oper, and node[%u], instId[%u].\n",
+                    wrFloatIp->node, wrFloatIp->instId);
+            }
+        }
+    } else {
+        for (uint32 i = 0; i < wrFloatIp->count; i++) {
+            if (wrFloatIp->netState[i] == (int32)NETWORK_STATE_UP) {
+                NofityCmaDoFloatIpOper(recvMsgInfo, wrFloatIp, NETWORK_OPER_DOWN);
+                write_runlog(LOG, "cms notify cma do float ip down oper, and node[%u], instId[%u].\n",
+                    wrFloatIp->node, wrFloatIp->instId);
+            }
+        }
+    }
+}
+
 void ProcessDnFloatIpMsg(MsgRecvInfo *recvMsgInfo, CmaDnFloatIpInfo *floatIp)
 {
     const char *str = "[ProcessDnLocalPeerMsg]";
@@ -1253,6 +1317,13 @@ static void InitFloatIpAck(CmFloatIpStatAck *ack)
     ack->msgType = (int32)MSG_CTL_CM_FLOAT_IP_ACK;
     ack->count = 0;
     ack->canShow = CM_TRUE;
+}
+
+void ProcessWrFloatIpMsg(MsgRecvInfo *recvMsgInfo, CmaWrFloatIp *wrFloatIp)
+{
+    write_runlog(DEBUG1,"cms receive wrFloatIpMsg, and node[%u], instId[%u].\n",
+        wrFloatIp->node, wrFloatIp->instId);
+    ArbitateWrFloatIp(recvMsgInfo, wrFloatIp);
 }
 
 static bool8 IsCurInstanceExistingFloatIp(uint32 groupIdx, int32 memIdx)

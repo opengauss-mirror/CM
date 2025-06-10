@@ -30,6 +30,10 @@
 #include "cm_ip.h"
 #include "ctl_query_base.h"
 #include "cm_msg_version_convert.h"
+#include "ctl_common.h"
+
+#define INVALID_INSTANCE_ID 0xFFFFFFFF
+#define ROLE_LEN 7 /* role length */
 
 static uint32 GetCmsIpMaxLen();
 static uint32 GetResIpMaxLen(const OneResStatList *stat);
@@ -353,11 +357,8 @@ status_t ProcessMsgAndPrintStatus(CM_Conn *pCmsCon)
     int wait_time;
     int ret;
 
-    if (access(manual_pause_file, F_OK) == 0) {
-        g_isPauseArbitration = true;
-    } else {
-        g_isPauseArbitration = false;
-    }
+    (void)getPauseStatus();
+    (void)getWalrecordMode();
 
     wait_time = g_waitSeconds * 1000;
     bool recDataEnd = false;
@@ -795,36 +796,102 @@ static const char *ResStatIntToStr(uint32 status, uint32 isWork)
     return "Unknown";
 }
 
+uint32 GetLockOwnerInstanceId()
+{
+    const char* target_lock = "wr cm lock";
+    uint32 ownerInstanceId = INVALID_INSTANCE_ID;
+    bool found_lock = false;
+
+    FILE* fp = popen("cm_ctl ddb --get / --prefix", "r");
+    if (!fp) {
+        write_runlog(ERROR, "Failed to execute ddb command.\n");
+        return INVALID_INSTANCE_ID;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\n")] = '\0';
+
+        if (strstr(line, target_lock)) {
+            found_lock = true;
+            continue;  
+        }
+
+        if (found_lock) {
+            ownerInstanceId = (uint32)strtoul(line, NULL, 10);
+            break;
+        }
+    }
+
+    pclose(fp);
+    return ownerInstanceId;
+}
+
 static void PrintOneResLine(const OneResStatList *stat, uint32 ipLen, uint32 resLen, uint32 instLen, uint32 statLen)
 {
+    uint32 wrLockOwner = INVALID_INSTANCE_ID;
+    bool showRole = false;
+    getWalrecordMode();
+    if (g_enableWalRecord) {
+        wrLockOwner = GetLockOwnerInstanceId();
+        showRole = true;
+    }
+
     for (uint32 i = 0; i < stat->instanceCount; ++i) {
         const char *status = ResStatIntToStr(stat->resStat[i].status, stat->resStat[i].isWorkMember);
         uint32 resIndex = get_node_index(stat->resStat[i].nodeId);
         if (resIndex == INVALID_NODE_NUM) {
             write_runlog(DEBUG1, "cm_ctl recv unknown resource info, nodeId=%u.\n", stat->resStat[i].nodeId);
-            return;
+            continue;
         }
+
+        const char* role = showRole ? 
+            ((stat->resStat[i].cmInstanceId == wrLockOwner) ? "Primary" : "Standby") : "";
+
         if (g_abnormalQuery && (strcmp(status, "OnLine") == 0)) {
             continue;
         }
+
         if (g_availabilityZoneCommand) {
-            (void)fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[resIndex].azName);
+            fprintf(g_logFilePtr, "%-*s ", max_az_name_len, g_node[resIndex].azName);
         }
+
         if (g_ipQuery) {
-            (void)fprintf(g_logFilePtr, "%-*u%-*s%-*s%-*s%-*u%-*s\n",
-                (MAX_NODE_ID_LEN + SPACE_LEN), stat->resStat[i].nodeId,
-                (max_node_name_len + SPACE_LEN), g_node[resIndex].nodeName,
-                ipLen, g_node[resIndex].sshChannel[0],
-                resLen, stat->resName,
-                instLen, stat->resStat[i].cmInstanceId,
-                statLen, status);
+            if (showRole) {
+                fprintf(g_logFilePtr, "%-*u%-*s%-*s%-*s%-*u%-*s (%-*s)\n",
+                    (MAX_NODE_ID_LEN + SPACE_LEN), stat->resStat[i].nodeId,
+                    (max_node_name_len + SPACE_LEN), g_node[resIndex].nodeName,
+                    ipLen, g_node[resIndex].sshChannel[0],
+                    resLen, stat->resName,
+                    instLen, stat->resStat[i].cmInstanceId,
+                    statLen, status,
+                    ROLE_LEN, role);
+            } else {
+                fprintf(g_logFilePtr, "%-*u%-*s%-*s%-*s%-*u%-*s\n",
+                    (MAX_NODE_ID_LEN + SPACE_LEN), stat->resStat[i].nodeId,
+                    (max_node_name_len + SPACE_LEN), g_node[resIndex].nodeName,
+                    ipLen, g_node[resIndex].sshChannel[0],
+                    resLen, stat->resName,
+                    instLen, stat->resStat[i].cmInstanceId,
+                    statLen, status);
+            }
         } else {
-            (void)fprintf(g_logFilePtr, "%-*u%-*s%-*s%-*u%-*s\n",
-                (MAX_NODE_ID_LEN + SPACE_LEN), stat->resStat[i].nodeId,
-                (max_node_name_len + SPACE_LEN), g_node[resIndex].nodeName,
-                resLen, stat->resName,
-                instLen, stat->resStat[i].cmInstanceId,
-                statLen, status);
+            if (showRole) {
+                fprintf(g_logFilePtr, "%-*u%-*s%-*s%-*u%-*s (%-*s)\n",
+                    (MAX_NODE_ID_LEN + SPACE_LEN), stat->resStat[i].nodeId,
+                    (max_node_name_len + SPACE_LEN), g_node[resIndex].nodeName,
+                    resLen, stat->resName,
+                    instLen, stat->resStat[i].cmInstanceId,
+                    statLen, status,
+                    ROLE_LEN, role);
+            } else {
+                fprintf(g_logFilePtr, "%-*u%-*s%-*s%-*u%-*s\n",
+                    (MAX_NODE_ID_LEN + SPACE_LEN), stat->resStat[i].nodeId,
+                    (max_node_name_len + SPACE_LEN), g_node[resIndex].nodeName,
+                    resLen, stat->resName,
+                    instLen, stat->resStat[i].cmInstanceId,
+                    statLen, status);
+            }
         }
     }
 }
@@ -1898,7 +1965,8 @@ static void PrintSimpleResult(cm_to_ctl_instance_status *cm_to_ctl_instance_stat
         }
     }
 
-    if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_DATANODE && !g_startStatusQuery) {
+    if (cm_to_ctl_instance_status_ptr->instance_type == INSTANCE_TYPE_DATANODE && !g_startStatusQuery &&
+        !g_enableWalRecord) {
         print_simple_DN_result(node_index, cm_to_ctl_instance_status_ptr, ip_len);
     }
 

@@ -208,6 +208,7 @@ extern bool g_cnPhonyDeadD;
 extern const uint32 AGENT_WATCH_DOG_THRESHOLD;
 /* cm_agent config parameters */
 extern uint32 agent_report_interval;
+extern uint32 agnet_report_wrFloatip_interval;
 extern uint32 agent_heartbeat_timeout;
 extern uint32 agent_connect_timeout;
 extern ClusterRole agent_backup_open;
@@ -321,6 +322,8 @@ extern bool g_isPauseArbitration;
 extern char g_cmManualPausePath[MAX_PATH_LEN];
 extern bool g_isStarting;
 extern char g_cmManualStartingPath[MAX_PATH_LEN];
+extern bool g_enableWalRecord;
+extern char g_cmManualWalRecordPath[MAX_PATH_LEN];
 
 
 #endif

@@ -193,6 +193,8 @@ static int get_prog_path()
     securec_check_errno(rc, (void)rc);
     rc = memset_s(g_cmManualPausePath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_cmManualWalRecordPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
     if (GetHomePath(g_appPath, sizeof(g_appPath)) != 0) {
         (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
@@ -242,6 +244,9 @@ static int get_prog_path()
         canonicalize_path(cluster_maintance_path);
         rcs = snprintf_s(
             g_cmManualPausePath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", g_appPath, CM_CLUSTER_MANUAL_PAUSE);
+        securec_check_intval(rcs, (void)rcs);
+        rcs = snprintf_s(
+            g_cmManualWalRecordPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", g_appPath, CM_CLUSTER_MANUAL_WALRECORD);
         securec_check_intval(rcs, (void)rcs);
         InitClientCrt(g_appPath);
     }
@@ -2129,6 +2134,12 @@ static int server_loop(void)
         } else {
             g_isPauseArbitration = false;
             pauseLogTimes = 0;
+        }
+
+        if (access(g_cmManualWalRecordPath, F_OK) == 0) {
+            g_enableWalRecord = true;
+        } else {
+            g_enableWalRecord = false;
         }
 
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);

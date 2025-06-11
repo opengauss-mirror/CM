@@ -174,6 +174,7 @@ uint32 g_threadDeadEffectiveTime = 600;
 uint32 agent_report_interval = 1;
 uint32 agent_heartbeat_timeout = 8;
 uint32 agent_connect_timeout = 1;
+uint32 agnet_report_wrFloatip_interval = 20;
 ClusterRole agent_backup_open = CLUSTER_PRIMARY;
 uint32 agent_connect_retries = 15;
 uint32 agent_check_interval = 2;
@@ -239,6 +240,8 @@ bool g_isPauseArbitration = false;
 char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 bool g_isStarting = false;
 char g_cmManualStartingPath[MAX_PATH_LEN] = {0};
+bool g_enableWalRecord = false;
+char g_cmManualWalRecordPath[MAX_PATH_LEN] = {0};
 
 bool &GetIsSharedStorageMode()
 {

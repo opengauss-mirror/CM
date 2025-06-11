@@ -335,6 +335,8 @@ bool g_isPauseArbitration = false;
 char g_cmManualPausePath[MAX_PATH_LEN] = {0};
 uint32 g_waitStaticPrimaryTimes = 6;
 uint32 g_realtimeBuildStatus = 0;
+bool g_enableWalRecord = false;
+char g_cmManualWalRecordPath[MAX_PATH_LEN] = {0};
 
 /* The global time structure of ondemand redo check. */
 int g_onDemandStatus[MAX_ONDEMAND_NODE_STATUS] = {0};

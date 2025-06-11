@@ -1535,7 +1535,7 @@ static void ProcessCtlToCmOneInstanceQueryMsg(
                 }
             }
         } else {
-            if (statusMsg.data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL &&
+            if (!g_enableWalRecord && statusMsg.data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL &&
                 CheckReadOnlyStatus(statusMsg.instanceId)) {
                 statusMsg.data_node_member.local_status.db_state = INSTANCE_HA_STATE_READ_ONLY;
             }

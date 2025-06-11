@@ -60,6 +60,7 @@ void UpdateIsregCheckList(const uint32 *newCheckList, uint32 newCheckCount);
 void* ETCDStatusCheckMain(void* arg);
 void* ETCDConnectionStatusCheckMain(void *arg);
 void* DNStatusCheckMain(void *arg);
+void* WRFloatIpCheckMain(void *arg);
 void* DNConnectionStatusCheckMain(void *arg);
 
 void* KerberosStatusCheckMain(void *arg);

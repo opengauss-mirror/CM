@@ -58,8 +58,9 @@ static void InstancesStatusCheckAndReport(void)
     gtm_status_check_and_report();
     coordinator_status_check_and_report();
 #endif
-
-    DatanodeStatusReport();
+    if (!g_enableWalRecord) {
+        DatanodeStatusReport();
+    }
     fenced_UDF_status_check_and_report();
     etcd_status_check_and_report();
     kerberos_status_check_and_report();
@@ -1932,6 +1933,17 @@ void MsgCmAgentResetFloatIpAck(const AgentMsgPkg *msg, char *dataPath, const cm_
     ProcessResetFloatIpFromCms(recvMsg);
 }
 
+void MsgCmAgentNotifyWrFloatIp(const AgentMsgPkg *msg, char *dataPath, const cm_msg_type *msgTypePtr)
+{
+    const CmsWrFloatIpAck *recvMsg =
+        (const CmsWrFloatIpAck *)CmGetMsgBytesPtr(msg, sizeof(CmsWrFloatIpAck));
+    if (recvMsg == NULL) {
+        return;
+    }
+    NetworkOper oper = ChangeInt2NetworkOper(recvMsg->oper);
+    SetFloatIpOper(recvMsg->node, oper, "[MsgCmAgentNotifyWrFloatIp]");
+}
+
 #ifdef ENABLE_MULTIPLE_NODES
 static void MsgCmAgentNotifyCn(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)
 {
@@ -2085,6 +2097,7 @@ void CmServerCmdProcessorInit(void)
     g_cmsCmdProcessor[MSG_CM_AGENT_FLOAT_IP_ACK]                = MsgCmAgentFloatIpAck;
     g_cmsCmdProcessor[MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED]    = MsgCmAgentIsregCheckListChanged;
     g_cmsCmdProcessor[MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP] = MsgCmAgentResetFloatIpAck;
+    g_cmsCmdProcessor[MSG_CMS_NOTIFY_WR_FLOAT_IP]               = MsgCmAgentNotifyWrFloatIp;
 #ifdef ENABLE_MULTIPLE_NODES
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN]                   = MsgCmAgentNotifyCn;
     g_cmsCmdProcessor[MSG_CM_AGENT_NOTIFY_CN_CENTRAL_NODE]      = MsgCmAgentNotifyCnCentralNode;

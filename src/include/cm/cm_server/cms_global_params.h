@@ -167,6 +167,7 @@ typedef enum ThreadProcessStatusE {
 #define CM_PID_FILE "cm_server.pid"
 #define CLUSTER_MAINTANCE "cluster_maintance"
 #define CM_CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
+#define CM_CLUSTER_MANUAL_WALRECORD "cluster_manual_walrecord"
 
 #define PRIMARY "PRIMARY"
 #define STANDBY "STANDBY"
@@ -489,6 +490,8 @@ extern char g_cmManualPausePath[MAX_PATH_LEN];
 extern uint32 g_waitStaticPrimaryTimes;
 extern SSDoubleClusterMode g_ssDoubleClusterMode;
 extern uint32 g_realtimeBuildStatus;
+extern bool g_enableWalRecord;
+extern char g_cmManualWalRecordPath[MAX_PATH_LEN];
 
 /* The global time structure of ondemand redo check. */
 extern int g_onDemandStatus[MAX_ONDEMAND_NODE_STATUS];

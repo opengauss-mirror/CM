@@ -56,6 +56,7 @@
 #define RESUMING_CN_STOP "resuming_cn_stop"
 #define CLUSTER_MANUAL_PAUSE "cluster_manual_pause"
 #define CLUSTER_MANUAL_STARTING "cluster_manual_starting"
+#define CLUSTER_MANUAL_WALRECORD "cluster_manual_walrecord"
 
 char* g_bin_name = NULL;
 char* g_bin_path = NULL;
@@ -143,6 +144,7 @@ static char g_logicClusterListPath[MAX_PATH_LEN];
 char minority_az_start_file[MAX_PATH_LEN];
 char g_minorityAzArbitrateFile[MAX_PATH_LEN];
 char manual_pause_file[MAXPGPATH];
+char manual_walrecord_file[MAXPGPATH];
 
 uint32 g_nodeId = 0;
 uint32 g_commandOperationNodeId = 0;
@@ -914,6 +916,8 @@ static void init_ctl_global_variable()
             "%s/share/sslcert/etcd/client.key", g_appPath);
         securec_check_intval(ret, (void)ret);
         ret = snprintf_s(manual_pause_file, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, CLUSTER_MANUAL_PAUSE);
+        securec_check_intval(ret, (void)ret);
+        ret = snprintf_s(manual_walrecord_file, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", g_appPath, CLUSTER_MANUAL_WALRECORD);
         securec_check_intval(ret, (void)ret);
     } else {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("Get GAUSSHOME failed."),

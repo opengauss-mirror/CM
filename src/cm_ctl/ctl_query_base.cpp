@@ -102,6 +102,9 @@ static void PrintClusterStatus(int clusterStatus, bool redistributing, int switc
     if (g_isPauseArbitration) {
         (void)fprintf(g_logFilePtr, "pausing         : Yes\n");
     }
+    if (g_enableWalRecord) {
+        (void)fprintf(g_logFilePtr, "enable_walrecord: Yes\n");
+    }
 }
 
 int PrintLogicClusterStatus(const char *receiveMsg, int nodeId)
@@ -304,6 +307,9 @@ int ProcessDataBeginMsg(const char *receiveMsg, bool *recDataEnd)
             (clusterStatusPtr->switchedCount == 0) ? "Yes" : "No");
         if (g_isPauseArbitration) {
             (void)fprintf(g_logFilePtr, "pausing                   : Yes\n");
+        }
+        if (g_enableWalRecord) {
+            (void)fprintf(g_logFilePtr, "enable_walrecord         : Yes\n");
         }
         (void)fprintf(g_logFilePtr, "\n");
         (void)fprintf(g_logFilePtr,
@@ -569,10 +575,10 @@ void PrintDnStatusLine()
     if (g_portQuery) {
         tmpInstanceLen = tmpInstanceLen + INSTANCE_LEN;
     }
-
-    (void)fprintf(g_logFilePtr, "\n[  Datanode State   ]\n\n");
-
-    PrintDnHeaderLine(nodeLen, ipLen, instanceLen, tmpInstanceLen, stateLen);
+    if (!g_enableWalRecord) {
+        (void)fprintf(g_logFilePtr, "\n[  Datanode State   ]\n\n");
+        PrintDnHeaderLine(nodeLen, ipLen, instanceLen, tmpInstanceLen, stateLen);
+    }
 
     uint32 maxLen;
     uint32 secondryStateLen = INSTANCE_STATIC_ROLE_LEN + SPACE_LEN +

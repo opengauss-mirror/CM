@@ -393,6 +393,8 @@ int get_prog_path()
     securec_check_errno(rc, (void)rc);
     rc = memset_s(g_cmManualStartingPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
     securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_cmManualWalRecordPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+    securec_check_errno(rc, (void)rc);
     if (GetHomePath(exec_path, sizeof(exec_path)) != 0) {
         (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return -1;
@@ -447,6 +449,9 @@ int get_prog_path()
         securec_check_intval(rcs, (void)rcs);
         rcs = snprintf_s(
             g_cmManualStartingPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, CM_CLUSTER_MANUAL_STARTING);
+        securec_check_intval(rcs, (void)rcs);
+        rcs = snprintf_s(
+            g_cmManualWalRecordPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin/%s", exec_path, CM_CLUSTER_MANUAL_WALRECORD);
         securec_check_intval(rcs, (void)rcs);
         InitClientCrt(exec_path);
     }
@@ -1116,6 +1121,12 @@ void server_loop(void)
             g_isStarting = true;
         } else {
             g_isStarting = false;
+        }
+
+        if (access(g_cmManualWalRecordPath, F_OK) == 0) {
+            g_enableWalRecord = true;
+        } else {
+            g_enableWalRecord = false;
         }
 
         (void)clock_gettime(CLOCK_MONOTONIC, &endTime);
@@ -1885,9 +1896,9 @@ int main(int argc, char** argv)
             CreateDNBackupStatusCheckThread(ind);
             CreateDNStorageScalingAlarmThread(ind);
 #endif
-        }
+            CreateWRFloatIpCheckThread(ind);
+            }
     }
-
     /* Get log path that is used in start&stop thread and log compress&remove thread. */
     status = cmagent_getenv("GAUSSLOG", g_logBasePath, sizeof(g_logBasePath));
     if (status != EOK) {

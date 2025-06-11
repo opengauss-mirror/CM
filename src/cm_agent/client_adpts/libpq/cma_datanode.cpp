@@ -1590,7 +1590,7 @@ void *DNMostAvailableCheckMain(void *arg)
     uint32 shutdownSleepInterval = 5;
     cltPqConn_t *curDnConn = NULL;
     for (;;) {
-        if (g_shutdownRequest) {
+        if (g_shutdownRequest || g_enableWalRecord) {
             cm_sleep(shutdownSleepInterval);
             continue;
         }

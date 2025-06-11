@@ -387,15 +387,14 @@ void start_instance_check(void)
      * skip StartDatanodeCheck and StartResourceCheck in pausing state
      */
     if (g_isDnFirstStart) {
-        if (needStartDnCheck && !g_enableSharedStorage) {
+        if (needStartDnCheck && !g_enableSharedStorage && !g_enableWalRecord) {
             StartInstanceAndCheck(StartDatanodeCheck, "[StartDatanodeCheck]");
         }
     } else {
-        if (!g_isPauseArbitration && needStartDnCheck && !g_enableSharedStorage) {
+        if (!g_isPauseArbitration && needStartDnCheck && !g_enableSharedStorage && !g_enableWalRecord) {
             StartInstanceAndCheck(StartDatanodeCheck, "[StartDatanodeCheck]");
         }
     }
-
     StartInstanceAndCheck(CheckAgentNicDown, "[CheckAgentNicDown]");
 
     if (IsCusResExistLocal() && !(g_isPauseArbitration && !g_isStarting)) {

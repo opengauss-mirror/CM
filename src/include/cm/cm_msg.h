@@ -275,6 +275,8 @@ typedef enum CM_MessageType_st {
     MSG_AGENT_ONDEMAND_STATUES_REPORT = 187,
     MSG_CTL_CM_NODE_KICK_COUNT = 188,
     MSG_CTL_CM_NODE_KICK_COUNT_ACK = 189,
+    MSG_AGENT_CM_WR_FLOAT_IP = 190,
+    MSG_CMS_NOTIFY_WR_FLOAT_IP = 191,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -1374,6 +1376,20 @@ typedef struct CmsDnFloatIpAckT {
     int32 oper;
     char remain[FLOAT_IP_MSG_RES];
 } CmsDnFloatIpAck;
+
+typedef struct CmaWrFloatIpT {
+    int msgType;
+    uint32 node;
+    uint32 instId;
+    uint32 count;
+    NetworkState netState[MAX_FLOAT_IP_COUNT];
+} CmaWrFloatIp;
+
+typedef struct CmsWrFloatIpAckT {
+    int msgType;
+    uint32 node;
+    int32 oper;
+}CmsWrFloatIpAck;
 
 typedef struct DnStatus_t {
     CM_MessageType barrierMsgType;

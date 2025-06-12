@@ -1180,7 +1180,9 @@ void server_loop(void)
             g_gotParameterReload = 0;
         }
         
-        CheckAllThreadActivities();
+        if (!g_enableWalRecord) {
+            CheckAllThreadActivities();
+        }
 
         CmUsleep(AGENT_RECV_CYCLE);
         recv_count++;
@@ -1899,7 +1901,7 @@ int main(int argc, char** argv)
             if (g_enableWalRecord) {
                 CreateWRFloatIpCheckThread(ind);
             }
-            }
+        }
     }
     /* Get log path that is used in start&stop thread and log compress&remove thread. */
     status = cmagent_getenv("GAUSSLOG", g_logBasePath, sizeof(g_logBasePath));

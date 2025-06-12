@@ -106,6 +106,7 @@ extern THR_LOCAL const char* thread_name;
 #define PG_REWIND_NAME "gs_rewind"
 #define GTM_CTL_NAME "gtm_ctl"
 #define CM_CTL_NAME "cm_ctl"
+#define WRCMD "wrcmd"
 
 #define COORDINATE_BIN_NAME "gaussdb"
 #define DATANODE_BIN_NAME "gaussdb"

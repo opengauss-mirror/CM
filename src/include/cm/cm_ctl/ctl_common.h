@@ -298,6 +298,7 @@ bool IsTimeOut(const cmTime_t *lastTime, const char *str);
 void RemoveStartingFile();
 void getPauseStatus();
 void getWalrecordMode();
+uint32 GetLockOwnerInstanceId();
 
 
 #endif

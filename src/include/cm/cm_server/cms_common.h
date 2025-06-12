@@ -59,5 +59,5 @@ void GetDnArbitrateMode();
 void CmsSyncStandbyMode();
 
 bool EnableShareDisk();
-
+void getWalrecordMode();
 #endif

@@ -386,6 +386,10 @@ static bool IsAllResAvailInNode(int32 resIdx)
     bool heartbeatRes = IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_VOTE_DISK, heartbeatStatus);
     MaxClusterResStatus nodeStatus = GetResNodeStat(g_node[nodeIdx].node, DEBUG5);
     bool nodeRes = IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus);
+    if (g_enableWalRecord) {
+        return nodeRes;
+    }
+
     return (heartbeatRes && nodeRes);
 }
 
@@ -1125,11 +1129,11 @@ void *MaxNodeClusterArbitrateMain(void *arg)
     CmsArbitrateStatus cmsSt = {false, CM_SERVER_UNKNOWN, MAINTENANCE_MODE_NONE};
     InitClusterResInfo();
     InitMaxNodeResource();
-    if (InitVotingDisk(g_votingDiskPath) != CM_SUCCESS) {
+    if (!g_enableWalRecord && InitVotingDisk(g_votingDiskPath) != CM_SUCCESS) {
         write_runlog(FATAL, "Init voting disk failed!\n");
         exit(-1);
     }
-    if (AllocVotingDiskMem() != CM_SUCCESS) {
+    if (!g_enableWalRecord && AllocVotingDiskMem() != CM_SUCCESS) {
         write_runlog(FATAL, "Alloc voting disk memory failed!\n");
         exit(-1);
     }
@@ -1153,7 +1157,7 @@ void *MaxNodeClusterArbitrateMain(void *arg)
             continue;
         }
 
-        if (CheckVotingDisk() != CM_SUCCESS) {
+        if (!g_enableWalRecord && CheckVotingDisk() != CM_SUCCESS) {
             cm_sleep(sleepInterval);
             continue;
         }

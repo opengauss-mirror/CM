@@ -160,6 +160,12 @@ int FindInstanceIdAndType(uint32 node, const char *dataPath, uint32 *instanceId,
                 *instanceType = INSTANCE_TYPE_DATANODE;
                 return 0;
             }
+            getWalrecordMode();
+            if (g_enableWalRecord) {
+                *instanceId = RES_INSTANCE_ID_MIN + node;
+                *instanceType = INSTANCE_TYPE_DATANODE;
+                return 0;
+            }
         }
     }
 

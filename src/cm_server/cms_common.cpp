@@ -898,3 +898,12 @@ bool EnableShareDisk()
 {
     return (g_dnArbitrateMode == SHARE_DISK);
 }
+
+void getWalrecordMode()
+{
+    if (access(g_cmManualWalRecordPath, F_OK) == 0) {
+        g_enableWalRecord = true;
+    } else {
+        g_enableWalRecord = false;
+    }  
+}

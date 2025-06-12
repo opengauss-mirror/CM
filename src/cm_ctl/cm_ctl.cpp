@@ -1378,8 +1378,11 @@ static int CheckCtlInputParameter(const CtlOption *ctx)
         (ctl_command == CM_BUILD_COMMAND && !ctx->build.isNeedCmsBuild) || ctl_command == CM_REMOVE_COMMAND ||
         ctl_command == CM_STARTCM_COMMAND || ctl_command == CM_STOPCM_COMMAND || ctl_command == CM_DISABLE_COMMAND ||
         ctl_command == CM_ENCRYPT_COMMAND;
+
+    getWalrecordMode();
+
     if (condition) {
-        if (g_cmData[0] == '\0') {
+        if (!g_enableWalRecord && g_cmData[0] == '\0') {
             write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("no data directory specified."),
                 errdetail("N/A"), errmodule(MOD_CMCTL), errcause("The cmdline entered by the user is incorrect."),
                 erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));

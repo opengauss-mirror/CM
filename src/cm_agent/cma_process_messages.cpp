@@ -352,6 +352,24 @@ static void ExeSwitchoverZengineCmd(const char *dataDir)
     return;
 }
 
+static void SetWrcmdSwitchover(char* command)
+{
+    char mppEnvSeparateFile[MAXPGPATH] = {0};
+    errno_t rc;
+    rc = cmagent_getenv("MPPDB_ENV_SEPARATE_PATH", mppEnvSeparateFile, sizeof(mppEnvSeparateFile));
+    if (rc == EOK) {
+        check_input_for_security(mppEnvSeparateFile);
+        rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+            SYSTEMQUOTE "source /etc/profile; source %s;%s switchover >> \"%s\" 2>&1 &" SYSTEMQUOTE, 
+            mppEnvSeparateFile, WRCMD, system_call_log);
+    } else {
+        write_runlog(DEBUG1, "Get MPPDB_ENV_SEPARATE_PATH failed, please check if the env exists.\n");
+        rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
+            SYSTEMQUOTE "source /etc/profile;%s switchover >> \"%s\" 2>&1 &" SYSTEMQUOTE,
+            mppEnvSeparateFile, WRCMD, system_call_log);
+    }
+}
+
 static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint32 instanceId, uint32 term, bool doFast)
 {
     char command[MAXPGPATH];
@@ -387,6 +405,10 @@ static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint
                 return;
             }
             lcName = get_logicClusterName_by_dnInstanceId(instanceId);
+            if (g_enableWalRecord) {
+                SetWrcmdSwitchover(command);
+                break;
+            }
             if (doFast) {
                 rc = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1,
                     SYSTEMQUOTE "%s switchover -D  %s  -T %u -f>> \"%s\" 2>&1 &" SYSTEMQUOTE,

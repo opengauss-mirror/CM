@@ -1896,7 +1896,9 @@ int main(int argc, char** argv)
             CreateDNBackupStatusCheckThread(ind);
             CreateDNStorageScalingAlarmThread(ind);
 #endif
-            CreateWRFloatIpCheckThread(ind);
+            if (g_enableWalRecord) {
+                CreateWRFloatIpCheckThread(ind);
+            }
             }
     }
     /* Get log path that is used in start&stop thread and log compress&remove thread. */

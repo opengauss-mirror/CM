@@ -1293,14 +1293,12 @@ void* WRFloatIpCheckMain(void *arg)
     write_runlog(LOG, "WRFloatIpCheckMain: start to check wr float ip status.\n");
 
     for (;;) {
-        if (g_shutdownRequest || !IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY)) {
+        if (g_shutdownRequest || !IsNeedCheckFloatIp() || (agent_backup_open != CLUSTER_PRIMARY) ||
+            !g_enableWalRecord) {
             cm_sleep(SHUTDOWN_SLEEP_TIME);
             continue;
         }
 
-        if (!g_enableWalRecord) {
-            continue;
-        }
         InitWrFloatIp(&wrFloatIp, g_nodeId);
         DnFloatIp *dnFloatIp = GetDnFloatIpByDnIdx(i);
         wrFloatIp.count = dnFloatIp->dnFloatIpCount;

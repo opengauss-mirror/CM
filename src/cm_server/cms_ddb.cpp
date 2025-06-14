@@ -1601,10 +1601,10 @@ void GetReadOnlyDdbValue(const char *cnValue, const char *dnValue)
         /* CN */
         if (g_node[i].coordinate == 1) {
             if (cnValue[cnIndex] != '\0') {
-                curNodeInfo->coordinateNode.ddbValue = cnValue[cnIndex] - '0';
+                curNodeInfo->coordinateNode.ddbValue =(ReadOnlyDdbValue)(cnValue[cnIndex] - '0');
                 cnIndex++;
             } else {
-                curNodeInfo->coordinateNode.ddbValue = 0;
+                curNodeInfo->coordinateNode.ddbValue = READ_ONLY_DDB_INIT;
             }
         }
 
@@ -1612,10 +1612,10 @@ void GetReadOnlyDdbValue(const char *cnValue, const char *dnValue)
         for (uint32 j = 0; j < curNodeInfo->dataNodeCount; j++) {
             DataNodeReadOnlyInfo *curDn = &curNodeInfo->dataNode[j];
             if (dnValue[dnIndex] != '\0') {
-                curDn->ddbValue = dnValue[dnIndex] - '0';
+                curDn->ddbValue = (ReadOnlyDdbValue)(dnValue[dnIndex] - '0');
                 dnIndex++;
             } else {
-                curDn->ddbValue = 0;
+                curDn->ddbValue = READ_ONLY_DDB_INIT;
             }
         }
     }
@@ -1804,7 +1804,7 @@ void SetReadOnlyDdbValue(char *cnValue, int cnValueLen, char *dnValue, int dnVal
         /* CN */
         if (g_node[i].coordinate == 1) {
             if (cnIndex < cnValueLen - 1) {
-                cnValue[cnIndex] = curNodeInfo->coordinateNode.ddbValue + '0';
+                cnValue[cnIndex] = (int)curNodeInfo->coordinateNode.ddbValue + '0';
                 cnIndex++;
             }
         }
@@ -1813,7 +1813,7 @@ void SetReadOnlyDdbValue(char *cnValue, int cnValueLen, char *dnValue, int dnVal
         for (uint32 j = 0; j < curNodeInfo->dataNodeCount; j++) {
             DataNodeReadOnlyInfo *curDn = &curNodeInfo->dataNode[j];
             if (dnIndex < dnValueLen - 1) {
-                dnValue[dnIndex] = curDn->ddbValue + '0';
+                dnValue[dnIndex] = (int)curDn->ddbValue + '0';
                 dnIndex++;
             }
         }

@@ -1261,7 +1261,7 @@ static void FillCm2CtlRsp4CnGroup(uint32 ii, cm_to_ctl_instance_status *cmToCtlS
             cmToCtlStatusContent->coordinatemember.status = INSTANCE_ROLE_INIT;
         } else if (g_instance_group_report_status_ptr[ii].instance_status.coordinatemember.status.status ==
             INSTANCE_ROLE_NORMAL &&
-            CheckReadOnlyStatus(cmToCtlStatusContent->instanceId)) {
+            CheckReadOnlyStatus(ii, 0)) {
             cmToCtlStatusContent->coordinatemember.status = INSTANCE_ROLE_READONLY;
         } else {
             cmToCtlStatusContent->coordinatemember.status =
@@ -1317,7 +1317,7 @@ static void FillCm2CtlRsp4DnGroup(uint32 ii, uint32 jj, cm_to_ctl_instance_statu
         sizeof(cm_to_ctl_instance_datanode_status));
     securec_check_errno(rc, (void)rc);
     if (cmToCtlStatusContent->data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL &&
-        CheckReadOnlyStatus(cmToCtlStatusContent->instanceId)) {
+        CheckReadOnlyStatus(ii, (int)jj)) {
         cmToCtlStatusContent->data_node_member.local_status.db_state = INSTANCE_HA_STATE_READ_ONLY;
     }
     if (GetIsSharedStorageMode()) {
@@ -1488,7 +1488,7 @@ static void ProcessCtlToCmOneInstanceQueryMsg(
                 instStatus->coordinatemember.status.db_state == INSTANCE_HA_STATE_STARTING) {
                 statusMsg.coordinatemember.status = INSTANCE_ROLE_INIT;
             } else if (instStatus->coordinatemember.status.status == INSTANCE_ROLE_NORMAL &&
-                CheckReadOnlyStatus(statusMsg.instanceId)) {
+                CheckReadOnlyStatus(groupIndex, 0)) {
                 statusMsg.coordinatemember.status = INSTANCE_ROLE_READONLY;
             } else {
                 statusMsg.coordinatemember.status = instStatus->coordinatemember.status.status;
@@ -1528,7 +1528,7 @@ static void ProcessCtlToCmOneInstanceQueryMsg(
             }
         } else {
             if (statusMsg.data_node_member.local_status.db_state == INSTANCE_HA_STATE_NORMAL &&
-                CheckReadOnlyStatus(statusMsg.instanceId)) {
+                CheckReadOnlyStatus(groupIndex, memberIndex)) {
                 statusMsg.data_node_member.local_status.db_state = INSTANCE_HA_STATE_READ_ONLY;
             }
             if (GetIsSharedStorageMode()) {
@@ -1844,7 +1844,7 @@ static void HdlCtlToCmStartStatQry(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_que
     } else if (backup_open != CLUSTER_PRIMARY) {
         clusterStat->cluster_status = g_HA_status->status;
     } else {
-        clusterStat->cluster_status = (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatus(DATANODE_ALL)) ?
+        clusterStat->cluster_status = (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatusAll()) ?
             CM_STATUS_DEGRADE : g_HA_status->status;
     }
     if (clusterStat->inReloading) {
@@ -1889,7 +1889,7 @@ static void HdlCtlToCmLogicCpleDetStatQry(MsgRecvInfo* recvMsgInfo, cm_to_ctl_in
         clusterStat->cluster_status = g_HA_status->status;
     } else {
         logicClusterStat.cluster_status =
-            (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatus(DATANODE_ALL)) ?
+            (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatusAll()) ?
             CM_STATUS_DEGRADE : g_HA_status->status;
     }
     logicClusterStat.is_all_group_mode_pending = g_HA_status->is_all_group_mode_pending;
@@ -1981,7 +1981,7 @@ static void HdlCtlToCmNonBalOrLgcCpleDetStatQry(MsgRecvInfo* recvMsgInfo, const 
             clusterStat->cluster_status = g_HA_status->status;
         } else {
             clusterStat->cluster_status =
-                (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatus(DATANODE_ALL)) ?
+                (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatusAll()) ?
                 CM_STATUS_DEGRADE : g_HA_status->status;
         }
         clusterStat->switchedCount = isDnRelationBalanced(ctlToCmQry->instanceId);
@@ -1993,7 +1993,7 @@ static void HdlCtlToCmNonBalOrLgcCpleDetStatQry(MsgRecvInfo* recvMsgInfo, const 
             clusterStat->cluster_status = g_HA_status->status;
         } else {
             clusterStat->cluster_status =
-                (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatus(DATANODE_ALL)) ?
+                (g_HA_status->status == CM_STATUS_NORMAL && CheckReadOnlyStatusAll()) ?
                 CM_STATUS_DEGRADE : g_HA_status->status;
         }
         clusterStat->is_all_group_mode_pending = g_HA_status->is_all_group_mode_pending;

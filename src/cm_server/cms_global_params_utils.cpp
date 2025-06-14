@@ -622,3 +622,14 @@ status_t GetNodeIdxByNodeId(uint32 nodeId, uint32 *nodeIdx, const char *str)
     write_runlog(ERROR, "%s cannot find the nodeId(%u).\n", str, nodeId);
     return CM_ERROR;
 }
+
+bool8 IsCurInstIdCascadeStandby(uint32 groupIdx, int memberIdx)
+{
+    if (g_instance_role_group_ptr[groupIdx].instanceMember[memberIdx].instanceType != INSTANCE_TYPE_DATANODE) {
+        return false;
+    }
+    if (g_instance_role_group_ptr[groupIdx].instanceMember[memberIdx].role == INSTANCE_ROLE_CASCADE_STANDBY) {
+        return true;
+    }
+    return CM_FALSE;
+}

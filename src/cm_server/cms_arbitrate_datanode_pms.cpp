@@ -1108,7 +1108,7 @@ static bool CanbeCandicate(const DnArbCtx *ctx, int32 memIdx, const CandicateCon
         if (ctx->dnReport[memIdx].local_status.db_state != INSTANCE_HA_STATE_NORMAL) {
             return false;
         }
-        if (!IsReadOnlyFinalState(ctx->roleGroup->instanceMember[memIdx].instanceId, false)) {
+        if (!IsReadOnlyFinalState(ctx->groupIdx, memIdx, READ_ONLY_OFF)) {
             return false;
         }
     }
@@ -1792,7 +1792,7 @@ static bool DyPrimaryNeedToSwitchover(DnArbCtx *ctx, const char *str)
 {
     int32 dnRestartCounts = ctx->localRep->dn_restart_counts;
     int32 dnRestartCountsInHour = ctx->localRep->dn_restart_counts_in_hour;
-    bool readOnly = IsReadOnlyFinalState(ctx->instId, true);
+    bool readOnly = IsReadOnlyFinalState(ctx->groupIdx, ctx->memIdx, READ_ONLY_ON);
     if (dnRestartCounts <= DN_RESTART_COUNTS && dnRestartCountsInHour <= DN_RESTART_COUNTS_IN_HOUR && !readOnly) {
         return false;
     }

@@ -62,6 +62,7 @@ extern int g_waitSeconds;
 extern CM_Conn* CmServer_conn;
 extern char *g_command_operation_azName;
 SSDoubleClusterMode  g_ssDoubleClusterMode = SS_DOUBLE_NULL;
+ClusterRole backup_open = CLUSTER_PRIMARY;
 
 static int QueryNeedQuickSwitchInstances(int* need_quick_switchover_instance,
     NeedQuickSwitchoverInstanceArray* needQuickSwitchoverInstance, bool* is_cluster_balance,
@@ -78,6 +79,8 @@ static void SetSwitchoverOper(SwitchoverOper *oper, int32 localRole, uint32 inst
 {
     if (localRole == INSTANCE_ROLE_STANDBY) {
         if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+            oper->localRole = INSTANCE_ROLE_MAIN_STANDBY;
+        } else if (backup_open == CLUSTER_STREAMING_STANDBY) {
             oper->localRole = INSTANCE_ROLE_MAIN_STANDBY;
         } else {
             oper->localRole = INSTANCE_ROLE_PRIMARY;
@@ -112,6 +115,8 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     cm_switchover_incomplete_msg *switchoverIncompletePtr = NULL;
     SwitchoverOper oper;
     if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
+        oper = {INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_STANDBY};
+    } else if (backup_open == CLUSTER_STREAMING_STANDBY) {
         oper = {INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_STANDBY};
     } else {
         oper = {INSTANCE_ROLE_PRIMARY, INSTANCE_ROLE_STANDBY};
@@ -1611,4 +1616,10 @@ static void GetClusterMode()
 
     g_ssDoubleClusterMode =
         (SSDoubleClusterMode)get_uint32_value_from_config(configDir, "ss_double_cluster_mode", SS_DOUBLE_NULL);
+
+    rc = snprintf_s(configDir, sizeof(configDir), sizeof(configDir) - 1, "%s/cm_agent/cm_server.conf", cmDir);
+    securec_check_intval(rc, (void)rc);
+
+    backup_open =
+        (ClusterRole)get_uint32_value_from_config(configDir, "backup_open", CLUSTER_PRIMARY);
 }

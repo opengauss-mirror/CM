@@ -43,12 +43,6 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
     uint32 groupIndex = 0;
     cm_to_ctl_command_ack ackMsg;
 
-    if (backup_open != CLUSTER_PRIMARY) {
-        ackMsg.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(cm_to_ctl_command_ack));
-        return;
-    }
-
     getWalrecordMode();
 
     if (!g_enableWalRecord) {
@@ -599,11 +593,6 @@ void process_ctl_to_cm_switchover_full_msg(
     cm_to_ctl_command_ack msgSwitchoverFullAck = {0};
     msgSwitchoverFullAck.msg_type = MSG_CM_CTL_SWITCHOVER_FULL_ACK;
 
-    if (backup_open != CLUSTER_PRIMARY) {
-        msgSwitchoverFullAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverFullAck), sizeof(cm_to_ctl_command_ack));
-        return;
-    }
     if (!CanDoSwitchoverInAllShard(
         recvMsgInfo, &msgSwitchoverFullAck, ctl_to_cm_swithover_ptr, "switchover_full_msg")) {
         return;
@@ -683,12 +672,6 @@ void ProcessCtlToCmSwitchoverAzMsg(MsgRecvInfo* recvMsgInfo, ctl_to_cm_switchove
     ctl_to_cm_swithover_ptr->azName[CM_AZ_NAME - 1] = '\0';
     int instanceType = 0;
     cm_msg_type msgSwitchoverAZAck;
-
-    if (backup_open != CLUSTER_PRIMARY) {
-        msgSwitchoverAZAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)RespondMsg(recvMsgInfo, 'S', (char*)(&msgSwitchoverAZAck), sizeof(cm_msg_type));
-        return;
-    }
 
     char *azName = ctl_to_cm_swithover_ptr->azName;
     bool isVoteAz = false;
@@ -2315,11 +2298,6 @@ void ProcessCtlToCmSwitchoverAllMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_sw
     cm_to_ctl_command_ack msgSwitchoverAllAck = { 0 };
 
     msgSwitchoverAllAck.msg_type = MSG_CM_CTL_SWITCHOVER_ALL_ACK;
-    if (backup_open != CLUSTER_PRIMARY) {
-        msgSwitchoverAllAck.msg_type = MSG_CM_CTL_BACKUP_OPEN;
-        (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgSwitchoverAllAck), sizeof(cm_to_ctl_command_ack));
-        return;
-    }
     if (!CanDoSwitchoverInAllShard(recvMsgInfo, &msgSwitchoverAllAck, switchoverMsg, "switchover_all_msg")) {
         return;
     }

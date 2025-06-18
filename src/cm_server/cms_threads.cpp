@@ -458,7 +458,13 @@ static void CreateArbitrateClusterThread()
     int err;
     pthread_t thrId;
 
-    if (g_dnArbitrateMode != SHARE_DISK || !IsCusResExist()) {
+    if (access(g_cmManualWalRecordPath, F_OK) == 0) {
+        g_enableWalRecord = true;
+    } else {
+        g_enableWalRecord = false;
+    }
+
+    if (!g_enableWalRecord && (g_dnArbitrateMode != SHARE_DISK || !IsCusResExist())) {
         return;
     }
     if ((err = pthread_create(&thrId, NULL, MaxNodeClusterArbitrateMain, NULL)) != 0) {

@@ -49,11 +49,15 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
         return;
     }
 
-    ret = find_node_in_dynamic_configure(switchoverMsg->node, switchoverMsg->instanceId, &groupIndex, &memberIndex);
-    if (ret != 0) {
-        write_runlog(
-            LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchoverMsg->node, switchoverMsg->instanceId);
-        return;
+    getWalrecordMode();
+
+    if (!g_enableWalRecord) {
+        ret = find_node_in_dynamic_configure(switchoverMsg->node, switchoverMsg->instanceId, &groupIndex, &memberIndex);
+        if (ret != 0) {
+            write_runlog(
+                LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchoverMsg->node, switchoverMsg->instanceId);
+           return;
+        }
     }
 
     const cm_instance_role_status *instInfo = &g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex];
@@ -94,6 +98,9 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
             ackMsg.command_result = CM_INVALID_COMMAND;
             write_runlog(LOG, "switchover the datanode instance(node =%u instanceid =%u) is not Follower, but is %s\n",
                 switchoverMsg->node, switchoverMsg->instanceId, DcfRoleToString(dnReport->receive_status.local_role));
+        }
+        if (g_enableWalRecord) {
+            ackMsg.command_result = CM_CAN_PRCESS_COMMAND;
         }
     } else {
         ackMsg.command_result = CM_INVALID_COMMAND;

@@ -237,6 +237,14 @@ static int DoSwitchoverBase(const CtlOption *ctx)
                     break;
             }
         }
+
+        if (g_enableWalRecord) {
+            uint32 wrLockOwner  = GetLockOwnerInstanceId();
+            if (wrLockOwner == RES_INSTANCE_ID_MIN + ctx->comm.nodeId) {
+                success = true;
+            }
+        }
+
         if (success) {
             break;
         }

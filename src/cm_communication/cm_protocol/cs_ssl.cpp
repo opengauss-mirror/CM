@@ -172,6 +172,55 @@ static const char *cm_cs_ssl_init_err_string(ssl_init_error_t err)
     return g_ssl_error_string[0];
 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+/*
+  Get the last SSL error code and reason
+*/
+static const char *cm_cs_ssl_last_err_string(char *buf, uint32 size)
+{
+    buf[0] = '\0';
+    const char *fstr = NULL;
+    ulong err = ERR_get_error_all(NULL, NULL, &fstr, NULL, NULL);
+    if (err) {
+        const char *rstr = ERR_reason_error_string(err);
+
+        if (snprintf_s(buf, size, size - 1, "error code = %lu, reason code = %d, ssl function = %s:%s ",
+            err, ERR_GET_REASON(err), (fstr ? fstr : "<null>"), (rstr ? rstr : "<null>")) == -1) {
+            return buf;
+        }
+    }
+
+    return buf;
+}
+/* function to generate DH key pair */
+static EVP_PKEY *get_pkey(void)
+{
+    EVP_PKEY *dh_key = NULL;
+    EVP_PKEY_CTX *gctx = NULL;
+    OSSL_PARAM params[2];
+    params[0] = OSSL_PARAM_construct_utf8_string("group", (char*)"ffdhe3072", 0);
+    params[1] = OSSL_PARAM_construct_end();
+    gctx = EVP_PKEY_CTX_new_from_name(NULL, "DH", NULL);
+    if (gctx == NULL) {
+        return NULL;
+    }
+    if (EVP_PKEY_keygen_init(gctx) <= 0) {
+        EVP_PKEY_CTX_free(gctx);
+        return NULL;
+    }
+    if (EVP_PKEY_CTX_set_params(gctx, params) <= 0) {
+        EVP_PKEY_CTX_free(gctx);
+        return NULL;
+    }
+    if (EVP_PKEY_keygen(gctx, &dh_key) <= 0) {
+        EVP_PKEY_CTX_free(gctx);
+        EVP_PKEY_free(dh_key);
+        return NULL;
+    }
+    EVP_PKEY_CTX_free(gctx);
+    return dh_key;
+}
+#else
 /*
   Get the last SSL error code and reason
 */
@@ -606,6 +655,7 @@ static DH *get_dh3072(void)
 
     return dh;
 }
+#endif
 
 static void cm_spin_lock(spinlock_t *lock, spin_statis_t *stat)
 {
@@ -1101,6 +1151,28 @@ static status_t cm_cs_ssl_set_cert_auth(SSL_CTX *ctx, const char *cert_file, con
     return CM_SUCCESS;
 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+static status_t cm_cs_ssl_set_tmp_dh(SSL_CTX *ctx)
+{
+    EVP_PKEY *dhpkey = get_pkey();
+    if (dhpkey == NULL) {
+        return CM_ERROR;
+    }
+
+    if (!EVP_PKEY_up_ref(dhpkey)) {
+        EVP_PKEY_free(dhpkey);
+        return CM_ERROR;
+    }
+
+    if (SSL_CTX_set0_tmp_dh_pkey(ctx, dhpkey) == 0) {
+        EVP_PKEY_free(dhpkey);
+        return CM_ERROR;
+    }
+
+    EVP_PKEY_free(dhpkey);
+    return CM_SUCCESS;
+}
+#else
 static status_t cm_cs_ssl_set_tmp_dh(SSL_CTX *ctx)
 {
     DH *dh = get_dh3072();
@@ -1116,6 +1188,7 @@ static status_t cm_cs_ssl_set_tmp_dh(SSL_CTX *ctx)
     DH_free(dh);
     return CM_SUCCESS;
 }
+#endif
 
 /**
  * create a new ssl context object.
@@ -1187,6 +1260,11 @@ static SSL_CTX *cm_ssl_create_context(ssl_config_t *config, bool is_client)
     if (cm_cs_ssl_set_crl_file(ctx, config) != CM_SUCCESS) {
         CM_SSL_FREE_CTX_AND_RETURN(SSL_INITERR_LOAD_CRL, ctx, NULL);
     }
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    /* THIS retains compatibility with previous versions of OpenSSL */
+    SSL_CTX_set_security_level(ctx, 0);
+#endif
 
     /* Verify cert and key files */
     if (cm_cs_ssl_set_cert_auth(ctx, config->cert_file, config->key_file, config->key_password) != CM_SUCCESS) {

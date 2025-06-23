@@ -1992,7 +1992,7 @@ int CheckMostAvailableSync(uint32 index)
 
 void CheckTransactionReadOnly(cltPqConn_t* Conn, uint32 index, int instanceType)
 {
-    bool *readOnly;
+    ReadOnlyState *readOnly;
     if (instanceType == INSTANCE_TYPE_DATANODE) {
         readOnly = &g_dnReadOnly[index];
     } else {
@@ -2016,12 +2016,12 @@ void CheckTransactionReadOnly(cltPqConn_t* Conn, uint32 index, int instanceType)
                 return;
             }
             char *result = Getvalue(nodeResult, 0, 0);
-            *readOnly = strcmp(result, "on") == 0 ? true : false;
-            if (*readOnly) {
+            *readOnly = strcmp(result, "on") == 0 ? READ_ONLY_ON : READ_ONLY_OFF;
+            if (*readOnly == READ_ONLY_ON) {
                 write_runlog(LOG, "[%s] default_transaction_read_only is %s.\n", __FUNCTION__, result);
             }
             if (undocumentedVersion != 0) {
-                *readOnly = false;
+                *readOnly = READ_ONLY_OFF;
             }
         }
     } else {

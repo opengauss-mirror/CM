@@ -25,10 +25,14 @@
 #define CMS_DISK_CHECK_H
 
 #include "common/config/cm_config.h"
+#include "cm/cm_msg.h"
+
+#define INVALID_DISK_USAGE (-1)
 
 void* StorageDetectMain(void* arg);
-bool CheckReadOnlyStatus(uint32 instanceId);
-bool IsReadOnlyFinalState(uint32 instanceId, bool expectedState);
-int UpdateNodeReadonlyInfo(uint32 lastNodeNum);
+bool CheckReadOnlyStatus(uint32 groupIdx, int memberIdx);
+bool IsReadOnlyFinalState(uint32 groupIdx, int memberIdx, ReadOnlyState expectedState);
+void UpdateNodeReadonlyInfo();
+bool CheckReadOnlyStatusAll();
 
 #endif

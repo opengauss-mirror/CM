@@ -99,12 +99,14 @@ typedef struct switchover_instance_t {
 typedef struct DataNodeReadOnlyInfoT {
     uint32 node;
     uint32 instanceId;
-    uint32 dataDiskUsage;
+    uint32 groupIndex;
+    int memberIndex;
     uint32 vgdataDiskUsage;
     uint32 vglogDiskUsage;
+    int dataDiskUsage;
     int instanceType;
     char ddbValue;
-    bool readOnly;
+    ReadOnlyState readOnly;
     bool finalState;
     char dataNodePath[CM_PATH_LENGTH];
     char instanceName[CM_NODE_NAME];
@@ -565,4 +567,5 @@ uint32 GetPeerInstId(uint32 groupIdx, int32 memIdx);
 bool CheckGroupAndMemIndex(uint32 groupIdx, int32 memIdx, const char *str);
 status_t CmsCanArbitrate(CmsArbitrateStatus *cmsSt, const char *str);
 status_t GetNodeIdxByNodeId(uint32 nodeId, uint32 *nodeIdx, const char *str);
+bool8 IsCurInstIdCascadeStandby(uint32 groupIdx, int memberIdx);
 #endif

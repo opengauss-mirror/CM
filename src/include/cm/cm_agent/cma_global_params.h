@@ -194,8 +194,8 @@ extern bool g_dnBuild[CM_MAX_DATANODE_PER_NODE];
 extern bool g_nicDown[CM_MAX_DATANODE_PER_NODE];
 extern bool g_dnPingFault[CM_MAX_DATANODE_PER_NODE];
 extern bool g_mostAvailableSync[CM_MAX_DATANODE_PER_NODE];
-extern bool g_dnReadOnly[CM_MAX_DATANODE_PER_NODE];
-extern bool g_cnReadOnly;
+extern ReadOnlyState g_dnReadOnly[CM_MAX_DATANODE_PER_NODE];
+extern ReadOnlyState g_cnReadOnly;
 #ifndef ENABLE_MULTIPLE_NODES
 extern bool g_ltranDown[CM_MAX_DATANODE_PER_NODE];
 #endif

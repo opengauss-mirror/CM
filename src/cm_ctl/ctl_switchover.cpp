@@ -1619,7 +1619,7 @@ static void GetClusterMode()
     g_ssDoubleClusterMode =
         (SSDoubleClusterMode)get_uint32_value_from_config(configDir, "ss_double_cluster_mode", SS_DOUBLE_NULL);
 
-    rc = snprintf_s(configDir, sizeof(configDir), sizeof(configDir) - 1, "%s/cm_agent/cm_server.conf", cmDir);
+    rc = snprintf_s(configDir, sizeof(configDir), sizeof(configDir) - 1, "%s/cm_server/cm_server.conf", cmDir);
     securec_check_intval(rc, (void)rc);
 
     backup_open =

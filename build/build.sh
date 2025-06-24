@@ -17,7 +17,7 @@ export MULTIPLE_NODES="ON"
 export OPEN_SOURCE_MODE="inc"
 export LIBPQ="ON"
 export KRB="OFF"
-export GCC="7.3"
+export GCC="10.3"
 export PRIVATEGAUSS="ON"
 export ALARM="ON"
 

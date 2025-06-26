@@ -32,8 +32,8 @@
 cltPqConn_t* g_dnConn[CM_MAX_DATANODE_PER_NODE] = {NULL};
 THR_LOCAL cltPqConn_t* g_Conn = NULL;
 extern const char* g_progname;
-#ifdef ENABLE_MULTIPLE_NODES
 static cltPqConn_t* GetDnConnect(int index, const char *dbname);
+#ifdef ENABLE_MULTIPLE_NODES
 static int GetDnDatabaseResult(cltPqConn_t* dnConn, const char* runCommand, char* databaseName);
 int GetDBTableFromSQL(int index, uint32 databaseId, uint32 tableId, uint32 tableIdSize,
                       DNDatabaseInfo *dnDatabaseInfo, int dnDatabaseCount, char* databaseName, char* tableName);
@@ -1661,7 +1661,6 @@ cltPqConn_t* get_connection(const char* pid_path, bool isCoordinater, int connec
     return dbConn;
 }
 
-#ifdef ENABLE_MULTIPLE_NODES
 static cltPqConn_t* GetDnConnect(int index, const char *dbname)
 {
     char** optlines;
@@ -1765,6 +1764,7 @@ static cltPqConn_t* GetDnConnect(int index, const char *dbname)
     return dbConn;
 }
 
+#ifdef ENABLE_MULTIPLE_NODES
 static int GetDnDatabaseResult(cltPqConn_t* dnConn, const char* runCommand, char* databaseName)
 {
     errno_t rcs = 0;
@@ -1875,7 +1875,7 @@ int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDataba
     int database_count;
     errno_t rc = 0;
     char postmaster_pid_path[MAXPGPATH] = {0};
-    const char *STMT_GET_DATABASE_LIST = "SELECT DATNAME,OID FROM PG_DATABASE;";
+    const char *STMT_GET_DATABASE_LIST = "SELECT DATNAME,OID FROM PG_DATABASE WHERE datallowconn = 't';";
     errno_t rcs = snprintf_s(postmaster_pid_path,
         MAXPGPATH, MAXPGPATH - 1, "%s/postmaster.pid", g_currentNode->datanode[index].datanodeLocalDataPath);
     securec_check_intval(rcs, (void)rcs);
@@ -1953,6 +1953,210 @@ int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDataba
     Clear(node_result);
     close_and_reset_connection(dnConn);
     return 0;
+}
+
+cltPqResult_t* GetRunCommandResult(cltPqConn_t* dnConn, const char* sqlCommands, int& maxRows)
+{
+    cltPqResult_t *nodeResult = Exec(dnConn, sqlCommands);
+    if (nodeResult == NULL) {
+        write_runlog(ERROR, "[%s()][line:%d] sqlCommands[0] fail return NULL!\n", __FUNCTION__, __LINE__);
+        return NULL;
+    }
+    if ((ResultStatus(nodeResult) != CLTPQRES_CMD_OK) && (ResultStatus(nodeResult) != CLTPQRES_TUPLES_OK)) {
+        if (ResHasError(nodeResult)) {
+            write_runlog(ERROR, "[%s()][line:%d] execute command(%s) failed, errMsg is: %s!\n",
+                         __FUNCTION__, __LINE__, sqlCommands, GetResErrMsg(nodeResult));
+        } else {
+            write_runlog(ERROR, "[%s()][line:%d] execute command(%s) failed!\n",
+                         __FUNCTION__, __LINE__, sqlCommands);
+        }
+    }
+    maxRows = Ntuples(nodeResult);
+    if (maxRows == 0) {
+        write_runlog(ERROR, "[%s()][line:%d] sqlCommands[1] is 0\n", __FUNCTION__, __LINE__);
+    }
+    return nodeResult;
+}
+
+void SetOneTableStatInfo(TableStatInfo *tabStatInfo, cltPqConn_t* dnConn)
+{
+    char sqlCommands[CM_MAX_SQL_COMMAND_LEN] = {0};
+    errno_t rc = snprintf_s(sqlCommands, CM_MAX_SQL_COMMAND_LEN, CM_MAX_SQL_COMMAND_LEN - 1,
+        "select pg_stat_get_tuples_changed('%s.%s'::regclass);", tabStatInfo->schemaname, tabStatInfo->relname);
+    securec_check_intval(rc, (void)rc);
+    int maxRows = 0;
+    cltPqResult_t *tupleChangeResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
+    if (tupleChangeResult == NULL) {
+        write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
+        return;
+    }
+    rc = sscanf_s(Getvalue(tupleChangeResult, 0, 0), "%ld", &(tabStatInfo->changes_since_analyze));
+    check_sscanf_s_result(rc, 1);
+    securec_check_intval(rc, (void)rc);
+    Clear(tupleChangeResult);
+
+    rc = memset_s(sqlCommands, CM_MAX_SQL_COMMAND_LEN, 0, CM_MAX_SQL_COMMAND_LEN);
+    securec_check_c(rc, "", "");
+    rc = snprintf_s(sqlCommands, CM_MAX_SQL_COMMAND_LEN, CM_MAX_SQL_COMMAND_LEN - 1,
+        "select reltuples from pg_class where relname = '%s';", tabStatInfo->relname);
+    securec_check_intval(rc, (void)rc);
+    cltPqResult_t *relTuplesResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
+    if (relTuplesResult == NULL) {
+        write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
+        return;
+    }
+    rc = sscanf_s(Getvalue(relTuplesResult, 0, 0), "%ld", &(tabStatInfo->reltuples));
+    check_sscanf_s_result(rc, 1);
+    securec_check_intval(rc, (void)rc);
+    Clear(relTuplesResult);
+}
+
+int GetVacuumAndAnalyzeScaleFactor(cltPqConn_t* dnConn, float& vacfactor, float& anlfactor,
+    int& vacthreshold, int& anlthreshold)
+{
+    const char* sqlCommands = "select name, setting from pg_settings where name ~ 'autovacuum';";
+    int maxRows = 0;
+    cltPqResult_t *nodeResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
+    if (nodeResult == NULL) {
+        write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
+        return -1;
+    }
+    for (int i = 0; i < maxRows; i++) {
+        if (strcmp(Getvalue(nodeResult, i, 0), "autovacuum_vacuum_scale_factor") == 0) {
+            errno_t rc = sscanf_s(Getvalue(nodeResult, i, 1), "%f", &vacfactor);
+            check_sscanf_s_result(rc, 1);
+            securec_check_intval(rc, (void)rc);
+        } else if (strcmp(Getvalue(nodeResult, i, 0), "autovacuum_vacuum_threshold") == 0) {
+            errno_t rc = sscanf_s(Getvalue(nodeResult, i, 1), "%d", &vacthreshold);
+            check_sscanf_s_result(rc, 1);
+            securec_check_intval(rc, (void)rc);
+        } else if (strcmp(Getvalue(nodeResult, i, 0), "autovacuum_analyze_scale_factor") == 0) {
+            errno_t rc = sscanf_s(Getvalue(nodeResult, i, 1), "%f", &anlfactor);
+            check_sscanf_s_result(rc, 1);
+            securec_check_intval(rc, (void)rc);
+        } else if (strcmp(Getvalue(nodeResult, i, 0), "autovacuum_analyze_threshold") == 0) {
+            errno_t rc = sscanf_s(Getvalue(nodeResult, i, 1), "%d", &anlthreshold);
+            check_sscanf_s_result(rc, 1);
+            securec_check_intval(rc, (void)rc);
+        }
+    }
+    Clear(nodeResult);
+    return 0;
+}
+
+int GetDatabaseTableInfo(int i, DNDatabaseInfo* dnDatabaseInfo, DatabaseStatInfo* localDbStatInfo, cltPqConn_t *dnConn)
+{
+    float vacScaleFactor = 0.2;
+    float anlScaleFactor = 0.1;
+    int vacThreshold = 50;
+    int anlThreshold = 50;
+    (void)GetVacuumAndAnalyzeScaleFactor(dnConn, vacScaleFactor, anlScaleFactor, vacThreshold, anlThreshold);
+    const char *sqlCommands = "select relid, schemaname, relname, n_live_tup, n_dead_tup from pg_stat_user_tables;";
+    int maxRows = 0;
+    cltPqResult_t *nodeResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
+    if (nodeResult == NULL) {
+        write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
+        return -1;
+    }
+    errno_t rc = strncpy_s(localDbStatInfo[i].dbname, NAMEDATALEN, dnDatabaseInfo[i].dbname, NAMEDATALEN - 1);
+    securec_check_intval(rc, (void)rc);
+    localDbStatInfo[i].oid = dnDatabaseInfo[i].oid;
+    localDbStatInfo[i].tableCount = maxRows;
+    localDbStatInfo[i].tableStatInfo = (TableStatInfo *)malloc(sizeof(TableStatInfo) * (size_t)maxRows);
+    if (localDbStatInfo[i].tableStatInfo == NULL) {
+        write_runlog(ERROR, "[%s()][line:%d] localDbStatInfo malloc failed!\n", __FUNCTION__, __LINE__);
+        for (int j = 0; j < i; ++j) {
+            FREE_AND_RESET(localDbStatInfo[j].tableStatInfo);
+        }
+        Clear(nodeResult);
+        return -1;
+    }
+    for (int j = 0; j < maxRows; j++) {
+        TableStatInfo* tableStatInfo = &(localDbStatInfo[i].tableStatInfo[j]);
+        tableStatInfo->autovacuum_vacuum_threshold = vacThreshold;
+        tableStatInfo->autovacuum_vacuum_scale_factor = vacScaleFactor;
+        tableStatInfo->autovacuum_analyze_threshold = anlThreshold;
+        tableStatInfo->autovacuum_analyze_scale_factor = anlScaleFactor;
+        int k = 0;
+        rc = sscanf_s(Getvalue(nodeResult, j, k++), "%d", &(tableStatInfo->relid));
+        check_sscanf_s_result(rc, 1);
+        securec_check_intval(rc, (void)rc);
+        rc = strncpy_s(tableStatInfo->schemaname, NAMEDATALEN, Getvalue(nodeResult, j, k++), NAMEDATALEN - 1);
+        securec_check_errno(rc, (void)rc);
+        rc = strncpy_s(tableStatInfo->relname, NAMEDATALEN, Getvalue(nodeResult, j, k++), NAMEDATALEN - 1);
+        securec_check_errno(rc, (void)rc);
+        rc = sscanf_s(Getvalue(nodeResult, j, k++), "%ld", &(tableStatInfo->n_live_tuples));
+        check_sscanf_s_result(rc, 1);
+        securec_check_intval(rc, (void)rc);
+        rc = sscanf_s(Getvalue(nodeResult, j, k++), "%ld", &(tableStatInfo->n_dead_tuples));
+        check_sscanf_s_result(rc, 1);
+        securec_check_intval(rc, (void)rc);
+        SetOneTableStatInfo(&localDbStatInfo[i].tableStatInfo[j], dnConn);
+    }
+    Clear(nodeResult);
+    return 0;
+}
+
+int InitAllDatabaseTableStatInfo(uint32 index, DatabaseStatInfo** dnStatInfo, int& dnDatabaseCount)
+{
+    DNDatabaseInfo *dnDatabaseInfo = NULL;
+    int rcs = GetAllDatabaseInfo(index, &dnDatabaseInfo, &dnDatabaseCount);
+    if (rcs < 0) {
+        write_runlog(ERROR, "[%s()][line:%d] get database info failed!\n", __FUNCTION__, __LINE__);
+        return -1;
+    }
+    DatabaseStatInfo* localDbStatInfo = (DatabaseStatInfo *)malloc(sizeof(DatabaseStatInfo) * (size_t)dnDatabaseCount);
+    if (localDbStatInfo == NULL) {
+        FREE_AND_RESET(dnDatabaseInfo);
+        write_runlog(ERROR, "[%s()][line:%d] localDbStatInfo malloc failed!\n", __FUNCTION__, __LINE__);
+        return -1;
+    }
+    rcs = memset_s(localDbStatInfo, sizeof(DatabaseStatInfo) * (size_t)dnDatabaseCount, 0,
+        sizeof(DatabaseStatInfo) * (size_t)dnDatabaseCount);
+    securec_check_c(rcs, "", "");
+    for (int i = 0; i < dnDatabaseCount; ++i) {
+        cltPqConn_t* dnConn = GetDnConnect(index, dnDatabaseInfo[i].dbname);
+        if (dnConn == NULL) {
+            write_runlog(ERROR, "[%s()][line:%d] get db connect failed!\n", __FUNCTION__, __LINE__);
+            FREE_AND_RESET(localDbStatInfo);
+            FREE_AND_RESET(dnDatabaseInfo);
+            return -1;
+        }
+        if (!IsConnOk(dnConn)) {
+            write_runlog(ERROR, "[%s()][line:%d]connect is not ok, errmsg is %s!\n",
+                __FUNCTION__, __LINE__, ErrorMessage(dnConn));
+            close_and_reset_connection(dnConn);
+            FREE_AND_RESET(dnDatabaseInfo);
+            FREE_AND_RESET(localDbStatInfo);
+            return -1;
+        }
+        if (GetDatabaseTableInfo(i, dnDatabaseInfo, localDbStatInfo, dnConn) != 0) {
+            write_runlog(ERROR, "[%s()][line:%d] get table stat info failed!\n", __FUNCTION__, __LINE__);
+            FREE_AND_RESET(localDbStatInfo);
+            FREE_AND_RESET(dnDatabaseInfo);
+            close_and_reset_connection(dnConn);
+            return -1;
+        }
+        close_and_reset_connection(dnConn);
+    }
+    *dnStatInfo = localDbStatInfo;
+    FREE_AND_RESET(dnDatabaseInfo);
+    return 0;
+}
+
+void CheckTableVacuumStatus(const TableStatInfo *tableStatInfo, bool* isNeedVacuum, bool* isNeedAnalyze)
+{
+    if (tableStatInfo == NULL) {
+        write_runlog(ERROR, "[%s()][line:%d] tableStatInfo is NULL!, skip check table vacuum status\n",
+                     __FUNCTION__, __LINE__);
+        return;
+    }
+    float vacthreshold = max(tableStatInfo->reltuples, tableStatInfo->n_live_tuples) *
+                         tableStatInfo->autovacuum_vacuum_scale_factor + tableStatInfo->autovacuum_vacuum_threshold;
+    float anlthreshold = max(tableStatInfo->reltuples, tableStatInfo->n_live_tuples) *
+                         tableStatInfo->autovacuum_analyze_scale_factor + tableStatInfo->autovacuum_analyze_threshold;
+    *isNeedVacuum = tableStatInfo->n_dead_tuples > vacthreshold;
+    *isNeedAnalyze = tableStatInfo->changes_since_analyze > anlthreshold;
 }
 
 int CheckMostAvailableSync(uint32 index)

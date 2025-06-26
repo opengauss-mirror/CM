@@ -36,7 +36,9 @@
 #define MAX_PATH_LEN 1024
 #define CM_IP_NUM 3
 #define GTM_IP_PORT 64
+#ifndef CM_IP_LENGTH
 #define CM_IP_LENGTH 128
+#endif
 #define CM_IP_ALL_NUM_LENGTH (CM_IP_NUM * CM_IP_LENGTH)
 #define CM_MAX_NUMBER_LENGTH (uint32)128
 #define CM_DEFAULT_DIGIT_RADIX 10

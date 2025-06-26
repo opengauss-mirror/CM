@@ -28,9 +28,35 @@
 #include "cma_libpq_api.h"
 #include "cma_main.h"
 
+typedef struct {
+    int relid;
+    char schemaname[NAMEDATALEN];
+    char relname[NAMEDATALEN];
+    int64 reltuples;
+    int64 n_live_tuples;
+    int64 n_dead_tuples;
+    int64 changes_since_analyze;
+    int autovacuum_vacuum_threshold;
+    float autovacuum_vacuum_scale_factor;
+    int autovacuum_analyze_threshold;
+    float autovacuum_analyze_scale_factor;
+} TableStatInfo;
 
-#ifdef ENABLE_MULTIPLE_NODES
+typedef struct {
+    uint32 oid;
+    char dbname[NAMEDATALEN];
+    TableStatInfo* tableStatInfo;
+    int tableCount;
+} DatabaseStatInfo;
+
+typedef enum {
+    UN_ANALYZE = 0,
+    UN_VACUUM,
+} TableStat;
+
+
 int GetAllDatabaseInfo(int index, DNDatabaseInfo **dnDatabaseInfo, int *dnDatabaseCount);
+#ifdef ENABLE_MULTIPLE_NODES
 int GetDBTableFromSQL(int index, uint32 databaseId, uint32 tableId, uint32 tableIdSize, DNDatabaseInfo *dnDatabaseInfo,
     int dnDatabaseCount, char *databaseName, char *tableName);
 #endif
@@ -80,5 +106,7 @@ void ProcessCrossClusterBuildCommand(int instanceType, const char *dataDir);
 void ExecuteCascadeStandbyDnBuildCommand(const char *dataDir);
 void CleanStandbyClusterCnAlarm();
 extern void check_datanode_realtime_build_status_by_sql(agent_to_cm_datanode_status_report* report_msg, uint32 ii);
+int InitAllDatabaseTableStatInfo(uint32 index, DatabaseStatInfo** dbStatInfo, int& dnDatabaseCount);
+void CheckTableVacuumStatus(const TableStatInfo* tableStatInfo, bool* isNeedVacuum, bool* isNeedAnalyze);
 
 #endif

@@ -83,6 +83,7 @@ int ExecuteSystemCmd(const char *cmd, int32 logLevel = ERROR, int32 *errCode = N
 void CheckDnNicDown(uint32 index);
 void CheckDnDiskDamage(uint32 index);
 bool IsDirectoryDestoryed(const char *path);
+bool CheckDNDataDirectory(const char *path);
 bool DnManualStop(uint32 index);
 bool DirectoryIsDestoryed(const char *path);
 void ReportCMAEventAlarm(Alarm *alarmItem, AlarmAdditionalParam *additionalParam);

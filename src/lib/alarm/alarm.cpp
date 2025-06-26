@@ -40,10 +40,10 @@
 #define static
 #endif
 
-static char MyHostName[CM_NODE_NAME] = {0};
-static char MyHostIP[CM_NODE_NAME] = {0};
-static char WarningType[CM_NODE_NAME] = {0};
-static char ClusterName[CLUSTER_NAME_LEN] = {0};
+char g_myHostName[CM_NODE_NAME] = {0};
+char g_myHostIp[CM_IP_LENGTH] = {0};
+char g_warningType[CM_NODE_NAME] = {0};
+char g_clusterName[CLUSTER_NAME_LEN] = {0};
 // declare the guc variable of alarm module
 char* Alarm_component = NULL;
 THR_LOCAL int AlarmReportInterval = 10;
@@ -57,7 +57,7 @@ const int ALARM_RETRY_TIMES = 3;
 #define FUSIONINSIGHTTYPE "1"
 #define ICBCTYPE "2"
 #define CBGTYPE "5"
-#define ALARMITEMNUMBER 64
+#define ALARMITEMNUMBER 128
 #define ALARM_LOGEXIT(ErrMsg, fp)        \
     do {                                 \
         AlarmLog(ALM_LOG, "%s", ErrMsg); \
@@ -401,23 +401,23 @@ void AlarmEnvInitialize()
         AlarmLog(ALM_LOG, "can not read GAUSS_WARNING_TYPE env.\n");
     } else {
         check_input_for_security1(warningType);
-        // save warningType into WarningType array
-        // WarningType is a static global variable
-        int  nRet = snprintf_s(WarningType, sizeof(WarningType), sizeof(WarningType) - 1, "%s", warningType);
+        // save warningType into g_warningType array
+        // g_warningType is a static global variable
+        int  nRet = snprintf_s(g_warningType, sizeof(g_warningType), sizeof(g_warningType) - 1, "%s", warningType);
         securec_check_ss_c(nRet, "", "");
     }
 
-    // save this host name into MyHostName array
-    // MyHostName is a static global variable
-    GetHostName(MyHostName, sizeof(MyHostName));
+    // save this host name into g_myHostName array
+    // g_myHostName is a static global variable
+    GetHostName(g_myHostName, sizeof(g_myHostName));
 
-    // save this host IP into MyHostIP array
-    // MyHostIP is a static global variable
-    GetHostIP(MyHostName, MyHostIP, sizeof(MyHostIP));
+    // save this host IP into g_myHostIp array
+    // g_myHostIp is a static global variable
+    GetHostIP(g_myHostName, g_myHostIp, sizeof(g_myHostIp));
 
-    // save this cluster name into ClusterName array
-    // ClusterName is a static global variable
-    GetClusterName(ClusterName, sizeof(ClusterName));
+    // save this cluster name into g_clusterName array
+    // g_clusterName is a static global variable
+    GetClusterName(g_clusterName, sizeof(g_clusterName));
 
     // read alarm item info from the configure file(alarmItem.conf)
     ReadAlarmItem();
@@ -439,21 +439,21 @@ static void FillAlarmAdditionalInfo(AlarmAdditionalParam* additionalParam, const
     securec_check_ss_c(nRet, "", "");
 
     // fill in the cluster name field
-    size_t lenClusterName = strlen(ClusterName);
+    size_t lenClusterName = strlen(g_clusterName);
     errno_t rc =
-        memcpy_s(additionalParam->clusterName, sizeof(additionalParam->clusterName) - 1, ClusterName, lenClusterName);
+        memcpy_s(additionalParam->clusterName, sizeof(additionalParam->clusterName) - 1, g_clusterName, lenClusterName);
     securec_check_c(rc, "", "");
     additionalParam->clusterName[lenClusterName] = '\0';
 
     // fill in the host IP field
-    size_t lenHostIP = strlen(MyHostIP);
-    rc = memcpy_s(additionalParam->hostIP, sizeof(additionalParam->hostIP) - 1, MyHostIP, lenHostIP);
+    size_t lenHostIP = strlen(g_myHostIp);
+    rc = memcpy_s(additionalParam->hostIP, sizeof(additionalParam->hostIP) - 1, g_myHostIp, lenHostIP);
     securec_check_c(rc, "", "");
     additionalParam->hostIP[lenHostIP] = '\0';
 
     // fill in the host name field
-    size_t lenHostName = strlen(MyHostName);
-    rc = memcpy_s(additionalParam->hostName, sizeof(additionalParam->hostName) - 1, MyHostName, lenHostName);
+    size_t lenHostName = strlen(g_myHostName);
+    rc = memcpy_s(additionalParam->hostName, sizeof(additionalParam->hostName) - 1, g_myHostName, lenHostName);
     securec_check_c(rc, "", "");
     additionalParam->hostName[lenHostName] = '\0';
 
@@ -948,7 +948,7 @@ void AlarmReporter(Alarm* alarmItem, AlarmType type, AlarmAdditionalParam* addit
         AlarmLog(ALM_LOG, "alarmItem is NULL.");
         return;
     }
-    if (strcmp(WarningType, FUSIONINSIGHTTYPE) == 0) {  // the warning type is FusionInsight type
+    if (strcmp(g_warningType, FUSIONINSIGHTTYPE) == 0) {  // the warning type is FusionInsight type
         // check whether the alarm component exists
         if (!CheckAlarmComponent(g_alarmComponentPath)) {
             // the alarm component does not exist
@@ -958,12 +958,12 @@ void AlarmReporter(Alarm* alarmItem, AlarmType type, AlarmAdditionalParam* addit
         if (SuppressComponentAlarmReport(alarmItem, type, g_alarmReportInterval)) {  // check whether report the alarm
             ComponentReport(g_alarmComponentPath, alarmItem, type, additionalParam);
         }
-    } else if (strcmp(WarningType, ICBCTYPE) == 0) {  // the warning type is ICBC type
+    } else if (strcmp(g_warningType, ICBCTYPE) == 0) {  // the warning type is ICBC type
         // suppress the syslog alarm
         if (SuppressSyslogAlarmReport(alarmItem, type, g_alarmReportInterval)) {  // check whether report the alarm
             SyslogReport(alarmItem, additionalParam);
         }
-    } else if (strcmp(WarningType, CBGTYPE) == 0) {
+    } else if (strcmp(g_warningType, CBGTYPE) == 0) {
         if (!SuppressAlarmLogReport(alarmItem, type, g_alarmReportInterval, g_alarmReportMaxCount)) {
             write_alarm(alarmItem,
                 AlarmIdToAlarmNameEn(alarmItem->id),

@@ -32,7 +32,7 @@ void StartDatanodeCheck(void);
 int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval);
 
 int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProcess);
-
+void DNDataBaseStatusCheck(int index);
 int CheckDatanodeStatus(const char *dataDir, int *role);
 int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg);
 /* Agent to DN connection */
@@ -40,6 +40,7 @@ int ProcessLockNoPrimaryCmd(uint32 instId);
 int ProcessLockChosenPrimaryCmd(const cm_to_agent_lock2 *msgTypeLock2Ptr);
 void *DNSyncCheckMain(void *arg);
 void *DNMostAvailableCheckMain(void *arg);
+void *DNDataDirectoryCheckMain(void *arg);
 void ProcessStreamingStandbyClusterBuildCommand(
     int instanceType, const char* dataDir, const cm_to_agent_build *buildMsg);
 void* DNBackupStatusCheckMain(void *arg);

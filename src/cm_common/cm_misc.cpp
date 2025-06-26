@@ -298,6 +298,8 @@ instacne_type_string type_map_string[] = {
     {"Datanode", INSTANCE_TYPE_DATANODE},
     {"Coordinator", INSTANCE_TYPE_COORDINATE},
     {"Fenced UDF", INSTANCE_TYPE_FENCED_UDF},
+    {"CM", INSTANCE_TYPE_CM},
+    {"CM LOG", INSTANCE_TYPE_LOG},
     {NULL, INSTANCE_TYPE_UNKNOWN}};
 
 const char* type_int_to_string(int type)

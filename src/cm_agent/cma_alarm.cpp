@@ -41,7 +41,18 @@ int g_abnormalCmaConnAlarmListSize;
 
 Alarm* g_abnormalBuildAlarmList = NULL;
 Alarm* g_abnormalDataInstDiskAlarmList = NULL;
+Alarm* g_networkIsolatedAlarmList = NULL;
+Alarm* g_diskDamagedAlarmList = NULL;
+Alarm* g_slowDiskAlarmList = NULL;
+Alarm* g_missingDataDirAlarmList = NULL;
+Alarm* g_dataDirOverloadAlarmList = NULL;
 int g_datanodeAbnormalAlarmListSize;
+int g_datanodeBuildFailedAlarmListSize;
+int g_networkIsolatedAlarmListSize;
+int g_diskDamagedAlarmListSize;
+int g_slowDiskAlarmListSize;
+int g_missingDataDirAlarmListSize;
+int g_dataDirOverloadAlarmListSize;
 
 Alarm* g_pgxcNodeMismatchAlarm = NULL;
 Alarm* g_streamingDRAlarmList = NULL;
@@ -121,6 +132,80 @@ void AbnormalAlarmItemInitialize(const staticNodeConfig* currentNode)
     }
 }
 
+void MissingDataDirAlarmItemInitialize()
+{
+    g_missingDataDirAlarmListSize = (int) (g_currentNode->datanodeCount);
+    g_dataDirOverloadAlarmListSize = (int) (g_currentNode->datanodeCount);
+    if (g_missingDataDirAlarmListSize == 0 || g_dataDirOverloadAlarmListSize == 0) {
+        return;
+    }
+    g_missingDataDirAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_missingDataDirAlarmListSize);
+    g_dataDirOverloadAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_dataDirOverloadAlarmListSize);
+    errno_t rc = memset_s(g_missingDataDirAlarmList, sizeof(Alarm) * (size_t)g_missingDataDirAlarmListSize, 0,
+                          sizeof(Alarm) * (size_t)g_missingDataDirAlarmListSize);
+    securec_check_errno(rc, (void)rc);
+    rc = memset_s(g_dataDirOverloadAlarmList, sizeof(Alarm) * (size_t)g_dataDirOverloadAlarmListSize, 0,
+                  sizeof(Alarm) * (size_t)g_dataDirOverloadAlarmListSize);
+    securec_check_errno(rc, (void)rc);
+    if (g_missingDataDirAlarmList == NULL || g_dataDirOverloadAlarmList == NULL) {
+        AlarmLog(ALM_LOG, "Out of memory: MissingDataDirAlarmItemInitialize failed.\n");
+        exit(1);
+    }
+    int alarmIndex = g_missingDataDirAlarmListSize - 1;
+    for (; alarmIndex >= 0; --alarmIndex) {
+        AlarmItemInitialize(
+            &(g_missingDataDirAlarmList[alarmIndex]), ALM_AI_MissingDataInstDataDir, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(
+            &(g_dataDirOverloadAlarmList[alarmIndex]), ALM_AI_DataDirectoryAccumulate, ALM_AS_Normal, NULL);
+    }
+}
+
+void SlowDiskAlarmItemInitialize()
+{
+    g_slowDiskAlarmListSize = (int) (g_currentNode->datanodeCount + g_currentNode->coordinate);
+    if (g_slowDiskAlarmListSize == 0) {
+        return;
+    }
+    g_slowDiskAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_slowDiskAlarmListSize);
+    if (g_slowDiskAlarmList == NULL) {
+        AlarmLog(ALM_LOG, "Out of memory: SlowDiskAlarmItemInitialize failed.\n");
+        exit(1);
+    }
+    errno_t rc = memset_s(g_slowDiskAlarmList, sizeof(Alarm) * (size_t)g_slowDiskAlarmListSize, 0,
+                          sizeof(Alarm) * (size_t)g_slowDiskAlarmListSize);
+    securec_check_errno(rc, (void)rc);
+    int alarmIndex = g_slowDiskAlarmListSize - 1;
+    for (; alarmIndex >= 0; --alarmIndex) {
+        AlarmItemInitialize(&(g_slowDiskAlarmList[alarmIndex]), ALM_AI_SlowDisk, ALM_AS_Normal, NULL);
+    }
+}
+
+void DatanodeBuildFailedAlarmItemInitialize(const staticNodeConfig* currentNode)
+{
+    int alarmIndex;
+    g_datanodeBuildFailedAlarmListSize = (int) currentNode->datanodeCount + currentNode->coordinate;
+    if (g_datanodeBuildFailedAlarmListSize == 0) {
+        return;
+    }
+    g_abnormalBuildAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_datanodeBuildFailedAlarmListSize);
+    if (g_abnormalBuildAlarmList == NULL) {
+        AlarmLog(ALM_LOG, "Out of memory: DatanodeBuildFailedAlarmItemInitialize failed.\n");
+        exit(1);
+    }
+    errno_t rc = memset_s(g_abnormalBuildAlarmList, sizeof(Alarm) * (size_t)g_datanodeBuildFailedAlarmListSize, 0,
+                          sizeof(Alarm) * (size_t)g_datanodeBuildFailedAlarmListSize);
+    securec_check_errno(rc, (void)rc);
+
+    alarmIndex = g_datanodeBuildFailedAlarmListSize - 1;
+    if (currentNode->coordinate == 1) {
+        AlarmItemInitialize(&(g_abnormalBuildAlarmList[alarmIndex]), ALM_AI_AbnormalBuild, ALM_AS_Normal, NULL);
+        --alarmIndex;
+    }
+    for (; alarmIndex >= 0; --alarmIndex) {
+        AlarmItemInitialize(&(g_abnormalBuildAlarmList[alarmIndex]), ALM_AI_AbnormalBuild, ALM_AS_Normal, NULL);
+    }
+}
+
 /* init alarm info  for datanode */
 void DatanodeAbnormalAlarmItemInitialize(const staticNodeConfig* currentNode)
 {
@@ -130,19 +215,42 @@ void DatanodeAbnormalAlarmItemInitialize(const staticNodeConfig* currentNode)
         return;
     }
 
-    g_abnormalBuildAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_datanodeAbnormalAlarmListSize);
     g_abnormalDataInstDiskAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_datanodeAbnormalAlarmListSize);
-    if (g_abnormalDataInstDiskAlarmList == NULL || g_abnormalBuildAlarmList == NULL) {
+    if (g_abnormalDataInstDiskAlarmList == NULL) {
         AlarmLog(ALM_LOG, "Out of memory: DatanodeAbnormalAlarmItemInitialize failed.\n");
         exit(1);
     }
+    errno_t rc = memset_s(g_abnormalDataInstDiskAlarmList, sizeof(Alarm) * (size_t)g_datanodeAbnormalAlarmListSize, 0,
+                          sizeof(Alarm) * (size_t)g_datanodeAbnormalAlarmListSize);
+    securec_check_errno(rc, (void)rc);
 
     alarmIndex = g_datanodeAbnormalAlarmListSize - 1;
 
     for (; alarmIndex >= 0; --alarmIndex) {
-        AlarmItemInitialize(&(g_abnormalBuildAlarmList[alarmIndex]), ALM_AI_AbnormalBuild, ALM_AS_Normal, NULL);
         AlarmItemInitialize(
             &(g_abnormalDataInstDiskAlarmList[alarmIndex]), ALM_AI_AbnormalDataInstDisk, ALM_AS_Normal, NULL);
+    }
+}
+
+void DiskDamagedAlarmItemInitialize()
+{
+    int alarmIndex;
+    g_diskDamagedAlarmListSize = (int)g_currentNode->datanodeCount;
+    if (g_diskDamagedAlarmListSize == 0) {
+        return;
+    }
+    g_diskDamagedAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_diskDamagedAlarmListSize);
+    if (g_diskDamagedAlarmList == NULL) {
+        AlarmLog(ALM_LOG, "Out of memory: DiskDamagedAlarmItemInitialize failed.\n");
+        exit(1);
+    }
+    errno_t rc = memset_s(g_diskDamagedAlarmList, sizeof(Alarm) * (size_t)g_diskDamagedAlarmListSize, 0,
+                          sizeof(Alarm) * (size_t)g_diskDamagedAlarmListSize);
+    securec_check_errno(rc, (void)rc);
+    alarmIndex = g_diskDamagedAlarmListSize - 1;
+    for (; alarmIndex >= 0; --alarmIndex) {
+        AlarmItemInitialize(
+            &(g_diskDamagedAlarmList[alarmIndex]), ALM_AI_DiskDamage, ALM_AS_Normal, NULL);
     }
 }
 
@@ -160,6 +268,9 @@ void AbnormalCmaConnAlarmItemInitialize(const staticNodeConfig* currentNode)
         AlarmLog(ALM_LOG, "Out of memory: AbnormalCmaConnAlarmItemInitialize failed.\n");
         exit(1);
     }
+    errno_t rc = memset_s(g_abnormalCmaConnAlarmList, sizeof(Alarm) * (size_t)g_abnormalCmaConnAlarmListSize, 0,
+                          sizeof(Alarm) * (size_t)g_abnormalCmaConnAlarmListSize);
+    securec_check_errno(rc, (void)rc);
 
     int alarmIndex = g_abnormalCmaConnAlarmListSize - 1;
 
@@ -184,7 +295,7 @@ void AbnormalCmaConnAlarmItemInitialize(const staticNodeConfig* currentNode)
 
 void report_build_fail_alarm(AlarmType alarmType, const char *instanceName, int alarmIndex)
 {
-    if (alarmIndex >= g_datanodeAbnormalAlarmListSize) {
+    if (alarmIndex >= g_datanodeBuildFailedAlarmListSize) {
         return;
     }
     AlarmAdditionalParam tempAdditionalParam;
@@ -252,13 +363,44 @@ void InitializeAlarmItem(const staticNodeConfig* currentNode)
     AbnormalAlarmItemInitialize(currentNode);
     /* init alarm check, check ALM_AS_Reported state of ALM_AI_AbnormalCmaConnFail */
     AbnormalCmaConnAlarmItemInitialize(currentNode);
-    /* init alarm check, check ALM_AS_Reported state of ALM_AI_AbnormalGTMInst */
-    /* ALM_AI_AbnormalBuild ALM_AI_AbnormalDataInstDisk */
+    /* init alarm check, check ALM_AS_Reported state of ALM_AI_AbnormalDataInstDisk */
     DatanodeAbnormalAlarmItemInitialize(currentNode);
+    /* ALM_AI_AbnormalBuild */
+    DatanodeBuildFailedAlarmItemInitialize(currentNode);
     /* init alarm check, check ALM_AI_PgxcNodeMismatch */
     PgxcNodeMismatchAlarmItemInitialize();
     /* init alarm check, check ALM_AI_StreamingDRCnDisconnected, ALM_AI_StreamingDRDnDisconnected */
     StreamingDRAlarmItemInitialize();
+    /* init alarm check, check ALM_AI_DatanodeNetworkIsolated */
+    DatanodeNetworkIsolatedAlarmItemInitialize();
+    /* init alarm check, check ALM_AI_DiskDamage */
+    DiskDamagedAlarmItemInitialize();
+    /* init alarm check, check ALM_AI_SlowDisk */
+    SlowDiskAlarmItemInitialize();
+    /* init alarm check, check ALM_AI_MissingDataInstDataDir */
+    MissingDataDirAlarmItemInitialize();
+}
+
+void DatanodeNetworkIsolatedAlarmItemInitialize()
+{
+    int alarmIndex;
+    g_networkIsolatedAlarmListSize = (int)g_currentNode->datanodeCount;
+    if (g_networkIsolatedAlarmListSize == 0) {
+        return;
+    }
+    g_networkIsolatedAlarmList = (Alarm*)malloc(sizeof(Alarm) * (size_t)g_networkIsolatedAlarmListSize);
+    if (g_networkIsolatedAlarmList == NULL) {
+        AlarmLog(ALM_LOG, "Out of memory: DatanodeNetworkIsolatedAlarmItemInitialize failed.\n");
+        exit(1);
+    }
+    errno_t rc = memset_s(g_networkIsolatedAlarmList, sizeof(Alarm) * (size_t)g_networkIsolatedAlarmListSize, 0,
+                          sizeof(Alarm) * (size_t)g_networkIsolatedAlarmListSize);
+    securec_check_errno(rc, (void)rc);
+    alarmIndex = g_networkIsolatedAlarmListSize - 1;
+    for (; alarmIndex >= 0; --alarmIndex) {
+        AlarmItemInitialize(
+            &(g_networkIsolatedAlarmList[alarmIndex]), ALM_AI_DatanodeNetworkIsolated, ALM_AS_Normal, NULL);
+    }
 }
 
 void StorageScalingAlarmItemInitialize(void)
@@ -269,6 +411,9 @@ void StorageScalingAlarmItemInitialize(void)
         AlarmLog(ALM_LOG, "Out of memort: StorageScalingAlarmList failed.\n");
         exit(1);
     }
+    errno_t rc = memset_s(StorageScalingAlarmList, sizeof(Alarm) * StorageScalingAlarmListSize, 0,
+                          sizeof(Alarm) * StorageScalingAlarmListSize);
+    securec_check_errno(rc, (void)rc);
 
     AlarmItemInitialize(&(StorageScalingAlarmList[0]), ALM_AI_StorageDilatationAlarmNotice, ALM_AS_Normal, NULL);
     AlarmItemInitialize(&(StorageScalingAlarmList[1]), ALM_AI_StorageDilatationAlarmMajor, ALM_AS_Normal, NULL);
@@ -301,6 +446,8 @@ void PgxcNodeMismatchAlarmItemInitialize()
         AlarmLog(ALM_LOG, "Out of memory: PgxcNodeMismatchAlarmItemInitialize failed.\n");
         exit(1);
     }
+    errno_t rc = memset_s(g_pgxcNodeMismatchAlarm, sizeof(Alarm), 0, sizeof(Alarm));
+    securec_check_errno(rc, (void)rc);
 
     AlarmItemInitialize(g_pgxcNodeMismatchAlarm, ALM_AI_PgxcNodeMismatch, ALM_AS_Normal, NULL);
 }
@@ -327,6 +474,9 @@ void StreamingDRAlarmItemInitialize(void)
         AlarmLog(ALM_LOG, "Out of memory: AbnormalAlarmItemInitialize failed.\n");
         exit(1);
     }
+    errno_t rc = memset_s(g_streamingDRAlarmList, sizeof(Alarm) * streamingDRAlarmListSize, 0,
+                          sizeof(Alarm) * streamingDRAlarmListSize);
+    securec_check_errno(rc, (void)rc);
     alarmIndex = (int32)(streamingDRAlarmListSize - 1);
     if (g_currentNode->coordinate == 1) {
         /* ALM_AI_AbnormalGTMInst */
@@ -339,4 +489,191 @@ void StreamingDRAlarmItemInitialize(void)
         AlarmItemInitialize(&(g_streamingDRAlarmList[alarmIndex]), ALM_AI_StreamingDisasterRecoveryDnDisconnected,
             ALM_AS_Normal, NULL);
     }
+}
+
+void ReportMemoryAbnormalAlarm(int memUsed, int threshold)
+{
+    Alarm memoryAlarm[1];
+    AlarmAdditionalParam tempAdditionalParam;
+    // Initialize the alarm item
+    AlarmItemInitialize(memoryAlarm, ALM_AI_MemoryUsageAbnormal, ALM_AS_Normal, NULL);
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             memoryAlarm,
+                             ALM_AT_Event,
+                             memUsed,
+                             threshold,
+                             g_myHostName);
+    /* report the alarm */
+    AlarmReporter(memoryAlarm, ALM_AT_Event, &tempAdditionalParam);
+}
+
+void ReportCpuAbnormalAlarm(int cpuUsed, int threshold)
+{
+    Alarm cpuAlarm[1];
+    AlarmAdditionalParam tempAdditionalParam;
+    // Initialize the alarm item
+    AlarmItemInitialize(cpuAlarm, ALM_AI_CpuUsageAbnormal, ALM_AS_Normal, NULL);
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             cpuAlarm,
+                             ALM_AT_Event,
+                             cpuUsed,
+                             threshold,
+                             g_myHostName);
+    /* report the alarm */
+    AlarmReporter(cpuAlarm, ALM_AT_Event, &tempAdditionalParam);
+}
+
+void ReportDiskIOAbnormalAlarm(const char* diskName, int ioUsed, int threshold)
+{
+    Alarm diskIOAlarm[1];
+    AlarmAdditionalParam tempAdditionalParam;
+    // Initialize the alarm item
+    AlarmItemInitialize(diskIOAlarm, ALM_AI_DiskIOAbnormal, ALM_AS_Normal, NULL);
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             diskIOAlarm,
+                             ALM_AT_Event,
+                             diskName,
+                             ioUsed,
+                             threshold,
+                             g_myHostName);
+    /* report the alarm */
+    AlarmReporter(diskIOAlarm, ALM_AT_Event, &tempAdditionalParam);
+}
+
+
+void ReportDNDisconnectAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex)
+{
+    if (alarmIndex >= g_networkIsolatedAlarmListSize) {
+        return;
+    }
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             instanceName,
+                             "",
+                             "",
+                             "",
+                             &(g_networkIsolatedAlarmList[alarmIndex]),
+                             alarmType,
+                             instanceName);
+    /* report the alarm */
+    AlarmReporter(&(g_networkIsolatedAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
+}
+
+void ReportDiskUsageAbnormalAlarm(const char* diskName, int diskUsed, int threshold)
+{
+    Alarm diskUsageAlarm[1];
+    AlarmAdditionalParam tempAdditionalParam;
+    // Initialize the alarm item
+    AlarmItemInitialize(diskUsageAlarm, ALM_AI_DiskUsageAbnormal, ALM_AS_Normal, NULL);
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             diskUsageAlarm,
+                             ALM_AT_Event,
+                             diskName,
+                             diskUsed,
+                             threshold,
+                             g_myHostName);
+    /* report the alarm */
+    AlarmReporter(diskUsageAlarm, ALM_AT_Event, &tempAdditionalParam);
+}
+
+void ReportDiskDamageAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex)
+{
+    if (alarmIndex >= g_diskDamagedAlarmListSize) {
+        return;
+    }
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             instanceName,
+                             "",
+                             "",
+                             "",
+                             &(g_diskDamagedAlarmList[alarmIndex]),
+                             alarmType,
+                             instanceName);
+    /* report the alarm */
+    AlarmReporter(&(g_diskDamagedAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
+}
+
+void ReportSlowDiskAlarm(const char* diskName, AlarmType alarmType, int index, const char* details)
+{
+    if (index >= g_slowDiskAlarmListSize) {
+        return;
+    }
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             &(g_slowDiskAlarmList[index]),
+                             alarmType,
+                             diskName,
+                             details);
+    /* report the alarm */
+    AlarmReporter(&(g_slowDiskAlarmList[index]), alarmType, &tempAdditionalParam);
+}
+
+void ReportDiskHangAlarm(Alarm* alarm, AlarmType alarmType, const char* diskName, uint64 costTime, uint64 timeout)
+{
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    char details[MAX_PATH_LEN] = {0};
+    errno_t rc = snprintf_s(details, MAX_PATH_LEN, MAX_PATH_LEN - 1, "disk(%s) read/write costTime=%lu, timeout=%lu",
+        diskName, costTime, timeout);
+    securec_check_intval(rc, (void)rc);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             alarm,
+                             alarmType,
+                             g_currentNode->nodeName,
+                             details);
+    /* report the alarm */
+    AlarmReporter(alarm, alarmType, &tempAdditionalParam);
+}
+
+void ReportDiskSlowAlarm(Alarm* alarm, AlarmType alarmType, uint64 costTime, uint64 threshold, const char* dirPath)
+{
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    char details[MAX_PATH_LEN] = {0};
+    errno_t rc = snprintf_s(details, MAX_PATH_LEN, MAX_PATH_LEN - 1, "data path(%s) read/write costTime=%lu, "
+        "threshold=%lu", dirPath, costTime, threshold);
+    securec_check_intval(rc, (void)rc);
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             alarm,
+                             alarmType,
+                             g_currentNode->nodeName,
+                             details);
+    /* report the alarm */
+    AlarmReporter(alarm, alarmType, &tempAdditionalParam);
 }

@@ -1444,6 +1444,10 @@ void GetAgentConfigEx()
         (void)fprintf(stderr, "get_config_param() get enable_log_compress fail.\n");
     }
 
+    if (get_config_param(configDir, "enable_vtable", g_enableVtable, sizeof(g_enableVtable)) < 0) {
+        (void)fprintf(stderr, "get_config_param() get enable_vtable fail.\n");
+    }
+
     if (get_config_param(configDir, "enable_ssl", g_enableMesSsl, sizeof(g_enableMesSsl)) < 0) {
         (void)fprintf(stderr, "get_config_param() get enable_ssl fail.\n");
     }

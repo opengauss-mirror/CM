@@ -23,6 +23,7 @@
 #include <malloc.h>
 #include "securec.h"
 #include "cm/cm_elog.h"
+#include "cm_vtable.h"
 #include "cm_disk_rw.h"
 
 using namespace std;
@@ -54,11 +55,13 @@ status_t OpenDiskFileHandle(const char *scsi_dev, uint32 offset, int64 instId)
     g_sdLrwHandler.instId = instId;
     g_sdBaseOffset = offset;
     g_sdLrwHandler.offset = g_sdBaseOffset;
-    g_sdLrwHandler.fd = open(g_sdLrwHandler.scsiDev, O_RDWR | O_DIRECT | O_SYNC);
-    if (g_sdLrwHandler.fd < 0) {
+    if (!g_vtable_func.isInitialize) {
+        g_sdLrwHandler.fd = open(g_sdLrwHandler.scsiDev, O_RDWR | O_DIRECT | O_SYNC);
+        if (g_sdLrwHandler.fd < 0) {
         write_runlog(ERROR, "OpenDiskFileHandle: open disk %s failed\n", g_sdLrwHandler.scsiDev);
-        (void)pthread_rwlock_unlock(&(g_sdRwLock));
-        return CM_ERROR;
+            (void)pthread_rwlock_unlock(&(g_sdRwLock));
+            return CM_ERROR;
+        }
     }
 
     g_sdLrwHandler.rwBuff = (char *)memalign(DISK_WRITE_512BYTES, BITMAP_BYTE_LENGTH);

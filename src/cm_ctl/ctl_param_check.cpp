@@ -35,6 +35,7 @@ const char *g_cmaParamInfo[] = {
     "alarm_report_max_count|int|1,2592000|NULL|NULL|",
     "agent_check_interval|int|0,2147483647|NULL|NULL|",
     "enable_log_compress|bool|0,0|NULL|NULL|",
+    "enable_vtable|bool|0,0|NULL|NULL|",
     "enable_ssl|bool|0,0|NULL|NULL|",
     "ssl_cert_expire_alert_threshold|int|7,180|NULL|NULL|",
     "ssl_cert_expire_check_interval|int|0,2147483647|NULL|NULL|",

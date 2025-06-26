@@ -411,6 +411,9 @@ void ReloadParametersFromConfigfile()
     if (get_config_param(configDir, "enable_log_compress", g_enableLogCompress, sizeof(g_enableLogCompress)) < 0) {
         write_runlog(ERROR, "get_config_param() get enable_log_compress fail.\n");
     }
+    if (get_config_param(configDir, "enable_vtable", g_enableVtable, sizeof(g_enableVtable)) < 0) {
+        write_runlog(ERROR, "get_config_param() get enable_vtable fail.\n");
+    }
     if (get_config_param(configDir, "security_mode", g_enableOnlineOrOffline, sizeof(g_enableOnlineOrOffline)) < 0) {
         write_runlog(ERROR, "get_config_param() get security_mode fail.\n");
     }

@@ -67,6 +67,7 @@ char g_enableCnAutoRepair[BOOL_STR_MAX_LEN] = {0};
 char g_logBasePath[MAXPGPATH];
 /* gateway to control log compress */
 char g_enableLogCompress[BOOL_STR_MAX_LEN] = {0};
+char g_enableVtable[BOOL_STR_MAX_LEN] = {0};
 char configDir[MAX_PATH_LEN] = {0};
 char g_alarmConfigDir[MAX_PATH_LEN] = {0};
 char g_cmagentLockfile[MAX_PATH_LEN] = {0};

@@ -13,6 +13,7 @@
 
 #include "cm_config.h"
 #include "cm_rhb.h"
+#include "cm_vtable.h"
 
 diskLrwHandler g_vdHandler;
 pthread_rwlock_t g_vdRwLock;
@@ -155,11 +156,14 @@ status_t InitVotingDiskHandler(const char *scsiDev, uint32 offset)
     }
     g_vdBaseOffset = offset;
     g_vdHandler.offset = g_vdBaseOffset;
-    g_vdHandler.fd = open(g_vdHandler.scsiDev, O_RDWR | O_DIRECT | O_SYNC);
-    if (g_vdHandler.fd < 0) {
-        write_runlog(ERROR, "[%s] open disk %s failed, errno %d.\n", __FUNCTION__, g_vdHandler.scsiDev, errno);
-        (void)pthread_rwlock_unlock(&(g_vdRwLock));
-        return CM_ERROR;
+    
+    if (!g_vtable_func.isInitialize) {
+        g_vdHandler.fd = open(g_vdHandler.scsiDev, O_RDWR | O_DIRECT | O_SYNC);
+        if (g_vdHandler.fd < 0) {
+            write_runlog(ERROR, "[%s] open disk %s failed, errno %d.\n", __FUNCTION__, g_vdHandler.scsiDev, errno);
+            (void)pthread_rwlock_unlock(&(g_vdRwLock));
+            return CM_ERROR;
+        }
     }
     g_vdHandler.rwBuff = (char *)memalign(VOTING_DISK_ALIGN_SIZE, VOTING_DISK_DATA_SIZE);
     if (g_vdHandler.rwBuff == NULL) {

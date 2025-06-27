@@ -178,6 +178,7 @@ uint32 agnet_report_wrFloatip_interval = 20;
 ClusterRole agent_backup_open = CLUSTER_PRIMARY;
 uint32 agent_connect_retries = 15;
 uint32 agent_check_interval = 2;
+uint32 g_diskUsageThreshold = 90;
 uint32 agent_kill_instance_timeout = 0;
 uint32 g_agentKerberosStatusCheckInterval = 5;
 const uint32 AGENT_WATCH_DOG_THRESHOLD = 200;

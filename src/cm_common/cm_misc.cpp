@@ -208,6 +208,17 @@ log_level_string log_level_map_string[] = {
 
 };
 
+void FreePtr2Ptr(char** ptr, uint32 prtCount)
+{
+    if (ptr == NULL) {
+        return;
+    }
+    for (uint32 i = 0; i < prtCount; i++) {
+        FREE_AND_RESET(ptr[i]);
+    }
+    FREE_AND_RESET(ptr);
+}
+
 int log_level_string_to_int(const char* log_level)
 {
     int i;

@@ -30,12 +30,14 @@
 #include "cma_connect.h"
 #include "cma_global_params.h"
 #include "cma_common.h"
+#include "cm_text.h"
 #include "cma_client.h"
 #include "cma_instance_management.h"
 #include "cma_instance_management_res.h"
 #include "cma_process_messages.h"
 #include "cma_connect.h"
 #include "cma_instance_check.h"
+#include "cm_util.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
 #endif
@@ -53,18 +55,23 @@ static const int THRESHOLD_FORMAT = 4;
 static const int THRESHOLD_MAX_VALUE = 100;
 static const int THRESHOLD_MIN_VALUE = 0;
 static const int INFO_POS = 5;
+static const uint64 SLOW_DISK_CHECK_PERIOD = 5 * 60;
+static const uint64 SLOW_DISK_CHECK_THRESHOLD = SLOW_DISK_CHECK_PERIOD * 2 / 10;
 
-using CpuInfo = struct CpuInfoSt {
-    uint64 cpuUser;
-    uint64 cpuNice;
-    uint64 cpuSys;
-    uint64 cpuIdle;
-    uint64 cpuIwait;
-    uint64 cpuHardirq;
-    uint64 cpuSoftirq;
-    uint64 cpuSteal;
-    uint64 cpuGuest;
-    uint64 cpuGuestNice ;
+static uint32 g_sys_report_interval = 1;
+
+MemCheckInfo g_memoryCheckInfoList[] = {
+    {"MemTotal", "MemTotal: %lu kB", MEM_STAT_TOTAL},
+    {"MemFree", "MemFree: %lu kB", MEM_STAT_FREE},
+    {"MemAvailable", "MemAvailable: %lu kB", MEM_STAT_AVAILABLE},
+    {"Buffers", "Buffers: %lu kB", MEM_STAT_BUFFERS},
+    {"Cached", "Cached: %lu kB", MEM_STAT_CACHED}
+};
+
+SlowIotLevelInfo g_slowIoLevelInfoList[] = {
+    {SVCTM_LEVEL_SLIGHT, 0, 0},
+    {SVCTM_LEVEL_MODERATE, 10, 1},
+    {SVCTM_LEVEL_SERIOUS, 20, 2}
 };
 
 void etcd_status_check_and_report(void)
@@ -418,6 +425,11 @@ static void CmGetDisk(const char* datadir, char* devicename, uint32 nameLen)
 
     (void)fclose(mtfp);
     FREE_AND_RESET(mntentBuffer);
+}
+
+void GetDiskNameByDataPath(const char* datadir, char* devicename, uint32 nameLen)
+{
+    return CmGetDisk(datadir, devicename, nameLen);
 }
 
 static int GetCpuCount(void)
@@ -862,7 +874,7 @@ static void DnStatusFinalProcessing(DnStatus* pkgDnStatus, uint32 dnId)
     if (pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_NORMAL ||
         pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_NEED_REPAIR ||
         pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_UNKONWN ||
-        (pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_DEMOTING && 
+        (pkgDnStatus->reportMsg.local_status.db_state == INSTANCE_HA_STATE_DEMOTING &&
          !g_isStorageWithDMSorDSS)) {
         g_dnRoleForPhonyDead[dnId] = pkgDnStatus->reportMsg.local_status.local_role;
     } else {
@@ -1143,6 +1155,7 @@ void* DNStatusCheckMain(void *arg)
             continue;
         }
 
+        DNDataBaseStatusCheck(i);
         InitDNStatus(&dnStatus, i);
         running = check_one_instance_status(GetDnProcessName(), g_currentNode->datanode[i].datanodeLocalDataPath, NULL);
         if (g_currentNode->datanode[i].datanodeRole != DUMMY_STANDBY_DN) {
@@ -1496,7 +1509,7 @@ void CheckSharedDiskUsage(uint32 &vgdataPathUsage, uint32 &vglogPathUsage)
     if (fgets(result, sizeof(result)-1, fp) != NULL) {
         sscanf(result, "%lf", &percent2);
     }
-    
+
     // If the value is greater than 0 and less than 1, consider it as 1.
     if (percent1 > 0 && percent1 < 1) {
         percent1 = 1;
@@ -1549,7 +1562,7 @@ void CheckDiskForDNDataPath()
 /* 
  * This function is used to ensure whether the status modify;
  */
-static int IsClusterInRedoState() 
+static int IsClusterInRedoState()
 {
     FILE *fp;
     char buffer[1024] = {0};
@@ -1574,7 +1587,7 @@ static int IsClusterInRedoState()
     char *end = foundString + strlen(foundString) - 1;
     while (end >= foundString && (*end == '\n' || *end == '\r' || *end == '\t' || *end == ' ')) {
         *end = '\0';
-        end--; 
+        end--;
     }
     /* If we found nothing, it must be something wrong with gaussdb or DSS. */
     if (*foundString == '\0') {
@@ -1646,55 +1659,71 @@ static void PingPeerIP(int* count, const char localIP[CM_IP_LENGTH], const char 
     return;
 }
 
+void GetPingSuccessCount(int i, int* count)
+{
+    if (g_multi_az_cluster) {
+        for (uint32 j = 0; j < g_dn_replication_num - 1; ++j) {
+            PingPeerIP(count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
+                       g_currentNode->datanode[i].peerDatanodes[j].datanodePeerHAIP[0]);
+        }
+    } else {
+        PingPeerIP(count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
+                   g_currentNode->datanode[i].datanodePeerHAIP[0]);
+        PingPeerIP(count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
+                   g_currentNode->datanode[i].datanodePeer2HAIP[0]);
+    }
+}
+
+void CheckDNConnectionStatus(int i, int alarmIndex, const char *instanceName)
+{
+    AlarmType alarmType = ALM_AT_Resume;
+    if (!g_mostAvailableSync[i]) {
+        int count = 0;
+        GetPingSuccessCount(i, &count);
+        if (count == 0) {
+            write_runlog(LOG, "dn(%u) is disconnected from other dn.\n", g_currentNode->datanode[i].datanodeId);
+            g_dnPingFault[i] = true;
+            if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY  &&
+                !g_isPauseArbitration) {
+                immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
+            }
+            alarmType = ALM_AT_Fault;
+        } else {
+            g_dnPingFault[i] = false;
+        }
+    } else {
+        g_dnPingFault[i] = false;
+    }
+    ReportDNDisconnectAlarm(alarmType, instanceName, alarmIndex);
+}
+
 void* DNConnectionStatusCheckMain(void *arg)
 {
     int i = *(int*)arg;
+    int alarmIndex = i;
+    char instanceName[CM_NODE_NAME] = {0};
     pthread_t threadId = pthread_self();
 
-    if (g_currentNode->datanode[i].datanodeListenCount == 1 &&
-        g_currentNode->datanode[i].datanodeLocalHAListenCount == 1 &&
-        strcmp(g_currentNode->datanode[i].datanodeListenIP[0], g_currentNode->datanode[i].datanodeLocalHAIP[0]) == 0) {
-        write_runlog(LOG, "datanodeListenIP is same with datanodeLocalHAIP no need connection status check.\n");
+    if ((i < 0) || (i >= CM_MAX_DATANODE_PER_NODE)) {
+        write_runlog(ERROR, "DN index [%d] is invalid, failed to start DNConnection thread.\n", i);
         return NULL;
     }
     if (g_single_node_cluster || IsBoolCmParamTrue(g_agentEnableDcf)) {
+        write_runlog(LOG, "instanceId(%u) is single node cluster or in dcf mode, no need connection status check.\n",
+                     g_currentNode->datanode[i].datanodeId);
         return NULL;
     }
     write_runlog(LOG, "dn(%d) connection status check thread start, threadid %lu.\n", i, threadId);
+    int ret = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1,
+                         "%s_%u", "dn", g_currentNode->datanode[i].datanodeId);
+    securec_check_intval(ret, (void)ret);
     for (;;) {
         set_thread_state(threadId);
         if (g_shutdownRequest || g_enableWalRecord) {
             cm_sleep(5);
             continue;
         }
-
-        if (!g_mostAvailableSync[i]) {
-            int count = 0;
-            if (g_multi_az_cluster) {
-                for (uint32 j = 0; j < g_dn_replication_num - 1; ++j) {
-                    PingPeerIP(&count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
-                        g_currentNode->datanode[i].peerDatanodes[j].datanodePeerHAIP[0]);
-                }
-            } else {
-                PingPeerIP(&count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
-                    g_currentNode->datanode[i].datanodePeerHAIP[0]);
-                PingPeerIP(&count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
-                    g_currentNode->datanode[i].datanodePeer2HAIP[0]);
-            }
-            if (count == 0) {
-                write_runlog(LOG, "dn(%u) is disconnected from other dn.\n", g_currentNode->datanode[i].datanodeId);
-                g_dnPingFault[i] = true;
-                if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY  && 
-                    !g_isPauseArbitration) {
-                    immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
-                }
-            } else {
-                g_dnPingFault[i] = false;
-            }
-        } else {
-            g_dnPingFault[i] = false;
-        }
-
+        CheckDNConnectionStatus(i, alarmIndex, instanceName);
         cm_sleep(agent_report_interval);
     }
 }
@@ -2013,6 +2042,401 @@ int CreateCheckNodeStatusThread()
     pthread_t thrId;
 
     if ((err = pthread_create(&thrId, NULL, CheckNodeStatusThreadMain, NULL)) != 0) {
+        write_runlog(ERROR, "Failed to create new thread: error %d.\n", err);
+        return err;
+    }
+    return 0;
+}
+
+void InitSystemStatInfo(SystemStatInfo* systemStat)
+{
+    errno_t rc = memset_s(systemStat, sizeof(SystemStatInfo), 0, sizeof(SystemStatInfo));
+    securec_check_errno(rc, (void)rc);
+    systemStat->memoryStatInfo.lastReportTime = GetMonotonicTimeS();
+    systemStat->cpuStatInfo.lastReportTime = GetMonotonicTimeS();
+    int diskCount = 0;
+    char **diskName = GetAllDisk(diskCount);
+    if (diskName == NULL || diskCount <= 0) {
+        write_runlog(ERROR, "Get disk info failed.\n");
+        return;
+    }
+    systemStat->diskStatInfo.diskCount = diskCount;
+    systemStat->diskStatInfo.disIoStatInfo = (DisIoStatInfo*)malloc((size_t)diskCount * sizeof(DisIoStatInfo));
+    if (systemStat->diskStatInfo.disIoStatInfo == NULL) {
+        write_runlog(ERROR, "InitSystemStatInfo: out of memory, diskCount = %d\n", diskCount);
+        for (int i = 0; i < diskCount; ++i) {
+            free(diskName[i]);
+        }
+        free(diskName);
+        return;
+    }
+    for (int i = 0; i < diskCount; ++i) {
+        if (CM_IS_EMPTY_STR(diskName[i])) {
+            continue;
+        }
+        rc = strcpy_s(systemStat->diskStatInfo.disIoStatInfo[i].diskName, MAX_DEVICE_DIR, diskName[i]);
+        securec_check_errno(rc, (void)rc);
+        systemStat->diskStatInfo.disIoStatInfo[i].lastReportTime = GetMonotonicTimeS();
+        systemStat->diskStatInfo.disIoStatInfo[i].weightWindow = std::deque<uint32>();
+        write_runlog(LOG, "start check device(%s).\n", diskName[i]);
+    }
+    for (int i = 0; i < diskCount; ++i) {
+        free(diskName[i]);
+    }
+    free(diskName);
+}
+
+status_t SetMemeryStatInfo(const char* line, MemoryStatInfo* memoryStatInfo, uint32& count)
+{
+    if (CM_IS_EMPTY_STR(line)) {
+        return CM_ERROR;
+    }
+    uint32 length = ELEMENT_COUNT(g_memoryCheckInfoList);
+    for (uint32 i = 0; i < length; i++) {
+        MemCheckInfo memCheckInfo = g_memoryCheckInfoList[i];
+        if (strncmp(line, memCheckInfo.name, strlen(memCheckInfo.name)) != 0) {
+            continue;
+        }
+        int32 ret = sscanf_s(line, memCheckInfo.info, &(memoryStatInfo->memItemList[memCheckInfo.item]));
+        check_sscanf_s_result(ret, 1);
+        if (ret == -1) {
+            write_runlog(ERROR, "failed to sscanf %s, line=[%s].\n", memCheckInfo.info, line);
+            return CM_ERROR;
+        }
+        ++count;
+        return CM_SUCCESS;
+    }
+    return CM_SUCCESS;
+}
+
+status_t CheckMemoryStatus(MemoryStatInfo* memoryStatInfo)
+{
+    char line[CM_PATH_LENGTH] = {0};
+    uint32 success = 0;
+    FILE* fp = fopen(FILE_MEMINFO, "re");
+    if (fp == NULL) {
+        write_runlog(ERROR, "failed to open file %s.\n", FILE_MEMINFO);
+        return CM_ERROR;
+    }
+    while (fgets(line, CM_PATH_LENGTH, fp)!= NULL) {
+        if (SetMemeryStatInfo(line, memoryStatInfo, success) != CM_SUCCESS) {
+            FCLOSE_AND_RESET(fp);
+            return CM_ERROR;
+        }
+        if (success == (uint32)MEM_STAT_BUTT) {
+            break;
+        }
+    }
+    fclose(fp);
+
+    uint64 sysMemUsed = memoryStatInfo->memItemList[MEM_STAT_TOTAL] - memoryStatInfo->memItemList[MEM_STAT_FREE]-
+            memoryStatInfo->memItemList[MEM_STAT_BUFFERS] - memoryStatInfo->memItemList[MEM_STAT_CACHED];
+    uint64 appMemUsed = memoryStatInfo->memItemList[MEM_STAT_TOTAL] - memoryStatInfo->memItemList[MEM_STAT_AVAILABLE];
+
+    if (sysMemUsed > memoryStatInfo->memItemList[MEM_STAT_TOTAL]
+            || appMemUsed > memoryStatInfo->memItemList[MEM_STAT_TOTAL]) {
+        write_runlog(ERROR, "check memory status failed, memTotal(%lu), memSys(%lu), memApp(%lu).\n",
+                     memoryStatInfo->memItemList[MEM_STAT_TOTAL], sysMemUsed, appMemUsed);
+        return CM_ERROR;
+    }
+    memoryStatInfo->systemMemUsedUtil = (float)sysMemUsed /
+        (float)memoryStatInfo->memItemList[MEM_STAT_TOTAL] * PERCENT;
+    memoryStatInfo->appMemUsedUtil = (float)sysMemUsed / (float)memoryStatInfo->memItemList[MEM_STAT_TOTAL] * PERCENT;
+    return CM_SUCCESS;
+}
+
+void ReportSystemStatusAlarm(const SystemStatInfo* systemStat, const EnvThreshold* threshold)
+{
+    int memUsed = (int)systemStat->memoryStatInfo.systemMemUsedUtil;
+    if (threshold->mem > 0 && memUsed > threshold->mem) {
+        write_runlog(LOG, "system memory usage is %u, threshold is %u, report alarm.\n", memUsed, threshold->mem);
+        ReportMemoryAbnormalAlarm(memUsed, threshold->mem);
+    }
+    int cpuUsed = (int)systemStat->cpuStatInfo.cpuUtil;
+    if (threshold->cpu > 0 && cpuUsed > threshold->cpu) {
+        write_runlog(LOG, "system cpu usage is %u, threshold is %u, report alarm.\n", cpuUsed, threshold->cpu);
+        ReportCpuAbnormalAlarm(cpuUsed, threshold->cpu);
+    }
+    for (uint32 i = 0; i < systemStat->diskStatInfo.diskCount; ++i) {
+        DisIoStatInfo* disIoStatInfo = &(systemStat->diskStatInfo.disIoStatInfo[i]);
+        if (CM_IS_EMPTY_STR(disIoStatInfo->diskName)) {
+            continue;
+        }
+        int ioUtil = (int)disIoStatInfo->ioUtil;
+        if (threshold->disk > 0 && ioUtil > threshold->disk) {
+            write_runlog(LOG, "system disk(%s) io usage is %u, threshold is %u, report alarm.\n",
+                         disIoStatInfo->diskName,
+                         ioUtil,
+                         threshold->disk);
+            ReportDiskIOAbnormalAlarm(disIoStatInfo->diskName, ioUtil, threshold->disk);
+        }
+        float svctm = disIoStatInfo->svctm;
+        for (int j = SVCTM_LEVEL_CEIL - 1; j >= 0; --j) {
+            if (svctm >= g_slowIoLevelInfoList[j].threshold) {
+                disIoStatInfo->weightWindow.push_back(g_slowIoLevelInfoList[j].weight);
+                disIoStatInfo->totalWeight += g_slowIoLevelInfoList[j].weight;
+                break;
+            }
+        }
+        AlarmType alarmType = ALM_AT_Resume;
+        if (disIoStatInfo->weightWindow.size() > SLOW_DISK_CHECK_PERIOD) {
+            disIoStatInfo->totalWeight -= disIoStatInfo->weightWindow.front();
+            disIoStatInfo->weightWindow.pop_front();
+            char details[MAX_PATH_LEN] = {0};
+            if (disIoStatInfo->totalWeight > SLOW_DISK_CHECK_THRESHOLD) {
+                alarmType = ALM_AT_Fault;
+                int ret = snprintf_s(details, MAX_PATH_LEN, MAX_PATH_LEN - 1, "weight: %lu, period: %lu, "
+                    "threshold: %lu", disIoStatInfo->totalWeight, SLOW_DISK_CHECK_PERIOD, SLOW_DISK_CHECK_THRESHOLD);
+                securec_check_intval(ret, (void)ret);
+                write_runlog(LOG, "detected slow disk(%s), details: %s, report alarm.\n",
+                             disIoStatInfo->diskName,
+                             details);
+            }
+            ReportSlowDiskAlarm(disIoStatInfo->diskName, alarmType, i, details);
+        }
+    }
+}
+
+status_t SetCpuStatInfo(const char* line, CpuSimpleInfo* cpuSimpleInfo)
+{
+    const int cpuNameLen = 8;
+    const int cpuInfoCount = 11;
+    char cpuName[cpuNameLen] = {0};
+    CpuInfo* tmpCpuInfo = &(cpuSimpleInfo->cpuInfo);
+    errno_t rc = sscanf_s(line, "%s %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu", cpuName, cpuNameLen,
+        &tmpCpuInfo->cpuUser, &tmpCpuInfo->cpuNice, &tmpCpuInfo->cpuSys, &tmpCpuInfo->cpuIdle, &tmpCpuInfo->cpuIwait,
+        &tmpCpuInfo->cpuHardirq, &tmpCpuInfo->cpuSoftirq, &tmpCpuInfo->cpuSteal, &tmpCpuInfo->cpuGuest,
+        &tmpCpuInfo->cpuGuestNice);
+    check_sscanf_s_result(rc, cpuInfoCount);
+    if (rc != cpuInfoCount) {
+        write_runlog(ERROR, "get cpu info from %s failed, line %s, count %d.\n", FILE_CPUSTAT, line, rc);
+        return CM_ERROR;
+    }
+
+    cpuSimpleInfo->cpuIdleTime = tmpCpuInfo->cpuIdle;
+    cpuSimpleInfo->cpuUserTime = tmpCpuInfo->cpuUser;
+    cpuSimpleInfo->cpuSystemTime = tmpCpuInfo->cpuSys;
+    cpuSimpleInfo->cpuTotalTime = 0;
+    uint64* value = (uint64*)tmpCpuInfo;
+    uint32 len = (uint32)sizeof(CpuInfo) / sizeof(uint64);
+    for (uint32 i = 0; i < len; ++i) {
+        cpuSimpleInfo->cpuTotalTime += *(value++);
+    }
+    return (strcmp(cpuName, "cpu") == 0) ? CM_SUCCESS : CM_ERROR;
+}
+
+status_t CheckCpuStatus(CpuStatInfo* cpuStatInfo)
+{
+    CpuSimpleInfo curCpuInfo = {0};
+    char line[MAX_PATH_LEN] = {0};
+    FILE* fp = fopen(FILE_CPUSTAT, "re");
+    if (fp == NULL) {
+        write_runlog(ERROR, "failed to open file %s.\n", FILE_CPUSTAT);
+        return CM_ERROR;
+    }
+    while (fgets(line, sizeof(line), fp)!= NULL) {
+        if (SetCpuStatInfo(line, &curCpuInfo)!= CM_SUCCESS) {
+            write_runlog(ERROR, "failed to set cpu stat info, line=[%s].\n", line);
+            FCLOSE_AND_RESET(fp);
+            return CM_ERROR;
+        }
+        break;
+    }
+    fclose(fp);
+    if (cpuStatInfo->oldCpuInfo.cpuTotalTime != 0) {
+        uint64* oldValue = (uint64*) &(cpuStatInfo->oldCpuInfo);
+        uint64* curValue = (uint64*) &(curCpuInfo);
+        uint32 count = (uint32)sizeof(CpuSimpleInfo) / sizeof(uint64);
+        for (uint32 i = 0; i < count; ++i) {
+            if (*(curValue++) < *(oldValue++)) {
+                write_runlog(ERROR, "get cpu info wrong, curCpuTime(%lu) < oldCpuTime(%lu). and index=[%u]\n",
+                    *(curValue--), *(oldValue--), i);
+                errno_t rc = memcpy_s(&(cpuStatInfo->oldCpuInfo), sizeof(CpuSimpleInfo), &(curCpuInfo),
+                    sizeof(CpuSimpleInfo));
+                securec_check_errno(rc, (void)  rc);
+                return CM_ERROR;
+            }
+        }
+        uint64 totalTimeInterval = curCpuInfo.cpuTotalTime - cpuStatInfo->oldCpuInfo.cpuTotalTime;
+        uint64 sysTimeInterval = curCpuInfo.cpuSystemTime - cpuStatInfo->oldCpuInfo.cpuSystemTime;
+        uint64 userTimeInterval = curCpuInfo.cpuUserTime - cpuStatInfo->oldCpuInfo.cpuUserTime;
+        uint64 idleTimeInterval = curCpuInfo.cpuIdleTime - cpuStatInfo->oldCpuInfo.cpuIdleTime;
+        cpuStatInfo->cpuUtil = (float)(totalTimeInterval - idleTimeInterval) / (float)totalTimeInterval * PERCENT;
+        cpuStatInfo->cpuSystemUtil = (float)sysTimeInterval / (float)totalTimeInterval * PERCENT;
+        cpuStatInfo->cpuUserUtil = (float)userTimeInterval / (float)totalTimeInterval * PERCENT;
+    }
+    errno_t rc = memcpy_s(&(cpuStatInfo->oldCpuInfo), sizeof(CpuSimpleInfo), &(curCpuInfo), sizeof(CpuSimpleInfo));
+    securec_check_errno(rc, (void)  rc);
+    return CM_SUCCESS;
+}
+
+void CalculateDiskIoUtil(DisIoStatInfo* disIoStatInfo, uint64 curTime, uint64 ioTimeMs,
+                         uint64 readCount, uint64 writeCount)
+{
+    uint64 rwCount = (readCount + writeCount) - (disIoStatInfo->lastReadCount + disIoStatInfo->lastWriteCount);
+    rwCount = rwCount == 0 ? 1 : rwCount;
+    if ((disIoStatInfo->lastCheckTime == 0) || (disIoStatInfo->lastCheckTime >= curTime)
+        || (disIoStatInfo->lastIoTime >= ioTimeMs) || (rwCount < 0)) {
+        if (disIoStatInfo->lastCheckTime >= curTime) {
+            write_runlog(ERROR, "lastCheckTime(%lu) >= curTime(%lu), get disk io info failed.\n",
+                disIoStatInfo->lastCheckTime, curTime);
+        }
+        if (disIoStatInfo->lastIoTime > ioTimeMs) {
+            write_runlog(ERROR, "lastIoTime(%lu) > ioTimeMs(%lu), get disk io info failed.\n",
+                         disIoStatInfo->lastIoTime, ioTimeMs);
+        }
+        if (rwCount < 0) {
+            write_runlog(ERROR, "lastReadCount(%lu) + lastWriteCount(%lu) > readCount(%lu) + writeCount(%lu),"
+                " get disk io info failed.\n", disIoStatInfo->lastReadCount,
+                disIoStatInfo->lastWriteCount, readCount, writeCount);
+        }
+        disIoStatInfo->lastCheckTime = curTime;
+        disIoStatInfo->lastIoTime = ioTimeMs;
+        disIoStatInfo->lastReadCount = readCount;
+        disIoStatInfo->lastWriteCount = writeCount;
+        disIoStatInfo->ioUtil = 0;
+        return;
+    }
+    uint64 ioTimeInterval = ioTimeMs - disIoStatInfo->lastIoTime;
+    uint64 timeInterval = curTime - disIoStatInfo->lastCheckTime;
+    if (ioTimeInterval > timeInterval) {
+        ioTimeInterval = timeInterval;
+    }
+    disIoStatInfo->ioUtil = (float)ioTimeInterval / (float)timeInterval * PERCENT;
+    disIoStatInfo->svctm = (float)ioTimeInterval / (float)rwCount;
+    disIoStatInfo->lastCheckTime = curTime;
+    disIoStatInfo->lastIoTime = ioTimeMs;
+    disIoStatInfo->lastReadCount = readCount;
+    disIoStatInfo->lastWriteCount = writeCount;
+}
+
+void SetOneDiskStatus(DisIoStatInfo* disIoStatInfo)
+{
+    FILE* fp = fopen(FILE_DISKSTAT, "re");
+    if (fp == NULL) {
+        write_runlog(ERROR, "failed to open file %s.\n", FILE_DISKSTAT);
+        return;
+    }
+    uint32 majorDeviceNum;
+    uint32 minorDeviceNum;
+    char deviceName[MAX_DEVICE_DIR] = {0};
+    uint64 readCount;
+    uint64 readMerge;
+    uint64 readSector;
+    uint64 readTimeMs;
+    uint64 writeCount;
+    uint64 writeMerge;
+    uint64 writeSector;
+    uint64 writeTimeMs;
+    uint64 ioCountInProgress;
+    uint64 ioTimeMs;
+    uint64 ioWeightTimeMs;
+    int cnt;
+    char line[MAX_PATH_LEN] = {0};
+    uint64 curTime;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        curTime = GetMonotonicTimeMs();
+        cnt = sscanf_s(line, "%u %u %s %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu",
+            &majorDeviceNum, &minorDeviceNum, deviceName, MAX_DEVICE_DIR - 1, &readCount, &readMerge, &readSector,
+            &readTimeMs, &writeCount, &writeMerge, &writeSector, &writeTimeMs,
+            &ioCountInProgress, &ioTimeMs, &ioWeightTimeMs);
+        check_sscanf_s_result(cnt, MAX_DEVICE_STAT_INDEX);
+        if (cnt != MAX_DEVICE_STAT_INDEX) {
+            write_runlog(ERROR, "get disk info from %s failed, line %s, count %d.\n", FILE_DISKSTAT, line, cnt);
+            continue;
+        }
+        if (strcmp(disIoStatInfo->diskName, deviceName) == 0) {
+            CalculateDiskIoUtil(disIoStatInfo, curTime, ioTimeMs, readCount, writeCount);
+            fclose(fp);
+            return;
+        }
+    }
+    fclose(fp);
+}
+
+status_t CheckDiskStatus(DiskStatInfo* diskStatInfo)
+{
+    if (diskStatInfo->diskCount == 0) {
+        write_runlog(DEBUG5, "diskCount is 0, can not check disk io.\n");
+        return CM_ERROR;
+    }
+    for (uint32 i = 0; i < diskStatInfo->diskCount; ++i) {
+        if (CM_IS_EMPTY_STR(diskStatInfo->disIoStatInfo[i].diskName)) {
+            write_runlog(LOG, "diskName is empty, can not check disk io.\n");
+            continue;
+        }
+        SetOneDiskStatus(&diskStatInfo->disIoStatInfo[i]);
+    }
+    return CM_SUCCESS;
+}
+
+void CheckDnDiskUsage()
+{
+    if (g_diskUsageThreshold == 0) {
+        return;
+    }
+    for (uint32 i = 0; i < g_currentNode->datanodeCount; ++i) {
+        uint32 diskUsage = GetDiskUsageForPath(g_currentNode->datanode[i].datanodeLocalDataPath);
+        if (diskUsage > g_diskUsageThreshold) {
+            char deviceName[MAX_PATH_LEN] = {0};
+            CmGetDisk(g_currentNode->datanode[i].datanodeLocalDataPath, deviceName, MAX_PATH_LEN);
+            write_runlog(LOG, "name %s, disk usage is %u, threshold is %u, report alarm.\n",
+                         deviceName, diskUsage, g_diskUsageThreshold);
+            ReportDiskUsageAbnormalAlarm(deviceName, diskUsage, g_diskUsageThreshold);
+        }
+    }
+}
+
+void CheckDnDiskDamageAlarm()
+{
+    for (uint32 i = 0; i < g_currentNode->datanodeCount; ++i) {
+        CheckDnDiskDamage(i);
+    }
+}
+
+void* CheckSysStatusThreadMain(void* const arg)
+{
+    pthread_t threadId = pthread_self();
+    write_runlog(LOG, "system status check thread start, threadid %lu.\n", threadId);
+
+    uint64 lastReportSysTime = GetMonotonicTimeS();
+    EnvThreshold threshold = {0};
+    SystemStatInfo systemStat;
+    errno_t rc = memset_s(&systemStat, sizeof(SystemStatInfo), 0, sizeof(SystemStatInfo));
+    securec_check_errno(rc, (void)rc);
+    InitSystemStatInfo(&systemStat);
+
+    for (;;) {
+        if (g_shutdownRequest) {
+            cm_sleep(SHUTDOWN_SLEEP_TIME);
+            break;
+        }
+        uint64 curTime = GetMonotonicTimeS();
+        if ((g_sys_report_interval != 0) && (curTime - lastReportSysTime >= g_sys_report_interval)) {
+            CheckMemoryStatus(&systemStat.memoryStatInfo);
+            CheckCpuStatus(&systemStat.cpuStatInfo);
+            CheckDiskStatus(&systemStat.diskStatInfo);
+            lastReportSysTime = curTime;
+        }
+        if (GetThreshold(threshold)!= CM_SUCCESS) {
+            threshold = {0, 0, 0, 0, 0};
+        }
+        CheckDnDiskUsage();
+        CheckDnDiskDamageAlarm();
+        ReportSystemStatusAlarm(&systemStat, &threshold);
+        cm_sleep(1);
+    }
+    free(systemStat.diskStatInfo.disIoStatInfo);
+    write_runlog(LOG, "system status check thread exit.\n");
+    return NULL;
+}
+
+int CreateCheckSysStatusThread()
+{
+    int err;
+    pthread_t thrId;
+
+    if ((err = pthread_create(&thrId, NULL, CheckSysStatusThreadMain, NULL)) != 0) {
         write_runlog(ERROR, "Failed to create new thread: error %d.\n", err);
         return err;
     }

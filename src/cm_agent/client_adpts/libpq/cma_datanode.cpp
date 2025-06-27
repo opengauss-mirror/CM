@@ -24,6 +24,8 @@
 
 #include <signal.h>
 #include <math.h>
+#include <sys/stat.h>
+#include <sys/vfs.h>
 #include "cma_global_params.h"
 #include "cma_datanode_utils.h"
 #include "cma_common.h"
@@ -31,8 +33,16 @@
 #include "cma_instance_management.h"
 #include "cma_process_messages.h"
 #include "cma_network_check.h"
+#include "cm_defs.h"
+#include <string>
+#include <unordered_map>
 
 static cltPqConn_t* g_dnConnSend[CM_MAX_DATANODE_PER_NODE] = {NULL};
+static char* g_dataDirCheckList[] = {"pg_xlog", "undo", "pg_clog", "pg_csnlog"};
+static int g_dataDirCheckListSize = (sizeof(g_dataDirCheckList) / sizeof(g_dataDirCheckList[0]));
+// pg_xlog, undo, pg_clog, pg_csnlog
+static const uint32 g_dataDirSizeThreshold[] = {0, 20, 20, 20};
+static std::unordered_map<std::string, Alarm*> databaseStatMap;
 
 #define MAX_SQLCOMMAND_LENGTH 1024
 
@@ -1204,6 +1214,25 @@ static void GaussdbNotExistProcessRestartCmdSuccess(uint32 ii)
     }
 }
 
+static void ReportAbnormalInstRestartAlarm(char* instanceName)
+{
+    Alarm abnormalRestartAlarm[1];
+    AlarmAdditionalParam tempAdditionalParam;
+    // Initialize the alarm item
+    AlarmItemInitialize(abnormalRestartAlarm, ALM_AI_AbnormalInstRestart, ALM_AS_Normal, NULL);
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             instanceName,
+                             "",
+                             "",
+                             "",
+                             abnormalRestartAlarm,
+                             ALM_AT_Event,
+                             instanceName);
+    /* report the alarm */
+    AlarmReporter(abnormalRestartAlarm, ALM_AT_Event, &tempAdditionalParam);
+}
+
 void StartDatanodeCheck(void)
 {
     int ret;
@@ -1352,6 +1381,7 @@ void StartDatanodeCheck(void)
                 } else {
                     GaussdbNotExistProcessRestartCmdSuccess(ii);
                     ExecuteEventTrigger(EVENT_START);
+                    ReportAbnormalInstRestartAlarm(instanceName);
                     // set the g_isDnFirstStart to false, only when the first startup is successful
                     if (g_isDnFirstStart) {
                         g_isDnFirstStart = false;
@@ -1511,6 +1541,113 @@ void *DNSyncCheckMain(void *arg)
 }
 #endif
 
+static void ReportAbnormalAnalyzeAlarm(Alarm* alarm, bool isNeedAnalyze, const char* dbName, const char* tableName)
+{
+    AlarmType alarmType = isNeedAnalyze ? ALM_AT_Fault : ALM_AT_Resume;
+    AlarmAdditionalParam tempAdditionalParam;
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             alarm,
+                             alarmType,
+                             dbName,
+                             tableName);
+    /* report the alarm */
+    AlarmReporter(alarm, alarmType, &tempAdditionalParam);
+}
+
+static void ReportAbnormalVacuumAlarm(Alarm* alarm, bool isNeedVacuum, const char* dbName, const char* tableName)
+{
+    AlarmType alarmType = isNeedVacuum ? ALM_AT_Fault : ALM_AT_Resume;
+    AlarmAdditionalParam tempAdditionalParam;
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             "",
+                             "",
+                             "",
+                             "",
+                             alarm,
+                             alarmType,
+                             dbName,
+                             tableName);
+    /* report the alarm */
+    AlarmReporter(alarm, alarmType, &tempAdditionalParam);
+}
+
+static void ResetDataBaseStatusInfo(DatabaseStatInfo* dnDbStatInfo, int dnDatabaseCount)
+{
+    if (dnDbStatInfo == NULL) {
+        return;
+    }
+    for (int i = 0; i < dnDatabaseCount; ++i) {
+        if (dnDbStatInfo[i].tableStatInfo != NULL) {
+            FREE_AND_RESET(dnDbStatInfo[i].tableStatInfo);
+        }
+    }
+    FREE_AND_RESET(dnDbStatInfo);
+}
+
+int CheckOneDatabaseStatus(DatabaseStatInfo *dnDbStatInfo, int dnDatabaseCount, int alarmSize,
+    const DatabaseStatInfo &dbStatInfo)
+{
+    for (int j = 0; j < dbStatInfo.tableCount; ++j) {
+        TableStatInfo* tableStatInfo = &(dbStatInfo.tableStatInfo[j]);
+        bool isNeedAnalyze = false;
+        bool isNeedVacuum = false;
+        char tableName[MAX_PATH_LEN] = {0};
+        errno_t rc = snprintf_s(tableName, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s.%s",
+                                tableStatInfo->schemaname, tableStatInfo->relname);
+        securec_check_intval(rc, (void)rc);
+        write_runlog(DEBUG1, "start vacuum status check for table [%s].\n", tableName);
+        CheckTableVacuumStatus(tableStatInfo, &isNeedVacuum, &isNeedAnalyze);
+        char key[MAX_PATH_LEN] = {0};
+        rc = snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s_%s_%s", dbStatInfo.dbname,
+                        tableStatInfo->schemaname, tableStatInfo->relname);
+        securec_check_intval(rc, (void)rc);
+        if (databaseStatMap.find(key) == databaseStatMap.end()) {
+            Alarm* databaseStatAlarm = (Alarm*)malloc(sizeof(Alarm) * (size_t) alarmSize);
+            if (databaseStatAlarm == NULL) {
+                write_runlog(ERROR, "databaseStatAlarm malloc failed.\n");
+                return -1;
+            }
+            AlarmItemInitialize(&(databaseStatAlarm[UN_ANALYZE]), ALM_AI_AbnormalUnAnalyzeTable,
+                                ALM_AS_Normal, NULL);
+            AlarmItemInitialize(&(databaseStatAlarm[UN_VACUUM]), ALM_AI_AbnormalUnVacuumTable,
+                                ALM_AS_Normal, NULL);
+            databaseStatMap[key] = databaseStatAlarm;
+        }
+        ReportAbnormalAnalyzeAlarm(&(databaseStatMap[key][UN_ANALYZE]), isNeedAnalyze,
+                                   dbStatInfo.dbname, tableName);
+        ReportAbnormalVacuumAlarm(&(databaseStatMap[key][UN_VACUUM]), isNeedVacuum,
+                                  dbStatInfo.dbname, tableName);
+    }
+    return 0;
+}
+
+void DNDataBaseStatusCheck(int index)
+{
+    DatabaseStatInfo* dnDbStatInfo = NULL;
+    int dnDatabaseCount = 0;
+    int res = InitAllDatabaseTableStatInfo(index, &dnDbStatInfo, dnDatabaseCount);
+    if (res != 0) {
+        write_runlog(ERROR, "InitAllDatabaseTableStatInfo failed.\n");
+        return;
+    }
+    int alarmSize = 2;
+    for (int i = 0; i < dnDatabaseCount; ++i) {
+        DatabaseStatInfo dbStatInfo = dnDbStatInfo[i];
+        write_runlog(DEBUG1, "start vacuum status check for database [%s].\n", dbStatInfo.dbname);
+        res = CheckOneDatabaseStatus(dnDbStatInfo, dnDatabaseCount, alarmSize, dbStatInfo);
+        if (res != 0) {
+            write_runlog(ERROR, "CheckOneDatabaseStatus failed.\n");
+            ResetDataBaseStatusInfo(dnDbStatInfo, dnDatabaseCount);
+            return;
+        }
+    }
+    ResetDataBaseStatusInfo(dnDbStatInfo, dnDatabaseCount);
+}
+
 static void InitDnSyncAvailabletMsg(AgentToCmserverDnSyncAvailable *dnAvailableSyncMsg, uint32 index)
 {
     errno_t rc = 0;
@@ -1578,6 +1715,189 @@ static void GetSyncAvailableFromDn(AgentToCmserverDnSyncAvailable *dnAvailableSy
     if (!isDnPrimary) {
         cm_sleep(agent_report_interval * report_sleep_times);
     }
+}
+
+bool IsDirExist(const char *dir)
+{
+    struct stat stat_buf;
+
+    if (stat(dir, &stat_buf) != 0)
+        return false;
+
+    if (!S_ISDIR(stat_buf.st_mode))
+        return false;
+
+#if !defined(WIN32) && !defined(__CYGWIN__)
+
+    if (stat_buf.st_uid != geteuid())
+        return false;
+
+    if ((stat_buf.st_mode & S_IRWXU) != S_IRWXU)
+        return false;
+
+#endif
+
+    return true;
+}
+
+static long CalculateDirectorySize(const char* path)
+{
+    DIR* dir;
+    struct dirent* entry;
+    struct stat statbuf;
+    long total_size = 0;
+    int ret;
+    if ((dir = opendir(path)) == NULL) {
+        return 0;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        char full_path[MAX_PATH_LEN];
+        ret = snprintf_s(full_path, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s", path, entry->d_name);
+        securec_check_intval(ret, (void)ret);
+        if (lstat(full_path, &statbuf) == -1) {
+            continue;
+        }
+
+        if (S_ISDIR(statbuf.st_mode)) {
+            total_size += CalculateDirectorySize(full_path);
+        } else {
+            total_size += statbuf.st_size;
+        }
+    }
+    closedir(dir);
+    return total_size;
+}
+
+void ReportDataDirOverloadAlarm(AlarmType alarmType, const char *instanceName, int index, char *details)
+{
+    if (index >= g_dataDirOverloadAlarmListSize) {
+        return;
+    }
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             instanceName,
+                             "",
+                             "",
+                             "",
+                             &(g_dataDirOverloadAlarmList[index]),
+                             alarmType,
+                             instanceName,
+                             details);
+    /* report the alarm */
+    AlarmReporter(&(g_dataDirOverloadAlarmList[index]), alarmType, &tempAdditionalParam);
+}
+
+void CheckDnDataDirSize(int index, const char *instanceName)
+{
+    struct statfs diskInfo = {0};
+    uint32 percent = 0;
+    const int one_hundred = 100;
+    int ret = statfs(g_currentNode->datanode[index].datanodeLocalDataPath, &diskInfo);
+    if (ret < 0) {
+        write_runlog(ERROR, "[%s][line:%d] get disk path [%s] stat info failed! errno:%d err:%s.\n",
+            __FUNCTION__, __LINE__, g_currentNode->datanode[index].datanodeLocalDataPath, errno, strerror(errno));
+        return;
+    }
+    AlarmType alarmType = ALM_AT_Resume;
+    char details[MAX_PATH_LEN] = {0};
+    for (int i = 0; i < g_dataDirCheckListSize; i++) {
+        char dir[MAX_PATH_LEN] = {0};
+        ret = snprintf_s(dir, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s",
+                         g_currentNode->datanode[index].datanodeLocalDataPath, g_dataDirCheckList[i]);
+        securec_check_intval(ret, (void)ret);
+        long totalBytes = CalculateDirectorySize(dir);
+        // convert to GB
+        long prettySize = (totalBytes) / (uint64)SIZE_G(1);
+        percent = (uint32)(totalBytes * one_hundred /
+                ((diskInfo.f_blocks - diskInfo.f_bfree + diskInfo.f_bavail) * diskInfo.f_bsize));
+        if (g_dataDirSizeThreshold[i] > 0 && percent > g_dataDirSizeThreshold[i]) {
+            char overloadDir[MAX_PATH_LEN] = {0};
+            alarmType = ALM_AT_Fault;
+            ret = snprintf_s(overloadDir, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s=%dGB,",
+                             g_dataDirCheckList[i], prettySize);
+            securec_check_intval(ret, (void)ret);
+            ret = strncat_s(details, MAX_PATH_LEN, overloadDir, strlen(overloadDir));
+            securec_check_intval(ret, (void)ret);
+        }
+    }
+    int len = 0;
+    if ((len = strlen(details)) > 0 && details[len - 1] == ',') {
+        details[len - 1] = '\0';
+    }
+    ReportDataDirOverloadAlarm(alarmType, instanceName, index, details);
+}
+
+void ReportMissingDataDirAlarm(AlarmType alarmType, const char *instanceName, int index, char *details)
+{
+    if (index >= g_missingDataDirAlarmListSize) {
+        return;
+    }
+    AlarmAdditionalParam tempAdditionalParam;
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             instanceName,
+                             "",
+                             "",
+                             "",
+                             &(g_missingDataDirAlarmList[index]),
+                             alarmType,
+                             instanceName,
+                             details);
+    /* report the alarm */
+    AlarmReporter(&(g_missingDataDirAlarmList[index]), alarmType, &tempAdditionalParam);
+}
+
+void CheckDnMissingDataDir(int index, const char *instanceName)
+{
+    AlarmType alarmType = ALM_AT_Resume;
+    int ret = 0;
+    char missingDir[MAX_PATH_LEN] = {0};
+    for (int i = 0; i < g_dataDirCheckListSize; i++) {
+        char dir[MAX_PATH_LEN] = {0};
+        ret = snprintf_s(dir, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s",
+                         g_currentNode->datanode[index].datanodeLocalDataPath, g_dataDirCheckList[i]);
+        securec_check_intval(ret, (void)ret);
+        if (!IsDirExist(dir)) {
+            alarmType = ALM_AT_Fault;
+            ret = strncat_s(missingDir, MAX_PATH_LEN, g_dataDirCheckList[i], strlen(g_dataDirCheckList[i]));
+            securec_check_intval(ret, (void)ret);
+            ret = strncat_s(missingDir, MAX_PATH_LEN, ",", strlen(","));
+            securec_check_intval(ret, (void)ret);
+        }
+    }
+    int len = 0;
+    if ((len = strlen(missingDir)) > 0 && missingDir[len - 1] == ',') {
+        missingDir[len - 1] = '\0';
+    }
+    ReportMissingDataDirAlarm(alarmType, instanceName, index, missingDir);
+}
+
+void* DNDataDirectoryCheckMain(void *arg)
+{
+    uint32 idx = *(uint32 *)arg;
+    pthread_t threadId = pthread_self();
+    uint32 shutdownSleepInterval = 5;
+    char instanceName[CM_NODE_NAME] = {0};
+    int ret = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1,
+                         "%s_%u", "dn", g_currentNode->datanode[idx].datanodeId);
+    securec_check_intval(ret, (void)ret);
+    write_runlog(LOG, "dn(%s) data directory check thread start, threadid %lu.\n", instanceName, threadId);
+    for (;;) {
+        if (g_shutdownRequest) {
+            cm_sleep(shutdownSleepInterval);
+            continue;
+        }
+        CheckDnMissingDataDir(idx, instanceName);
+        CheckDnDataDirSize(idx, instanceName);
+        cm_sleep(agent_report_interval);
+    }
+    return NULL;
 }
 
 void *DNMostAvailableCheckMain(void *arg)

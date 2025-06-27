@@ -601,8 +601,10 @@ void PrintDnStatusLine()
                 SPACE_NUM * (stateLen + SEPERATOR_LEN + SPACE_LEN) + secondryStateLen;
         }
     }
-    for (uint32 i = 0; i < maxLen; i++) {
-        (void)fprintf(g_logFilePtr, "-");
+    if (!g_enableWalRecord) {
+        for (uint32 i = 0; i < maxLen; i++) {
+            (void)fprintf(g_logFilePtr, "-");
+        }
     }
     (void)fprintf(g_logFilePtr, "\n");
 }

@@ -28,6 +28,7 @@ void CreateETCDStatusCheckThread();
 void CreatePhonyDeadCheckThread();
 void CreateStartAndStopThread();
 void CreateDNStatusCheckThread(int* i);
+void CreateDNDataDirectoryCheckThread(int* i);
 void CreateWRFloatIpCheckThread(int* i);
 void CreateDNBackupStatusCheckThread(int* i);
 void CreateDNConnectionStatusCheckThread(int* i);

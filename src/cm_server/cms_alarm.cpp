@@ -21,15 +21,19 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <vector>
 
 #include "alarm/alarm.h"
 #include "common/config/cm_config.h"
 #include "cm/cm_elog.h"
+#include "cm/cm_text.h"
 #include "cm/cm_msg.h"
 #include "cms_global_params.h"
 #include "cms_ddb_adapter.h"
 #include "cms_common.h"
 #include "cms_alarm.h"
+
+using std::vector;
 
 static Alarm *g_logStorageAlarm;
 static InstanceAlarm* g_readOnlyPreAlarm = NULL;
@@ -413,4 +417,111 @@ void UpdatePhonyDeadAlarm()
         }
     }
     return;
+}
+
+void GetInstanceName(char* instanceName, uint32 len, uint32 groupIdx, int32 memIdx)
+{
+    cm_instance_role_status role = g_instance_role_group_ptr[groupIdx].instanceMember[memIdx];
+    const char* instType = "unknown";
+    switch (role.instanceType) {
+        case INSTANCE_TYPE_COORDINATE:
+            instType = "cn";
+            break;
+        case INSTANCE_TYPE_GTM:
+            instType = "gtm";
+            break;
+        case INSTANCE_TYPE_DATANODE:
+            instType = "dn";
+            break;
+        default:
+            break;
+    }
+    errno_t rc = snprintf_s(instanceName, len, len - 1, "%s_%u", instType, role.instanceId);
+    securec_check_intval(rc, (void)rc);
+}
+
+void ReportCmdTimeoutAlarm(const char* instanceName, const char* details, const char* cmd)
+{
+    if (CM_IS_EMPTY_STR(instanceName) || CM_IS_EMPTY_STR(details) || CM_IS_EMPTY_STR(cmd)) {
+        write_runlog(LOG, "cannot report cmd timeout alarm, when instanceName, details or cmd is null.\n");
+        return;
+    }
+    write_runlog(LOG, "%s will report cmd timeout alarm.\n", instanceName);
+    Alarm cmdTimeoutAlarm[1];
+    AlarmAdditionalParam tempAdditionalParam;
+    // Initialize the alarm item
+    AlarmItemInitialize(cmdTimeoutAlarm, ALM_AI_CommandExecTimeout, ALM_AS_Normal, NULL);
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             instanceName,
+                             "",
+                             "",
+                             "",
+                             cmdTimeoutAlarm,
+                             ALM_AT_Event,
+                             instanceName,
+                             cmd,
+                             details);
+    /* report the alarm */
+    AlarmReporter(cmdTimeoutAlarm, ALM_AT_Event, &tempAdditionalParam);
+}
+
+void SwitchoverTimeoutAlarmReportFunc(uint32 groupIdx, int32 memIdx)
+{
+    char instanceName[MAX_PATH_LEN];
+    GetInstanceName(instanceName, (uint32)MAX_PATH_LEN, groupIdx, memIdx);
+    char details[MAX_PATH_LEN];
+    errno_t rc = snprintf_s(details, MAX_PATH_LEN, MAX_PATH_LEN - 1, "please check the log of the %s, "
+        "and CMS will choose the other to promote primary", instanceName);
+    securec_check_intval(rc, (void)rc);
+    ReportCmdTimeoutAlarm(instanceName, details, "switchover");
+}
+
+void BuildTimeoutAlarmReportFunc(uint32 groupIdx, int32 memIdx)
+{
+    char instanceName[MAX_PATH_LEN];
+    GetInstanceName(instanceName, (uint32)MAX_PATH_LEN, groupIdx, memIdx);
+    char details[MAX_PATH_LEN];
+    errno_t rc = snprintf_s(details, MAX_PATH_LEN, MAX_PATH_LEN - 1, "please check the gs_ctl build log of the node"
+        " %u, and the log of the %s", g_instance_role_group_ptr[groupIdx].instanceMember[memIdx].node, instanceName);
+    securec_check_intval(rc, (void)rc);
+    ReportCmdTimeoutAlarm(instanceName, details, "build");
+}
+
+vector<CmdTimeoutAlarm> cmdTimeoutAlarmList = {
+    {(int32)MSG_CM_AGENT_SWITCHOVER, {0}, SwitchoverTimeoutAlarmReportFunc},
+    {(int32)MSG_CM_AGENT_BUILD, {0}, BuildTimeoutAlarmReportFunc}
+};
+
+void ReportExecCmdTimeoutAlarm(uint32 groupIdx, int32 memIdx, int32 pendingCmd)
+{
+    for (CmdTimeoutAlarm alarm : cmdTimeoutAlarmList) {
+        if (alarm.pendingCmd != pendingCmd) {
+            continue;
+        }
+        if (alarm.reportFunc != NULL) {
+            alarm.reportFunc(groupIdx, memIdx);
+        }
+        break;
+    }
+}
+
+void ReportForceFinishRedoAlarm(uint32 groupIdx, int32 memIdx, bool8 isAuto)
+{
+    Alarm forceFinishRedoAlarm[1];
+    char instanceName[MAX_PATH_LEN] = {0};
+    GetInstanceName(instanceName, (uint32)MAX_PATH_LEN, groupIdx, memIdx);
+    AlarmAdditionalParam tempAdditionalParam;
+    // Initialize the alarm item
+    AlarmItemInitialize(forceFinishRedoAlarm, ALM_AI_ForceFinishRedo, ALM_AS_Normal, NULL);
+    /* fill the alarm message */
+    WriteAlarmAdditionalInfo(&tempAdditionalParam,
+                             instanceName,
+                             "",
+                             "",
+                             "",
+                             forceFinishRedoAlarm,
+                             ALM_AT_Event,
+                             instanceName);
+    AlarmReporter(forceFinishRedoAlarm, ALM_AT_Event, &tempAdditionalParam);
 }

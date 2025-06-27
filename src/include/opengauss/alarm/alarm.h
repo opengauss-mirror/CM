@@ -18,12 +18,16 @@
 
 #include "c.h"
 
+#define CM_ALARM_NODE_NAME 65
+#define CM_ALARM_IP_LENGTH 128
+
 /* GaussDB alarm module. */
 typedef enum AlarmId {
     ALM_AI_Unknown = 0,
 
     /* alarm on data instances(alarm checker) */
     ALM_AI_MissingDataInstDataOrRedoDir = 0x404E0001,
+    ALM_AI_MissingDataInstDataDir = 0x404E0002,
     ALM_AI_MissingDataInstWalSegmt = 0x404E0003,
     ALM_AI_TooManyDataInstConn = 0x404F0001,
 
@@ -89,6 +93,26 @@ typedef enum AlarmId {
     ALM_AI_StreamingDisasterRecoveryCnDisconnected = 0x404F0070,
     ALM_AI_StreamingDisasterRecoveryDnDisconnected = 0x404F0071,
     ALM_AI_DbInstanceDoublePrimary = 0x404F007A,
+    ALM_AI_DbUserLoginFailed = 0x404F0072,
+    ALM_AI_ListenSocketFailed = 0x404F0073,
+    ALM_AI_CommandExecTimeout = 0x404F0074,
+    ALM_AI_SecurityAccountLock = 0x404F0075,
+    ALM_AI_SecurityAccountFailedAttempt = 0x404F0076,
+    ALM_AI_MemoryUsageAbnormal = 0x404F0077,
+    ALM_AI_CpuUsageAbnormal = 0x404F0078,
+    ALM_AI_DiskIOAbnormal = 0x404F0079,
+    ALM_AI_DeadLock = 0x404F007B,
+    ALM_AI_DatanodeNetworkIsolated = 0x404F007C,
+    ALM_AI_DiskUsageAbnormal = 0x404F007D,
+    ALM_AI_DiskDamage = 0x404F007E,
+    ALM_AI_SlowDisk = 0x404F007F,
+    ALM_AI_AbnormalInstRestart = 0x404F0080,
+    ALM_AI_XlogAccumulate = 0x404F0081,
+    ALM_AI_DataDirectoryAccumulate = 0x404F0082,
+    ALM_AI_AbnormalUnAnalyzeTable = 0x404F0083,
+    ALM_AI_AbnormalUnVacuumTable = 0x404F0084,
+    ALM_AI_DiskHang = 0x404F0085,
+    ALM_AI_DiskReadWriteSlow = 0x404F0086,
     ALM_AI_BUTT = 0x7FFFFFFFFFFFFFFF             /* force compiler to decide AlarmId as uint64 */
 } AlarmId;
 
@@ -188,6 +212,11 @@ extern void AlarmLog(int level, const char* fmt, ...) __attribute__((format(PG_P
 /* declare the guc variable of alarm module */
 extern char* Alarm_component;
 extern THR_LOCAL int AlarmReportInterval;
+
+extern char g_myHostName[CM_ALARM_NODE_NAME];
+extern char g_myHostIp[CM_ALARM_IP_LENGTH];
+extern char g_warningType[CM_ALARM_NODE_NAME];
+extern char g_clusterName[CLUSTER_NAME_LEN];
 
 /* declare the global variable of alarm module */
 extern int g_alarmReportInterval;

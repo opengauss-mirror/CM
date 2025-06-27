@@ -25,6 +25,7 @@
 #define CMS_ALARM_H
 
 #include "alarm/alarm.h"
+#include "cm_defs.h"
 
 typedef struct InstancePhonyDeadAlarmT {
     uint32 instanceId;
@@ -35,6 +36,14 @@ typedef struct InstanceAlarmT {
     uint32 instanceId;
     Alarm instanceAlarmItem;
 } InstanceAlarm;
+
+typedef void (*CmdTimeoutAlarmReportFunc)(uint32 groupIdx, int32 memIdx);
+
+typedef struct CmdTimeoutAlarmT {
+    int32 pendingCmd;
+    char reserved[4];   // for alignment
+    CmdTimeoutAlarmReportFunc reportFunc;
+} CmdTimeoutAlarm;
 
 extern void ReadOnlyAlarmItemInitialize(void);
 extern void ReportReadOnlyAlarm(AlarmType alarmType, const char* instanceName, uint32 instanceid);
@@ -51,5 +60,7 @@ extern void ReportIncreaseOrReduceAlarm(AlarmType alarmType, uint32 instanceId, 
 void UpdatePhonyDeadAlarm();
 void ReportLogStorageAlarm(AlarmType alarmType, const char* instanceName, uint32 alarmIndex);
 void ReportReadOnlyPreAlarm(AlarmType alarmType, const char* instanceName, uint32 instanceid);
+void ReportExecCmdTimeoutAlarm(uint32 groupIdx, int32 memIdx, int32 pendingCmd);
+void ReportForceFinishRedoAlarm(uint32 groupIdx, int32 memIdx, bool8 isAuto);
 
 #endif

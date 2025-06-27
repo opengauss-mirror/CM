@@ -319,6 +319,8 @@ typedef enum CM_MessageType_st {
 #define INSTANCE_TYPE_UNKNOWN 5
 #define INSTANCE_TYPE_RESOURCE 6
 #define INSTANCE_TYPE_PENDING 7
+#define INSTANCE_TYPE_CM 8
+#define INSTANCE_TYPE_LOG 9
 
 
 #define INSTANCE_WALSNDSTATE_STARTUP 0
@@ -1546,6 +1548,7 @@ typedef struct cm_instance_command_status_st {
     int32 buildFailedTimeout;
     cmTime_t cmTime; // use to record time
     uint8 msgProcFlag;
+    uint64 cleanCmdTime;
 } cm_instance_command_status;
 
 typedef struct DatanodelocalPeer_t {

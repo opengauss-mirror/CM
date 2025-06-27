@@ -335,6 +335,16 @@ static inline void CmSleep(int ms)
     } while (0)
 #endif
 
+#ifndef FCLOSE_AND_RESET
+#define FCLOSE_AND_RESET(ptr) \
+    do {                     \
+        if (NULL != (ptr)) { \
+            (void)fclose(ptr);       \
+            (ptr) = NULL;    \
+        }                    \
+    } while (0)
+#endif
+
 #ifdef __cplusplus
 }
 #endif

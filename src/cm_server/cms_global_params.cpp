@@ -1283,6 +1283,10 @@ void CleanCommand(uint32 groupIndex, int memberIndex)
             curCmd->cmdSour,
             curCmd->cmdRealPur,
             curCmd->peerInstId);
+        curCmd->cleanCmdTime = GetMonotonicTimeMs();
+        if (curCmd->time_out <= 0) {
+            ReportExecCmdTimeoutAlarm(groupIndex, memberIndex, curCmd->pengding_command);
+        }
     }
 
     curCmd->command_status = INSTANCE_NONE_COMMAND;

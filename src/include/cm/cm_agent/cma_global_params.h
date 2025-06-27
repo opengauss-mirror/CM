@@ -214,6 +214,7 @@ extern uint32 agent_connect_timeout;
 extern ClusterRole agent_backup_open;
 extern uint32 agent_connect_retries;
 extern uint32 agent_check_interval;
+extern uint32 g_diskUsageThreshold;
 extern uint32 agent_kill_instance_timeout;
 extern uint32 g_agentKerberosStatusCheckInterval;
 extern uint32 g_cnAutoRepairDelay;

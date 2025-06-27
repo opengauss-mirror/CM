@@ -211,6 +211,8 @@ extern ArbitrateParamsOn2Nodes g_paramsOn2Nodes;
 
 extern char** CmReadfile(const char* path);
 extern void freefile(char** lines);
+// Freeing a two-dimensional pointer
+void FreePtr2Ptr(char** ptr, uint32 prtCount);
 extern int log_level_string_to_int(const char* log_level);
 extern int datanode_rebuild_reason_string_to_int(const char* reason);
 extern const char* DcfRoleToString(int role);

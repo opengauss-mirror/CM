@@ -233,7 +233,8 @@ static const vector<vector<int>> g_allowedActionOptions = {
          RES_EDIT_INST_INPUT, RES_INST_ATTR_INPUT, RES_LIST_INST_INPUT, RES_CHECK}, // "res" command
          {}, // "show" command
          {}, // "pause" command
-         {} // "resume" command
+         {}, // "resume" command
+         {} // "rack" command
 };
 unordered_map<string, CtlCommand> g_optToCommand {
 #ifdef ENABLE_MULTIPLE_NODES
@@ -266,7 +267,8 @@ unordered_map<string, CtlCommand> g_optToCommand {
     {"res", CM_RES_COMMAND},
     {"show", CM_SHOW_COMMAND},
     {"pause", CM_PAUSE_COMMAND},
-    {"resume", CM_RESUME_COMMAND}
+    {"resume", CM_RESUME_COMMAND},
+    {"rack", CM_RACK_COMMAND}
 };
 
 static string CheckActionOptions(CtlCommand ctlCommandAction, vector<int> optionIn, option* longActionOptions, int lengthLong)
@@ -2340,6 +2342,9 @@ static void CtlCommandProcessCore(int *status, CtlOption *ctlCtx)
             break;
         case CM_RESUME_COMMAND:
             *status = DoResume();
+            break;
+        case CM_RACK_COMMAND:
+            *status = DoRack();
             break;
         default:
             write_runlog2(ERROR, errcode(ERRCODE_PARAMETER_FAILURE), errmsg("The option parameter is not specified."),

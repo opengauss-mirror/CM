@@ -112,7 +112,8 @@ typedef enum {
     CM_RES_COMMAND,
     CM_SHOW_COMMAND,
     CM_PAUSE_COMMAND,
-    CM_RESUME_COMMAND
+    CM_RESUME_COMMAND,
+    CM_RACK_COMMAND
 } CtlCommand;
 
 
@@ -228,6 +229,7 @@ int DoGuc(CtlOption *ctx);
 int DoEncrypt(const CtlOption *ctx);
 int DoSwitch(const CtlOption *ctx);
 int DoShowCommand();
+int DoRack();
 
 void stop_etcd_cluster(void);
 int stop_check_node(uint32 node_id_check);

@@ -75,6 +75,9 @@ static void SendFinishRedoMessage(const DnArbCtx *ctx)
     finishRedoMsgPtr.is_finish_redo_cmd_sent = ctx->localRep->is_finish_redo_cmd_sent;
     WriteKeyEventLog(KEY_EVENT_FINISH_REDO, ctx->instId, "send finish redo message to instance(%u)", ctx->instId);
     (void)RespondMsg(ctx->recvMsgInfo, 'S', (char*)(&finishRedoMsgPtr), sizeof(cm_to_agent_finish_redo));
+    if (!ctx->localRep->is_finish_redo_cmd_sent) {
+        ReportForceFinishRedoAlarm(ctx->groupIdx, ctx->memIdx, (bool8)(force_promote == 1));
+    }
 }
 
 static void SetDynamicRole(DnArbCtx *ctx, int32 role, const char *str1, const char *str2)

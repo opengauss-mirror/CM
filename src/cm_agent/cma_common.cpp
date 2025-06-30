@@ -37,6 +37,9 @@
 #include "cma_instance_management.h"
 #include "cma_instance_management_res.h"
 #include "cma_common.h"
+#include "cma_disk_check.h"
+
+static const int DISK_USAGE_DEFAULT_THRESHOLD = 90;
 
 void save_thread_id(pthread_t thrId)
 {
@@ -378,6 +381,8 @@ void ReloadParametersFromConfig()
     agent_connect_timeout = (uint32)(get_int_value_from_config(configDir, "agent_connect_timeout", 1));
     agent_connect_retries = (uint32)(get_int_value_from_config(configDir, "agent_connect_retries", 15));
     agent_check_interval = (uint32)(get_int_value_from_config(configDir, "agent_check_interval", 2));
+    g_diskUsageThreshold =
+        (uint32)(get_int_value_from_config(configDir, "diskusage_threshold_value_check", DISK_USAGE_DEFAULT_THRESHOLD));
     agent_kill_instance_timeout = (uint32)get_int_value_from_config(configDir, "agent_kill_instance_timeout", 0);
     agent_phony_dead_check_interval =
         (uint32)get_int_value_from_config(configDir, "agent_phony_dead_check_interval", 10);
@@ -400,6 +405,7 @@ void ReloadParametersFromConfig()
         configDir, "dilatation_shard_count_for_disk_capacity_alarm", dilatation_shard_count_for_disk_capacity_alarm);
     g_diskTimeout = get_uint32_value_from_config(configDir, "disk_timeout", 200);
     GetEventTrigger();
+    LoadDiskCheckConfig(configDir);
 }
 
 void ReloadParametersFromConfigfile()
@@ -443,11 +449,13 @@ void ReloadParametersFromConfigfile()
         "  log_min_messages=%d, maxLogFileSize=%d, sys_log_path=%s, \n  alarm_component=%s, "
         "alarm_report_interval=%d, dilatation_shard_count_for_disk_capacity_alarm:%u, \n"
         "  agent_heartbeat_timeout=%u, agent_report_interval=%u, agent_connect_timeout=%u, \n"
-        "  agent_connect_retries=%u, agent_check_interval=%u, agent_kill_instance_timeout=%u, \n"
+        "  agent_connect_retries=%u, agent_check_interval=%u, diskusage_threshold_value_check=%u, \n"
+        "agent_kill_instance_timeout=%u,"
         "  agent_phony_dead_check_interval=%u, enable_gtm_phony_dead_check=%u, disk_timeout=%u, \n"
         "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, "
         "upgrade_from=%u,\n  enable_cn_auto_repair=%s, enable_log_compress=%s, security_mode=%d,\n"
-        "  incremental_build=%d, unix_socket_directory=%s, "
+        "  incremental_build=%d, unix_socket_directory=%s, disk_check_timeout=%u, disk_check_interval=%u, \n"
+        "disk_check_buffer_size=%u.\n"
 #ifndef ENABLE_MULTIPLE_NODES
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s,\n"
         "  db_service_vip=%s, enable_fence_dn=%s, ss_double_cluster_mode=%d, agent_backup_open=%d\n",
@@ -465,6 +473,7 @@ void ReloadParametersFromConfigfile()
         agent_connect_timeout,
         agent_connect_retries,
         agent_check_interval,
+        g_diskUsageThreshold,
         agent_kill_instance_timeout,
         agent_phony_dead_check_interval,
         enable_gtm_phony_dead_check,
@@ -479,9 +488,12 @@ void ReloadParametersFromConfigfile()
         security_mode,
         incremental_build,
         g_unixSocketDirectory,
+        GetDiskCheckTimeout(),
+        GetDiskCheckInterval(),
+        GetDiskCheckBufferSize(),
+#ifndef ENABLE_MULTIPLE_NODES
         g_enableE2ERto,
         g_disasterRecoveryType,
-#ifndef ENABLE_MULTIPLE_NODES
         g_environmentThreshold,
         g_dbServiceVip,
         g_enableFenceDn,
@@ -1087,6 +1099,11 @@ bool IsDirectoryDestoryed(const char *path)
 
 void CheckDnDiskDamage(uint32 index)
 {
+    char instanceName[CM_NODE_NAME] = {0};
+    int ret = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1,
+                         "%s_%u", "dn", g_currentNode->datanode[index].datanodeId);
+    securec_check_intval(ret, (void)ret);
+    AlarmType alarmType = ALM_AT_Resume;
     bool dnManualStop = DnManualStop(index);
     if (!dnManualStop) {
         set_disc_check_state(g_currentNode->datanode[index].datanodeId);
@@ -1097,6 +1114,7 @@ void CheckDnDiskDamage(uint32 index)
                 "data path disc writable test failed, %s.\n",
                 g_currentNode->datanode[index].datanodeLocalDataPath);
             g_dnDiskDamage[index] = true;
+            alarmType = ALM_AT_Fault;
         } else {
             g_dnDiskDamage[index] = false;
         }
@@ -1110,6 +1128,7 @@ void CheckDnDiskDamage(uint32 index)
             g_currentNode->datanode[index].datanodeId,
             index);
     }
+    ReportDiskDamageAlarm(alarmType, instanceName, index);
 }
 
 bool CheckMaintanceCluster()

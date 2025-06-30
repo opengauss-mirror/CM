@@ -29,6 +29,7 @@
 #include "cms_arbitrate_datanode.h"
 #include "cms_arbitrate_datanode_pms.h"
 #include "cms_az.h"
+#include "cms_alarm.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include "cm_ip.h"
@@ -1009,6 +1010,7 @@ void process_finish_redo_message(MsgRecvInfo* recvMsgInfo)
                 (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[group_index].lk_lock));
                 uint32 dn_index = g_instance_role_group_ptr[group_index].instanceMember[0].instanceId - 6001;
                 value[dn_index] = '1';
+                ReportForceFinishRedoAlarm(group_index, 0, false);
             }
         }
         (void)pthread_rwlock_wrlock(&g_finish_redo_rwlock);
@@ -1032,6 +1034,8 @@ void process_finish_redo_message(MsgRecvInfo* recvMsgInfo)
                 g_instance_group_report_status_ptr[i].instance_status.finish_redo = true;
             }
             (void)pthread_rwlock_unlock(&(g_instance_group_report_status_ptr[i].lk_lock));
+
+            ReportForceFinishRedoAlarm(i, 0, false);
 
             char status_key[MAX_PATH_LEN] = {0};
             rc = snprintf_s(status_key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/finish_redo/%u", pw->pw_name, i);

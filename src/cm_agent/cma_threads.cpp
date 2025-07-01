@@ -151,6 +151,17 @@ void CreateDNStatusCheckThread(int* i)
     save_thread_id(thr_id);
 }
 
+void CreateDNDataDirectoryCheckThread(int* i)
+{
+    int err;
+    pthread_t thr_id;
+
+    if ((err = pthread_create(&thr_id, NULL, DNDataDirectoryCheckMain, i)) != 0) {
+        write_runlog(FATAL, "Failed to create a new thread: error %d\n", err);
+        exit(-1);
+    }
+}
+
 void CreateWRFloatIpCheckThread(int* i)
 {
     int err;

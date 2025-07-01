@@ -37,6 +37,7 @@
 #include "cma_threads.h"
 #include "cma_client.h"
 #include "cma_datanode_scaling.h"
+#include "cma_disk_check.h"
 #include "cma_log_management.h"
 #include "cma_instance_management.h"
 #include "cma_instance_management_res.h"
@@ -69,6 +70,8 @@ static volatile sig_atomic_t g_gotParameterReload = 0;
 int g_tcpKeepalivesIdle = 30;
 int g_tcpKeepalivesInterval = 30;
 int g_tcpKeepalivesCount = 3;
+
+static const int diskUsageDefaultThreshold = 90;
 
 bool g_poolerPingEnd = false;
 bool *g_coordinatorsDrop;
@@ -1517,6 +1520,7 @@ int get_agent_global_params_from_configfile()
     get_start_mode(configDir);
     get_connection_mode(configDir);
     GetStringFromConf(configDir, g_environmentThreshold, sizeof(g_environmentThreshold), "environment_threshold");
+    LoadDiskCheckConfig(configDir);
     
     GetStringFromConf(configDir, g_dbServiceVip, sizeof(g_dbServiceVip), "db_service_vip");
     if (g_dbServiceVip[0] == '\0') {
@@ -1531,6 +1535,8 @@ int get_agent_global_params_from_configfile()
     agent_backup_open = (ClusterRole)get_uint32_value_from_config(configDir, "agent_backup_open", CLUSTER_PRIMARY);
     agent_connect_retries = get_uint32_value_from_config(configDir, "agent_connect_retries", 15);
     agent_check_interval = get_uint32_value_from_config(configDir, "agent_check_interval", 2);
+    g_diskUsageThreshold =
+        get_uint32_value_from_config(configDir, "diskusage_threshold_value_check", diskUsageDefaultThreshold);
     agent_kill_instance_timeout = get_uint32_value_from_config(configDir, "agent_kill_instance_timeout", 0);
     agent_phony_dead_check_interval = get_uint32_value_from_config(configDir, "agent_phony_dead_check_interval", 10);
     enable_gtm_phony_dead_check = get_uint32_value_from_config(configDir, "enable_gtm_phony_dead_check", 1);
@@ -1891,6 +1897,7 @@ int main(int argc, char** argv)
             (void)pthread_rwlock_init(&(g_cmDoWriteOper[i].lock), NULL);
             int *ind = thread_index + i;
             CreateDNStatusCheckThread(ind);
+            CreateDNDataDirectoryCheckThread(ind);
             CreateDNConnectionStatusCheckThread(ind);
             CreateDNCheckSyncListThread(ind);
             CreateDNCheckAvailableSyncThread(ind);
@@ -1946,6 +1953,13 @@ int main(int argc, char** argv)
     CreateKerberosStatusCheckThread();
     CreateDiskUsageCheckThread();
     CreateOnDemandRedoCheckThread();
+    CreateDiskHealthCheckThread();
+
+    err = CreateCheckSysStatusThread();
+    if (err != 0) {
+        write_runlog(FATAL, "Failed to create check system status thread: error %d\n", err);
+        exit(err);
+    }
 
 #ifdef ENABLE_MULTIPLE_NODES
     err = CreateCheckNodeStatusThread();

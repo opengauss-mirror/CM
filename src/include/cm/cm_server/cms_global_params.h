@@ -234,8 +234,8 @@ typedef enum ThreadProcessStatusE {
 
 #define AUTHENTICATION_TIMEOUT 60
 #define RELOADWAIT_TIMEOUT 60
-#define MAX_DN_NUM 1024
-#define MAX_INSTANCE_NUM 2048
+#define MAX_DN_NUM 9
+#define MAX_INSTANCE_NUM 9
 
 /* ondemand status check timeout */
 #define ONDEMADN_STATUS_CHECK_TIMEOUT 6

@@ -58,7 +58,7 @@ void ReportCMSAlarmNormalCluster(Alarm* alarmItem, AlarmType type, AlarmAddition
 
 void ReadOnlyAlarmItemInitialize(void)
 {
-    uint32 readOnlyCount = MAX_CN_NUM + MAX_DN_NUM;
+    uint32 readOnlyCount = MAX_DN_NUM;
     g_readOnlyAlarm = (InstanceAlarm*)malloc(sizeof(InstanceAlarm) * readOnlyCount);
     g_readOnlyPreAlarm = (InstanceAlarm*)malloc(sizeof(InstanceAlarm) * readOnlyCount);
     g_logStorageAlarm = (Alarm*)malloc(sizeof(Alarm) * CM_NODE_MAXNUM);
@@ -99,7 +99,7 @@ void ReadOnlyAlarmItemInitialize(void)
 
 void ReportReadOnlyAlarm(AlarmType alarmType, const char* instanceName, uint32 instanceid)
 {
-    uint32 readOnlyCount = MAX_CN_NUM + MAX_DN_NUM;
+    uint32 readOnlyCount = MAX_DN_NUM;
     uint32 alarmIndex = 0;
     for (; alarmIndex < readOnlyCount; alarmIndex++) {
         if (instanceid == g_readOnlyAlarm[alarmIndex].instanceId) {
@@ -123,7 +123,7 @@ void ReportReadOnlyAlarm(AlarmType alarmType, const char* instanceName, uint32 i
 
 void ReportReadOnlyPreAlarm(AlarmType alarmType, const char* instanceName, uint32 instanceid)
 {
-    uint32 readOnlyCount = MAX_CN_NUM + MAX_DN_NUM;
+    uint32 readOnlyCount = MAX_DN_NUM;
     uint32 alarmIndex = 0;
     for (; alarmIndex < readOnlyCount; alarmIndex++) {
         if (instanceid == g_readOnlyPreAlarm[alarmIndex].instanceId) {
@@ -225,7 +225,7 @@ void InstanceAlarmItemInitialize(void)
     }
     g_instance_count = (int)(g_coordinator_num + g_gtm_num + dn_count);
     if (g_instance_count > MAX_INSTANCE_NUM) {
-        write_runlog(ERROR, "total instance count %d is greater than max(2048).\n", g_instance_count);
+        write_runlog(ERROR, "total instance count %d is greater than max(%d).\n", g_instance_count, MAX_INSTANCE_NUM);
         return;
     }
     g_phony_dead_alarm = (InstancePhonyDeadAlarm *)malloc(sizeof(InstancePhonyDeadAlarm) * MAX_INSTANCE_NUM);
@@ -246,7 +246,7 @@ void InstanceAlarmItemInitialize(void)
         for (int32 j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             uint32 instanceid = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
             if (alarmIndex >= MAX_INSTANCE_NUM) {
-                write_runlog(ERROR, "out of range 2048.\n");
+                write_runlog(ERROR, "out of range %d.\n", MAX_INSTANCE_NUM);
                 return;
             }
 

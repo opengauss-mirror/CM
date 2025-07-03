@@ -189,13 +189,13 @@ void StartupAlarmItemInitialize(const staticNodeConfig *currentNode)
     int alarmIndex = g_startupAlarmListSize - 1;
 
     /* ALM_AI_AbnormalCMAProcess. */
-    AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalCMAProcess, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalCMAProcess, ALM_AS_Init, NULL);
 
     --alarmIndex;
 
     for (; alarmIndex >= 0; --alarmIndex) {
         /* ALM_AI_AbnormalETCDProcess. */
-        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalETCDProcess, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalETCDProcess, ALM_AS_Init, NULL);
     }
 }
 

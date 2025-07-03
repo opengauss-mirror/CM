@@ -48,6 +48,7 @@ char g_clusterName[CLUSTER_NAME_LEN] = {0};
 char* Alarm_component = NULL;
 THR_LOCAL int AlarmReportInterval = 10;
 const int ALARM_RETRY_TIMES = 3;
+const int MS_COUNT_PER_SEC = 1000;
 
 // if report alarm succeed(component), return 0
 #define ALARM_REPORT_SUCCEED 0
@@ -635,71 +636,84 @@ static bool SuppressSyslogAlarmReport(Alarm* alarmItem, AlarmType type, int time
     return false;
 }
 
+static bool CheckAlarmSuppression(const struct timeval curTime, Alarm* alarmItem, int timeInterval, int maxReportCount)
+{
+    bool isOvertime = (curTime.tv_sec - alarmItem->lastReportTime >= timeInterval);
+    return maxReportCount > 0 ? (isOvertime && alarmItem->reportCount < maxReportCount) : isOvertime;
+}
+
+static bool HandleFaultAlarmReport(Alarm* alarmItem, const struct timeval thisTime, bool shouldReport)
+{
+    if (alarmItem->stat == ALM_AS_Reported) { /* original state is fault */
+        /* check whether the interval between now and last report time is more than $timeInterval secs */
+        if (!shouldReport) {
+            /* don't need report */
+            return true;
+        }
+        ++(alarmItem->reportCount);
+        alarmItem->lastReportTime = thisTime.tv_sec;
+        if (alarmItem->startTimeStamp == 0) {
+            alarmItem->startTimeStamp = thisTime.tv_sec * MS_COUNT_PER_SEC + thisTime.tv_usec / MS_COUNT_PER_SEC;
+        }
+        /* need report */
+        return false;
+    } else if (alarmItem->stat == ALM_AS_Normal || alarmItem->stat == ALM_AS_Init) { /* original state is resume */
+        /* now the state have changed, report the alarm immediately */
+        alarmItem->reportCount = 1;
+        alarmItem->lastReportTime = thisTime.tv_sec;
+        alarmItem->stat = ALM_AS_Reported;
+        alarmItem->startTimeStamp = thisTime.tv_sec * MS_COUNT_PER_SEC + thisTime.tv_usec / MS_COUNT_PER_SEC;
+        alarmItem->endTimeStamp = 0;
+        /* need report */
+        return false;
+    }
+    return true;
+}
+
+static bool HandleResumeAlarmReport(Alarm* alarmItem, const struct timeval thisTime, bool shouldReport)
+{
+    if (alarmItem->stat == ALM_AS_Reported) { /* original state is fault */
+        /* now the state have changed, report the resume immediately */
+        alarmItem->reportCount = 1;
+        alarmItem->lastReportTime = thisTime.tv_sec;
+        alarmItem->stat = ALM_AS_Normal;
+        alarmItem->endTimeStamp = thisTime.tv_sec * MS_COUNT_PER_SEC + thisTime.tv_usec / MS_COUNT_PER_SEC;
+        alarmItem->startTimeStamp = 0;
+        /* need report */
+        return false;
+    } else if (alarmItem->stat == ALM_AS_Normal) { /* original state is resume */
+        /* check whether the interval between now and last report time is more than $timeInterval secs */
+        if (!shouldReport) {
+            /* don't need report */
+            return true;
+        }
+        ++(alarmItem->reportCount);
+        alarmItem->lastReportTime = thisTime.tv_sec;
+        if (alarmItem->endTimeStamp == 0) {
+            alarmItem->endTimeStamp = thisTime.tv_sec * MS_COUNT_PER_SEC + thisTime.tv_usec / MS_COUNT_PER_SEC;
+        }
+        /* need report */
+        return false;
+    }
+    return true;
+}
+
 /* suppress the alarm log */
 static bool SuppressAlarmLogReport(Alarm* alarmItem, AlarmType type, int timeInterval, int maxReportCount)
 {
     struct timeval thisTime;
-    (void)gettimeofday(&thisTime, NULL);
-
+    gettimeofday(&thisTime, NULL);
+    bool shouldReport = CheckAlarmSuppression(thisTime, alarmItem, timeInterval, maxReportCount);
     /* alarm suppression */
     if (type == ALM_AT_Fault) {                   /* now the state is fault */
-        if (alarmItem->stat == ALM_AS_Reported) { /* original state is fault */
-            /* check whether the interval between now and last report time is more than $timeInterval secs */
-            if (thisTime.tv_sec - alarmItem->lastReportTime >= timeInterval &&
-                alarmItem->reportCount < maxReportCount) {
-                ++(alarmItem->reportCount);
-                alarmItem->lastReportTime = thisTime.tv_sec;
-                if (alarmItem->startTimeStamp == 0) {
-                    alarmItem->startTimeStamp = thisTime.tv_sec * 1000 + thisTime.tv_usec / 1000;
-                }
-                /* need report */
-                return false;
-            } else {
-                /* don't need report */
-                return true;
-            }
-        } else if (alarmItem->stat == ALM_AS_Normal) { /* original state is resume */
-            /* now the state have changed, report the alarm immediately */
-            alarmItem->reportCount = 1;
-            alarmItem->lastReportTime = thisTime.tv_sec;
-            alarmItem->stat = ALM_AS_Reported;
-            alarmItem->startTimeStamp = thisTime.tv_sec * 1000 + thisTime.tv_usec / 1000;
-            alarmItem->endTimeStamp = 0;
-            /* need report */
-            return false;
-        }
+        return HandleFaultAlarmReport(alarmItem, thisTime, shouldReport);
     } else if (type == ALM_AT_Resume) {           /* now the state is resume */
-        if (alarmItem->stat == ALM_AS_Reported) { /* original state is fault */
-            /* now the state have changed, report the resume immediately */
-            alarmItem->reportCount = 1;
-            alarmItem->lastReportTime = thisTime.tv_sec;
-            alarmItem->stat = ALM_AS_Normal;
-            alarmItem->endTimeStamp = thisTime.tv_sec * 1000 + thisTime.tv_usec / 1000;
-            alarmItem->startTimeStamp = 0;
-            /* need report */
-            return false;
-        } else if (alarmItem->stat == ALM_AS_Normal) { /* original state is resume */
-            /* check whether the interval between now and last report time is more than $timeInterval secs */
-            if (thisTime.tv_sec - alarmItem->lastReportTime >= timeInterval &&
-                alarmItem->reportCount < maxReportCount) {
-                ++(alarmItem->reportCount);
-                alarmItem->lastReportTime = thisTime.tv_sec;
-                if (alarmItem->endTimeStamp == 0) {
-                    alarmItem->endTimeStamp = thisTime.tv_sec * 1000 + thisTime.tv_usec / 1000;
-                }
-                /* need report */
-                return false;
-            } else {
-                /* don't need report */
-                return true;
-            }
-        }
+        return HandleResumeAlarmReport(alarmItem, thisTime, shouldReport);
     } else if (type == ALM_AT_Event) {
         /* need report */
-        alarmItem->startTimeStamp = thisTime.tv_sec * 1000 + thisTime.tv_usec / 1000;
+        alarmItem->startTimeStamp = thisTime.tv_sec * MS_COUNT_PER_SEC + thisTime.tv_usec / MS_COUNT_PER_SEC;
         return false;
     }
-
     return true;
 }
 

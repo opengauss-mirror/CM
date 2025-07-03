@@ -1219,7 +1219,7 @@ static void ReportAbnormalInstRestartAlarm(char* instanceName)
     Alarm abnormalRestartAlarm[1];
     AlarmAdditionalParam tempAdditionalParam;
     // Initialize the alarm item
-    AlarmItemInitialize(abnormalRestartAlarm, ALM_AI_AbnormalInstRestart, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(abnormalRestartAlarm, ALM_AI_AbnormalInstRestart, ALM_AS_Init, NULL);
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(&tempAdditionalParam,
                              instanceName,
@@ -1612,9 +1612,9 @@ int CheckOneDatabaseStatus(DatabaseStatInfo *dnDbStatInfo, int dnDatabaseCount, 
                 return -1;
             }
             AlarmItemInitialize(&(databaseStatAlarm[UN_ANALYZE]), ALM_AI_AbnormalUnAnalyzeTable,
-                                ALM_AS_Normal, NULL);
+                                ALM_AS_Init, NULL);
             AlarmItemInitialize(&(databaseStatAlarm[UN_VACUUM]), ALM_AI_AbnormalUnVacuumTable,
-                                ALM_AS_Normal, NULL);
+                                ALM_AS_Init, NULL);
             databaseStatMap[key] = databaseStatAlarm;
         }
         ReportAbnormalAnalyzeAlarm(&(databaseStatMap[key][UN_ANALYZE]), isNeedAnalyze,

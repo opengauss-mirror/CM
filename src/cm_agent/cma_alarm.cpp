@@ -78,25 +78,25 @@ void StartupAlarmItemInitialize(const staticNodeConfig* currentNode)
     int alarmIndex = g_startupAlarmListSize - 1;
     if (currentNode->gtm == 1) {
         /* ALM_AI_AbnormalGTMProcess */
-        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalGTMProcess, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalGTMProcess, ALM_AS_Init, NULL);
 
         --alarmIndex;
     }
     if (currentNode->coordinate == 1) {
         /* ALM_AI_AbnormalCoordinatorProcess */
-        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalCoordinatorProcess, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalCoordinatorProcess, ALM_AS_Init, NULL);
 
         --alarmIndex;
     }
     if (currentNode->cmServerLevel == 1) {
         /* ALM_AI_AbnormalCMSProcess */
-        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalCMSProcess, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalCMSProcess, ALM_AS_Init, NULL);
 
         --alarmIndex;
     }
     for (; alarmIndex >= 0; --alarmIndex) {
         /* ALM_AI_AbnormalDatanodeProcess */
-        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalDatanodeProcess, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_startupAlarmList[alarmIndex]), ALM_AI_AbnormalDatanodeProcess, ALM_AS_Init, NULL);
     }
 }
 
@@ -123,12 +123,12 @@ void AbnormalAlarmItemInitialize(const staticNodeConfig* currentNode)
     alarmIndex = g_abnormalAlarmListSize - 1;
     if (currentNode->gtm == 1) {
         /* ALM_AI_AbnormalGTMInst */
-        AlarmItemInitialize(&(g_abnormalAlarmList[alarmIndex]), ALM_AI_AbnormalGTMInst, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_abnormalAlarmList[alarmIndex]), ALM_AI_AbnormalGTMInst, ALM_AS_Init, NULL);
         --alarmIndex;
     }
     for (; alarmIndex >= 0; --alarmIndex) {
         /* ALM_AI_AbnormalDatanodeInst */
-        AlarmItemInitialize(&(g_abnormalAlarmList[alarmIndex]), ALM_AI_AbnormalDatanodeInst, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_abnormalAlarmList[alarmIndex]), ALM_AI_AbnormalDatanodeInst, ALM_AS_Init, NULL);
     }
 }
 
@@ -154,9 +154,9 @@ void MissingDataDirAlarmItemInitialize()
     int alarmIndex = g_missingDataDirAlarmListSize - 1;
     for (; alarmIndex >= 0; --alarmIndex) {
         AlarmItemInitialize(
-            &(g_missingDataDirAlarmList[alarmIndex]), ALM_AI_MissingDataInstDataDir, ALM_AS_Normal, NULL);
+            &(g_missingDataDirAlarmList[alarmIndex]), ALM_AI_MissingDataInstDataDir, ALM_AS_Init, NULL);
         AlarmItemInitialize(
-            &(g_dataDirOverloadAlarmList[alarmIndex]), ALM_AI_DataDirectoryAccumulate, ALM_AS_Normal, NULL);
+            &(g_dataDirOverloadAlarmList[alarmIndex]), ALM_AI_DataDirectoryAccumulate, ALM_AS_Init, NULL);
     }
 }
 
@@ -176,7 +176,7 @@ void SlowDiskAlarmItemInitialize()
     securec_check_errno(rc, (void)rc);
     int alarmIndex = g_slowDiskAlarmListSize - 1;
     for (; alarmIndex >= 0; --alarmIndex) {
-        AlarmItemInitialize(&(g_slowDiskAlarmList[alarmIndex]), ALM_AI_SlowDisk, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_slowDiskAlarmList[alarmIndex]), ALM_AI_SlowDisk, ALM_AS_Init, NULL);
     }
 }
 
@@ -198,11 +198,11 @@ void DatanodeBuildFailedAlarmItemInitialize(const staticNodeConfig* currentNode)
 
     alarmIndex = g_datanodeBuildFailedAlarmListSize - 1;
     if (currentNode->coordinate == 1) {
-        AlarmItemInitialize(&(g_abnormalBuildAlarmList[alarmIndex]), ALM_AI_AbnormalBuild, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_abnormalBuildAlarmList[alarmIndex]), ALM_AI_AbnormalBuild, ALM_AS_Init, NULL);
         --alarmIndex;
     }
     for (; alarmIndex >= 0; --alarmIndex) {
-        AlarmItemInitialize(&(g_abnormalBuildAlarmList[alarmIndex]), ALM_AI_AbnormalBuild, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_abnormalBuildAlarmList[alarmIndex]), ALM_AI_AbnormalBuild, ALM_AS_Init, NULL);
     }
 }
 
@@ -228,7 +228,7 @@ void DatanodeAbnormalAlarmItemInitialize(const staticNodeConfig* currentNode)
 
     for (; alarmIndex >= 0; --alarmIndex) {
         AlarmItemInitialize(
-            &(g_abnormalDataInstDiskAlarmList[alarmIndex]), ALM_AI_AbnormalDataInstDisk, ALM_AS_Normal, NULL);
+            &(g_abnormalDataInstDiskAlarmList[alarmIndex]), ALM_AI_AbnormalDataInstDisk, ALM_AS_Init, NULL);
     }
 }
 
@@ -250,7 +250,7 @@ void DiskDamagedAlarmItemInitialize()
     alarmIndex = g_diskDamagedAlarmListSize - 1;
     for (; alarmIndex >= 0; --alarmIndex) {
         AlarmItemInitialize(
-            &(g_diskDamagedAlarmList[alarmIndex]), ALM_AI_DiskDamage, ALM_AS_Normal, NULL);
+            &(g_diskDamagedAlarmList[alarmIndex]), ALM_AI_DiskDamage, ALM_AS_Init, NULL);
     }
 }
 
@@ -276,20 +276,20 @@ void AbnormalCmaConnAlarmItemInitialize(const staticNodeConfig* currentNode)
 
     for (unsigned int i = 0; i < currentNode->gtm; i++) {
         /* ALM_AI_AbnormalGTMProcess */
-        AlarmItemInitialize(&(g_abnormalCmaConnAlarmList[alarmIndex]), ALM_AI_AbnormalCmaConnFail, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_abnormalCmaConnAlarmList[alarmIndex]), ALM_AI_AbnormalCmaConnFail, ALM_AS_Init, NULL);
 
         --alarmIndex;
     }
 
     for (unsigned int i = 0; i < currentNode->coordinate; i++) {
         /* ALM_AI_AbnormalCoordinatorProcess */
-        AlarmItemInitialize(&(g_abnormalCmaConnAlarmList[alarmIndex]), ALM_AI_AbnormalCmaConnFail, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_abnormalCmaConnAlarmList[alarmIndex]), ALM_AI_AbnormalCmaConnFail, ALM_AS_Init, NULL);
 
         --alarmIndex;
     }
 
     for (; alarmIndex >= 0; --alarmIndex) {
-        AlarmItemInitialize(&(g_abnormalCmaConnAlarmList[alarmIndex]), ALM_AI_AbnormalCmaConnFail, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_abnormalCmaConnAlarmList[alarmIndex]), ALM_AI_AbnormalCmaConnFail, ALM_AS_Init, NULL);
     }
 }
 
@@ -399,7 +399,7 @@ void DatanodeNetworkIsolatedAlarmItemInitialize()
     alarmIndex = g_networkIsolatedAlarmListSize - 1;
     for (; alarmIndex >= 0; --alarmIndex) {
         AlarmItemInitialize(
-            &(g_networkIsolatedAlarmList[alarmIndex]), ALM_AI_DatanodeNetworkIsolated, ALM_AS_Normal, NULL);
+            &(g_networkIsolatedAlarmList[alarmIndex]), ALM_AI_DatanodeNetworkIsolated, ALM_AS_Init, NULL);
     }
 }
 
@@ -415,8 +415,8 @@ void StorageScalingAlarmItemInitialize(void)
                           sizeof(Alarm) * StorageScalingAlarmListSize);
     securec_check_errno(rc, (void)rc);
 
-    AlarmItemInitialize(&(StorageScalingAlarmList[0]), ALM_AI_StorageDilatationAlarmNotice, ALM_AS_Normal, NULL);
-    AlarmItemInitialize(&(StorageScalingAlarmList[1]), ALM_AI_StorageDilatationAlarmMajor, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(&(StorageScalingAlarmList[0]), ALM_AI_StorageDilatationAlarmNotice, ALM_AS_Init, NULL);
+    AlarmItemInitialize(&(StorageScalingAlarmList[1]), ALM_AI_StorageDilatationAlarmMajor, ALM_AS_Init, NULL);
 }
 
 void ReportStorageScalingAlarm(AlarmType alarmType, const char* instanceName, int alarmIndex, const char *info)
@@ -449,7 +449,7 @@ void PgxcNodeMismatchAlarmItemInitialize()
     errno_t rc = memset_s(g_pgxcNodeMismatchAlarm, sizeof(Alarm), 0, sizeof(Alarm));
     securec_check_errno(rc, (void)rc);
 
-    AlarmItemInitialize(g_pgxcNodeMismatchAlarm, ALM_AI_PgxcNodeMismatch, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(g_pgxcNodeMismatchAlarm, ALM_AI_PgxcNodeMismatch, ALM_AS_Init, NULL);
 }
 
 void ReportStreamingDRAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex, const char *info)
@@ -481,22 +481,22 @@ void StreamingDRAlarmItemInitialize(void)
     if (g_currentNode->coordinate == 1) {
         /* ALM_AI_AbnormalGTMInst */
         AlarmItemInitialize(&(g_streamingDRAlarmList[alarmIndex]), ALM_AI_StreamingDisasterRecoveryCnDisconnected,
-            ALM_AS_Normal, NULL);
+            ALM_AS_Init, NULL);
         --alarmIndex;
     }
     for (; alarmIndex >= 0; --alarmIndex) {
         /* ALM_AI_AbnormalDatanodeInst */
         AlarmItemInitialize(&(g_streamingDRAlarmList[alarmIndex]), ALM_AI_StreamingDisasterRecoveryDnDisconnected,
-            ALM_AS_Normal, NULL);
+            ALM_AS_Init, NULL);
     }
 }
 
-void ReportMemoryAbnormalAlarm(int memUsed, int threshold)
+void ReportMemoryAbnormalAlarm(int sysMemUsed, int appMemUsed, int threshold)
 {
     Alarm memoryAlarm[1];
     AlarmAdditionalParam tempAdditionalParam;
     // Initialize the alarm item
-    AlarmItemInitialize(memoryAlarm, ALM_AI_MemoryUsageAbnormal, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(memoryAlarm, ALM_AI_MemoryUsageAbnormal, ALM_AS_Init, NULL);
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(&tempAdditionalParam,
                              "",
@@ -505,7 +505,8 @@ void ReportMemoryAbnormalAlarm(int memUsed, int threshold)
                              "",
                              memoryAlarm,
                              ALM_AT_Event,
-                             memUsed,
+                             sysMemUsed,
+                             appMemUsed,
                              threshold,
                              g_myHostName);
     /* report the alarm */
@@ -517,7 +518,7 @@ void ReportCpuAbnormalAlarm(int cpuUsed, int threshold)
     Alarm cpuAlarm[1];
     AlarmAdditionalParam tempAdditionalParam;
     // Initialize the alarm item
-    AlarmItemInitialize(cpuAlarm, ALM_AI_CpuUsageAbnormal, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(cpuAlarm, ALM_AI_CpuUsageAbnormal, ALM_AS_Init, NULL);
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(&tempAdditionalParam,
                              "",
@@ -538,7 +539,7 @@ void ReportDiskIOAbnormalAlarm(const char* diskName, int ioUsed, int threshold)
     Alarm diskIOAlarm[1];
     AlarmAdditionalParam tempAdditionalParam;
     // Initialize the alarm item
-    AlarmItemInitialize(diskIOAlarm, ALM_AI_DiskIOAbnormal, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(diskIOAlarm, ALM_AI_DiskIOAbnormal, ALM_AS_Init, NULL);
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(&tempAdditionalParam,
                              "",
@@ -580,7 +581,7 @@ void ReportDiskUsageAbnormalAlarm(const char* diskName, int diskUsed, int thresh
     Alarm diskUsageAlarm[1];
     AlarmAdditionalParam tempAdditionalParam;
     // Initialize the alarm item
-    AlarmItemInitialize(diskUsageAlarm, ALM_AI_DiskUsageAbnormal, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(diskUsageAlarm, ALM_AI_DiskUsageAbnormal, ALM_AS_Init, NULL);
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(&tempAdditionalParam,
                              "",
@@ -597,7 +598,7 @@ void ReportDiskUsageAbnormalAlarm(const char* diskName, int diskUsed, int thresh
     AlarmReporter(diskUsageAlarm, ALM_AT_Event, &tempAdditionalParam);
 }
 
-void ReportDiskDamageAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex)
+void ReportDiskDamageAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex, const char* details)
 {
     if (alarmIndex >= g_diskDamagedAlarmListSize) {
         return;
@@ -611,7 +612,8 @@ void ReportDiskDamageAlarm(AlarmType alarmType, const char *instanceName, int al
                              "",
                              &(g_diskDamagedAlarmList[alarmIndex]),
                              alarmType,
-                             instanceName);
+                             instanceName,
+                             details);
     /* report the alarm */
     AlarmReporter(&(g_diskDamagedAlarmList[alarmIndex]), alarmType, &tempAdditionalParam);
 }

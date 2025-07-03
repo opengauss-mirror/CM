@@ -1105,6 +1105,7 @@ void CheckDnDiskDamage(uint32 index)
     securec_check_intval(ret, (void)ret);
     AlarmType alarmType = ALM_AT_Resume;
     bool dnManualStop = DnManualStop(index);
+    char diskName[MAX_DEVICE_DIR] = {0};
     if (!dnManualStop) {
         set_disc_check_state(g_currentNode->datanode[index].datanodeId);
         bool cdt = (IsDirectoryDestoryed(g_currentNode->datanode[index].datanodeLocalDataPath) ||
@@ -1115,6 +1116,7 @@ void CheckDnDiskDamage(uint32 index)
                 g_currentNode->datanode[index].datanodeLocalDataPath);
             g_dnDiskDamage[index] = true;
             alarmType = ALM_AT_Fault;
+            GetDiskNameByDataPath(g_currentNode->datanode[index].datanodeLocalDataPath, diskName, MAX_DEVICE_DIR);
         } else {
             g_dnDiskDamage[index] = false;
         }
@@ -1128,7 +1130,7 @@ void CheckDnDiskDamage(uint32 index)
             g_currentNode->datanode[index].datanodeId,
             index);
     }
-    ReportDiskDamageAlarm(alarmType, instanceName, index);
+    ReportDiskDamageAlarm(alarmType, instanceName, index, diskName);
 }
 
 bool CheckMaintanceCluster()

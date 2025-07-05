@@ -967,11 +967,10 @@ int check_flush_lsn_by_preparse(agent_to_cm_datanode_status_report* report_msg, 
     check_sscanf_s_result(rc, 2);
     securec_check_intval(rc, (void)rc);
     XLogRecPtr preparseLsn = (((uint64)hi) << 32) | lo;
-    if (preparseLsn == InvalidXLogRecPtr) {
-        return 0;
+    if (preparseLsn != InvalidXLogRecPtr) {
+        report_msg->local_status.last_flush_lsn = preparseLsn;
+        report_msg->local_status.disconn_mode = PRE_PROHIBIT_CONNECTION;
     }
-    report_msg->local_status.last_flush_lsn = preparseLsn;
-    report_msg->local_status.disconn_mode = PRE_PROHIBIT_CONNECTION;
     Clear(node_result);
     return 0;
 }

@@ -30,6 +30,7 @@
 #include "cms_write_dynamic_config.h"
 #include "cms_arbitrate_datanode_pms_utils.h"
 #include "cms_az.h"
+#include "cms_common.h"
 
 void ChangeDnMemberIndex(const char *str, uint32 groupIdx, int32 memIdx, int32 instTypePur, int32 instTypeSor)
 {
@@ -107,10 +108,12 @@ int find_node_in_dynamic_configure(uint32 node, uint32 instanceId, uint32 *group
 {
     *group_index = 0;
     *member_index = 0;
+    getWalrecordMode();
+
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         for (int j = 0; j < Min(g_instance_role_group_ptr[i].count, CM_PRIMARY_STANDBY_MAX_NUM); j++) {
             if ((node == g_instance_role_group_ptr[i].instanceMember[j].node) &&
-                (instanceId == g_instance_role_group_ptr[i].instanceMember[j].instanceId)) {
+                ((instanceId == g_instance_role_group_ptr[i].instanceMember[j].instanceId) || g_enableWalRecord)) {
                 *group_index = i;
                 *member_index = j;
                 return 0;

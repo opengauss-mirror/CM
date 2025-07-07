@@ -42,16 +42,12 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
     int memberIndex = 0;
     uint32 groupIndex = 0;
     cm_to_ctl_command_ack ackMsg;
-
     getWalrecordMode();
-
-    if (!g_enableWalRecord) {
-        ret = find_node_in_dynamic_configure(switchoverMsg->node, switchoverMsg->instanceId, &groupIndex, &memberIndex);
-        if (ret != 0) {
-            write_runlog(
-                LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchoverMsg->node, switchoverMsg->instanceId);
-           return;
-        }
+    ret = find_node_in_dynamic_configure(switchoverMsg->node, switchoverMsg->instanceId, &groupIndex, &memberIndex);
+    if (ret != 0) {
+        write_runlog(
+            LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchoverMsg->node, switchoverMsg->instanceId);
+        return;
     }
 
     const cm_instance_role_status *instInfo = &g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex];

@@ -72,6 +72,8 @@ typedef struct BaseIpListConfSt {
 typedef struct VipCusResConfJsonSt {
     char resName[CM_JSON_STR_LEN];
     char floatIp[CM_JSON_STR_LEN];
+    char cmd[CM_JSON_STR_LEN];
+    char netMask[CM_JSON_STR_LEN];
     struct {
         BaseIpListConf *conf;
         uint32 count;

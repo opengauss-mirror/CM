@@ -2141,16 +2141,18 @@ status_t CheckMemoryStatus(MemoryStatInfo* memoryStatInfo)
     }
     memoryStatInfo->systemMemUsedUtil = (float)sysMemUsed /
         (float)memoryStatInfo->memItemList[MEM_STAT_TOTAL] * PERCENT;
-    memoryStatInfo->appMemUsedUtil = (float)sysMemUsed / (float)memoryStatInfo->memItemList[MEM_STAT_TOTAL] * PERCENT;
+    memoryStatInfo->appMemUsedUtil = (float)appMemUsed / (float)memoryStatInfo->memItemList[MEM_STAT_TOTAL] * PERCENT;
     return CM_SUCCESS;
 }
 
 void ReportSystemStatusAlarm(const SystemStatInfo* systemStat, const EnvThreshold* threshold)
 {
     int memUsed = (int)systemStat->memoryStatInfo.systemMemUsedUtil;
-    if (threshold->mem > 0 && memUsed > threshold->mem) {
-        write_runlog(LOG, "system memory usage is %u, threshold is %u, report alarm.\n", memUsed, threshold->mem);
-        ReportMemoryAbnormalAlarm(memUsed, threshold->mem);
+    int appMemUsed = (int)systemStat->memoryStatInfo.appMemUsedUtil;
+    if (threshold->mem > 0 && (memUsed > threshold->mem || appMemUsed > threshold->mem)) {
+        write_runlog(LOG, "system memory usage is %u, app memory usage is %u, threshold is %u, report alarm.\n",
+            memUsed, appMemUsed, threshold->mem);
+        ReportMemoryAbnormalAlarm(memUsed, appMemUsed, threshold->mem);
     }
     int cpuUsed = (int)systemStat->cpuStatInfo.cpuUtil;
     if (threshold->cpu > 0 && cpuUsed > threshold->cpu) {

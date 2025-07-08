@@ -52,9 +52,9 @@ void CmsEtcdAbnormalAlarmItemInitialize(void)
 {
     errno_t rc = memset_s(g_etcdAlarmList, sizeof(g_etcdAlarmList), 0, sizeof(g_etcdAlarmList));
     securec_check_errno(rc, (void)rc);
-    AlarmItemInitialize(&(g_etcdAlarmList[ETCD_UNHEALTH]), ALM_AI_AbnormalEtcdUnhealth, ALM_AS_Normal, NULL, 0, 0);
-    AlarmItemInitialize(&(g_etcdAlarmList[ETCD_DOWN]), ALM_AI_AbnormalEtcdDown, ALM_AS_Normal, NULL, 0, 0);
-    AlarmItemInitialize(&(g_etcdAlarmList[ETCD_NEAR_QUOTA]), ALM_AI_AbnormalEtcdNearQuota, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(&(g_etcdAlarmList[ETCD_UNHEALTH]), ALM_AI_AbnormalEtcdUnhealth, ALM_AS_Init, NULL, 0, 0);
+    AlarmItemInitialize(&(g_etcdAlarmList[ETCD_DOWN]), ALM_AI_AbnormalEtcdDown, ALM_AS_Init, NULL, 0, 0);
+    AlarmItemInitialize(&(g_etcdAlarmList[ETCD_NEAR_QUOTA]), ALM_AI_AbnormalEtcdNearQuota, ALM_AS_Init, NULL);
 }
 
 static void PrintEtcdServerList(const EtcdServerSocket *etcdServerList, uint32 len, int32 logLevel)

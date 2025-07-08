@@ -72,13 +72,13 @@ void ReadOnlyAlarmItemInitialize(void)
     }
     write_runlog(LOG, "[%s][line:%d] ReadOnlyAlarm malloc success.\n", __FUNCTION__, __LINE__);
     for (uint32 i = 0; i < CM_NODE_MAXNUM; i++) {
-        AlarmItemInitialize(&(g_logStorageAlarm[i]), ALM_AI_StorageThresholdPreAlarm, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(g_logStorageAlarm[i]), ALM_AI_StorageThresholdPreAlarm, ALM_AS_Init, NULL);
     }
     for (uint32 i = 0; i < readOnlyCount; i++) {
         AlarmItemInitialize(&(g_readOnlyAlarm[i].instanceAlarmItem),
-            ALM_AI_TransactionReadOnly, ALM_AS_Normal, NULL);
+            ALM_AI_TransactionReadOnly, ALM_AS_Init, NULL);
         AlarmItemInitialize(&(g_readOnlyPreAlarm[i].instanceAlarmItem),
-            ALM_AI_StorageThresholdPreAlarm, ALM_AS_Normal, NULL);
+            ALM_AI_StorageThresholdPreAlarm, ALM_AS_Init, NULL);
     }
     uint32 alarmIndex = 0;
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
@@ -197,9 +197,9 @@ void AlarmInitReduceOrIncreaseSyncList()
     securec_check_errno(rc, (void)rc);
     for (int i = 0; i < dnCount; ++i) {
         AlarmItemInitialize(
-            &(g_reduceSyncListAlarm[i].instanceAlarmItem), ALM_AI_DNReduceSyncList, ALM_AS_Normal, NULL);
+            &(g_reduceSyncListAlarm[i].instanceAlarmItem), ALM_AI_DNReduceSyncList, ALM_AS_Init, NULL);
         AlarmItemInitialize(
-            &(g_increaseSyncListAlarm[i].instanceAlarmItem), ALM_AI_DNIncreaseSyncList, ALM_AS_Normal, NULL);
+            &(g_increaseSyncListAlarm[i].instanceAlarmItem), ALM_AI_DNIncreaseSyncList, ALM_AS_Init, NULL);
     }
     int alarmIndex = 0;
     for (uint32 i = 0; i < g_dynamic_header->relationCount; ++i) {
@@ -240,7 +240,7 @@ void InstanceAlarmItemInitialize(void)
 
     for (int i = 0; i < MAX_INSTANCE_NUM; i++) {
         AlarmItemInitialize(
-            &(g_phony_dead_alarm[i].PhonyDeadAlarmItem[0]), ALM_AI_AbnormalPhonyDead, ALM_AS_Normal, NULL);
+            &(g_phony_dead_alarm[i].PhonyDeadAlarmItem[0]), ALM_AI_AbnormalPhonyDead, ALM_AS_Init, NULL);
     }
 
     int alarmIndex = 0;
@@ -303,7 +303,7 @@ void report_phony_dead_alarm(AlarmType alarmType, const char* instanceName, uint
 
 void UnbalanceAlarmItemInitialize()
 {
-    AlarmItemInitialize(UnbalanceAlarmItem, ALM_AI_UnbalancedCluster, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(UnbalanceAlarmItem, ALM_AI_UnbalancedCluster, ALM_AS_Init, NULL);
 }
 
 void report_unbalanced_alarm(AlarmType alarmType)
@@ -318,7 +318,7 @@ void report_unbalanced_alarm(AlarmType alarmType)
 void ReportClusterDoublePrimaryAlarm(
     AlarmType alarmType, AlarmId alarmId, uint32 instanceId, const char* serviceType)
 {
-    AlarmItemInitialize(DoublePrimaryAlarmItem, alarmId, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(DoublePrimaryAlarmItem, alarmId, ALM_AS_Init, NULL);
 
     char instanceInfo[RESERVE_LEN] = {0};
     int32 ret = -1;
@@ -351,7 +351,7 @@ void report_ddb_fail_alarm(AlarmType alarmType, const char* instanceName, int al
 
 void ServerSwitchAlarmItemInitialize(void)
 {
-    AlarmItemInitialize(ServerSwitchAlarmItem, ALM_AI_ServerSwitchOver, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(ServerSwitchAlarmItem, ALM_AI_ServerSwitchOver, ALM_AS_Init, NULL);
 }
 
 void report_server_switch_alarm(AlarmType alarmType, const char *instanceName)
@@ -450,7 +450,7 @@ void ReportCmdTimeoutAlarm(const char* instanceName, const char* details, const 
     Alarm cmdTimeoutAlarm[1];
     AlarmAdditionalParam tempAdditionalParam;
     // Initialize the alarm item
-    AlarmItemInitialize(cmdTimeoutAlarm, ALM_AI_CommandExecTimeout, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(cmdTimeoutAlarm, ALM_AI_CommandExecTimeout, ALM_AS_Init, NULL);
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(&tempAdditionalParam,
                              instanceName,
@@ -513,7 +513,7 @@ void ReportForceFinishRedoAlarm(uint32 groupIdx, int32 memIdx, bool8 isAuto)
     GetInstanceName(instanceName, (uint32)MAX_PATH_LEN, groupIdx, memIdx);
     AlarmAdditionalParam tempAdditionalParam;
     // Initialize the alarm item
-    AlarmItemInitialize(forceFinishRedoAlarm, ALM_AI_ForceFinishRedo, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(forceFinishRedoAlarm, ALM_AI_ForceFinishRedo, ALM_AS_Init, NULL);
     /* fill the alarm message */
     WriteAlarmAdditionalInfo(&tempAdditionalParam,
                              instanceName,

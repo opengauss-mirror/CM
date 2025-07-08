@@ -392,7 +392,7 @@ static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint
             rc = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "%s_%u", "gtm", instanceId);
             securec_check_intval(rc, (void)rc);
             /* Initialize the alarm item structure(typedef struct Alarm) */
-            AlarmItemInitialize(&(alarm[0]), ALM_AI_GTMSwitchOver, ALM_AS_Normal, NULL);
+            AlarmItemInitialize(&(alarm[0]), ALM_AI_GTMSwitchOver, ALM_AS_Init, NULL);
             /* fill the alarm message */
             WriteAlarmAdditionalInfo(&alarmParam, instanceName, "", "", "", alarm, ALM_AT_Event, instanceName);
             /* report the alarm */
@@ -423,7 +423,7 @@ static void ProcessSwitchoverCommand(const char *dataDir, int instanceType, uint
             rc = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "%s_%u", "dn", instanceId);
             securec_check_intval(rc, (void)rc);
             /* Initialize the alarm item structure(typedef struct Alarm) */
-            AlarmItemInitialize(&(alarm[0]), ALM_AI_DatanodeSwitchOver, ALM_AS_Normal, NULL);
+            AlarmItemInitialize(&(alarm[0]), ALM_AI_DatanodeSwitchOver, ALM_AS_Init, NULL);
             /* fill the alarm message */
             WriteAlarmAdditionalInfo(&alarmParam, instanceName, "", "", lcName, alarm, ALM_AT_Event, instanceName);
             /* report the alarm */
@@ -491,7 +491,7 @@ static void process_failover_command(const char* dataDir, int instanceType,
             rc = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "%s_%u", "gtm", instance_id);
             securec_check_intval(rc, (void)rc);
             /* Initialize the alarm item structure(typedef struct Alarm) */
-            AlarmItemInitialize(&(AlarmFailOver[0]), ALM_AI_GTMFailOver, ALM_AS_Normal, NULL);
+            AlarmItemInitialize(&(AlarmFailOver[0]), ALM_AI_GTMFailOver, ALM_AS_Init, NULL);
             /* fill the alarm message */
             WriteAlarmAdditionalInfo(
                 &tempAdditionalParam, instanceName, "", "", "", AlarmFailOver, ALM_AT_Event, instanceName);
@@ -505,7 +505,7 @@ static void process_failover_command(const char* dataDir, int instanceType,
             rc = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1, "%s_%u", "dn", instance_id);
             securec_check_intval(rc, (void)rc);
             /* Initialize the alarm item structure(typedef struct Alarm) */
-            AlarmItemInitialize(&(AlarmFailOver[0]), ALM_AI_DatanodeFailOver, ALM_AS_Normal, NULL);
+            AlarmItemInitialize(&(AlarmFailOver[0]), ALM_AI_DatanodeFailOver, ALM_AS_Init, NULL);
             /* fill the alarm message */
             WriteAlarmAdditionalInfo(&tempAdditionalParam,
                 instanceName,
@@ -905,7 +905,7 @@ static void ProcessBuildCommand(const char *dataDir, int instanceType, const cm_
         "dn", g_currentNode->datanode[dnIndex].datanodeId);
     securec_check_intval(ret, (void)ret);
     /* Initialize the alarm item structure(typedef struct Alarm). */
-    AlarmItemInitialize(&(AlarmBuild[0]), ALM_AI_Build, ALM_AS_Normal, NULL);
+    AlarmItemInitialize(&(AlarmBuild[0]), ALM_AI_Build, ALM_AS_Init, NULL);
     /* fill the alarm message. */
     WriteAlarmAdditionalInfo(&tempAdditionalParam, instanceName, "", "", "", AlarmBuild, ALM_AT_Event, instanceName);
     /* report the alarm. */

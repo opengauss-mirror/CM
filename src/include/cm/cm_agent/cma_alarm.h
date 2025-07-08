@@ -70,12 +70,12 @@ extern void report_ddb_fail_alarm(AlarmType alarmType, const char* instanceName,
 extern void InitializeAlarmItem(const staticNodeConfig* currentNode);
 extern void ReportPgxcNodeMismatchAlarm(AlarmType alarmType, const char* instanceName);
 extern void ReportStreamingDRAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex, const char *info);
-extern void ReportMemoryAbnormalAlarm(int memUsed, int threshold);
+extern void ReportMemoryAbnormalAlarm(int sysMemUsed, int appMemUsed, int threshold);
 extern void ReportCpuAbnormalAlarm(int cpuUsed, int threshold);
 extern void ReportDiskIOAbnormalAlarm(const char* diskName, int ioUsed, int threshold);
 extern void ReportDNDisconnectAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex);
 extern void ReportDiskUsageAbnormalAlarm(const char* diskName, int diskUsed, int threshold);
-extern void ReportDiskDamageAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex);
+extern void ReportDiskDamageAlarm(AlarmType alarmType, const char *instanceName, int alarmIndex, const char* details);
 extern void ReportSlowDiskAlarm(const char* diskName, AlarmType alarmType, int index, const char* info);
 extern void ReportDiskHangAlarm(Alarm* alarm, AlarmType type, const char* diskName, uint64 costTime, uint64 timeout);
 extern void ReportDiskSlowAlarm(Alarm* alarm, AlarmType type, uint64 costTime, uint64 threshold, const char* path);

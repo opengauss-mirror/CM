@@ -147,8 +147,8 @@ void InitDirAlarmItem(DirHealth* dirHealth)
 {
     for (uint32 i = 0; i < dirHealth->dirCount; ++i) {
         Alarm* diskAlarm = dirHealth->dir[i].diskAlarm;
-        AlarmItemInitialize(&(diskAlarm[DISK_ALARM_READ_WRITE_SLOW]), ALM_AI_DiskReadWriteSlow, ALM_AS_Normal, NULL);
-        AlarmItemInitialize(&(diskAlarm[DISK_ALARM_HUNG]), ALM_AI_DiskHang, ALM_AS_Normal, NULL);
+        AlarmItemInitialize(&(diskAlarm[DISK_ALARM_READ_WRITE_SLOW]), ALM_AI_DiskReadWriteSlow, ALM_AS_Init, NULL);
+        AlarmItemInitialize(&(diskAlarm[DISK_ALARM_HUNG]), ALM_AI_DiskHang, ALM_AS_Init, NULL);
     }
 }
 

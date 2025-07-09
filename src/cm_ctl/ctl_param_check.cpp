@@ -39,6 +39,7 @@ const char *g_cmaParamInfo[] = {
     "disk_check_interval|int|0,2147483647|NULL|NULL|",
     "disk_check_buffer_size|int|0,2147483647|NULL|NULL|",
     "enable_log_compress|bool|0,0|NULL|NULL|",
+    "enable_vtable|bool|0,0|NULL|NULL|",
     "enable_ssl|bool|0,0|NULL|NULL|",
     "ssl_cert_expire_alert_threshold|int|7,180|NULL|NULL|",
     "ssl_cert_expire_check_interval|int|0,2147483647|NULL|NULL|",

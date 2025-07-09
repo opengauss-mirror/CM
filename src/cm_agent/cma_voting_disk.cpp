@@ -24,6 +24,7 @@
 
 #include "cma_global_params.h"
 #include "cm_voting_disk.h"
+#include "cm_vtable.h"
 
 static void StopCurrentNode()
 {
@@ -77,6 +78,13 @@ void *VotingDiskMain(void *arg)
     thread_name = "VotingDisk";
     pthread_t threadId = pthread_self();
     write_runlog(LOG, "Voting disk status check thread start, threadid %lu.\n", threadId);
+    
+    if (IsBoolCmParamTrue(g_enableVtable)) {
+        if (cm_init_vtable() != 0) {
+            write_runlog(FATAL, "CM agent init vtable failed!\n");
+            exit(-1);
+        }
+    }
 
     if (InitVotingDisk(g_votingDiskPath) != CM_SUCCESS) {
         write_runlog(FATAL, "Init voting disk failed!\n");

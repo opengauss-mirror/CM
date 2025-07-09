@@ -27,6 +27,7 @@
 #include "cm_ddb_sharedisk_cmd.h"
 #include "cm_ddb_sharedisk_disklock.h"
 #include "cm_ddb_sharedisk.h"
+#include "cm_vtable.h"
 
 uint32 g_cmSdServerNum = 0;
 static diskLrwHandler g_cmsArbitrateDiskHandler;
@@ -156,6 +157,11 @@ status_t InitShareDiskManager(const DrvApiInfo *apiInfo)
     g_waitForTime = apiInfo->sdConfig.waitTime;
     int64 instId = apiInfo->sdConfig.instanceId;
     uint32 offset = apiInfo->sdConfig.offset + DISK_ARBITRATE_LOCK_SPACE + DISK_RESERVED_LEN_AFTER_CMSLOCK;
+    if (g_shareDiskLockType == DISK_LOCK_MGR_NORMAL) {
+        if (cm_init_vtable() != 0) {
+            write_runlog(LOG, "CM server init vtable failed.\n");
+        }
+    }
     CM_RETURN_IFERR(InitDiskData(apiInfo->sdConfig.devPath, offset, instId));
     return CM_SUCCESS;
 }

@@ -27,6 +27,7 @@
 #include <malloc.h>
 #include "cm_misc_base.h"
 #include "share_disk_api.h"
+#include "cm_vtable.h"
 
 status_t ShareDiskRead(diskLrwHandler *handler, char *data, uint32 dataLen)
 {
@@ -34,25 +35,33 @@ status_t ShareDiskRead(diskLrwHandler *handler, char *data, uint32 dataLen)
         write_runlog(ERROR, "dataLen errno %u.\n", dataLen);
         return CM_ERROR;
     }
-
-    if (handler->fd < 0) {
-        write_runlog(ERROR, "fd errno %d. reopen\n", handler->fd);
-        handler->fd = open(handler->scsiDev, O_RDWR | O_DIRECT | O_SYNC);
-        if (handler->fd < 0) {
-            write_runlog(ERROR, "reopen fd failed when read data from disk.\n");
+    if (g_vtable_func.isInitialize) {
+        int res = VtableRead(atoll(handler->scsiDev), handler->offset, dataLen, handler->rwBuff);
+        if (res != 0) {
+            write_runlog(ERROR, "Write data %s to dev %s failed, dataLen %u, offset %lu vtable_error %d.\n",
+                data, handler->scsiDev, dataLen, handler->offset, res);
             return CM_ERROR;
         }
-    }
+    } else {
+        if (handler->fd < 0) {
+            write_runlog(ERROR, "fd errno %d. reopen\n", handler->fd);
+            handler->fd = open(handler->scsiDev, O_RDWR | O_DIRECT | O_SYNC);
+            if (handler->fd < 0) {
+                write_runlog(ERROR, "reopen fd failed when read data from disk.\n");
+                return CM_ERROR;
+            }
+        }
 
-    long size = pread(handler->fd, handler->rwBuff, (size_t)dataLen, (off_t)(handler->offset));
-    if (size != dataLen) {
-        write_runlog(ERROR,
-            "Read dev size %u, read real size %ld, offset %lu, errno %d.\n",
-            dataLen,
-            size,
-            handler->offset,
-            errno);
-        return CM_ERROR;
+        long size = pread(handler->fd, handler->rwBuff, (size_t)dataLen, (off_t)(handler->offset));
+        if (size != dataLen) {
+            write_runlog(ERROR,
+                "Read dev size %u, read real size %ld, offset %lu, errno %d.\n",
+                dataLen,
+                size,
+                handler->offset,
+                errno);
+            return CM_ERROR;
+        }
     }
 
     int rc = memcpy_s(data, dataLen, handler->rwBuff, dataLen);
@@ -68,20 +77,30 @@ status_t ShareDiskWrite(diskLrwHandler *handler, const char *data, uint32 dataLe
         return CM_ERROR;
     }
 
-    if (handler->fd < 0) {
-        write_runlog(ERROR, "fd errno %d. reopen\n", handler->fd);
-        handler->fd = open(handler->scsiDev, O_RDWR | O_DIRECT | O_SYNC);
+    if (g_vtable_func.isInitialize) {
+        int res = VtableWrite(atoll(handler->scsiDev), handler->offset, dataLen, (char*)data);
+        if (res != 0) {
+            write_runlog(ERROR, "Write data %s to dev %s failed, dataLen %u offset %lu vtable_error %d.\n",
+                data, handler->scsiDev, dataLen, handler->offset, res);
+            return CM_ERROR;
+        }
+    } else {
         if (handler->fd < 0) {
-            write_runlog(ERROR, "reOpen dev %s failed, errno %d.\n", handler->scsiDev, errno);
+            write_runlog(ERROR, "fd errno %d. reopen\n", handler->fd);
+            handler->fd = open(handler->scsiDev, O_RDWR | O_DIRECT | O_SYNC);
+            if (handler->fd < 0) {
+                write_runlog(ERROR, "reOpen dev %s failed, errno %d.\n", handler->scsiDev, errno);
+                return CM_ERROR;
+            }
+        }
+
+        long size = pwrite(handler->fd, data, (size_t)dataLen, (off_t)(handler->offset));
+        if (size != dataLen) {
+            write_runlog(ERROR, "Write data %s to dev %s failed, dataLen %u size %ld offset %lu errno %d.\n",
+                data, handler->scsiDev, dataLen, size, handler->offset, errno);
             return CM_ERROR;
         }
     }
 
-    long size = pwrite(handler->fd, data, (size_t)dataLen, (off_t)(handler->offset));
-    if (size != dataLen) {
-        write_runlog(ERROR, "Write data %s to dev %s failed, dataLen %u size %ld offset %lu errno %d.\n",
-            data, handler->scsiDev, dataLen, size, handler->offset, errno);
-        return CM_ERROR;
-    }
     return CM_SUCCESS;
 }

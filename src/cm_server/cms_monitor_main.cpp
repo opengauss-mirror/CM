@@ -965,7 +965,9 @@ static status_t IsPeerCmsReachableOn2Nodes()
 
             if (connect(socketFd, rp->ai_addr, rp->ai_addrlen) == -1) {
                 write_runlog(LOG, "could not connect to peer cms.\n");
-                ret = CM_ERROR;
+                close(socketFd);
+                freeaddrinfo(result);
+                return CM_ERROR;
             }
             char addrStr[INET6_ADDRSTRLEN];
             void *addr;

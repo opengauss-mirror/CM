@@ -61,6 +61,7 @@ extern bool wait_seconds_set;
 extern int g_waitSeconds;
 extern CM_Conn* CmServer_conn;
 extern char *g_command_operation_azName;
+extern char g_appPath[MAXPGPATH];
 SSDoubleClusterMode  g_ssDoubleClusterMode = SS_DOUBLE_NULL;
 ClusterRole backup_open = CLUSTER_PRIMARY;
 
@@ -529,6 +530,85 @@ static int BalanceResultReq(int &timePass, bool waitBalance, int &sendCheckCount
     return 0;
 }
 
+bool get_instance_role_groups(dynamicConfigHeader **header_out, dynamic_cms_timeline **timeline_out,
+    cm_instance_role_group **instance_groups_out, uint32 *relation_count_out)
+{
+    int fd = -1;
+    dynamicConfigHeader *header = NULL;
+    dynamic_cms_timeline *timeline = NULL;
+    cm_instance_role_group *instance_groups = NULL;
+    ssize_t returnCode;
+    bool result = false;
+
+    do {
+        char clusterDynamicConfig[MAXPGPATH] = {0};
+        int ret = snprintf_s(clusterDynamicConfig, MAXPGPATH, MAXPGPATH - 1,
+            "%s/bin/%s", g_appPath, DYNAMC_CONFIG_FILE);
+        securec_check_intval(ret, (void)ret);
+        check_input_for_security(clusterDynamicConfig);
+        canonicalize_path(clusterDynamicConfig);
+
+        fd = open(clusterDynamicConfig, O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            write_runlog(LOG, "Failed to open dynamic config file\n");
+            break;
+        }
+
+        size_t header_size = sizeof(dynamicConfigHeader);
+        size_t header_alignment_size = (header_size / AGLINMENT_SIZE +
+            ((header_size % AGLINMENT_SIZE == 0) ? 0 : 1)) * AGLINMENT_SIZE;
+        header = (dynamicConfigHeader *)malloc(header_alignment_size);
+        if (header == NULL) {
+            write_runlog(LOG, "Failed to malloc header\n");
+            break;
+        }
+
+        returnCode = read(fd, header, header_alignment_size);
+        if (returnCode != (ssize_t)header_alignment_size) {
+            write_runlog(LOG, "Failed to read header\n");
+            break;
+        }
+
+        timeline = (dynamic_cms_timeline *)malloc(sizeof(dynamic_cms_timeline));
+        if (timeline == NULL) {
+            write_runlog(LOG, "Failed to malloc timeline\n");
+            break;
+        }
+
+        returnCode = read(fd, timeline, sizeof(dynamic_cms_timeline));
+        if (returnCode != (ssize_t)sizeof(dynamic_cms_timeline)) {
+            write_runlog(LOG, "Failed to read timeline\n");
+            break;
+        }
+
+        instance_groups = (cm_instance_role_group *)malloc(sizeof(cm_instance_role_group) * header->relationCount);
+        if (instance_groups == NULL) {
+            write_runlog(LOG, "Failed to malloc instance_groups\n");
+            break;
+        }
+
+        returnCode = read(fd, instance_groups, sizeof(cm_instance_role_group) * header->relationCount);
+        if (returnCode != (ssize_t)(sizeof(cm_instance_role_group) * header->relationCount)) {
+            write_runlog(LOG, "Failed to read instance_groups\n");
+            break;
+        }
+
+        *header_out = header;
+        *timeline_out = timeline;
+        *instance_groups_out = instance_groups;
+        *relation_count_out = header->relationCount;
+        result = true;
+    } while (0);
+
+    if (!result) {
+        FREE_AND_RESET(header);
+        FREE_AND_RESET(timeline);
+        FREE_AND_RESET(instance_groups);
+    }
+    if (fd >= 0) close(fd);
+    return result;
+}
+
 static int DoSwitchoverAll(const CtlOption *ctx)
 {
     int ret;
@@ -540,12 +620,39 @@ static int DoSwitchoverAll(const CtlOption *ctx)
     bool waitBalance = false;
     char *receiveMsg = NULL;
     char inCompleteMsg[CM_MSG_ERR_INFORMATION_LENGTH] = {0};
+    int count = 0;
     cm_msg_type* msgType = NULL;
     ctl_to_cm_switchover switchoverMsg = {0};
     cm_to_ctl_command_ack *ackMsg = NULL;
     cm_to_ctl_balance_result *msgBalanceResult = NULL;
     cm_to_ctl_balance_check_ack *msgBalanceCheckAck = NULL;
     cm_switchover_incomplete_msg *incompleteSwitchoverMsg = NULL;
+    getWalrecordMode();
+
+    int initPrimaryIndex = -1;
+
+    if (g_enableWalRecord) {
+        dynamicConfigHeader *header = NULL;
+        dynamic_cms_timeline *timeline = NULL;
+        cm_instance_role_group *g_instance_role_group_ptr = NULL;
+        uint32 relation_count = 0;
+        if (!get_instance_role_groups(&header, &timeline, &g_instance_role_group_ptr, &relation_count)) {
+            write_runlog(ERROR,
+                "Can not switchover right now.!\n\n"
+                "HINT: Can not get init role from  clusterDynamicConfig.\n"
+                "please check clusterDynamicConfig.\n");
+            return -1;
+        }
+        for (uint32 i = 0; i < relation_count; i++) {
+            for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
+                int initRole = g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit;
+                if (initRole == INSTANCE_ROLE_PRIMARY) {
+                    initPrimaryIndex = g_instance_role_group_ptr[i].instanceMember[j].instanceId - MIN_DN_INST_ID;
+                    break;
+                }
+            }
+        }
+    }
 
     // return conn to cm_server
     do_conn_cmserver(false, 0);
@@ -598,6 +705,7 @@ static int DoSwitchoverAll(const CtlOption *ctx)
             retryFlag = true;
             toTryForWarn = false;
         }
+
         if (CmServer_conn != NULL) {
             if (cm_client_flush_msg(CmServer_conn) == TCP_SOCKET_ERROR_EPIPE) {
                 FINISH_CONNECTION_WITHOUT_EXITCODE((CmServer_conn));
@@ -724,6 +832,15 @@ static int DoSwitchoverAll(const CtlOption *ctx)
             }
         }
 
+        if (g_enableWalRecord) {
+            count++;
+            write_runlog(LOG, ".");
+            sleep(1);
+            if (count > g_waitSeconds) {
+                goto done;
+            }
+        }
+
         ret = BalanceResultReq(timePass, waitBalance, sendCheckCount);
         if (ret < 0) {
             return ret;
@@ -732,6 +849,20 @@ static int DoSwitchoverAll(const CtlOption *ctx)
 
 done:
     (void)sleep(5);
+    if (g_enableWalRecord) {
+        CMPQfinish(CmServer_conn);
+        CmServer_conn = NULL;
+        count = 0;
+        uint32 lockowner = GetLockOwnerInstanceId();
+        int currentPrimaryIndex = lockowner - RES_INSTANCE_ID_MIN;
+        if (currentPrimaryIndex == initPrimaryIndex) {
+            write_runlog(LOG, "switchover successfully.\n");
+            return 0;
+        } else {
+            write_runlog(LOG, "switchover failed.\n");
+            return 1;
+        }
+    }
     write_runlog(LOG, "switchover successfully.\n");
     CMPQfinish(CmServer_conn);
     CmServer_conn = NULL;

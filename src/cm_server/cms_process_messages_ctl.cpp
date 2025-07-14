@@ -2310,7 +2310,7 @@ void ProcessCtlToCmSwitchoverAllMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_sw
     getWalrecordMode();
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
-        const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
+        cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
         for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             int instanceType = g_instance_role_group_ptr[i].instanceMember[j].instanceType;
             int initRole = g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit;
@@ -2320,8 +2320,16 @@ void ProcessCtlToCmSwitchoverAllMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_sw
                 uint32 lockowner = GetLockOwnerInstanceId();
                 uint32 lockownerNodeId = lockowner - RES_INSTANCE_ID_MIN;
                 uint32 nodeId = instanceId - MIN_DN_INST_ID;
+                cm_instance_role_status *instInfo = &g_instance_role_group_ptr[i].instanceMember[j];
+                int localRole = instStatus->data_node_member[j].local_status.local_role;
                 if (initRole == INSTANCE_ROLE_PRIMARY && nodeId != lockownerNodeId) {
-                    SetSwitchoverInSwitchoverProcess(i, j, switchoverMsg->wait_seconds);
+                    SetSwitchoverCmd(&(instStatus->command_member[j]), localRole, instInfo->instanceId,
+                        GetPeerInstId(i, j));
+                    instStatus->command_member[j].time_out = switchoverMsg->wait_seconds;
+                    instStatus->command_member[j].msgProcFlag = recvMsgInfo->msgProcFlag;
+                    SetSendTimes(i, j, switchoverMsg->wait_seconds);
+                    needDoDnNum++;
+                    return;
                 }
             }
             switch (instanceType) {

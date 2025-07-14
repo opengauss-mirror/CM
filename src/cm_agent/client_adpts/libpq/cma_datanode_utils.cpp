@@ -1970,6 +1970,8 @@ cltPqResult_t* GetRunCommandResult(cltPqConn_t* dnConn, const char* sqlCommands,
             write_runlog(ERROR, "[%s()][line:%d] execute command(%s) failed!\n",
                          __FUNCTION__, __LINE__, sqlCommands);
         }
+        Clear(nodeResult);
+        return NULL;
     }
     maxRows = Ntuples(nodeResult);
     if (maxRows == 0) {
@@ -1978,7 +1980,7 @@ cltPqResult_t* GetRunCommandResult(cltPqConn_t* dnConn, const char* sqlCommands,
     return nodeResult;
 }
 
-void SetOneTableStatInfo(TableStatInfo *tabStatInfo, cltPqConn_t* dnConn)
+int SetOneTableStatInfo(TableStatInfo *tabStatInfo, cltPqConn_t* dnConn)
 {
     char sqlCommands[CM_MAX_SQL_COMMAND_LEN] = {0};
     errno_t rc = snprintf_s(sqlCommands, CM_MAX_SQL_COMMAND_LEN, CM_MAX_SQL_COMMAND_LEN - 1,
@@ -1988,7 +1990,7 @@ void SetOneTableStatInfo(TableStatInfo *tabStatInfo, cltPqConn_t* dnConn)
     cltPqResult_t *tupleChangeResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
     if (tupleChangeResult == NULL) {
         write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
-        return;
+        return -1;
     }
     rc = sscanf_s(Getvalue(tupleChangeResult, 0, 0), "%ld", &(tabStatInfo->changes_since_analyze));
     check_sscanf_s_result(rc, 1);
@@ -2003,12 +2005,13 @@ void SetOneTableStatInfo(TableStatInfo *tabStatInfo, cltPqConn_t* dnConn)
     cltPqResult_t *relTuplesResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
     if (relTuplesResult == NULL) {
         write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
-        return;
+        return -1;
     }
     rc = sscanf_s(Getvalue(relTuplesResult, 0, 0), "%ld", &(tabStatInfo->reltuples));
     check_sscanf_s_result(rc, 1);
     securec_check_intval(rc, (void)rc);
     Clear(relTuplesResult);
+    return 0;
 }
 
 int GetVacuumAndAnalyzeScaleFactor(cltPqConn_t* dnConn, float& vacfactor, float& anlfactor,
@@ -2044,20 +2047,9 @@ int GetVacuumAndAnalyzeScaleFactor(cltPqConn_t* dnConn, float& vacfactor, float&
     return 0;
 }
 
-int GetDatabaseTableInfo(int i, DNDatabaseInfo* dnDatabaseInfo, DatabaseStatInfo* localDbStatInfo, cltPqConn_t *dnConn)
+int InitOneDatabaseTableInfo(int i, DNDatabaseInfo *dnDatabaseInfo, DatabaseStatInfo *localDbStatInfo, int maxRows,
+    cltPqResult_t *nodeResult)
 {
-    float vacScaleFactor = 0.2;
-    float anlScaleFactor = 0.1;
-    int vacThreshold = 50;
-    int anlThreshold = 50;
-    (void)GetVacuumAndAnalyzeScaleFactor(dnConn, vacScaleFactor, anlScaleFactor, vacThreshold, anlThreshold);
-    const char *sqlCommands = "select relid, schemaname, relname, n_live_tup, n_dead_tup from pg_stat_user_tables;";
-    int maxRows = 0;
-    cltPqResult_t *nodeResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
-    if (nodeResult == NULL) {
-        write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
-        return -1;
-    }
     errno_t rc = strncpy_s(localDbStatInfo[i].dbname, NAMEDATALEN, dnDatabaseInfo[i].dbname, NAMEDATALEN - 1);
     securec_check_intval(rc, (void)rc);
     localDbStatInfo[i].oid = dnDatabaseInfo[i].oid;
@@ -2068,6 +2060,27 @@ int GetDatabaseTableInfo(int i, DNDatabaseInfo* dnDatabaseInfo, DatabaseStatInfo
         for (int j = 0; j < i; ++j) {
             FREE_AND_RESET(localDbStatInfo[j].tableStatInfo);
         }
+        return -1;
+    }
+    return 0;
+}
+
+int GetDatabaseTableInfo(int i, DNDatabaseInfo* dnDatabaseInfo, DatabaseStatInfo* localDbStatInfo, cltPqConn_t *dnConn)
+{
+    float vacScaleFactor = 0.2;
+    float anlScaleFactor = 0.1;
+    int vacThreshold = 50;
+    int anlThreshold = 50;
+    errno_t rc;
+    (void)GetVacuumAndAnalyzeScaleFactor(dnConn, vacScaleFactor, anlScaleFactor, vacThreshold, anlThreshold);
+    const char *sqlCommands = "select relid, schemaname, relname, n_live_tup, n_dead_tup from pg_stat_user_tables;";
+    int maxRows = 0;
+    cltPqResult_t *nodeResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
+    if (nodeResult == NULL) {
+        write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
+        return -1;
+    }
+    if (InitOneDatabaseTableInfo(i, dnDatabaseInfo, localDbStatInfo, maxRows, nodeResult) != 0) {
         Clear(nodeResult);
         return -1;
     }
@@ -2091,7 +2104,14 @@ int GetDatabaseTableInfo(int i, DNDatabaseInfo* dnDatabaseInfo, DatabaseStatInfo
         rc = sscanf_s(Getvalue(nodeResult, j, k++), "%ld", &(tableStatInfo->n_dead_tuples));
         check_sscanf_s_result(rc, 1);
         securec_check_intval(rc, (void)rc);
-        SetOneTableStatInfo(&localDbStatInfo[i].tableStatInfo[j], dnConn);
+        if (SetOneTableStatInfo(&localDbStatInfo[i].tableStatInfo[j], dnConn) != 0) {
+            write_runlog(ERROR, "[%s()][line:%d] SetOneTableStatInfo failed!\n", __FUNCTION__, __LINE__);
+            for (int k = 0; k <= i; ++k) {
+                FREE_AND_RESET(localDbStatInfo[k].tableStatInfo);
+            }
+            Clear(nodeResult);
+            return -1;
+        }
     }
     Clear(nodeResult);
     return 0;

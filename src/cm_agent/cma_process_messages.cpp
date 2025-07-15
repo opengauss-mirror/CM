@@ -509,6 +509,23 @@ static void process_failover_command(const char* dataDir, int instanceType,
     return;
 }
 
+static void process_failover_cascade_command(const char* dataDir, uint32 instance_id)
+{
+    char command[MAXPGPATH];
+    errno_t rc;
+    write_runlog(LOG, "failover cascade msg from cm_server, data_dir :%s \n", dataDir);
+    rc = snprintf_s(command,
+            MAXPGPATH,
+            MAXPGPATH - 1,
+            SYSTEMQUOTE "%s failover -D  %s -M standby >> \"%s\" 2>&1 &" SYSTEMQUOTE,
+            PG_CTL_NAME,
+            dataDir,
+            system_call_log);
+    securec_check_intval(rc, (void)rc);
+    RunCmd(command);
+    return;
+}
+
 static void process_finish_redo_command(const char* dataDir, uint32 instd, bool isFinishRedoCmdSent)
 {
     char command[MAXPGPATH];
@@ -1437,26 +1454,38 @@ static void MsgCmAgentFailover(const AgentMsgPkg* msg, char *dataPath, const cm_
     int ret;
     uint32 node, term, instanceId;
     int32 staPrimId = -1;
+    bool8 isCascade = CM_FALSE;
 
-    if (undocumentedVersion != 0 && undocumentedVersion < FAILOVER_STAPRI_VERSION) {
-        const cm_to_agent_failover *failoverMsg =
-            (const cm_to_agent_failover *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_failover));
+    if (msg->msgLen == sizeof(cm_to_agent_failover_cascade)) {
+        const cm_to_agent_failover_cascade *failoverMsg =
+            (const cm_to_agent_failover_cascade *)(const char*)(msg->msgPtr);
         if (failoverMsg == NULL) {
             return;
         }
-        term = failoverMsg->term;
         node = failoverMsg->node;
         instanceId = failoverMsg->instanceId;
+        isCascade = CM_TRUE;
     } else {
-        const cm_to_agent_failover_sta *failoverMsg =
-            (const cm_to_agent_failover_sta *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_failover_sta));
-        if (failoverMsg == NULL) {
-            return;
+        if (undocumentedVersion != 0 && undocumentedVersion < FAILOVER_STAPRI_VERSION) {
+            const cm_to_agent_failover *failoverMsg =
+                (const cm_to_agent_failover *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_failover));
+            if (failoverMsg == NULL) {
+                return;
+            }
+            term = failoverMsg->term;
+            node = failoverMsg->node;
+            instanceId = failoverMsg->instanceId;
+        } else {
+            const cm_to_agent_failover_sta *failoverMsg =
+                (const cm_to_agent_failover_sta *)CmGetMsgBytesPtr(msg, sizeof(cm_to_agent_failover_sta));
+            if (failoverMsg == NULL) {
+                return;
+            }
+            term = failoverMsg->term;
+            node = failoverMsg->node;
+            instanceId = failoverMsg->instanceId;
+            staPrimId = failoverMsg->staPrimId;
         }
-        term = failoverMsg->term;
-        node = failoverMsg->node;
-        instanceId = failoverMsg->instanceId;
-        staPrimId = failoverMsg->staPrimId;
     }
 
     ret = FindInstancePathAndType(
@@ -1467,7 +1496,11 @@ static void MsgCmAgentFailover(const AgentMsgPkg* msg, char *dataPath, const cm_
             node, instanceId);
         return;
     }
-    process_failover_command(dataPath, instanceType, instanceId, term, staPrimId);
+    if (isCascade) {
+        process_failover_cascade_command(dataPath, instanceId);
+    } else {
+        process_failover_command(dataPath, instanceType, instanceId, term, staPrimId);
+    }
 }
 
 static void MsgCmAgentBuild(const AgentMsgPkg* msg, char *dataPath, const cm_msg_type* msgTypePtr)

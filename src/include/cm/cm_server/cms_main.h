@@ -25,6 +25,8 @@
 #ifndef CMS_MAIN_H
 #define CMS_MAIN_H
 
+#define MAX_UNAUTH_CONN 10000
+
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cm_msg.h"
 typedef struct _exec_msg_ {

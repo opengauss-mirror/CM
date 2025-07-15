@@ -92,4 +92,5 @@ enable_set_most_available_sync = off     # whether allow cm_server to manage dn 
                                          # default off
 cmserver_set_most_available_sync_delay_times = 6 # delay times when cm_server need to send modify most_available_sync command.
 upgrade_from = 0                         # the version number of the cluster before upgrade
+cms_enable_failover_cascade = false      # if true, the system will promote a cascaded standby node when all standby nodes are abnormal.
 ############### must leave a new line at the end ###################

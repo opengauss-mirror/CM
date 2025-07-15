@@ -762,13 +762,15 @@ static void PrintStanceInfo(const DnArbCtx *ctx, const GetInstType *instType)
     GetInstanceInfoStr(&(ctx->staPrim), staticPriStr, MAX_PATH_LEN);
     char pendingStaStr[MAX_PATH_LEN] = {0};
     GetInstanceInfoStr(&(ctx->pendStatus), pendingStaStr, MAX_PATH_LEN);
+    char staNorStandbyStr[MAX_PATH_LEN] = {0};
+    GetInstanceInfoStr(&(ctx->staNorStandby), staNorStandbyStr, MAX_PATH_LEN);
     char dyCascadeStr[MAX_PATH_LEN] = {0};
     GetInstanceInfoStr(&(ctx->dyCascade), dyCascadeStr, MAX_PATH_LEN);
     char staCascadeStr[MAX_PATH_LEN] = {0};
     GetInstanceInfoStr(&(ctx->staCasCade), staCascadeStr, MAX_PATH_LEN);
-    write_runlog(LOG, "%s: instd(%u) staPrimary: [%s], dyPrimary: [%s], dyNorPrim: [%s], notPendCmd: [%s], cascade: "
-        "[sta: (%s);  dy: (%s)].\n", instType->instTpStr, ctx->instId, staticPriStr, dyPriStr, dyNorPriStr,
-        pendingStaStr, staCascadeStr, dyCascadeStr);
+    write_runlog(LOG, "%s: instd(%u) staPrimary: [%s], dyPrimary: [%s], dyNorPrim: [%s], notPendCmd: [%s], "
+                      "staNorStandby: [%s], cascade: [sta: (%s);  dy: (%s)].\n", instType->instTpStr, ctx->instId,
+                 staticPriStr, dyPriStr, dyNorPriStr, pendingStaStr, staNorStandbyStr, staCascadeStr, dyCascadeStr);
 }
 
 static void GetInstanceInfo(DnArbCtx *ctx, const GetInstType *instType)
@@ -788,6 +790,10 @@ static void GetInstanceInfo(DnArbCtx *ctx, const GetInstType *instType)
         }
         if (commd[i].command_status != INSTANCE_NONE_COMMAND || commd[i].pengding_command != MSG_CM_AGENT_BUTT) {
             InstanceInfoValues(ctx->groupIdx, i, &(ctx->pendStatus));
+        }
+        if (ctx->dnReport[i].local_status.local_role == INSTANCE_ROLE_STANDBY
+            && ctx->dnReport[i].local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
+            InstanceInfoValues(ctx->groupIdx, i, &(ctx->staNorStandby));
         }
         if (ctx->dnReport[i].local_status.local_role == INSTANCE_ROLE_CASCADE_STANDBY) {
             InstanceInfoValues(ctx->groupIdx, i, &(ctx->dyCascade));
@@ -2281,6 +2287,16 @@ static int32 GetDnSwitchoverIndex(const DnArbCtx *ctx)
     return -1;
 }
 
+static int32 GetDnFailoveroverIndex(const DnArbCtx *ctx)
+{
+    for (int32 i = 0; i < ctx->roleGroup->count; ++i) {
+        if (ctx->repGroup->command_member[i].pengding_command == (int)MSG_CM_AGENT_FAILOVER) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static void ChangeRole2CasCade(DnArbCtx *ctx, const char *str)
 {
     // static role
@@ -2290,6 +2306,12 @@ static void ChangeRole2CasCade(DnArbCtx *ctx, const char *str)
         if (switchIdx != -1) {
             write_runlog(LOG, "%s line %d: instd(%u) cannot send restart msg, bacause instd(%u) is doing switchover.\n",
                 str, __LINE__, ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, switchIdx));
+            return;
+        }
+        int32 failoverIdx = GetDnFailoveroverIndex(ctx);
+        if (failoverIdx != -1) {
+            write_runlog(LOG, "%s line %d: instd(%u) cannot send restart msg, bacause instd(%u) is doing failover.\n",
+                str, __LINE__, ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, failoverIdx));
             return;
         }
         SendRestartMsg(ctx, str);
@@ -2303,10 +2325,96 @@ static void ChangeRole2CasCade(DnArbCtx *ctx, const char *str)
                     "switchover.\n", str, __LINE__, ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, switchIdx));
                 return;
             }
+            int32 failoverIdx = GetDnFailoveroverIndex(ctx);
+            if (failoverIdx != -1) {
+                write_runlog(LOG, "%s line %d: instd(%u) cannot send restart msg, bacause instd(%u) is doing "
+                    "failover.\n",
+                    str, __LINE__, ctx->instId, GetInstanceIdInGroup(ctx->groupIdx, failoverIdx));
+                return;
+            }
             SendRestartMsg(ctx, str);
         } else {
             ArbitrateUnkownInstance(ctx, str);
             SendNotifyMessage2Cma(ctx, INSTANCE_ROLE_CASCADE_STANDBY);
+        }
+    }
+}
+
+static void send_cascade_failover_message(DnArbCtx *ctx, cm_to_agent_failover_cascade* failover_msg_ptr)
+{
+    uint32 group_index = ctx->groupIdx;
+    int member_index = ctx->memIdx;
+    uint32 instanceId = ctx->instId;
+    for (int i = 0; i <= ctx->roleGroup->count; ++i) {
+        cm_instance_role_status instanceReport = ctx->roleGroup->instanceMember[i];
+        if (instanceReport.role == INSTANCE_ROLE_STANDBY) {
+            ChangeCascadeMemberIndex("[ChangeDnStandbyMemberIndex]", group_index, member_index, i);
+            break;
+        }
+    }
+    failover_msg_ptr->msg_type = (int)MSG_CM_AGENT_FAILOVER;
+    failover_msg_ptr->node = ctx->node;
+    failover_msg_ptr->instanceId = instanceId;
+    uint32 pass_term = ReadTermFromDdb(group_index);
+    if (pass_term == InvalidTerm) {
+        write_runlog(ERROR, "line %d: Term on DDB has not been set yet, which should not happen.\n", __LINE__);
+        (void)WriteDynamicConfigFile(false);
+        return;
+    }
+
+    (void)WriteDynamicConfigFile(false);
+
+    if (pass_term < g_instance_group_report_status_ptr[group_index].instance_status.term) {
+        write_runlog(ERROR, "line %d: DDB term(%u) is smaller than group term(%u)!.\n",
+            __LINE__, pass_term, g_instance_group_report_status_ptr[group_index].instance_status.term);
+        return;
+    }
+
+    g_instance_group_report_status_ptr[group_index].instance_status.term = pass_term;
+    WriteKeyEventLog(KEY_EVENT_FAILOVER, instanceId, "Failover to standby message has sent to instance %u.",
+                     instanceId);
+    (void)RespondMsg(ctx->recvMsgInfo, 'S', (char*)failover_msg_ptr, sizeof(cm_to_agent_failover_cascade));
+    ctx->repGroup->command_member[member_index].pengding_command = (int)MSG_CM_AGENT_FAILOVER;
+    cm_pending_notify_broadcast_msg(group_index, instanceId);
+}
+
+static void SendFailoverCascadeMsg(DnArbCtx *ctx, const SendMsg_t *sfMsg)
+{
+    ArbiCond *cond = &ctx->cond;
+    GroupStatusShow(sfMsg->tyName, ctx->groupIdx, ctx->instId, cond->vaildCount, cond->finishRedo);
+    cm_to_agent_failover_cascade failover_msg_ptr;
+    send_cascade_failover_message(ctx, &failover_msg_ptr);
+    write_runlog(LOG, "%s, line %d: Failover message has sent to instance %u in reduce standy condition(%d), %s.\n",
+                 sfMsg->tyName, __LINE__, ctx->instId, cond->isDegrade, sfMsg->sendMsg);
+}
+
+static void arbitrateStandby(DnArbCtx *ctx, const char *str)
+{
+    if (g_cms_enable_failover_cascade && ctx->staNorStandby.count == 0) {
+        g_cascade_failover_count++;
+        if (g_cascade_failover_count < ctx->cond.arbitInterval) {
+            write_runlog(LOG, "%s, line %d: Cannot failover instance %u, because time(%u) is smaller than %u.\n",
+                str, __LINE__, ctx->instId, g_cascade_failover_count, ctx->cond.arbitInterval);
+            return;
+        }
+        int32 staCascadeCount = ctx->staCasCade.count;
+        for (int32 i = 0; i < staCascadeCount; i++) {
+            int32 memIdx = ctx->staCasCade.itStatus[i].memIdx;
+            if (ctx->dnReport[memIdx].local_status.db_state == INSTANCE_HA_STATE_NEED_REPAIR) {
+                ctx->cond.candiIdx = memIdx;
+                break;
+            }
+        }
+        ArbiCond *cond = &(ctx->cond);
+        const char *str = "[SendFailoverCascade]";
+        if (cond->candiIdx == ctx->memIdx) {
+            SendMsg_t sfMsg = {str, "local promoting"};
+            SendFailoverCascadeMsg(ctx, &sfMsg);
+            g_cascade_failover_count = 0;
+        } else {
+            write_runlog(LOG, "%s, line %d: No valid candidate found for failover (candiIdx=%d, memIdx=%d), "
+                            "g_cascade_failover_count = %d.\n",
+                str, __LINE__, cond->candiIdx, ctx->memIdx, g_cascade_failover_count);
         }
     }
 }
@@ -2321,6 +2429,7 @@ static bool CheckCurNodeIsCascade(DnArbCtx *ctx)
     if (log_min_messages <= DEBUG1) {
         ArbitrateUnkownInstance(ctx, str);
     }
+    arbitrateStandby(ctx, str);
     ChangeRole2CasCade(ctx, str);
     if (ctx->info.lockmode == PROHIBIT_CONNECTION || ctx->info.lockmode == SPECIFY_CONNECTION) {
         SendUnlockMessage(ctx, GetPrimaryTerm(ctx));

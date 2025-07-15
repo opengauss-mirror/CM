@@ -115,6 +115,7 @@ typedef struct DnArbCtx_t {
     StatusInstances staPrim;
     StatusInstances dyPrim;
     StatusInstances dyNorPrim;
+    StatusInstances staNorStandby;
     StatusInstances pendStatus;
     StatusInstances staCasCade;
     StatusInstances dyCascade;

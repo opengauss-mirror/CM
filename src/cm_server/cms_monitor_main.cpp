@@ -383,6 +383,17 @@ static void ReloadParametersFromConfigfile()
     }
     undocumentedVersion = get_uint32_value_from_config(configDir, "upgrade_from", 0);
 
+    char cmsEnableFailoverCascade[10] = {0};
+    get_config_param(configDir, "cms_enable_failover_cascade", cmsEnableFailoverCascade,
+                     sizeof(cmsEnableFailoverCascade));
+    if (!CheckBoolConfigParam(cmsEnableFailoverCascade)) {
+        rcs = strcpy_s(cmsEnableFailoverCascade, sizeof(cmsEnableFailoverCascade), "false");
+        securec_check_errno(rcs, (void)rcs);
+        write_runlog(FATAL, "invalid value for parameter \" cms_enable_failover_cascade \" in %s.\n", configDir);
+    } else {
+        g_cms_enable_failover_cascade = IsBoolCmParamTrue(cmsEnableFailoverCascade) ? true : false;
+    }
+
 #ifdef ENABLE_MULTIPLE_NODES
     write_runlog(LOG,
         "reload cm_server parameters:\n"
@@ -428,7 +439,8 @@ static void ReloadParametersFromConfigfile()
         "cmserver_demote_delay_on_etcd_fault=%d, switch_rto=%d,\n  force_promote=%d, "
         "cluster_starting_aribt_delay=%u, enable_e2e_rto=%u,\n  agent_fault_timeout=%u, "
         "cmserver_set_most_available_sync_delay_times=%u, g_delayArbiTime=%u,\n"
-        "g_clusterArbiTime=%d, wait_static_primary_times=%u, backup_open=%d, upgrade_from=%d.\n",
+        "g_clusterArbiTime=%d, wait_static_primary_times=%u, backup_open=%d, upgrade_from=%d, "
+        "cms_enable_failover_cascade=%u.\n",
         log_min_messages, maxLogFileSize, sys_log_path, g_alarmComponentPath, g_alarmReportInterval,
         instance_heartbeat_timeout, instance_keep_heartbeat_timeout, g_ddbArbicfg.haHeartBeatTimeOut,
         cmserver_self_vote_timeout, g_ddbArbicfg.haStatusInterval, cmserver_ha_connect_timeout,
@@ -440,7 +452,7 @@ static void ReloadParametersFromConfigfile()
         cmserver_demote_delay_on_etcd_fault, switch_rto, force_promote, g_clusterStartingArbitDelay,
         g_enableE2ERto, g_cm_agent_kill_instance_time, g_cm_agent_set_most_available_sync_delay_time,
         g_delayArbiTime, g_clusterArbiTime,
-        g_waitStaticPrimaryTimes, backup_open, undocumentedVersion);
+        g_waitStaticPrimaryTimes, backup_open, undocumentedVersion, g_cms_enable_failover_cascade);
 #endif
 }
 

@@ -425,6 +425,17 @@ void GetCmsParaFromConfig()
     if (g_cm_server_num == CMS_ONE_PRIMARY_ONE_STANDBY) {
         GetTwoNodesArbitrateParams();
     }
+
+    char cmsEnableFailoverCascade[10] = {0};
+    get_config_param(configDir, "cms_enable_failover_cascade", cmsEnableFailoverCascade,
+                     sizeof(cmsEnableFailoverCascade));
+    if (!CheckBoolConfigParam(cmsEnableFailoverCascade)) {
+        rcs = strcpy_s(cmsEnableFailoverCascade, sizeof(cmsEnableFailoverCascade), "false");
+        securec_check_errno(rcs, (void)rcs);
+        write_runlog(FATAL, "invalid value for parameter \" cms_enable_failover_cascade \" in %s.\n", configDir);
+    } else {
+        g_cms_enable_failover_cascade = IsBoolCmParamTrue(cmsEnableFailoverCascade) ? true : false;
+    }
 }
 
 void GetDdbArbiCfg(int32 loadWay)

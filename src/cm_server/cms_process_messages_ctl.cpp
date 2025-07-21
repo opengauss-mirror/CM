@@ -42,16 +42,12 @@ void ProcessCtlToCmSwitchoverMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_switc
     int memberIndex = 0;
     uint32 groupIndex = 0;
     cm_to_ctl_command_ack ackMsg;
-
     getWalrecordMode();
-
-    if (!g_enableWalRecord) {
-        ret = find_node_in_dynamic_configure(switchoverMsg->node, switchoverMsg->instanceId, &groupIndex, &memberIndex);
-        if (ret != 0) {
-            write_runlog(
-                LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchoverMsg->node, switchoverMsg->instanceId);
-           return;
-        }
+    ret = find_node_in_dynamic_configure(switchoverMsg->node, switchoverMsg->instanceId, &groupIndex, &memberIndex);
+    if (ret != 0) {
+        write_runlog(
+            LOG, "can't find the instance(node =%u  instanceid =%u)\n", switchoverMsg->node, switchoverMsg->instanceId);
+        return;
     }
 
     const cm_instance_role_status *instInfo = &g_instance_role_group_ptr[groupIndex].instanceMember[memberIndex];
@@ -2311,14 +2307,31 @@ void ProcessCtlToCmSwitchoverAllMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_sw
     msgBalanceResult.msg_type = MSG_CM_CTL_BALANCE_RESULT_ACK;
     int voteAZIndex = GetVoteAzIndex();
     bool isInVoteAz = false;
+    getWalrecordMode();
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
         (void)pthread_rwlock_wrlock(&(g_instance_group_report_status_ptr[i].lk_lock));
-        const cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
+        cm_instance_report_status *instStatus = &g_instance_group_report_status_ptr[i].instance_status;
         for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             int instanceType = g_instance_role_group_ptr[i].instanceMember[j].instanceType;
             int initRole = g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit;
             uint32 instanceId = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
             isInVoteAz = IsCurInstanceInVoteAz(i, j);
+            if (g_enableWalRecord) {
+                uint32 lockowner = GetLockOwnerInstanceId();
+                uint32 lockownerNodeId = lockowner - RES_INSTANCE_ID_MIN;
+                uint32 nodeId = instanceId - MIN_DN_INST_ID;
+                cm_instance_role_status *instInfo = &g_instance_role_group_ptr[i].instanceMember[j];
+                int localRole = instStatus->data_node_member[j].local_status.local_role;
+                if (initRole == INSTANCE_ROLE_PRIMARY && nodeId != lockownerNodeId) {
+                    SetSwitchoverCmd(&(instStatus->command_member[j]), localRole, instInfo->instanceId,
+                        GetPeerInstId(i, j));
+                    instStatus->command_member[j].time_out = switchoverMsg->wait_seconds;
+                    instStatus->command_member[j].msgProcFlag = recvMsgInfo->msgProcFlag;
+                    SetSendTimes(i, j, switchoverMsg->wait_seconds);
+                    needDoDnNum++;
+                    return;
+                }
+            }
             switch (instanceType) {
                 case INSTANCE_TYPE_GTM: {
                     int conStatus = instStatus->gtm_member[j].local_status.connect_status;

@@ -836,7 +836,7 @@ static int DoSwitchoverAll(const CtlOption *ctx)
             count++;
             write_runlog(LOG, ".");
             sleep(1);
-            if (count > g_waitSeconds) {
+            if (count > DEFAULT_WAIT) {
                 goto done;
             }
         }

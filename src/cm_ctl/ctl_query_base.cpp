@@ -104,6 +104,9 @@ static void PrintClusterStatus(int clusterStatus, bool redistributing, int switc
     }
     if (g_enableWalRecord) {
         (void)fprintf(g_logFilePtr, "enable_walrecord: Yes\n");
+        if (g_wormUsageQuery) {
+            (void)fprintf(g_logFilePtr, "worm_usage      : %d%%\n", g_wormUsage);
+        }
     }
 }
 

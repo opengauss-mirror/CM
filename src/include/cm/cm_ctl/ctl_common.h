@@ -199,6 +199,8 @@ extern DdbConn *g_sess;
 extern TlsAuthPath g_tlsPath;
 extern bool g_isPauseArbitration;
 extern bool g_enableWalRecord;
+extern bool g_wormUsageQuery;
+extern int g_wormUsage;
 
 status_t do_start(void);
 int DoStop(void);

@@ -145,7 +145,7 @@ static void clean_cn_heart_beat(int cmServerCurrentRole, int cm_server_last_role
     }
 }
 
-static void CleanSwitchoverCommand()
+void CleanSwitchoverCommand()
 {
     write_runlog(LOG, "cms change to primary, will clean switchover command.\n");
     for (uint32 i = 0; i < g_dynamic_header->relationCount; ++i) {

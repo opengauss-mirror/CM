@@ -75,6 +75,8 @@ static int JudgeInstanceRole(int instanceType, int member_index, int instance_ro
 static int JudgeDatanodeStatus(uint32 node_id, const char *data_path, int db_state);
 static int JudgeGtmStatus(uint32 node_id, const char *data_path, int gtm_state);
 static void GetClusterMode();
+static bool get_instance_role_groups(dynamicConfigHeader **header_out, dynamic_cms_timeline **timeline_out,
+    cm_instance_role_group **instance_groups_out, uint32 *relation_count_out);
 
 static void SetSwitchoverOper(SwitchoverOper *oper, int32 localRole, uint32 instanceId)
 {
@@ -96,6 +98,32 @@ static void SetSwitchoverOper(SwitchoverOper *oper, int32 localRole, uint32 inst
         datanode_role_int_to_string(oper->localRole), oper->peerRole, datanode_role_int_to_string(oper->peerRole));
 }
 
+int NofityCmsSwitchoverFinished()
+{
+    int ret;
+    ctl_to_cm_finish_switchover finish_switchover_content = {0};
+
+    /* return conn to cm_server */
+    do_conn_cmserver(false, 0);
+    if (CmServer_conn == NULL) {
+        write_runlog(ERROR, "send finish switchover msg to cm_server.\n");
+        return -1;
+    }
+
+    finish_switchover_content.msg_type = (int)MSG_CTL_CM_FINISH_SWITCHOVER;
+    ret = cm_client_send_msg(CmServer_conn, 'C', (char*)&finish_switchover_content, sizeof(finish_switchover_content));
+    if (ret != 0) {
+        write_runlog(ERROR, "send finish switchover msg to cm_server failed.\n");
+        FINISH_CONNECTION((CmServer_conn), -1);
+    }
+
+    (void)sleep(3);
+    write_runlog(DEBUG5, "Finish switchover msg has been processed successfully.\n");
+    CMPQfinish(CmServer_conn);
+    CmServer_conn = NULL;
+    return 0;
+}
+
 static int DoSwitchoverBase(const CtlOption *ctx)
 {
     int ret;
@@ -115,12 +143,37 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     cm_to_ctl_instance_status instStatusPtr = {0};
     cm_switchover_incomplete_msg *switchoverIncompletePtr = NULL;
     SwitchoverOper oper;
+    uint32 initPrimaryIndex = -1;
+
     if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
         oper = {INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_STANDBY};
     } else if (backup_open == CLUSTER_STREAMING_STANDBY) {
         oper = {INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_STANDBY};
     } else {
         oper = {INSTANCE_ROLE_PRIMARY, INSTANCE_ROLE_STANDBY};
+    }
+
+    if (g_enableWalRecord) {
+        dynamicConfigHeader *header = NULL;
+        dynamic_cms_timeline *timeline = NULL;
+        cm_instance_role_group *g_instance_role_group_ptr = NULL;
+        uint32 relation_count = 0;
+        if (!get_instance_role_groups(&header, &timeline, &g_instance_role_group_ptr, &relation_count)) {
+            write_runlog(ERROR,
+                "Can not switchover right now.!\n\n"
+                "HINT: Can not get init role from  clusterDynamicConfig.\n"
+                "please check clusterDynamicConfig.\n");
+            return -1;
+        }
+        for (uint32 i = 0; i < relation_count; i++) {
+            for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
+                int initRole = g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit;
+                if (initRole == INSTANCE_ROLE_PRIMARY) {
+                    initPrimaryIndex = g_instance_role_group_ptr[i].instanceMember[j].instanceId - MIN_DN_INST_ID;
+                    break;
+                }
+            }
+        }
     }
 
     // return conn to cm_server
@@ -135,9 +188,19 @@ static int DoSwitchoverBase(const CtlOption *ctx)
 
     write_runlog(DEBUG1, "send switchover msg to cms, nodeId:%u, dataPath:%s.\n", ctx->comm.nodeId, ctx->comm.dataPath);
 
-    if (FindInstanceIdAndType(ctx->comm.nodeId, ctx->comm.dataPath, &instanceId, &instanceType) != 0) {
-        write_runlog(ERROR, "can't find the node_id:%u, data_path:%s.\n", ctx->comm.nodeId, ctx->comm.dataPath);
-        return -1;
+    if (g_enableWalRecord && ctx->switchover.switchoverAll) {
+        if (FindInstanceIdAndType(initPrimaryIndex, ctx->comm.dataPath, &instanceId, &instanceType) != 0) {
+            write_runlog(ERROR, "can't find the initPrimaryIndex:%u, data_path:%s.\n",
+                initPrimaryIndex, ctx->comm.dataPath);
+            return -1;
+        }
+    }
+
+    if (!ctx->switchover.switchoverAll) {
+        if (FindInstanceIdAndType(ctx->comm.nodeId, ctx->comm.dataPath, &instanceId, &instanceType) != 0) {
+            write_runlog(ERROR, "can't find the node_id:%u, data_path:%s.\n", ctx->comm.nodeId, ctx->comm.dataPath);
+            return -1;
+        }
     }
 
     if (!wait_seconds_set) {
@@ -151,6 +214,10 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     }
 
     switchoverMsg.node = ctx->comm.nodeId;
+    if (g_enableWalRecord && ctx->switchover.switchoverAll) {
+        switchoverMsg.node = initPrimaryIndex;
+    }
+
     switchoverMsg.instanceId = instanceId;
     switchoverMsg.wait_seconds = g_waitSeconds;
 
@@ -246,7 +313,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
 
         if (g_enableWalRecord) {
             uint32 wrLockOwner  = GetLockOwnerInstanceId();
-            if (wrLockOwner == RES_INSTANCE_ID_MIN + ctx->comm.nodeId) {
+            if (wrLockOwner == RES_INSTANCE_ID_MIN + switchoverMsg.node) {
                 success = true;
             }
         }
@@ -305,6 +372,12 @@ static int DoSwitchoverBase(const CtlOption *ctx)
         write_runlog(LOG, "%s\n", inCompleteMsg);
     } else {
         (void)sleep(5);
+        if (g_enableWalRecord) {
+            int ret = NofityCmsSwitchoverFinished();
+            if (ret != 0) {
+                write_runlog(ERROR, "failed to notify switchover finished.\n");
+            }
+        }
         write_runlog(LOG, "switchover successfully.\n");
     }
     FINISH_CONNECTION((CmServer_conn), 0);
@@ -530,7 +603,7 @@ static int BalanceResultReq(int &timePass, bool waitBalance, int &sendCheckCount
     return 0;
 }
 
-bool get_instance_role_groups(dynamicConfigHeader **header_out, dynamic_cms_timeline **timeline_out,
+static bool get_instance_role_groups(dynamicConfigHeader **header_out, dynamic_cms_timeline **timeline_out,
     cm_instance_role_group **instance_groups_out, uint32 *relation_count_out)
 {
     int fd = -1;
@@ -620,39 +693,13 @@ static int DoSwitchoverAll(const CtlOption *ctx)
     bool waitBalance = false;
     char *receiveMsg = NULL;
     char inCompleteMsg[CM_MSG_ERR_INFORMATION_LENGTH] = {0};
-    int count = 0;
+
     cm_msg_type* msgType = NULL;
     ctl_to_cm_switchover switchoverMsg = {0};
     cm_to_ctl_command_ack *ackMsg = NULL;
     cm_to_ctl_balance_result *msgBalanceResult = NULL;
     cm_to_ctl_balance_check_ack *msgBalanceCheckAck = NULL;
     cm_switchover_incomplete_msg *incompleteSwitchoverMsg = NULL;
-    getWalrecordMode();
-
-    int initPrimaryIndex = -1;
-
-    if (g_enableWalRecord) {
-        dynamicConfigHeader *header = NULL;
-        dynamic_cms_timeline *timeline = NULL;
-        cm_instance_role_group *g_instance_role_group_ptr = NULL;
-        uint32 relation_count = 0;
-        if (!get_instance_role_groups(&header, &timeline, &g_instance_role_group_ptr, &relation_count)) {
-            write_runlog(ERROR,
-                "Can not switchover right now.!\n\n"
-                "HINT: Can not get init role from  clusterDynamicConfig.\n"
-                "please check clusterDynamicConfig.\n");
-            return -1;
-        }
-        for (uint32 i = 0; i < relation_count; i++) {
-            for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-                int initRole = g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit;
-                if (initRole == INSTANCE_ROLE_PRIMARY) {
-                    initPrimaryIndex = g_instance_role_group_ptr[i].instanceMember[j].instanceId - MIN_DN_INST_ID;
-                    break;
-                }
-            }
-        }
-    }
 
     // return conn to cm_server
     do_conn_cmserver(false, 0);
@@ -832,15 +879,6 @@ static int DoSwitchoverAll(const CtlOption *ctx)
             }
         }
 
-        if (g_enableWalRecord) {
-            count++;
-            write_runlog(LOG, ".");
-            sleep(1);
-            if (count > DEFAULT_WAIT) {
-                goto done;
-            }
-        }
-
         ret = BalanceResultReq(timePass, waitBalance, sendCheckCount);
         if (ret < 0) {
             return ret;
@@ -849,20 +887,6 @@ static int DoSwitchoverAll(const CtlOption *ctx)
 
 done:
     (void)sleep(5);
-    if (g_enableWalRecord) {
-        CMPQfinish(CmServer_conn);
-        CmServer_conn = NULL;
-        count = 0;
-        uint32 lockowner = GetLockOwnerInstanceId();
-        int currentPrimaryIndex = lockowner - RES_INSTANCE_ID_MIN;
-        if (currentPrimaryIndex == initPrimaryIndex) {
-            write_runlog(LOG, "switchover successfully.\n");
-            return 0;
-        } else {
-            write_runlog(LOG, "switchover failed.\n");
-            return 1;
-        }
-    }
     write_runlog(LOG, "switchover successfully.\n");
     CMPQfinish(CmServer_conn);
     CmServer_conn = NULL;
@@ -1708,13 +1732,14 @@ static bool CheckDnMostAvaiSync()
 int DoSwitchover(const CtlOption *ctx)
 {
     GetClusterMode();
+    getWalrecordMode();
     // if primary dn most_available_sync is on, can not do switchover
     if (CheckDnMostAvaiSync()) {
         write_runlog(ERROR,
             "primary dn most_available_sync is on, can not do switchover.\n");
         return -1;
     }
-    if (ctx->switchover.switchoverAll) {
+    if (ctx->switchover.switchoverAll && !g_enableWalRecord) {
         if (switchover_all_quick && g_clusterType != V3SingleInstCluster) {
             return DoSwitchoverAllQuick();
         }

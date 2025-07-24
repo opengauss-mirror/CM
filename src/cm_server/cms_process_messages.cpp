@@ -1571,6 +1571,11 @@ static void MsgFinishRedoCheck(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc
     process_finish_redo_check_message(recvMsgInfo);
 }
 
+static void MsgFinishSwitchover(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    process_finish_switchover_message(recvMsgInfo);
+}
+
 static void MsgDiskUsageStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     AgentToCmDiskUsageStatusReport *agentToCmDiskUsagePtr;
@@ -1841,6 +1846,7 @@ static void InitCmCtlCmdProc()
     g_cmdProc[MSG_CTL_CM_NODE_DISK_STATUS_REQ] = MsgShowStatus;
     g_cmdProc[MSG_CTL_CM_FLOAT_IP_REQ] = MsgShowStatus;
     g_cmdProc[MSG_CTL_CM_NODE_KICK_COUNT] = MsgKickStatQuery;
+    g_cmdProc[MSG_CTL_CM_FINISH_SWITCHOVER] = MsgFinishSwitchover;
 }
 
 static void InitCmAgentCmdProc()

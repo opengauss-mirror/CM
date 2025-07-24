@@ -2316,22 +2316,6 @@ void ProcessCtlToCmSwitchoverAllMsg(MsgRecvInfo* recvMsgInfo, const ctl_to_cm_sw
             int initRole = g_instance_role_group_ptr[i].instanceMember[j].instanceRoleInit;
             uint32 instanceId = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
             isInVoteAz = IsCurInstanceInVoteAz(i, j);
-            if (g_enableWalRecord) {
-                uint32 lockowner = GetLockOwnerInstanceId();
-                uint32 lockownerNodeId = lockowner - RES_INSTANCE_ID_MIN;
-                uint32 nodeId = instanceId - MIN_DN_INST_ID;
-                cm_instance_role_status *instInfo = &g_instance_role_group_ptr[i].instanceMember[j];
-                int localRole = instStatus->data_node_member[j].local_status.local_role;
-                if (initRole == INSTANCE_ROLE_PRIMARY && nodeId != lockownerNodeId) {
-                    SetSwitchoverCmd(&(instStatus->command_member[j]), localRole, instInfo->instanceId,
-                        GetPeerInstId(i, j));
-                    instStatus->command_member[j].time_out = switchoverMsg->wait_seconds;
-                    instStatus->command_member[j].msgProcFlag = recvMsgInfo->msgProcFlag;
-                    SetSendTimes(i, j, switchoverMsg->wait_seconds);
-                    needDoDnNum++;
-                    return;
-                }
-            }
             switch (instanceType) {
                 case INSTANCE_TYPE_GTM: {
                     int conStatus = instStatus->gtm_member[j].local_status.connect_status;

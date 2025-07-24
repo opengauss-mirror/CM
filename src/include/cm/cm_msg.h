@@ -277,6 +277,7 @@ typedef enum CM_MessageType_st {
     MSG_CTL_CM_NODE_KICK_COUNT_ACK = 189,
     MSG_AGENT_CM_WR_FLOAT_IP = 190,
     MSG_CMS_NOTIFY_WR_FLOAT_IP = 191,
+    MSG_CTL_CM_FINISH_SWITCHOVER = 192,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -477,6 +478,10 @@ typedef struct cm_to_ctl_finish_redo_check_ack_st {
 typedef struct ctl_to_cm_finish_redo_st {
     int msg_type;
 } ctl_to_cm_finish_redo;
+
+typedef struct ctl_to_cm_finish_switchover_st {
+    int msg_type;
+} ctl_to_cm_finish_switchover;
 
 typedef enum SwitchStepEn {
     UNKNOWN_STEP = 0,

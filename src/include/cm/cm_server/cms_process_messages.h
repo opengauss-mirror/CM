@@ -145,6 +145,7 @@ void SetAgentDataReportMsg(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer);
 void ProcessStopArbitrationMessage(void);
 void process_finish_redo_message(MsgRecvInfo* recvMsgInfo);
 void process_finish_redo_check_message(MsgRecvInfo* recvMsgInfo);
+void process_finish_switchover_message(MsgRecvInfo* recvMsgInfo);
 void ProcessDnBarrierinfo(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer);
 void ProcessCnBarrierinfo(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer);
 void FlushCmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType);

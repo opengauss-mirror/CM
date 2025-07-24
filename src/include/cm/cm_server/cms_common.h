@@ -61,4 +61,5 @@ void CmsSyncStandbyMode();
 bool EnableShareDisk();
 void getWalrecordMode();
 uint32 GetLockOwnerInstanceId();
+void CleanSwitchoverCommand();
 #endif

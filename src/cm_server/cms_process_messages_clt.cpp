@@ -1060,6 +1060,11 @@ void process_finish_redo_message(MsgRecvInfo* recvMsgInfo)
     (void)RespondMsg(recvMsgInfo, 'S', (char *)(&msgFinishRedoAck), sizeof(msgFinishRedoAck));
 }
 
+void process_finish_switchover_message(MsgRecvInfo* recvMsgInfo)
+{
+    CleanSwitchoverCommand();
+}
+
 void FlushCmToAgentMsg(MsgRecvInfo* recvMsgInfo, int msgType)
 {
     CmToAgentMsg(recvMsgInfo, msgType);

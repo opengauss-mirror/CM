@@ -83,6 +83,7 @@ bool g_ipQuery = false;
 bool g_availabilityZoneCommand = false;
 bool switchover_all_quick = false;
 bool g_kickStatQuery = false;
+bool g_wormUsageQuery = false;
 int do_force = 0;
 int g_fencedUdfQuery = 0;
 int shutdown_level = 0;  // cm_ctl stop single instance, single node or all nodes
@@ -115,6 +116,7 @@ char *g_cmsPromoteMode = NULL;
 
 bool g_gtmBalance = true;
 bool g_datanodesBalance = true;
+int g_wormUsage = -1;
 cm_to_ctl_central_node_status g_centralNode;
 
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
@@ -201,7 +203,7 @@ const int RES_LIST_INST_INPUT = 30;
 const int ErrorCode = -2;
 
 // short and long Options corresponds to CtlCommand.Need to change the options here, if options of the commands are added or modified
-static const char* g_allowedOptions = "aAb:B:cCD:dE:fFgil:I:j:k:L:m:M:n:NP:OpqrRsSt:T:vwxz:";
+static const char* g_allowedOptions = "aAb:B:cCD:dE:fFgil:I:j:k:L:m:M:n:NP:OpqrRsSt:T:uvwxz:";
 static const vector<vector<int>> g_allowedActionOptions = {
         {}, // no command
         { 'L' }, // "restart" command
@@ -210,7 +212,8 @@ static const vector<vector<int>> g_allowedActionOptions = {
         { 'z', 'n', 'D', 'q', 'f', 'a', 'A', 't' }, // "switchover" command
         {'c', 'n', 'D', 't', 'f', 'b', 'j'}, // "build" command
         {}, // CM_REMOVE_COMMAND -- no corresponding commands need user to input in the commandline
-        {'z', 'n', 'D', 'R', 'l', 'v', 'w', 'C', 's', 'S', 'd', 'i', 'F', 'L', 'x', 'p', 'r', 't', 'g', 'O', MINORITY_AZ}, // "query" command
+        {'z', 'n', 'D', 'R', 'l', 'v', 'w', 'C', 's', 'S', 'd', 'i', 'F',
+            'L', 'x', 'p', 'r', 't', 'g', 'O', 'u', MINORITY_AZ}, // "query" command
         {'I', 'n', 'k', 1, 2, 3, CMS_P_MODE, CM_SET_PARAM, CM_AGENT_MODE, CM_SERVER_MODE}, // "set" command
         {1, 2, 3}, // "get" command
         {}, // CM_STARTCM_COMMAND -- no corresponding commands need user to input in the commandline
@@ -1959,6 +1962,9 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
         case 'O':
             g_kickStatQuery = true;
             break;
+        case 'u':
+            g_wormUsageQuery = true;
+            break;
 #ifdef ENABLE_MULTIPLE_NODES
         case 'L':
             MatchCmdArgL();
@@ -2207,6 +2213,36 @@ static void DoRestartCommand(void)
 }
 #endif
 
+int GetWormUsage()
+{
+    FILE *fp;
+    char buffer[256];
+    int usage = -1;
+
+    fp = popen("wrcmd usage", "r");
+    if (fp == NULL) {
+        perror("Failed to run command");
+        return usage;
+    }
+
+    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+        char *usage_str = strstr(buffer, "Usage:");
+        if (usage_str != NULL) {
+            char *percent_ptr = usage_str + strlen("Usage:");
+            while (*percent_ptr && !isdigit(*percent_ptr)) {
+                percent_ptr++;
+            }
+            if (*percent_ptr) {
+                usage = atoi(percent_ptr);
+                break;
+            }
+        }
+    }
+
+    pclose(fp);
+    return usage;
+}
+
 static void DoQueryCommand(int *status)
 {
     if (backup_process_query) {
@@ -2214,6 +2250,9 @@ static void DoQueryCommand(int *status)
     } else if (g_kickStatQuery) {
         *status = DoKickOutStatQuery();
     } else {
+        if (g_enableWalRecord && g_wormUsageQuery) {
+            g_wormUsage = GetWormUsage();
+        }
         *status = do_query();
     }
 

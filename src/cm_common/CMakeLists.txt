@@ -38,5 +38,6 @@ endif ()
 
 install_static_libs(${CJSON_DIRECTORY_LIB} "libcjson.so*")
 
+install(FILES ${SSL_DIRECTORY_BIN}/openssl DESTINATION bin)
 install_static_libs(${SSL_DIRECTORY_LIB} "libcrypto.so*")
 install_static_libs(${SSL_DIRECTORY_LIB} "libssl.so*")

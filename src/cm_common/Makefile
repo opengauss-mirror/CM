@@ -37,6 +37,8 @@ clean:
 install:all
 	mkdir -p $(DESTDIR)/share/config
 	cp -rf ${CJSON_DIRECTORY_LIB}/libcjson.so* $(DESTDIR)/lib
+	
+	cp -rf ${SSL_DIRECTORY_BIN}/openssl $(DESTDIR)/bin
 	cp -rf ${SSL_DIRECTORY_LIB}/libcrypto.so* $(DESTDIR)/lib
 	cp -rf ${SSL_DIRECTORY_LIB}/libssl.so* $(DESTDIR)/lib
 

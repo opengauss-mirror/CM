@@ -124,10 +124,14 @@ Port* ConnCreate(int serverFd)
 
 void set_socket_timeout(const Port* my_port, int timeout)
 {
+    if (my_port == NULL) {
+        write_runlog(ERROR, "my_port is null.\n");
+        return;
+    }
     struct timeval t = {timeout, 0};
     socklen_t len = sizeof(struct timeval);
     if (setsockopt(my_port->sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, len) < 0) {
-        write_runlog(LOG, "setsockopt set SO_RCVTIMEO=%d failed.", timeout);
+        write_runlog(LOG, "setsockopt set SO_RCVTIMEO=%d failed.\n", timeout);
     }
 }
 
@@ -290,7 +294,7 @@ CM_Connection* GetTempConnection(uint64 connSeq)
 int cm_server_flush_msg(CM_Connection* con)
 {
     int ret = 0;
-    if (con != NULL && con->fd >= 0) {
+    if (con != NULL && con->fd >= 0 && con->port != NULL) {
         ret = pq_flush(con->port);
         if (ret != 0) {
             write_runlog(ERROR, "pq_flush failed, return ret=%d\n", ret);

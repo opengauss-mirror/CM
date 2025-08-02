@@ -84,11 +84,11 @@ static void GetMaxFloatIpNameLen(CtlFloatIpHeadSize *floatIpLen)
                 floatIpLen->floatIpNameText.len = CM_MAX(len, floatIpLen->floatIpNameText.len);
 
                 // base_ip
-                len = (uint32)strlen(dnFloatIp->baseIp[i]);
+                len = (uint32)strlen(dnFloatIp->baseIp[k]);
                 floatIpLen->baseIpText.len = CM_MAX(len, floatIpLen->baseIpText.len);
 
                 // float_ip
-                len = (uint32)strlen(dnFloatIp->dnFloatIp[i]);
+                len = (uint32)strlen(dnFloatIp->dnFloatIp[k]);
                 floatIpLen->floatIpText.len = CM_MAX(len, floatIpLen->floatIpText.len);
             }
         }

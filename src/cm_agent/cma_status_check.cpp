@@ -2276,7 +2276,7 @@ void CalculateDiskIoUtil(DisIoStatInfo* disIoStatInfo, uint64 curTime, uint64 io
                          uint64 readCount, uint64 writeCount)
 {
     uint64 rwCount = (readCount + writeCount) - (disIoStatInfo->lastReadCount + disIoStatInfo->lastWriteCount);
-    rwCount = rwCount == 0 ? 1 : rwCount;
+    rwCount = (rwCount == 0) ? 1 : rwCount;
     if ((disIoStatInfo->lastCheckTime == 0) || (disIoStatInfo->lastCheckTime >= curTime)
         || (disIoStatInfo->lastIoTime >= ioTimeMs) || (rwCount < 0)) {
         if (disIoStatInfo->lastCheckTime >= curTime) {

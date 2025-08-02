@@ -139,7 +139,7 @@ static int GetChildCmdResult(int status)
 int ExecuteCmd(const char *command, struct timeval timeout)
 {
 #ifndef WIN32
-    pid_t pid;
+    pid_t pid = -1;
     pid_t child = 0;
     struct sigaction ign = {};
     struct sigaction intact = {};
@@ -265,7 +265,7 @@ int get_config_param(const char *config_file, const char *srcParam, char *destPa
         subStr = strtok_r(subStr, "\r", &saveptr1);
 
         char *trimStr = trim(subStr);
-        if (strcmp(trimStr, "''") == 0) {
+        if (trimStr != NULL && strcmp(trimStr, "''") == 0) {
             trimStr = "";
         }
 

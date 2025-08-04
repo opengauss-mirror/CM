@@ -39,6 +39,7 @@ install:all
 	cp -rf ${CJSON_DIRECTORY_LIB}/libcjson.so* $(DESTDIR)/lib
 	
 	cp -rf ${SSL_DIRECTORY_BIN}/openssl $(DESTDIR)/bin
+	chmod 700 $(DESTDIR)/bin/openssl
 	cp -rf ${SSL_DIRECTORY_LIB}/libcrypto.so* $(DESTDIR)/lib
 	cp -rf ${SSL_DIRECTORY_LIB}/libssl.so* $(DESTDIR)/lib
 

@@ -100,6 +100,7 @@ static void UsageHelp(const char *projectName)
     (void)printf(_("  %s show\n"), projectName);
     (void)printf(_("  %s pause\n"), projectName);
     (void)printf(_("  %s resume\n"), projectName);
+    (void)printf(_("  %s rack\n"), projectName);
 }
 
 static void CommonHelp()

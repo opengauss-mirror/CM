@@ -273,6 +273,8 @@ int DoRack()
     ClusterInfo cluster;
     ret = MatrixMemFuncInit(g_matrixMemLibPath);
     if (ret != MATRIX_MEM_SUCCESS) {
+        write_runlog(ERROR, "Failed to initialize matrix memory functions, error code: %d\n."
+                            "It may means that you are not on a specific environment", ret);
         return 1;
     }
 

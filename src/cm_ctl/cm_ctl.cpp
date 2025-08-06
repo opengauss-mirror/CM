@@ -1972,7 +1972,9 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
 #endif
         case 'B':
             FREE_AND_RESET(g_bin_name);
-            g_bin_name = xstrdup(optarg);
+            if (optarg != NULL) {
+                g_bin_name = xstrdup(optarg);
+            }
             break;
         case 'j':
             if (optarg != NULL) {
@@ -1987,13 +1989,15 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
             break;
         case 'T':
             FREE_AND_RESET(g_bin_path);
-            g_bin_path = xstrdup(optarg);
+            if (optarg != NULL) {
+                g_bin_path = xstrdup(optarg);
+            }
             break;
         case 'r':
             g_paralleRedoState = true;
             break;
         case 'k':
-            if (GetSetParameterAndValue(optarg, &ctlCtx->guc) == CM_ERROR) {
+            if (optarg != NULL && GetSetParameterAndValue(optarg, &ctlCtx->guc) == CM_ERROR) {
                 exit(1);
             }
             break;
@@ -2068,25 +2072,37 @@ static void ParseCmdArgsCore(int cmd, bool *setDataPath, CtlOption *ctlCtx)
             ctlCtx->resOpt.mode = RES_OP_CHECK;
             break;
         case RES_NAME_INPUT:
-            ctlCtx->resOpt.resName = xstrdup(optarg);
+            if (optarg != NULL) {
+                ctlCtx->resOpt.resName = xstrdup(optarg);
+            }
             break;
         case RES_ATTR_INPUT:
-            ctlCtx->resOpt.resAttr = xstrdup(optarg);
+            if (optarg != NULL) {
+                ctlCtx->resOpt.resAttr = xstrdup(optarg);
+            }
             break;
         case RES_ADD_INST_INPUT:
-            ctlCtx->resOpt.inst.instName = xstrdup(optarg);
-            ctlCtx->resOpt.inst.mode = RES_OP_ADD;
+            if (optarg != NULL) {
+                ctlCtx->resOpt.inst.instName = xstrdup(optarg);
+                ctlCtx->resOpt.inst.mode = RES_OP_ADD;
+            }
             break;
         case RES_DEL_INST_INPUT:
-            ctlCtx->resOpt.inst.instName = xstrdup(optarg);
-            ctlCtx->resOpt.inst.mode = RES_OP_DEL;
+            if (optarg != NULL) {
+                ctlCtx->resOpt.inst.instName = xstrdup(optarg);
+                ctlCtx->resOpt.inst.mode = RES_OP_DEL;
+            }
             break;
         case RES_EDIT_INST_INPUT:
-            ctlCtx->resOpt.inst.instName = xstrdup(optarg);
-            ctlCtx->resOpt.inst.mode = RES_OP_EDIT;
+            if (optarg != NULL) {
+                ctlCtx->resOpt.inst.instName = xstrdup(optarg);
+                ctlCtx->resOpt.inst.mode = RES_OP_EDIT;
+            }
             break;
         case RES_INST_ATTR_INPUT:
-            ctlCtx->resOpt.inst.instAttr = xstrdup(optarg);
+            if (optarg != NULL) {
+                ctlCtx->resOpt.inst.instAttr = xstrdup(optarg);
+            }
             break;
         case RES_LIST:
             ctlCtx->resOpt.mode = RES_OP_LIST;

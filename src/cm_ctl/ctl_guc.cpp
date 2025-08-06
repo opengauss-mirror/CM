@@ -48,6 +48,10 @@ static status_t CheckGucOption(const GucOption &gucCtx);
 
 static inline void SkipSpace(char *&ptr)
 {
+    if (ptr == NULL) {
+        write_runlog(ERROR, "ptr is NULL.\n");
+        return;
+    }
     while (isspace((unsigned char)*ptr)) {
         ++ptr;
     }
@@ -351,6 +355,9 @@ static void GetRemoteGucCommand(const CtlOption *ctx, char *cmd, size_t cmdLen)
 static void PrintOneParameterAndValue(char *line)
 {
     char *ptr = line;
+    if (line == NULL) {
+        return;
+    }
     string parameter;
     string value;
     

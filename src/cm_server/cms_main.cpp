@@ -68,8 +68,8 @@ static int ServerListenSocket[MAXLISTEN] = {0};
 int cm_server_send_msg(CM_Connection* con, char msgtype, const char* s, size_t len, int log_level)
 {
     int ret = 0;
-    if (con != NULL && con->fd >= 0) {
-        if (con->port == NULL || con->port->remote_type == CM_CTL) {
+    if (con != NULL && con->fd >= 0 && con->port != NULL) {
+        if (con->port->remote_type == CM_CTL) {
             log_level = DEBUG1;
         }
         if (msgtype == 'S') {

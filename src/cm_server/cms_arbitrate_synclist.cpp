@@ -280,9 +280,13 @@ static bool IsDoGsGucFlag(uint32 groupIndex)
 
 static bool CompareDnOnlineWithExpectSyncList(const DatanodeDynamicStatus *statusDn, const DatanodeSyncList *syncList)
 {
+    if (statusDn == NULL || syncList == NULL) {
+        return false;
+    }
     if (statusDn->count != syncList->count) {
         return false;
     }
+
     for (int i = 0; i < statusDn->count; ++i) {
         if (statusDn->dnStatus[i] != syncList->dnSyncList[i]) {
             return false;

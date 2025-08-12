@@ -798,7 +798,7 @@ static const char *ResStatIntToStr(uint32 status, uint32 isWork)
 
 uint32 GetLockOwnerInstanceId()
 {
-    const char* target_lock = "wr cm lock";
+    const char* target_lock = "gr cm lock";
     uint32 ownerInstanceId = INVALID_INSTANCE_ID;
     bool found_lock = false;
 

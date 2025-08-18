@@ -179,6 +179,8 @@ int CM_enlargeStringInfo(CM_StringInfo str, int needed)
             FREE_AND_RESET(str->data);
             str->maxlen = 0;
         }
+        write_runlog(ERROR, "enlarge string info malloc failed, out of memory.\n");
+        return -1;
     }
     return 0;
 }

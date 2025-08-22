@@ -50,7 +50,7 @@ typedef struct CM_StringInfoData {
 
 typedef CM_StringInfoData* CM_StringInfo;
 
-#define CM_MaxAllocSize ((Size)0x3fffffff) /* 1 gigabyte - 1 */
+#define CM_MaxAllocSize ((Size)(70 * 1024)) /* CM_MSG_MAX_LENGTH */
 
 /*------------------------
  * There are two ways to create a StringInfo object initially:

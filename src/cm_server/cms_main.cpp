@@ -47,6 +47,7 @@ typedef struct unauth_connection_t {
 } unauth_connection;
 
 static unauth_connection* g_unauth_conn_list = NULL;
+static int g_unauthConnCount = 0;
 volatile sig_atomic_t got_stop = 0;
 volatile sig_atomic_t g_gotParameterReload = 0;
 volatile sig_atomic_t g_SetReplaceCnStatus = 0;
@@ -1234,7 +1235,7 @@ static void abort_unauthen_connection(int epollfd, bool all)
             } else {
                 g_unauth_conn_list = cur->next;
             }
-
+            g_unauthConnCount--;
             /* abort this connection */
             EventDel(epollfd, cur->conn);
             write_runlog(LOG, "connection TIMEOUT abort\n");
@@ -1770,6 +1771,7 @@ static void remove_unauthen_connection(const CM_Connection* conn)
             } else {
                 g_unauth_conn_list = cur->next;
             }
+            g_unauthConnCount--;
             free(cur);
             /* it is sole, stop it. */
             break;
@@ -1885,6 +1887,9 @@ static CM_Connection* makeConnection(int fd, Port* port)
 
 static bool add_unauthen_connection(CM_Connection* conn)
 {
+    if (g_unauthConnCount > MAX_UNAUTH_CONN) {
+        return false;
+    }
     unauth_connection* tmp = (unauth_connection*)malloc(sizeof(unauth_connection));
 
     if (tmp == NULL) {
@@ -1894,6 +1899,7 @@ static bool add_unauthen_connection(CM_Connection* conn)
     tmp->conn = conn;
     tmp->next = g_unauth_conn_list;
     g_unauth_conn_list = tmp;
+    g_unauthConnCount++;
 
     return true;
 }

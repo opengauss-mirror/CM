@@ -83,12 +83,14 @@ static void SetSwitchoverOper(SwitchoverOper *oper, int32 localRole, uint32 inst
     if (localRole == INSTANCE_ROLE_STANDBY) {
         if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
             oper->localRole = INSTANCE_ROLE_MAIN_STANDBY;
+            oper->peerRole = INSTANCE_ROLE_STANDBY;
         } else if (backup_open == CLUSTER_STREAMING_STANDBY) {
             oper->localRole = INSTANCE_ROLE_MAIN_STANDBY;
+            oper->peerRole = INSTANCE_ROLE_CASCADE_STANDBY;
         } else {
             oper->localRole = INSTANCE_ROLE_PRIMARY;
+            oper->peerRole = INSTANCE_ROLE_STANDBY;
         }
-        oper->peerRole = INSTANCE_ROLE_STANDBY;
     } else if (localRole == INSTANCE_ROLE_CASCADE_STANDBY) {
         oper->localRole = INSTANCE_ROLE_STANDBY;
         oper->peerRole = INSTANCE_ROLE_CASCADE_STANDBY;
@@ -148,7 +150,7 @@ static int DoSwitchoverBase(const CtlOption *ctx)
     if (g_ssDoubleClusterMode == SS_DOUBLE_STANDBY) {
         oper = {INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_STANDBY};
     } else if (backup_open == CLUSTER_STREAMING_STANDBY) {
-        oper = {INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_STANDBY};
+        oper = {INSTANCE_ROLE_MAIN_STANDBY, INSTANCE_ROLE_CASCADE_STANDBY};
     } else {
         oper = {INSTANCE_ROLE_PRIMARY, INSTANCE_ROLE_STANDBY};
     }

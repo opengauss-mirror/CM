@@ -393,6 +393,16 @@ static void checkMesSslCertExpire()
     write_runlog(LOG, "check mes ssl cert expire time done.\n");
 }
 
+#ifdef ENABLE_XALARMD
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <xalarm/register_xalarm.h>
+#ifdef __cplusplus
+}
+#endif
+#endif
+
 void CmaRhbUnInit()
 {
     g_exitFlag = true;
@@ -400,6 +410,15 @@ void CmaRhbUnInit()
     write_runlog(LOG, "Got exit, CMS Conn Thread is done!\n");
     (void)pthread_join(g_rhbThread, NULL);
     write_runlog(LOG, "Got exit, Rhb UnInit is done!\n");
+
+#ifdef ENABLE_XALARMD
+    // unRegister xalarm
+    if (g_xalarmClientId >= 0) {
+        xalarm_UnRegister(g_xalarmClientId);
+        write_runlog(LOG, "xalarm unregister success, client id is %d\n", g_xalarmClientId);
+        g_xalarmClientId = -1;
+    }
+#endif
 }
 
 void *CmaRhbMain(void *args)

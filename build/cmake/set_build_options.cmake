@@ -47,6 +47,11 @@ if (ENABLE_LIBPQ)
     add_definitions(-D ENABLE_LIBPQ)
 endif()
 
+if (ENABLE_XALARMD)
+    message("ENABLE_XALARMD is on!")
+    add_definitions(-D ENABLE_XALARMD)
+endif()
+
 set(GCC_VERSION $ENV{GCC_VERSION})
 if ("x${GCC_VERSION}" STREQUAL "x")
     set(GCC_VERSION "7.3.0")

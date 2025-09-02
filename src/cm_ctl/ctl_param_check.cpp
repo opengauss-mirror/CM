@@ -38,6 +38,7 @@ const char *g_cmaParamInfo[] = {
     "disk_check_timeout|int|0,2147483647|NULL|NULL|",
     "disk_check_interval|int|0,2147483647|NULL|NULL|",
     "disk_check_buffer_size|int|0,2147483647|NULL|NULL|",
+    "enable_xalarmd_slow_disk_check|bool|0,0|NULL|NULL|",
     "enable_log_compress|bool|0,0|NULL|NULL|",
     "enable_vtable|bool|0,0|NULL|NULL|",
     "enable_ssl|bool|0,0|NULL|NULL|",

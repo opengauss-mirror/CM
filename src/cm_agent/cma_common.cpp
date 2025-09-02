@@ -458,7 +458,7 @@ void ReloadParametersFromConfigfile()
         "  log_threshold_check_interval=%u, log_max_size=%ld, log_max_count=%u, log_saved_days=%u, "
         "upgrade_from=%u,\n  enable_cn_auto_repair=%s, enable_log_compress=%s, security_mode=%d,\n"
         "  incremental_build=%d, unix_socket_directory=%s, disk_check_timeout=%u, disk_check_interval=%u, \n"
-        "disk_check_buffer_size=%u.\n"
+        "disk_check_buffer_size=%u, enable_xalarmd_slow_disk_check=%d.\n"
 #ifndef ENABLE_MULTIPLE_NODES
         "enable_e2e_rto=%u, disaster_recovery_type=%d, environment_threshold=%s,\n"
         "  db_service_vip=%s, enable_fence_dn=%s, ss_double_cluster_mode=%d, agent_backup_open=%d\n",
@@ -494,6 +494,7 @@ void ReloadParametersFromConfigfile()
         GetDiskCheckTimeout(),
         GetDiskCheckInterval(),
         GetDiskCheckBufferSize(),
+        g_enableXalarmdFeature,
 #ifndef ENABLE_MULTIPLE_NODES
         g_enableE2ERto,
         g_disasterRecoveryType,

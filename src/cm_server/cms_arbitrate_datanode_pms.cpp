@@ -1782,7 +1782,7 @@ static bool IsInstanceNoCmd(const DnArbCtx *ctx, const char *str)
 
 static void SendSwitchoverMessage(const DnArbCtx *ctx, int32 memIdx, const char *str)
 {
-    if (IsMaintenanceModeDisableOperation(CMS_SWITCHOVER_DN, ctx->maintaMode) || backup_open != CLUSTER_PRIMARY) {
+    if (IsMaintenanceModeDisableOperation(CMS_SWITCHOVER_DN, ctx->maintaMode)) {
         write_runlog(LOG, "%s, %u Maintaining cluster: cm server cannot switchover dn.\n", str, ctx->instId);
         return;
     }

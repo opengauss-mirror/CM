@@ -1724,7 +1724,7 @@ static void* start_check(void* arg)
             startaz_try_heartbeat--;
         } else if (g_commandOperationNodeId > 0 && g_commandOperationInstanceId > 0) {
             g_resStartStatus = StartResInstCheck(g_commandOperationInstanceId);
-        } else if (g_cmData[0] == '\0') {
+        } else if (g_cmData[0] == '\0' || (g_commandOperationNodeId > 0 && g_commandOperationInstanceId == 0)) {
             for (ii = 0; ii < g_node_num; ii++) {
                 if (g_node[ii].node == g_commandOperationNodeId) {
                     break;

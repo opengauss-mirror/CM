@@ -1275,7 +1275,7 @@ void* DNStatusCheckMain(void *arg)
             report_build_fail_alarm(ALM_AT_Resume, instanceName, i);
         }
 
-        write_runlog(DEBUG5, "DatanodeStatusCheck: local role is %d, db state is %d, build reason is %d\n",
+        write_runlog(DEBUG1, "DatanodeStatusCheck: local role is %d, db state is %d, build reason is %d\n",
             dnStatus.reportMsg.local_status.local_role, dnStatus.reportMsg.local_status.db_state,
             dnStatus.reportMsg.local_status.buildReason);
         DnCheckFloatIp(&dnStatus, (uint32)i, (bool8)(running == PROCESS_RUNNING));

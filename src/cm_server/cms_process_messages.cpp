@@ -939,6 +939,7 @@ int CheckShareDiskDataNodeStatus(uint32 groupIndex)
             GetInstanceIdInGroup(groupIndex, 0), normalPriCnt, priCnt, dnFaultCnt, unknownCnt);
         return 1;
     }
+    g_HA_status->status = CM_STATUS_NORMAL;
 
     return 0;
 }
@@ -1061,7 +1062,7 @@ void set_cluster_status(void)
 {
     uint32 i;
 
-    g_HA_status->status = CM_STATUS_NORMAL;
+    g_HA_status->status = CM_STATUS_UNKNOWN;
     g_HA_status->is_all_group_mode_pending = false;
 
     CheckClusterStatus();

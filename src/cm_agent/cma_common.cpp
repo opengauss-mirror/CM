@@ -536,6 +536,7 @@ int ReadDBStateFile(GaussState *state, const char *statePath)
         (void)fclose(statef);
         return -1;
     }
+    write_runlog(DEBUG1, "gaussdb state file: state:%d, mode:%d.\n", state->state, state->mode);
     (void)fclose(statef);
     return 0;
 }

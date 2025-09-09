@@ -2002,14 +2002,25 @@ int SetOneTableStatInfo(TableStatInfo *tabStatInfo, cltPqConn_t* dnConn)
         "select reltuples from pg_class where relname = '%s';", tabStatInfo->relname);
     securec_check_intval(rc, (void)rc);
     cltPqResult_t *relTuplesResult = GetRunCommandResult(dnConn, sqlCommands, maxRows);
-    if (relTuplesResult == NULL) {
-        write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
+    if ((ResultStatus(relTuplesResult) == CLTPQRES_CMD_OK) || (ResultStatus(relTuplesResult) == CLTPQRES_TUPLES_OK)) {
+        if (relTuplesResult == NULL) {
+            write_runlog(ERROR, "[%s()][line:%d] GetRunCommandResult failed!\n", __FUNCTION__, __LINE__);
+            return -1;
+        }
+        char* reltupleStr = Getvalue(relTuplesResult, 0, 0);
+        if (reltupleStr == NULL || *reltupleStr == '\0') {
+            write_runlog(ERROR, "[%s()][line:%d] Getvalue returned null or empty string for reltuples\n",
+                         __FUNCTION__, __LINE__);
+            return -1;
+        }
+        rc = sscanf_s(reltupleStr, "%ld", &(tabStatInfo->reltuples));
+        check_sscanf_s_result(rc, 1);
+        securec_check_intval(rc, (void)rc);
+        Clear(relTuplesResult);
+    } else {
+        write_runlog(ERROR, "%s exec FAIL! Status=%d\n", sqlCommands, ResultStatus(relTuplesResult));
         return -1;
     }
-    rc = sscanf_s(Getvalue(relTuplesResult, 0, 0), "%ld", &(tabStatInfo->reltuples));
-    check_sscanf_s_result(rc, 1);
-    securec_check_intval(rc, (void)rc);
-    Clear(relTuplesResult);
     return 0;
 }
 

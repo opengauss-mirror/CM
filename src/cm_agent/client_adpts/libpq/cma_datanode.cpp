@@ -105,10 +105,11 @@ static int getDNStatusFromStateFile(agent_to_cm_datanode_status_report* report_m
          * Because this value may be backward, causing cm error arbitration.
          */
         report_msg->local_status.term = InvalidTerm;
-        report_msg->local_status.db_state = state.state;
-        if (report_msg->local_status.db_state == INSTANCE_HA_STATE_NORMAL) {
+        if (state.state == INSTANCE_HA_STATE_NORMAL) {
             write_runlog(WARNING, "got wrong DB state from the state file, dn is disconnected but state is NORMAL.\n");
             report_msg->local_status.db_state = INSTANCE_HA_STATE_UNKONWN;
+        } else {
+            report_msg->local_status.db_state = state.state;
         }
 
         rcs = ProcessStatusFromStateFile(report_msg, (const GaussState *)&state);

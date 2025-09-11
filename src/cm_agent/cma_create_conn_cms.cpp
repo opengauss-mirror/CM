@@ -388,6 +388,10 @@ void* ConnCmsPMain(void* arg)
     const int twoSec = 2;
 
     for (;;) {
+        if (g_exitFlag || g_shutdownRequest) {
+            write_runlog(LOG, "Get exit flag, ConnCmsPM thread will exit!\n");
+            cm_sleep(5);
+        }
         (void)gettimeofday(&checkBeginFunction, NULL);
         isToStopInstances = false;
         if (agent_cm_server_connect == NULL) {

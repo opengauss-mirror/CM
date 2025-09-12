@@ -8,7 +8,6 @@ BASE_BUILD_PATH = $(CM_TOP_BUILDDIR)/build
 CM_ADAPTER_PATH = $(OPEN_CM_SRC_PATH)/cm_adapter
 COMM_LIB_PATH = $(OPEN_CM_SRC_PATH)/lib
 DESTDIR = $(CM_TOP_BUILDDIR)/output
-RPATH_FLAG = -Wl,-rpath=/usr/local/softbus/ctrlbus/lib
 
 include $(BASE_BUILD_PATH)/Makefile.global
 

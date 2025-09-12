@@ -244,7 +244,7 @@ function seperate_symbols() {
     if [ "x${COMPONENT}" == "xV3" ]; then
         strip_mode="--strip-all"
     else
-        strip_mode="--strip-debug"
+        strip_mode="--strip-all"
     fi
 
     cd ${OUT_PATH}

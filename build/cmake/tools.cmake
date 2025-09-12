@@ -3,7 +3,6 @@
 function(add_exec_tgt TGT_NAME TGT_SRC_LIST TGT_INC_LIST)
     add_executable(${TGT_NAME} ${${TGT_SRC_LIST}})
     target_compile_options(${TGT_NAME} PRIVATE -fPIE)
-    target_link_options(${TGT_NAME} PRIVATE -pie "-Wl,-rpath=/usr/local/softbus/ctrlbus/lib")
     #IF (TGT_INC_LIST)
     target_include_directories(${TGT_NAME} PUBLIC ${${TGT_INC_LIST}})
     #ENDIF ()

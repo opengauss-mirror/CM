@@ -81,6 +81,13 @@ pthread_rwlock_t g_gtmsFailoverLock;
 pthread_rwlock_t g_cnDropLock;
 pthread_rwlock_t g_coordinatorsCancelLock;
 
+pthread_t g_cmsConnThread = 0;
+
+ThreadActivity *threadActivities;
+int activities_index;
+pthread_rwlock_t activitiesMutex;
+time_t lastStackCaptureTime = 0;
+
 bool g_poolerPingEndRequest = false;
 
 int g_gtmConnFailTimes = 0;

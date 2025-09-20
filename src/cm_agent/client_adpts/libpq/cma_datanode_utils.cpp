@@ -2145,6 +2145,10 @@ int InitAllDatabaseTableStatInfo(uint32 index, DatabaseStatInfo** dnStatInfo, in
         sizeof(DatabaseStatInfo) * (size_t)dnDatabaseCount);
     securec_check_c(rcs, "", "");
     for (int i = 0; i < dnDatabaseCount; ++i) {
+        if (dnDatabaseInfo[i].oid <= 1) {
+            continue;
+        }
+
         cltPqConn_t* dnConn = GetDnConnect(index, dnDatabaseInfo[i].dbname);
         if (dnConn == NULL) {
             write_runlog(ERROR, "[%s()][line:%d] get db connect failed!\n", __FUNCTION__, __LINE__);

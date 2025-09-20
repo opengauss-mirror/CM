@@ -32,7 +32,7 @@ void StartDatanodeCheck(void);
 int CheckDnStausPhonyDead(int dnId, int agentCheckTimeInterval);
 
 int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProcess);
-void DNDataBaseStatusCheck(int index);
+void DNDataBaseStatusCheck(uint32 index);
 int CheckDatanodeStatus(const char *dataDir, int *role);
 int ProcessUnlockCmd(const cm_to_agent_unlock *unlockMsg);
 /* Agent to DN connection */

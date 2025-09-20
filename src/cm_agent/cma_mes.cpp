@@ -396,8 +396,10 @@ static void checkMesSslCertExpire()
 void CmaRhbUnInit()
 {
     g_exitFlag = true;
-    write_runlog(LOG, "Got exit, set g_exitFlag to true and wait rhb thread exit!\n");
+    (void)pthread_join(g_cmsConnThread, NULL);
+    write_runlog(LOG, "Got exit, CMS Conn Thread is done!\n");
     (void)pthread_join(g_rhbThread, NULL);
+    write_runlog(LOG, "Got exit, Rhb UnInit is done!\n");
 }
 
 void *CmaRhbMain(void *args)

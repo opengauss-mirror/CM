@@ -35,6 +35,7 @@
 #include "cma_common.h"
 #include "cma_connect_client.h"
 #include "cma_threads.h"
+#include "cma_mes.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_gtm.h"
 #include "cma_cn_gtm_work_threads_mgr.h"
@@ -260,9 +261,7 @@ void CreateFaultDetectThread()
 void CreateConnCmsPThread()
 {
     int err;
-    pthread_t thr_id;
-
-    if ((err = pthread_create(&thr_id, NULL, ConnCmsPMain, NULL)) != 0) {
+    if ((err = pthread_create(&g_cmsConnThread, NULL, ConnCmsPMain, NULL)) != 0) {
         write_runlog(FATAL, "Failed to create new thread: error %d\n", err);
         exit(err);
     }

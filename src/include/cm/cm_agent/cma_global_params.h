@@ -129,6 +129,9 @@ extern struct timespec g_disconnectTime;
 extern TlsAuthPath g_tlsPath;
 extern pthread_t g_threadId[CM_MAX_THREAD_NUM];
 
+/* Global Thread pthread_t */
+extern pthread_t g_cmsConnThread;
+
 extern const char* g_progname;
 extern char configDir[MAX_PATH_LEN];
 extern char g_alarmConfigDir[MAX_PATH_LEN];

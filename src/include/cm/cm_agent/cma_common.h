@@ -34,6 +34,7 @@
 #define CM_IP_LENGTH 128
 #endif
 #define CM_EXECUTE_CMD_TIME_OUT 2
+#define CM_DISK_TIMEOUT 120
 
 const int max_instance_start = 3;
 typedef enum {
@@ -64,7 +65,7 @@ extern uint64 g_obsDropCnXlog;
 
 pgpid_t get_pgpid(char* pid_path, uint32 len);
 bool is_process_alive(pgpid_t pid);
-void set_disc_check_state(uint32 instanceId);
+void set_disc_check_state(uint32 instanceId, long *check_disc_state, bool update);
 bool agentCheckDisc(const char* path);
 void set_instance_not_exist_alarm_value(int *val, int state);
 void record_pid(const char* DataPath);

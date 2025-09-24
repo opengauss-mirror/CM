@@ -1155,7 +1155,6 @@ void* DNStatusCheckMain(void *arg)
             continue;
         }
 
-        DNDataBaseStatusCheck(i);
         InitDNStatus(&dnStatus, i);
         running = check_one_instance_status(GetDnProcessName(), g_currentNode->datanode[i].datanodeLocalDataPath, NULL);
         if (g_currentNode->datanode[i].datanodeRole != DUMMY_STANDBY_DN) {

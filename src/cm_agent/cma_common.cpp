@@ -631,18 +631,23 @@ int check_disc_state(uint32 instanceId)
     return 0;
 }
 
-void set_disc_check_state(uint32 instanceId)
+void set_disc_check_state(uint32 instanceId, long *check_disc_state, bool update)
 {
     g_checkDiscInstanceNow = instanceId;
     struct timeval now = {0};
     (void)gettimeofday(&now, NULL);
     if (instanceId == 0) {
-        if (now.tv_sec - g_check_disc_state > 120) {
-            write_runlog(LOG, "the instance check disc take %ld second.\n", now.tv_sec - g_check_disc_state);
+        if (now.tv_sec - (*check_disc_state) > CM_DISK_TIMEOUT) {
+            write_runlog(LOG, "the instance check disc take %ld second.\n", now.tv_sec - (*check_disc_state));
         }
-        g_check_disc_state = 0;
+        if (update == true) {
+            g_check_disc_state = 0;
+        }
     } else {
-        g_check_disc_state = now.tv_sec;
+        *check_disc_state = now.tv_sec;
+        if (update == true) {
+            g_check_disc_state = now.tv_sec;
+        }
     }
 }
 
@@ -1103,6 +1108,7 @@ bool IsDirectoryDestoryed(const char *path)
 
 void CheckDnDiskDamage(uint32 index)
 {
+    long check_disc_state = 0;
     char instanceName[CM_NODE_NAME] = {0};
     int ret = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1,
                          "%s_%u", "dn", g_currentNode->datanode[index].datanodeId);
@@ -1111,7 +1117,7 @@ void CheckDnDiskDamage(uint32 index)
     bool dnManualStop = DnManualStop(index);
     char diskName[MAX_DEVICE_DIR] = {0};
     if (!dnManualStop) {
-        set_disc_check_state(g_currentNode->datanode[index].datanodeId);
+        set_disc_check_state(g_currentNode->datanode[index].datanodeId, &check_disc_state, true);
         bool cdt = (IsDirectoryDestoryed(g_currentNode->datanode[index].datanodeLocalDataPath) ||
             !agentCheckDisc(g_currentNode->datanode[index].datanodeLocalDataPath) || !agentCheckDisc(g_logBasePath));
         if (cdt) {
@@ -1124,7 +1130,7 @@ void CheckDnDiskDamage(uint32 index)
         } else {
             g_dnDiskDamage[index] = false;
         }
-        set_disc_check_state(0);
+        set_disc_check_state(0, &check_disc_state, true);
     } else {
         g_dnDiskDamage[index] = false;
         g_dnBuild[index] = false;

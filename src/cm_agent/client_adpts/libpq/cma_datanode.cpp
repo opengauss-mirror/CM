@@ -852,6 +852,7 @@ static void CheckDnDiskStatus(char *instanceManualStartPath, uint32 ii, int *ala
     struct stat instanceStatBuf = {0};
     struct stat clusterStatBuf = {0};
     bool cdt;
+    long check_disc_state = 0;
 
     rcs = snprintf_s(instanceManualStartPath,
         MAX_PATH_LEN,
@@ -864,7 +865,7 @@ static void CheckDnDiskStatus(char *instanceManualStartPath, uint32 ii, int *ala
     cdt = (stat(instanceManualStartPath, &instanceStatBuf) != 0 &&
         stat(g_cmManualStartPath, &clusterStatBuf) != 0);
     if (cdt) {
-        set_disc_check_state(g_currentNode->datanode[ii].datanodeId);
+        set_disc_check_state(g_currentNode->datanode[ii].datanodeId, &check_disc_state, false);
         cdt = (IsDirectoryDestoryed(g_currentNode->datanode[ii].datanodeLocalDataPath) ||
             !agentCheckDisc(g_currentNode->datanode[ii].datanodeLocalDataPath) || !agentCheckDisc(g_logBasePath));
         if (cdt) {
@@ -885,7 +886,7 @@ static void CheckDnDiskStatus(char *instanceManualStartPath, uint32 ii, int *ala
                 g_dnDiskDamage[ii] = false;
             }
         }
-        set_disc_check_state(0);
+        set_disc_check_state(0, &check_disc_state, false);
     } else {
         g_dnDiskDamage[ii] = false;
         g_dnBuild[ii] = false;

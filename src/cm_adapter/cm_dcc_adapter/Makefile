@@ -25,5 +25,4 @@ clean:
 install:all
 	mkdir -p ${DESTDIR}/lib
 	cp -rf ${LIB_DCC_HOME}/lib/* $(DESTDIR)/lib
-	cp -rf ${LZ4_DIRECTORY_LIB}/liblz4.so* $(DESTDIR)/lib
 	cp -rf ${ZSTD_DIRECTORY_LIB}/libzstd.so* $(DESTDIR)/lib

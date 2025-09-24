@@ -12,5 +12,4 @@ target_link_libraries(cmdccapi PRIVATE dcc cmprotocol_static)
 install(DIRECTORY ${LIB_DCC_HOME}/lib/ DESTINATION lib)
 
 # other
-install_static_libs(${LZ4_DIRECTORY_LIB} "liblz4.so*")
 install_static_libs(${ZSTD_DIRECTORY_LIB} "libzstd.so*")

@@ -362,6 +362,10 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
         return -1;
     }
 
+    if (!g_isStorageWithDMSorDSS || (reportMsg->local_status.local_role == INSTANCE_ROLE_PRIMARY)) {
+        DNDataBaseStatusCheck(dataNodeIndex);
+    }
+
     /* SQL6 check */
     if (check_datanode_status_by_SQL6(reportMsg, dataNodeIndex, dataPath) != 0) {
         return -1;
@@ -373,7 +377,8 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
     if (check_flush_lsn_by_preparse(reportMsg, dataNodeIndex) != 0) {
         return -1;
     }
-if (!IsBoolCmParamTrue(g_agentEnableDcf)) {
+
+    if (!g_isStorageWithDMSorDSS && !IsBoolCmParamTrue(g_agentEnableDcf)) {
         /* SQL2 check */
         if (check_datanode_status_by_SQL2(reportMsg, dataNodeIndex) != 0) {
             return -1;
@@ -387,18 +392,18 @@ if (!IsBoolCmParamTrue(g_agentEnableDcf)) {
             return -1;
         }
     } else {
-        if (CheckDatanodeStatusBySqL10(reportMsg, dataNodeIndex) != 0) {
+        if (!g_isStorageWithDMSorDSS && CheckDatanodeStatusBySqL10(reportMsg, dataNodeIndex) != 0) {
             return -1;
         }
     }
     /* SQL5 check */
-    if (checkDnSql5Timer > g_check_dn_sql5_interval) {
+    if (!g_isStorageWithDMSorDSS && (checkDnSql5Timer > g_check_dn_sql5_interval)) {
         check_datanode_status_by_SQL5(reportMsg->instanceId, dataNodeIndex, dataPath);
         checkDnSql5Timer = 0;
     }
 
     /* check dn most_available_sync */
-    if (CheckMostAvailableSync(dataNodeIndex)) {
+    if (!g_isStorageWithDMSorDSS && CheckMostAvailableSync(dataNodeIndex)) {
         return -1;
     }
     CheckTransactionReadOnly(g_dnConn[dataNodeIndex], dataNodeIndex, INSTANCE_TYPE_DATANODE);
@@ -1626,7 +1631,7 @@ int CheckOneDatabaseStatus(DatabaseStatInfo *dnDbStatInfo, int dnDatabaseCount, 
     return 0;
 }
 
-void DNDataBaseStatusCheck(int index)
+void DNDataBaseStatusCheck(uint32 index)
 {
     DatabaseStatInfo* dnDbStatInfo = NULL;
     int dnDatabaseCount = 0;
@@ -1638,6 +1643,10 @@ void DNDataBaseStatusCheck(int index)
     int alarmSize = 2;
     for (int i = 0; i < dnDatabaseCount; ++i) {
         DatabaseStatInfo dbStatInfo = dnDbStatInfo[i];
+        if (dbStatInfo.oid <= 1) {
+            continue;
+        }
+
         write_runlog(DEBUG1, "start vacuum status check for database [%s].\n", dbStatInfo.dbname);
         res = CheckOneDatabaseStatus(dnDbStatInfo, dnDatabaseCount, alarmSize, dbStatInfo);
         if (res != 0) {

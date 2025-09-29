@@ -946,7 +946,10 @@ static status_t IsPeerCmsReachableOn2Nodes()
         }
 
         // Resolve peer cms hostname to IP addresses
-        int addrStatus = getaddrinfo(g_node[i].cmServerLocalHAIP[0], NULL, &hints, &result);
+        char port[CM_IP_LENGTH];
+        errno_t rc = snprintf_s(port, CM_IP_LENGTH, CM_IP_LENGTH - 1, "%u", g_node[i].cmServerLocalHAPort);
+        securec_check_intval(rc, (void)rc);
+        int addrStatus = getaddrinfo(g_node[i].cmServerLocalHAIP[0], port, &hints, &result);
         if (addrStatus != 0) {
             write_runlog(ERROR, "getaddrinfo: %s\n", gai_strerror(addrStatus));
             continue;
@@ -963,12 +966,6 @@ static status_t IsPeerCmsReachableOn2Nodes()
             setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
             setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-            if (connect(socketFd, rp->ai_addr, rp->ai_addrlen) == -1) {
-                write_runlog(LOG, "could not connect to peer cms.\n");
-                close(socketFd);
-                freeaddrinfo(result);
-                return CM_ERROR;
-            }
             char addrStr[INET6_ADDRSTRLEN];
             void *addr;
             if (rp->ai_family == AF_INET) {
@@ -979,6 +976,13 @@ static status_t IsPeerCmsReachableOn2Nodes()
                 addr = &(ipv6->sin6_addr);
             }
             inet_ntop(rp->ai_family, addr, addrStr, sizeof(addrStr));
+
+            if (connect(socketFd, rp->ai_addr, rp->ai_addrlen) == -1) {
+                write_runlog(LOG, "could not connect to peer cms %s, errno=%d.\n", addrStr, errno);
+                close(socketFd);
+                freeaddrinfo(result);
+                return CM_ERROR;
+            }
             write_runlog(DEBUG1, "connect to peer cms %s successfuly.\n", addrStr);
             ret = CM_SUCCESS;
             close(socketFd);

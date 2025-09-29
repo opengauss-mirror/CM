@@ -168,9 +168,12 @@ extern char g_enableCnAutoRepair[BOOL_STR_MAX_LEN];
 extern char g_enableOnlineOrOffline[BOOL_STR_MAX_LEN];
 extern char g_enableIncrementalBuild[BOOL_STR_MAX_LEN];
 extern char g_enableLogCompress[BOOL_STR_MAX_LEN];
+extern bool g_enableXalarmdFeature;
+#ifdef ENABLE_XALARMD
+extern int g_xalarmClientId;
+#endif
 extern char g_enableVtable[BOOL_STR_MAX_LEN];
 extern char instance_maintance_path[MAX_PATH_LEN];
-
 extern volatile bool g_repairCn;
 extern bool g_shutdownRequest;
 extern bool g_syncDroppedCoordinator;

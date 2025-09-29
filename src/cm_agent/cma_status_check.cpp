@@ -41,6 +41,18 @@
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
 #endif
+#ifdef ENABLE_XALARMD
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <xalarm/register_xalarm.h>
+#ifdef __cplusplus
+}
+#endif
+#include "cjson/cJSON.h"
+static const uint32 XALARM_TYPE_OCCUR = 1;
+static const uint32 XALARM_TYPE_RECOVER = 2;
+#endif
 #include "cma_status_check.h"
 #include "cm_ip.h"
 #include "cm_msg_version_convert.h"
@@ -2076,6 +2088,14 @@ void InitSystemStatInfo(SystemStatInfo* systemStat)
         rc = strcpy_s(systemStat->diskStatInfo.disIoStatInfo[i].diskName, MAX_DEVICE_DIR, diskName[i]);
         securec_check_errno(rc, (void)rc);
         systemStat->diskStatInfo.disIoStatInfo[i].lastReportTime = GetMonotonicTimeS();
+        systemStat->diskStatInfo.disIoStatInfo[i].ioUtil = 0.0f;
+        systemStat->diskStatInfo.disIoStatInfo[i].svctm = 0.0f;
+        systemStat->diskStatInfo.disIoStatInfo[i].lastReportIoUtil = 0.0f;
+        systemStat->diskStatInfo.disIoStatInfo[i].totalWeight = 0;
+        systemStat->diskStatInfo.disIoStatInfo[i].lastReadCount = 0;
+        systemStat->diskStatInfo.disIoStatInfo[i].lastWriteCount = 0;
+        systemStat->diskStatInfo.disIoStatInfo[i].lastCheckTime = 0;
+        systemStat->diskStatInfo.disIoStatInfo[i].lastIoTime = 0;
         systemStat->diskStatInfo.disIoStatInfo[i].weightWindow = std::deque<uint32>();
         write_runlog(LOG, "start check device(%s).\n", diskName[i]);
     }
@@ -2557,6 +2577,136 @@ void* ETCDConnectionStatusCheckMain(void* arg)
         }
         cm_sleep(agent_report_interval);
     }
-
     return NULL;
 }
+
+#ifdef ENABLE_XALARMD
+static AlarmType GetAlarmType(int alarmtype)
+{
+    if (alarmtype == XALARM_TYPE_OCCUR) {
+        return ALM_AT_Fault;
+    } else if (alarmtype == XALARM_TYPE_RECOVER) {
+        return ALM_AT_Resume;
+    }
+    write_runlog(ERROR, "Unknown alarm type: %d\n", alarmtype);
+    return ALM_AT_Fault;
+}
+
+static void BuildAlarmDetails(char *details, size_t maxSize, AlarmType alarmType,
+                              const char *driverName, const char *dataPath)
+{
+    errno_t rc;
+    if (alarmType == ALM_AT_Fault) {
+        rc = snprintf_s(details, maxSize, maxSize - 1,
+            "detected slow disk by xalarm plugin, data path: %s",
+            dataPath);
+        securec_check_intval(rc, (void)rc);
+    } else {
+        write_runlog(ERROR, "receive recover alarm type: %d\n", alarmType);
+        rc = snprintf_s(details, maxSize, maxSize - 1,
+            "recovered by xalarm plugin, data path: %s",
+            dataPath);
+        securec_check_intval(rc, (void)rc);
+    }
+}
+
+static void HandlePrimarySlowDisk(const char *dataPath, int index)
+{
+    write_runlog(LOG, "Checking datanode role: index=%d, role=%d, path=%s\n",
+        index, g_dnReportMsg[index].dnStatus.reportMsg.local_status.local_role, dataPath);
+    if (g_dnReportMsg[index].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY) {
+        immediate_stop_one_instance(dataPath, INSTANCE_DN);
+    } else {
+        write_runlog(LOG, "Slow disk detected on non-primary node, no restart needed: role=%d, path=%s\n",
+            g_dnReportMsg[index].dnStatus.reportMsg.local_status.local_role, dataPath);
+    }
+}
+
+static bool IsDeviceNameMatching(const char* deviceName, const char* driverName)
+{
+    if (strlen(deviceName) <= 0 || strlen(driverName) <= 0) {
+        return false;
+    }
+    if (strncmp(deviceName, driverName, strlen(driverName)) != 0) {
+        return false;
+    }
+    size_t driverNameLen = strlen(driverName);
+    char nextChar = deviceName[driverNameLen];
+    return (nextChar == '\0' || (nextChar == 'p' && isdigit(deviceName[driverNameLen + 1])));
+}
+
+static bool IsValidAlarmType(int alarmtype)
+{
+    return (alarmtype == XALARM_TYPE_OCCUR || alarmtype == XALARM_TYPE_RECOVER);
+}
+
+static void ProcessMatchedDevice(const char *driverName, int alarmtype, int index, const char *dataPath)
+{
+    if (!IsValidAlarmType(alarmtype)) {
+        return;
+    }
+    
+    AlarmType alarmType = GetAlarmType(alarmtype);
+    char details[MAX_PATH_LEN] = {0};
+    BuildAlarmDetails(details, MAX_PATH_LEN, alarmType, driverName, dataPath);
+    
+    if (alarmType == ALM_AT_Fault) {
+        HandlePrimarySlowDisk(dataPath, index);
+    } else {
+        write_runlog(LOG, "Slow disk recovered: %s, data path: %s\n", driverName, dataPath);
+    }
+    
+    ReportSlowDiskAlarm(driverName, alarmType, index, details);
+}
+
+void HandleXalarm(struct alarm_info *param)
+{
+    if (g_shutdownRequest || g_exitFlag) {
+        return;
+    }
+    
+    int alarmid = xalarm_getid(param);
+    int alarmlevel = xalarm_getlevel(param);
+    int alarmtype = xalarm_gettype(param);
+    long long alarmtime = xalarm_gettime(param);
+    char *alarmStr = xalarm_getdesc(param);
+    
+    write_runlog(LOG, "received xalarm notification: [alarmid:%d] "
+        "[alarmlevel:%d] [alarmtype:%d] [alarmtime:%lld ms]\n", alarmid, alarmlevel, alarmtype, alarmtime);
+
+    cJSON *alarm_info = cJSON_Parse(alarmStr);
+    if (alarm_info == NULL) {
+        write_runlog(ERROR, "cannot parse alarm info from xalarm.\n");
+        return;
+    }
+    
+    if (!cJSON_IsObject(alarm_info)) {
+        write_runlog(ERROR, "alarm_info not found or not an object\n");
+        cJSON_Delete(alarm_info);
+        return;
+    }
+    
+    cJSON *driver_name = cJSON_GetObjectItem(alarm_info, "driver_name");
+    if (!cJSON_IsString(driver_name) || (driver_name->valuestring == NULL)) {
+        write_runlog(ERROR, "driver_name not found or not a string.\n");
+        cJSON_Delete(alarm_info);
+        return;
+    }
+
+    for (int i = 0; i < (int)g_currentNode->datanodeCount; ++i) {
+        char deviceName[MAX_PATH_LEN] = {0};
+        const char *dataPath = g_currentNode->datanode[i].datanodeLocalDataPath;
+        CmGetDisk(dataPath, deviceName, MAX_PATH_LEN);
+        
+        write_runlog(LOG, "CmGetDisk: path=%s, deviceName=%s, driver_name=%s， datanodeCount=%d\n",
+                     dataPath, deviceName, driver_name->valuestring, (int)g_currentNode->datanodeCount);
+        
+        if (IsDeviceNameMatching(deviceName, driver_name->valuestring)) {
+            ProcessMatchedDevice(driver_name->valuestring, alarmtype, i, dataPath);
+            break;
+        }
+    }
+    
+    cJSON_Delete(alarm_info);
+}
+#endif

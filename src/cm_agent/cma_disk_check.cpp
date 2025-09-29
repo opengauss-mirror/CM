@@ -27,6 +27,19 @@
 #include "cma_status_check.h"
 #include "cma_global_params.h"
 #include "cma_disk_check.h"
+#include "alarm/alarm.h"
+#ifdef ENABLE_XALARMD
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <xalarm/register_xalarm.h>
+#ifdef __cplusplus
+}
+#endif
+#include "cjson/cJSON.h"
+int g_xalarmClientId = -1;
+static const uint64 XALARM_SLOW_DISK_ID = 1002;
+#endif
 
 static uint32 g_diskCheckTimeout = DISK_CHECK_TIMEOUT_DEFAULT;
 static uint32 g_diskCheckInterval = DISK_CHECK_INTERVAL_DEFAULT;
@@ -42,6 +55,11 @@ void LoadDiskCheckConfig(const char *configFile)
     g_diskCheckInterval = get_uint32_value_from_config(configFile, "disk_check_interval", DISK_CHECK_INTERVAL_DEFAULT);
     g_diskCheckBufferSize = get_uint32_value_from_config(configFile, "disk_check_buffer_size",
                                                          DISK_CHECK_BUFFER_SIZE_DEFAULT);
+    char enableXalarmStr[MAXPGPATH] = {0};
+    if (get_config_param(configFile, "enable_xalarmd_slow_disk_check", enableXalarmStr, sizeof(enableXalarmStr)) >= 0) {
+        g_enableXalarmdFeature = IsBoolCmParamTrue(enableXalarmStr);
+        write_runlog(LOG, "enable_xalarmd_slow_disk_check is set to %s\n", g_enableXalarmdFeature ? "true" : "false");
+    }
     pthread_rwlock_wrlock(&g_diskCheckBufferLock);
     FREE_AND_RESET(g_diskCheckBuffer);
     if (g_diskCheckBufferSize <= 0) {
@@ -521,6 +539,24 @@ status_t CreateDiskHealthCheckMonitorThread()
 
 void CreateDiskHealthCheckThread()
 {
+#ifdef ENABLE_XALARMD
+    if (g_enableXalarmdFeature) {
+        struct alarm_subscription_info id_filter;
+        id_filter.id_list[0] = XALARM_SLOW_DISK_ID;
+        id_filter.len = 1;
+        g_xalarmClientId = xalarm_Register(HandleXalarm, id_filter);
+        if (g_xalarmClientId < 0) {
+            write_runlog(ERROR, "Failed to xalarm register, please check the status of xalarmd\n");
+        } else {
+            write_runlog(LOG, "xalarm register success, client id is %d\n", g_xalarmClientId);
+        }
+        return;
+    } else {
+        write_runlog(LOG, "Xalarm feature is disabled by configuration, use traditional disk check.\n");
+    }
+#else
+    write_runlog(LOG, "Xalarm feature is disabled in compile time, use traditional disk check.\n");
+#endif
     if (InitDiskHealthCtx() != CM_SUCCESS) {
         write_runlog(FATAL, "Failed to init disk health check context.\n");
         exit(1);

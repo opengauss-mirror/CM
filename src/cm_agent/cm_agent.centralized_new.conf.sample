@@ -42,6 +42,7 @@ diskusage_threshold_value_check = 90                          #disk usage thresh
 disk_check_timeout = 2000                                     #disk read/write check timeout, unit: ms
 disk_check_interval = 1                                       #disk read/write check interval, unit: s
 disk_check_buffer_size = 1                                    #disk read/write check buffer size
+enable_xalarmd_slow_disk_check = false                         #whether to use the xalarmd plugin for slow disk detection. Note: The xalarmd plugin is provided by the operating system.
 voting_disk_path = ''
 disk_timeout = 200
 agent_rhb_interval = 1000                                     # the heatbeat of cma to cma broadcast interval, unit is ms

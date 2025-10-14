@@ -20,64 +20,45 @@
  *
  * -------------------------------------------------------------------------
  */
-constexpr double MAX_RACK_MEMORY_PERCENT = 0.25;
-
-#define MAX_HOSTNAME_LENGTH 48
-#define MAX_SOCKET_NUM 2
+#ifndef RACK_H
+#define RACK_H
+#define MAX_HOST_NAMEDESC_LENGTH 48
+#define MAX_NUMA_RESV_LEN 16
+#define MAX_NUMA_NUM 32
 #define MAX_HOST_NUM 16
-#define MAX_REGIONS_NUM 6
-#define MEM_INVALID_NODE_ID ("")
-#define MEM_TOPOLOGY_MAX_HOSTS 16
-#define MEM_TOPOLOGY_MAX_TOTAL_NUMS 16
-#define MEM_MAX_ID_LENGTH 48
 
-struct SocketInfo {
-    int memTotal;
-    int memUsed;
-    int memExport;
-    int memImport;
-};
+typedef struct {
+    // todo
+} ubsmem_options_t;
 
-struct HostInfo {
-    char hostName[MAX_HOSTNAME_LENGTH];
-    int num;
-    SocketInfo socket[MAX_SOCKET_NUM];
-};
+typedef struct {
+    uint32_t slot_id;
+    uint32_t socket_id;
+    uint32_t numa_id;
+    uint32_t mem_lend_ratio;
+    uint64_t mem_total;
+    uint64_t mem_free;
+    uint64_t mem_borrow;
+    uint64_t mem_lend;
+    uint8_t resv[MAX_NUMA_RESV_LEN];   
+} ubsmem_numa_mem_t;
 
-struct ClusterInfo {
-    int num;
-    HostInfo host[MAX_HOST_NUM];
-};
+typedef struct {
+    char host_name[MAX_HOST_NAMEDESC_LENGTH];
+    int numa_num;
+    ubsmem_numa_mem_t numa[MAX_NUMA_NUM];
+} ubsmem_host_info_t;
 
-typedef enum RackMemRegionType {
-    ALL2ALL_SHARE = 0,
-    ONE2ALL_SHARE,
-    INCLUDE_ALL_TYPE,
-} ShmRegionType;
+typedef struct {
+    int host_num;
+    ubsmem_host_info_t host[MAX_HOST_NUM];
+} ubsmem_cluster_info_t;
 
-typedef enum RackMemPerfLevel {
-    L0,
-    L1,
-    L2
-} PerfLevel;
+int ubsmem_lookup_cluster_statistic(ubsmem_cluster_info_t *info);
 
-typedef struct TagRackMemSHMRegionDesc {
-    PerfLevel perfLevel;
-    ShmRegionType type;
-    int num;
-    char nodeId[MEM_TOPOLOGY_MAX_HOSTS][MEM_MAX_ID_LENGTH];
-    char hostName[MEM_TOPOLOGY_MAX_HOSTS][MEM_MAX_ID_LENGTH];
-} SHMRegionDesc;
+int ubsmem_init_attributes(ubsmem_options_t *ubsm_shmem_opts);
 
-typedef struct TagRackMemSHMRegions {
-    int num;
-    SHMRegionDesc region[MAX_REGIONS_NUM];
-} SHMRegions;
+int ubsmem_initialize(const ubsmem_options_t *ubsm_shmem_opts);
 
-typedef struct TagRackMemSHMRegionInfo {
-    int num;
-    int64_t info[0];
-} SHMRegionInfo;
-
-int RackMemShmLookupShareRegions(const char *baseBid, ShmRegionType type, SHMRegions *regions);
-int RackMemLookupClusterStatistic(ClusterInfo *cluster);
+int ubsmem_finalize(void);
+#endif // RACK_H

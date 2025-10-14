@@ -22,11 +22,12 @@
  * -------------------------------------------------------------------------
  */
 #include <cstdio>
-#include <unordered_map>
+#include <vector>
 #include <string>
 #include <ostream>
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #include <math.h>
 #include <dlfcn.h>
 #include "rack.h"
@@ -34,17 +35,10 @@
 #include "cm/cm_ctl/ctl_rack.h"
 
 MatrixMemFunc g_matrixMemFunc = {0};
-static constexpr auto BASE_NID = "";
-static constexpr const char* HOST_NAME = "rack_nodeid";
-static constexpr const char* MEM_TOTAL = "MemTotal(MB)";
-static constexpr const char* MEM_USED = "MemUsed(MB)";
-static constexpr const char* MEM_EXPORT = "MemExport(MB)";
-static constexpr const char* MEM_IMPORT = "MemImport(MB)";
-static constexpr const char* AVAIL_MEM = "AvailMem(MB)";
-std::unordered_map<std::string, std::string> g_NodeIds = {};
-std::string nodeId;
-std::string hostName;
-static char* g_matrixMemLibPath = "/usr/local/softbus/ctrlbus/lib/libmemfabric_client.so";
+static char* g_matrixMemLibPath = "/usr/local/ubs_mem/lib/libubsm_sdk.so";
+const int NULL_SIZE = 4;
+
+using namespace std;
 
 int MaxtrixMemLoadSymbol(char *symbol, void **symLibHandle)
 {
@@ -72,8 +66,10 @@ int MaxtrixMemOpenDl(void **libHandle, char *symbol)
 int MatrixMemFuncInit(char *matrixMemLibPath)
 {
     SymbolInfo symbols[] = {
-        {"RackMemShmLookupShareRegions", (void **)&g_matrixMemFunc.rackMemShmLookupShareRegions},
-        {"RackMemLookupClusterStatistic", (void **)&g_matrixMemFunc.rackMemLookupClusterStatistic}
+        {"ubsmem_lookup_cluster_statistic", (void **)&g_matrixMemFunc.ubsmem_lookup_cluster_statistic},
+        {"ubsmem_init_attributes", (void **)&g_matrixMemFunc.ubsmem_init_attributes},
+        {"ubsmem_initialize", (void **)&g_matrixMemFunc.ubsmem_initialize},
+        {"ubsmem_finalize", (void **)&g_matrixMemFunc.ubsmem_finalize}
     };
 
     if (SECUREC_UNLIKELY(MaxtrixMemOpenDl(&g_matrixMemFunc.handle, matrixMemLibPath) != MATRIX_MEM_SUCCESS)) {
@@ -92,185 +88,115 @@ int MatrixMemFuncInit(char *matrixMemLibPath)
     return MATRIX_MEM_SUCCESS;
 }
 
-int RackMemShmLookupShareRegions(const char *baseNid, ShmRegionType type, SHMRegions *regions)
+void MatrixMemFuncUnInit()
 {
-    return g_matrixMemFunc.rackMemShmLookupShareRegions(baseNid, type, regions);
-}
-int RackMemLookupClusterStatistic(ClusterInfo *cluster)
-{
-    return g_matrixMemFunc.rackMemLookupClusterStatistic(cluster);
-}
-
-static void RackMemGetNodeInfo()
-{
-    if (!g_NodeIds.empty()) {
-        write_runlog(WARNING, "The RackManager node information has been initialized.\n");
-        return;
-    }
-
-    int ret;
-    SHMRegions regions = SHMRegions();
-    ret = RackMemShmLookupShareRegions(BASE_NID, ShmRegionType::INCLUDE_ALL_TYPE, &regions);
-    if (ret != 0 || regions.region[0].num <= 0) {
-        write_runlog(ERROR, "lookup rack share regions failed, code: [%d], node num: [%d]\n",
-                     ret, regions.region[0].num);
-        return;
-    }
-    for (int i = 0; i < regions.num; i++) {
-        for (int j = 0; j < regions.region[i].num; j++) {
-            write_runlog(DEBUG1, "The share regions [%d] host name: [%s], node id: [%s].\n", i,
-                         regions.region[i].hostName[j], regions.region[i].nodeId[j]);
-            g_NodeIds[std::string(regions.region[i].hostName[j])] = std::string(regions.region[i].hostName[j]);
-        }
-    }
-    return;
-}
-
-static void GetHostName()
-{
-    if (hostName != "") {
-        write_runlog(WARNING, "The RackManager host name [%s] has been initialized.\n", hostName.c_str());
-        return;
-    }
-
-    const std::string filePath = "/etc/hostname";
-    std::ifstream file(filePath);
-    if (!file.is_open()) {
-        write_runlog(ERROR, "Failed to open /etc/hostname , error: %s\n", strerror(errno));
-        return;
-    }
-
-    std::string content;
-    if (std::getline(file, content)) {
-        if (content.length() >= MAX_HOSTNAME_LENGTH) {
-            write_runlog(ERROR, "the hostname is too long.");
-            file.close();
-            return;
-        }
-        hostName = content;
-    } else {
-        write_runlog(ERROR, "Unable to read file /etc/hostname");
-    }
-
-    file.close();
-    write_runlog(DEBUG1, "The RackManager host name is: [%s].\n", hostName.c_str());
-    return;
-}
-
-static void GetNodeId()
-{
-    if (nodeId != "") {
-        write_runlog(WARNING, "The RackManager node id [%s] has been initialized.\n", nodeId.c_str());
-        return;
-    }
-
-    GetHostName();
-    if (hostName.empty()) {
-        write_runlog(ERROR, "Failed to get host name from /etc/hostname.");
-        return;
-    }
-    RackMemGetNodeInfo();
-    if (g_NodeIds.empty()) {
-        write_runlog(ERROR, "Failed to get Rack node information, hostname: [%s].", hostName.c_str());
-        return;
-    }
-    nodeId = g_NodeIds[hostName];
-    if (nodeId.empty()) {
-        write_runlog(ERROR, "Failed to get Rack nodeId, hostname: [%s].", hostName.c_str());
-        return;
-    }
-    write_runlog(DEBUG1, "The RackManager node id is: [%s].\n", nodeId.c_str());
-}
-
-int updateMaxWidth(int currentValue, int currentMax)
-{
-    int digits;
-    if (currentValue == 0) {
-        digits = 1; // Special case for zero
-    } else {
-        digits = static_cast<int>(log10(abs(currentValue))) + 1;
-    }
-
-    if (digits > currentMax) {
-        return digits;
-    } else {
-        return currentMax;
+    if (g_matrixMemFunc.inited) {
+        (void)dlclose(g_matrixMemFunc.handle);
+        g_matrixMemFunc.handle = NULL;
+        g_matrixMemFunc.inited = false;
     }
 }
 
-MemoryStates calculateHostMemory(const struct HostInfo *host)
+int ubsmem_lookup_cluster_statistic(ubsmem_cluster_info_t *info)
 {
-    MemoryStates stats = {0};
-    for (int i = 0; i < host->num; i++) {
-        const struct SocketInfo *socket = &host->socket[i];
-        stats.totalMemTotal += socket->memTotal;
-        stats.totalMemUsed += socket->memUsed;
-        stats.totalMemExport += socket->memExport;
-        stats.totalMemImport += socket->memImport;
+    return g_matrixMemFunc.ubsmem_lookup_cluster_statistic(info);
+}
+
+int ubsmem_init_attributes(ubsmem_options_t *ubsm_shmem_opts)
+{
+    return g_matrixMemFunc.ubsmem_init_attributes(ubsm_shmem_opts);
+}
+
+int ubsmem_initialize(const ubsmem_options_t *ubsm_shmem_opts)
+{
+    return g_matrixMemFunc.ubsmem_initialize(ubsm_shmem_opts);
+}
+
+int ubsmem_finalize(void)
+{
+    return g_matrixMemFunc.ubsmem_finalize();
+}
+
+HostMemoryInfo calculateHostMemory(const ubsmem_host_info_t& hostInfo)
+{
+    HostMemoryInfo stats = {0};
+    for (int i = 0; i < hostInfo.numa_num; i++) {
+        const ubsmem_numa_mem_t& numaInfo = hostInfo.numa[i];
+        stats.memTotal += numaInfo.mem_total;
+        stats.memUsed += numaInfo.mem_total - numaInfo.mem_free;
+        stats.memExport += numaInfo.mem_borrow;
+        stats.memImport += numaInfo.mem_lend;
+        stats.availableMem +=
+            (numaInfo.mem_total * numaInfo.mem_lend_ratio / PERCENTAGE_CONVERSION - numaInfo.mem_lend);
     }
-    stats.availableMem = (int)stats.totalMemTotal * MAX_RACK_MEMORY_PERCENT - stats.totalMemExport;
+
+    stats.memTotal /= (KILO * KILO);
+    stats.memUsed /= (KILO * KILO);
+    stats.memExport /= (KILO * KILO);
+    stats.memImport /= (KILO * KILO);
+    stats.availableMem /= (KILO * KILO);
     return stats;
 }
 
-void calculateAndPrintClusterInfo(const struct ClusterInfo *clusterInfo)
+void PrintHostInfo(const char* host_name, const HostMemoryInfo& stats, const vector<int>& columnWidth)
 {
-    int maxHostNameLength = strlen(HOST_NAME);
-    int maxMemTotalLength = strlen(MEM_TOTAL);
-    int maxMemUsedLength = strlen(MEM_USED);
-    int maxMemExportLength = strlen(MEM_EXPORT);
-    int maxMemImportLength = strlen(MEM_IMPORT);
-    int maxAvailMemLength = strlen(AVAIL_MEM);
-
-    MemoryStates *hosMemoryStats = new MemoryStates[clusterInfo->num];
-
-    for (int i = 0; i < clusterInfo->num; i++) {
-        const struct HostInfo *currenthost = &clusterInfo->host[i];
-        MemoryStates stats = calculateHostMemory(currenthost);
-        hosMemoryStats[i] = stats;
-
-        int currentHostNameLength = strlen(currenthost->hostName);
-        if (currentHostNameLength > maxHostNameLength) {
-            maxHostNameLength = currentHostNameLength;
-        }
-
-        maxMemTotalLength = updateMaxWidth(stats.totalMemTotal, maxMemTotalLength);
-        maxMemUsedLength = updateMaxWidth(stats.totalMemUsed, maxMemUsedLength);
-        maxMemExportLength = updateMaxWidth(stats.totalMemExport, maxMemExportLength);
-        maxMemImportLength = updateMaxWidth(stats.totalMemImport, maxMemImportLength);
-        maxAvailMemLength = updateMaxWidth(stats.availableMem, maxAvailMemLength);
+    cout << left << setw(columnWidth[0] + OFFSET_ALIGNMENT);
+    if (host_name == nullptr || host_name[0] == '\0') {
+        cout << "NULL";
+    } else {
+        cout << host_name;
     }
 
-    int totalWidth = maxHostNameLength + maxMemTotalLength + maxMemUsedLength +
-                     maxMemExportLength + maxMemImportLength + maxAvailMemLength + 5;
-    std::cout << std::string(totalWidth, '-') << std::endl;
+    cout << left << setw(columnWidth[1] + OFFSET_ALIGNMENT) << stats.memTotal
+         << left << setw(columnWidth[2] + OFFSET_ALIGNMENT) << stats.memUsed
+         << left << setw(columnWidth[3] + OFFSET_ALIGNMENT) << stats.memExport
+         << left << setw(columnWidth[4] + OFFSET_ALIGNMENT) << stats.memImport
+         << left << setw(columnWidth[5] + OFFSET_ALIGNMENT) << stats.availableMem << endl;
+}
 
-    printf("%-*s %-*s %-*s %-*s %-*s %-*s\n", maxHostNameLength, HOST_NAME,
-           maxMemTotalLength, MEM_TOTAL, maxMemUsedLength, MEM_USED,
-           maxMemExportLength, MEM_EXPORT, maxMemImportLength, MEM_IMPORT,
-           maxAvailMemLength, AVAIL_MEM);
-    std::cout << std::string(totalWidth, '-') << std::endl;
+void PrintClusterInfo(ubsmem_cluster_info_t& clusterInfo)
+{
+    vector<int> columnWidths(COLUMN_SIZE, 0);
+    string headers[] = {"NodeId", "MemTotal(MB)", "MemUsed(MB)", "MemExport(MB)", "MemImport(MB)", "AvailMem(MB)"};
 
-    for (int i = 0; i < clusterInfo->num; i++) {
-        const struct HostInfo *currenthost = &clusterInfo->host[i];
-        MemoryStates stats = hosMemoryStats[i];
-
-        printf("%-*s %-*d %-*d %-*d %-*d %-*d\n", maxHostNameLength, currenthost->hostName,
-               maxMemTotalLength, stats.totalMemTotal, maxMemUsedLength, stats.totalMemUsed,
-               maxMemExportLength, stats.totalMemExport, maxMemImportLength, stats.totalMemImport,
-               maxAvailMemLength, stats.availableMem);
-        if (i != clusterInfo->num - 1) {
-            printf("\n\n");
-        }
+    for (int i = 0; i < COLUMN_SIZE; i++) {
+        columnWidths[i] = static_cast<int>(headers[i].length());
     }
 
-    std::cout << std::string(totalWidth, '-') << std::endl;
-    printf("NOTE: Available memory refers to the memory that this node can lend to other nodes.\n");
+    vector<HostMemoryInfo> hostMemoryInfos;
+    for (int i = 0; i < clusterInfo.host_num; i++) {
+        HostMemoryInfo hostInfo = calculateHostMemory(clusterInfo.host[i]);
+
+        columnWidths[0] =
+            max(columnWidths[0],
+                clusterInfo.host[i].host_name[0] ? static_cast<int>(strlen(clusterInfo.host[i].host_name)) : NULL_SIZE);
+        columnWidths[1] = max(columnWidths[1], static_cast<int>(to_string(hostInfo.memTotal).length()));
+        columnWidths[2] = max(columnWidths[2], static_cast<int>(to_string(hostInfo.memUsed).length()));
+        columnWidths[3] = max(columnWidths[3], static_cast<int>(to_string(hostInfo.memExport).length()));
+        columnWidths[4] = max(columnWidths[4], static_cast<int>(to_string(hostInfo.memImport).length()));
+        columnWidths[5] = max(columnWidths[5], static_cast<int>(to_string(hostInfo.availableMem).length()));
+        hostMemoryInfos.push_back(hostInfo);
+    }
+
+    cout << "------------------------------------------------------------------------------------\n";
+    for (int i = 0; i < COLUMN_SIZE; i++) {
+        cout << left << setw(columnWidths[i] + OFFSET_ALIGNMENT) << headers[i];
+    }
+    cout << endl;
+    cout << "------------------------------------------------------------------------------------\n";
+
+    for (int i = 0; i < clusterInfo.host_num; i++) {
+        PrintHostInfo(clusterInfo.host[i].host_name, hostMemoryInfos[i], columnWidths);
+        cout << endl;
+    }
+    cout << "NOTE: Available memory refers to the memory that this node can lend to other nodes.\n";
 }
 
 int DoRack()
 {
     int ret;
-    ClusterInfo cluster;
+    ubsmem_cluster_info_t cluster;
+    ubsmem_options_t ubsm_shmem_opts;
     ret = MatrixMemFuncInit(g_matrixMemLibPath);
     if (ret != MATRIX_MEM_SUCCESS) {
         write_runlog(ERROR, "Failed to initialize matrix memory functions, error code: %d\n."
@@ -278,16 +204,28 @@ int DoRack()
         return 1;
     }
 
-    GetNodeId();
-    if (nodeId.empty()) {
-        return 1;
+    ret = ubsmem_init_attributes(&ubsm_shmem_opts);
+    if (ret != 0) {
+        write_runlog(ERROR, "Failed to initialize ubsmem_attributes, error code: %d\n.", ret);
+    }
+    ret = ubsmem_initialize(&ubsm_shmem_opts);
+    if (ret != 0) {
+        write_runlog(ERROR, "Failed to initialize ubsmd, error code: %d\n.", ret);
     }
 
-    ret = RackMemLookupClusterStatistic(&cluster);
-    if (ret != 0 || cluster.num <= 1) {
-        write_runlog(ERROR, "lookup rack cluster statistic failed, code: [%d], node num: [%d]\n", ret, cluster.num);
+    ret = ubsmem_lookup_cluster_statistic(&cluster);
+    if (ret != 0 || cluster.host_num <= 1) {
+        write_runlog(ERROR, "lookup rack cluster statistic failed, code: [%d], node num: [%d]\n", ret,
+                     cluster.host_num);
         return 1;
     }
-    calculateAndPrintClusterInfo(&cluster);
+    PrintClusterInfo(cluster);
+
+    ret = ubsmem_finalize();
+    if (ret != 0) {
+        write_runlog(ERROR, "ubsmem_finalize failed, code: [%d].\n", ret);
+        return 1;
+    }
+    MatrixMemFuncUnInit();
     return 0;
 }

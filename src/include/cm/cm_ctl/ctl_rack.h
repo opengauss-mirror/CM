@@ -20,10 +20,14 @@
  *
  * -------------------------------------------------------------------------
  */
-
+#ifndef CTL_RACK_H
+#define CTL_RACK_H
 constexpr auto MATRIX_MEM_SUCCESS = 0;
 constexpr auto MATRIX_MEM_ERROR = -1;
-constexpr auto RACK_PRECENT = 25;
+constexpr auto PERCENTAGE_CONVERSION = 100;
+constexpr auto KILO = 1024;
+constexpr auto OFFSET_ALIGNMENT = 2;
+constexpr auto COLUMN_SIZE = 6;
 
 typedef struct SymbolInfo {
     char *symbolName;
@@ -33,14 +37,17 @@ typedef struct SymbolInfo {
 typedef struct MatrixMemFunc {
     bool inited;
     void *handle;
-    int (*rackMemShmLookupShareRegions)(const char *baseBid, ShmRegionType type, SHMRegions *regions);
-    int (*rackMemLookupClusterStatistic)(ClusterInfo *cluster);
+    int (*ubsmem_init_attributes)(ubsmem_options_t *ubsm_shmem_opts);
+    int (*ubsmem_initialize)(const ubsmem_options_t *ubsm_shmem_opts);
+    int (*ubsmem_finalize)(void);
+    int (*ubsmem_lookup_cluster_statistic)(ubsmem_cluster_info_t *info);
 } MatrixMemFunc;
 
 typedef struct {
-    int totalMemTotal;
-    int totalMemUsed;
-    int totalMemExport;
-    int totalMemImport;
-    int availableMem;
-} MemoryStates;
+    uint64_t memTotal;
+    uint64_t memUsed;
+    uint64_t memExport;
+    uint64_t memImport;
+    uint64_t availableMem;
+} HostMemoryInfo;
+#endif // CTL_RACK_H

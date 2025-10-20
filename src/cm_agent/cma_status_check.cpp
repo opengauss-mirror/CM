@@ -418,7 +418,10 @@ static void CmGetDisk(const char* datadir, char* devicename, uint32 nameLen)
          * get the file system with type of ext* or xfs.
          * find the best fit for the data directory
          */
-        const size_t offset = strlen("/dev/");
+        size_t offset = strlen("/dev/");
+        if (buf_len >= offset && strncmp(devicePath, "/dev/", offset) != 0) {
+            offset = 0;
+        }
         if (strncmp(ent->mnt_fsname, devicePath, buf_len) == 0 && strlen(datadir) >= buf_len &&
             buf_len == strlen(devicePath)) {
             rc = strncpy_s(devicename, MAX_DEVICE_DIR, ent->mnt_fsname + offset, strlen(ent->mnt_fsname + offset));
@@ -2072,7 +2075,7 @@ void InitSystemStatInfo(SystemStatInfo* systemStat)
         return;
     }
     systemStat->diskStatInfo.diskCount = diskCount;
-    systemStat->diskStatInfo.disIoStatInfo = (DisIoStatInfo*)malloc((size_t)diskCount * sizeof(DisIoStatInfo));
+    systemStat->diskStatInfo.disIoStatInfo = new DisIoStatInfo[diskCount];
     if (systemStat->diskStatInfo.disIoStatInfo == NULL) {
         write_runlog(ERROR, "InitSystemStatInfo: out of memory, diskCount = %d\n", diskCount);
         for (int i = 0; i < diskCount; ++i) {
@@ -2447,7 +2450,7 @@ void* CheckSysStatusThreadMain(void* const arg)
         ReportSystemStatusAlarm(&systemStat, &threshold);
         cm_sleep(1);
     }
-    free(systemStat.diskStatInfo.disIoStatInfo);
+    delete[] systemStat.diskStatInfo.disIoStatInfo;
     write_runlog(LOG, "system status check thread exit.\n");
     return NULL;
 }

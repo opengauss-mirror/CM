@@ -65,8 +65,8 @@ const char *g_cmaParamInfo[] = {
 #else
     "enable_cn_auto_repair|bool|0,0|NULL|NULL|",
     "enable_gtm_phony_dead_check|int|0,1|NULL|NULL|",
-    "environment_threshold|string|0,0|NULL|NULL|",
 #endif
+    "environment_threshold|string|0,0|NULL|NULL|",
     "db_service_vip|string|0,0|NULL|NULL|",
     "event_triggers|string|0,0|NULL|NULL|",
     "ss_double_cluster_mode|int|0,2|NULL|NULL|",

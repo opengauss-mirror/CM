@@ -43,5 +43,6 @@ int ResourceStoppedCheck(void);
 status_t InitLocalResConf();
 uint32 GetLocalResConfCount();
 bool IsCusResExistLocal();
+void ManualStopLocalResInst(CmResConfList *conf);
 
 #endif

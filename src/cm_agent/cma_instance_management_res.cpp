@@ -327,7 +327,7 @@ static status_t ManuallStopAllLocalResInst()
     return result;
 }
 
-static void ManualStopLocalResInst(CmResConfList *conf)
+void ManualStopLocalResInst(CmResConfList *conf)
 {
     if (ManuallStopAllLocalResInst() == CM_SUCCESS) {
         CleanOneInstCheckCount(conf);

@@ -27,6 +27,7 @@
 #include "cm_ddb_sharedisk_cmd.h"
 #include "cm_ddb_sharedisk_disklock.h"
 #include "cm_ddb_sharedisk.h"
+#include "cms_global_params.h"
 #include "cm_vtable.h"
 
 uint32 g_cmSdServerNum = 0;
@@ -546,6 +547,10 @@ static status_t CreateShareDiskThread(const DrvApiInfo *apiInfo)
     }
     g_arbiCon = apiInfo->cmsArbiCon;
     pthread_t thrId;
+
+    /* We need to release the previous primary lock if the service restarts repeatedly in a short period */
+    sleep(apiInfo->cmsArbiCon->arbiCfg->haHeartBeatTimeOut);
+
     int32 res = pthread_create(&thrId, NULL, GetShareDiskLockMain, NULL);
     if (res != 0) {
         write_runlog(ERROR, "Failed to create share disk lock thread.\n");

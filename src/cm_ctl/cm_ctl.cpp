@@ -2219,7 +2219,7 @@ int GetWormUsage()
     char buffer[256];
     int usage = -1;
 
-    fp = popen("wrcmd usage", "r");
+    fp = popen("grcmd usage", "r");
     if (fp == NULL) {
         perror("Failed to run command");
         return usage;

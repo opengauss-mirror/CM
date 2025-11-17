@@ -1685,7 +1685,15 @@ void CheckDNConnectionStatus(int i, int alarmIndex, const char *instanceName)
             g_dnPingFault[i] = true;
             if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY  &&
                 !g_isPauseArbitration) {
-                immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
+                if (g_enableWalRecord) {
+                    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+                        if (strcmp(g_resConf[i].resName, "gr") == 0) {
+                            ManualStopLocalResInst(&g_resConf[i]);
+                        }
+                    }
+                } else {
+                    immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
+                }
             }
             alarmType = ALM_AT_Fault;
         } else {

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14.1)
 project(CM)
-
+set(CMAKE_SKIP_RPATH TRUE)
 set(OPENCM_PROJECT_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 set(DEFAULT_3RD_PATH ${OPENCM_PROJECT_SOURCE_DIR}/binarylibs)
 

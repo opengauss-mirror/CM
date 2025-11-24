@@ -558,8 +558,8 @@ void CreateDiskHealthCheckThread()
     write_runlog(LOG, "Xalarm feature is disabled in compile time, use traditional disk check.\n");
 #endif
     if (InitDiskHealthCtx() != CM_SUCCESS) {
-        write_runlog(FATAL, "Failed to init disk health check context.\n");
-        exit(1);
+        write_runlog(ERROR, "Failed to init disk health check context.\n");
+        return;
     }
     uint32 totalDir = 0;
     for (uint32 i = 0; i < g_diskHealth.diskCount; i++) {

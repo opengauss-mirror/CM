@@ -289,6 +289,14 @@ CM_MonitorNodeStopThread gMonitorNodeStopThread;
  * datanode ha heartbeat timeout) + instance_failover_delay_timeout
  */
 uint32 g_instance_failover_delay_time_from_set = 0;
+/* If all standby nodes in a cluster with cascaded standbys are abnormal
+ * whether the cms will failover a cascaded standby node
+ */
+bool g_cms_enable_failover_cascade = false;
+/* If all standby nodes in a cluster with cascaded standbys are abnormal and the threshold is reached,
+ *then failover the cascaded standby.
+ */
+uint32 g_cascade_failover_count = 0;
 uint32 cmserver_gs_guc_reload_timeout = 300;
 uint32 serverHATimeout = 6;
 uint32 cmserver_switchover_timeout = SWITCHOVER_DEFAULT_WAIT;

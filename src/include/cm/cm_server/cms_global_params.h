@@ -99,12 +99,14 @@ typedef struct switchover_instance_t {
 typedef struct DataNodeReadOnlyInfoT {
     uint32 node;
     uint32 instanceId;
-    uint32 dataDiskUsage;
+    uint32 groupIndex;
+    int memberIndex;
     uint32 vgdataDiskUsage;
     uint32 vglogDiskUsage;
+    int dataDiskUsage;
     int instanceType;
     char ddbValue;
-    bool readOnly;
+    ReadOnlyState readOnly;
     bool finalState;
     char dataNodePath[CM_PATH_LENGTH];
     char instanceName[CM_NODE_NAME];
@@ -376,6 +378,8 @@ extern uint32 g_cnDeleteDelayTimeForDnWithoutPrimary;
 extern uint32 g_cmd_disable_coordinatorId;
 #endif
 extern uint32 g_instance_failover_delay_time_from_set;
+extern bool g_cms_enable_failover_cascade;
+extern uint32 g_cascade_failover_count;
 extern uint32 cmserver_gs_guc_reload_timeout;
 extern uint32 serverHATimeout;
 extern uint32 cmserver_switchover_timeout;
@@ -550,6 +554,7 @@ extern bool CurAzIsNeedToStop(const char *azName);
 void InitClientCrt(const char *appPath);
 bool CanArbitrate(MsgRecvInfo* recvMsgInfo, const char *arbitrateType);
 void ChangeDnMemberIndex(const char *str, uint32 groupIdx, int32 memIdx, int32 instTypePur, int32 instTypeSor);
+void ChangeCascadeMemberIndex(const char *str, uint32 groupIdx, int32 memIdx, int32 peerId);
 void SetSwitchoverCmd(cm_instance_command_status *cmd, int32 localRole, uint32 instId, uint32 peerInstId);
 void HashCascadeStandby(cm_to_ctl_instance_datanode_status *dnReport, uint32 groupIdx, int32 memIdx);
 bool IncrementTermToFile(void);
@@ -562,4 +567,5 @@ uint32 GetPeerInstId(uint32 groupIdx, int32 memIdx);
 bool CheckGroupAndMemIndex(uint32 groupIdx, int32 memIdx, const char *str);
 status_t CmsCanArbitrate(CmsArbitrateStatus *cmsSt, const char *str);
 status_t GetNodeIdxByNodeId(uint32 nodeId, uint32 *nodeIdx, const char *str);
+bool8 IsCurInstIdCascadeStandby(uint32 groupIdx, int memberIdx);
 #endif

@@ -48,12 +48,37 @@ void ChangeDnMemberIndex(const char *str, uint32 groupIdx, int32 memIdx, int32 i
                 datanode_role_int_to_string(instTypePur));
             instMem[i].role = instTypePur;
             cmd[i].role_changed = INSTANCE_ROLE_CHANGED;
-        } else if (((instTypePur == INSTANCE_ROLE_PRIMARY || instTypePur == INSTANCE_ROLE_MAIN_STANDBY)
-            || peerInstId == instMem[i].instanceId) && (i != memIdx) && instMem[i].role == instTypePur) {
+        } else if (((instTypePur == INSTANCE_ROLE_PRIMARY || instTypePur == INSTANCE_ROLE_MAIN_STANDBY
+                     || instTypePur == INSTANCE_ROLE_STANDBY) || peerInstId == instMem[i].instanceId)
+                     && (i != memIdx) && instMem[i].role == instTypePur) {
             write_runlog(LOG, "%s: %d: instance(%u) static role(%s) will change to be %s.\n",
                 str, __LINE__, instMem[i].instanceId, datanode_role_int_to_string(instMem[i].role),
                 datanode_role_int_to_string(instTypeSor));
             instMem[i].role = instTypeSor;
+            cmd[i].role_changed = INSTANCE_ROLE_CHANGED;
+        }
+    }
+    SetDynamicConfigChangeToDdb(groupIdx, 0);
+}
+
+void ChangeCascadeMemberIndex(const char *str, uint32 groupIdx, int32 memIdx, int32 peerId)
+{
+    cm_instance_role_status *instMem = g_instance_role_group_ptr[groupIdx].instanceMember;
+    int32 count = g_instance_role_group_ptr[groupIdx].count;
+    cm_instance_command_status *cmd = g_instance_group_report_status_ptr[groupIdx].instance_status.command_member;
+    for (int32 i = 0; i < count; ++i) {
+        /* change cascade standby and one standby index */
+        if (i == memIdx && instMem[i].role == INSTANCE_ROLE_CASCADE_STANDBY) {
+            write_runlog(LOG, "%s: %d: instance(%u) static role(%s) will change to be %s.\n",
+                str, __LINE__, instMem[i].instanceId, datanode_role_int_to_string(INSTANCE_ROLE_CASCADE_STANDBY),
+                datanode_role_int_to_string(INSTANCE_ROLE_STANDBY));
+            instMem[i].role = INSTANCE_ROLE_STANDBY;
+            cmd[i].role_changed = INSTANCE_ROLE_CHANGED;
+        } else if (i == peerId && instMem[i].role == INSTANCE_ROLE_STANDBY) {
+            write_runlog(LOG, "%s: %d: instance(%u) static role(%s) will change to be %s.\n",
+                str, __LINE__, instMem[i].instanceId, datanode_role_int_to_string(INSTANCE_ROLE_STANDBY),
+                datanode_role_int_to_string(INSTANCE_ROLE_CASCADE_STANDBY));
+            instMem[i].role = INSTANCE_ROLE_CASCADE_STANDBY;
             cmd[i].role_changed = INSTANCE_ROLE_CHANGED;
         }
     }
@@ -621,4 +646,15 @@ status_t GetNodeIdxByNodeId(uint32 nodeId, uint32 *nodeIdx, const char *str)
     }
     write_runlog(ERROR, "%s cannot find the nodeId(%u).\n", str, nodeId);
     return CM_ERROR;
+}
+
+bool8 IsCurInstIdCascadeStandby(uint32 groupIdx, int memberIdx)
+{
+    if (g_instance_role_group_ptr[groupIdx].instanceMember[memberIdx].instanceType != INSTANCE_TYPE_DATANODE) {
+        return false;
+    }
+    if (g_instance_role_group_ptr[groupIdx].instanceMember[memberIdx].role == INSTANCE_ROLE_CASCADE_STANDBY) {
+        return true;
+    }
+    return CM_FALSE;
 }

@@ -21,8 +21,8 @@ endif ()
 
 message("We will install target to ${CMAKE_INSTALL_PREFIX}, build mode: <${CMAKE_BUILD_TYPE}>.")
 
-set(SECURE_OPTIONS -fno-common -fstack-protector-strong)
-set(SECURE_LINK_OPTS -Wl,-z,noexecstack -Wl,-z,relro,-z,now)
+set(SECURE_OPTIONS -fno-common -fstack-protector-strong -fPIE)
+set(SECURE_LINK_OPTS -Wl,-z,noexecstack -Wl,-z,relro,-z,now -pie)
 set(PROTECT_OPTIONS -fwrapv -std=c++11 ${OPTIMIZE_LEVEL})
 set(WARNING_OPTIONS -Wall -Wendif-labels -Werror -Wformat-security)
 set(OPTIMIZE_OPTIONS -pipe -fno-aggressive-loop-optimizations -fno-expensive-optimizations -fno-omit-frame-pointer

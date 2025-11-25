@@ -694,6 +694,13 @@ typedef struct cm_to_agent_failover_sta_st {
     uint32 term;
 } cm_to_agent_failover_sta;
 
+typedef struct cm_to_agent_failover_cascade_st {
+    int msg_type;
+    uint32 node;
+    uint32 instanceId;
+    int wait_seconds;
+} cm_to_agent_failover_cascade;
+
 typedef struct cm_to_agent_build_st {
     int msg_type;
     uint32 node;
@@ -1286,6 +1293,20 @@ typedef struct agent_to_cm_current_time_report_st {
     long int etcd_time;
 } agent_to_cm_current_time_report;
 
+typedef enum {
+    READ_ONLY_DDB_INIT = 0,
+    READ_ONLY_EXPECT = 1,
+    READ_ONLY_ALREADY = 2,
+    READ_ONLY_NOT_EXPECT = 3,
+    READ_ONLY_DDB_MAX
+} ReadOnlyDdbValue;
+
+typedef enum {
+    READ_ONLY_INIT,
+    READ_ONLY_ON,
+    READ_ONLY_OFF
+} ReadOnlyState;
+
 typedef struct {
     int msgType;
     uint32 instanceId;
@@ -1294,7 +1315,7 @@ typedef struct {
     uint32 vgdataPathUsage;
     uint32 vglogPathUsage;
     int instanceType;
-    bool readOnly;
+    ReadOnlyState readOnly;
     char reserved[16];
 } AgentToCmDiskUsageStatusReport;
 
@@ -1546,6 +1567,8 @@ typedef struct CmDnReportStatusMsgT {
     DatanodelocalPeer dnLp;
 } CmDnReportStatusMsg;
 
+typedef struct DataNodeReadOnlyInfoT DataNodeReadOnlyInfo;
+
 // need to keep consist with cm_to_ctl_instance_datanode_status
 typedef struct cm_instance_datanode_report_status_st {
     cm_local_replconninfo local_status;
@@ -1580,6 +1603,7 @@ typedef struct cm_instance_datanode_report_status_st {
     cmTime_t printBegin; // print synclist time
     DatanodelocalPeer dnLp;
     DnFloatIpInfo floatIp;
+    DataNodeReadOnlyInfo *readOnly;
 } cm_instance_datanode_report_status;
 
 typedef struct cm_instance_gtm_report_status_st {
@@ -1632,6 +1656,7 @@ typedef struct cm_instance_coordinate_report_status_st {
     uint64 ckpt_redo_point;
     bool is_barrier_exist;
     int buildReason;
+    DataNodeReadOnlyInfo *readOnly;
 } cm_instance_coordinate_report_status;
 
 typedef struct cm_instance_arbitrate_status_st {

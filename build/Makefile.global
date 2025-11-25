@@ -107,8 +107,8 @@ ifeq ($(ENABLE_UT), ON)
     COMPILE_MACRO += -DENABLE_UT
 endif
 
-SECURE_OPTIONS = -fno-common -fstack-protector-strong
-SECURE_LINK_OPTS = -Wl,-z,noexecstack -Wl,-z,relro,-z,now
+SECURE_OPTIONS = -fno-common -fstack-protector-strong -fPIE
+SECURE_LINK_OPTS = -Wl,-z,noexecstack -Wl,-z,relro,-z,now -pie
 PROTECT_OPTIONS = -fwrapv -std=c++11 $(OPTIMIZE_LEVEL)
 WARNING_OPTIONS = -Wall -Wendif-labels -Werror -Wformat-security
 OPTIMIZE_OPTIONS = -pipe -fno-aggressive-loop-optimizations -fno-expensive-optimizations -fno-omit-frame-pointer -fno-strict-aliasing -freg-struct-return

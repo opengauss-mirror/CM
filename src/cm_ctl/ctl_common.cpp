@@ -433,7 +433,12 @@ static status_t DoConnCmserver(uint32 nodeIndex, uint32 cmsIndex, uint32 cmaInde
         pw->pw_name, g_nodeHeader.node, "cm_ctl", CM_CTL, isFirstCms ? "" : "postmaster=1");
         securec_check_intval(ret, (void)ret);
 
+    write_runlog(LOG, "[cm_ctl connstr] %s \n", connstr);
+
     CM_Conn *conn = PQconnectCM(connstr);
+
+    write_runlog(LOG, "[cm_ctl conn object] pghost:%s, pghostaddr:%s, pgport:%s, pglocalhost:%s, pglocalport:%s, pguser:%s, gc_node_name:%s \n", conn->pghost, conn->pghostaddr, conn->pgport, conn->pglocalhost, conn->pglocalport, conn->pguser,conn->gc_node_name);
+
     if (conn != NULL && (CMPQstatus(conn) == CONNECTION_OK)) {
         write_runlog(DEBUG5, "socket is [%d]. try to get ssl connection: %s\n", conn->sock, connstr);
         if (TryGetSslConnToCmserver(conn, timeOut) != CM_SUCCESS) {

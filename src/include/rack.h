@@ -22,7 +22,7 @@
  */
 #ifndef RACK_H
 #define RACK_H
-#define MAX_HOST_NAMEDESC_LENGTH 48
+#define MAX_HOST_NAME_DESC_LENGTH 64
 #define MAX_NUMA_RESV_LEN 16
 #define MAX_NUMA_NUM 32
 #define MAX_HOST_NUM 16
@@ -40,11 +40,11 @@ typedef struct {
     uint64_t mem_free;
     uint64_t mem_borrow;
     uint64_t mem_lend;
-    uint8_t resv[MAX_NUMA_RESV_LEN];   
+    uint8_t resv[MAX_NUMA_RESV_LEN];
 } ubsmem_numa_mem_t;
 
 typedef struct {
-    char host_name[MAX_HOST_NAMEDESC_LENGTH];
+    char host_name[MAX_HOST_NAME_DESC_LENGTH];
     int numa_num;
     ubsmem_numa_mem_t numa[MAX_NUMA_NUM];
 } ubsmem_host_info_t;

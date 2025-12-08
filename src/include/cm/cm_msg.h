@@ -278,6 +278,8 @@ typedef enum CM_MessageType_st {
     MSG_AGENT_CM_WR_FLOAT_IP = 190,
     MSG_CMS_NOTIFY_WR_FLOAT_IP = 191,
     MSG_CTL_CM_FINISH_SWITCHOVER = 192,
+    MSG_CTL_CM_QUERY_NODE = 193,
+    MSG_CM_CTL_QUERY_NODE_ACK = 194,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -2285,6 +2287,10 @@ typedef struct CmsToCtlOneResInstStatSt {
     CmResStatInfo instStat;
 } CmsToCtlOneResInstStat;
 
+typedef struct CmsToCtlOneNodeStatSt {
+    int msgType;
+    bool isNodeOnline;
+} CmsToCtlOneNodeStat;
 
 typedef struct CmsToCtlGroupResStatusSt {
     int msgType;
@@ -2297,6 +2303,11 @@ typedef struct QueryOneResInstStatSt {
     int msgType;
     uint32 instId;
 } QueryOneResInstStat;
+
+typedef struct QueryOneNodeStatSt {
+    int msgType;
+    uint32 nodeId;
+} QueryOneNodeStat;
 
 typedef struct CmsSSLConnSt {
     uint64 startConnTime;

@@ -48,6 +48,36 @@ static inline void ResInstCheckGetQueryMsg(QueryOneResInstStat *queryMsg, uint32
     queryMsg->instId = resInstId;
 }
 
+static inline void NodeCheckGetQueryMsg(QueryOneNodeStatSt *queryMsg, uint32 nodeId)
+{
+    queryMsg->msgType = (int)MSG_CTL_CM_QUERY_NODE;
+    queryMsg->nodeId = nodeId;
+}
+
+static bool NodeCheckGetResult(CM_Conn *pCmsCon)
+{
+    struct timespec timeBegin = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &timeBegin);
+    for (;;) {
+        if (cm_client_flush_msg(pCmsCon) == TCP_SOCKET_ERROR_EPIPE) {
+            break;
+        }
+        CM_BREAK_IF_TRUE(IsTimeOut(&timeBegin, "[NodeCheckGetResult]"));
+        char *recvMsg = recv_cm_server_cmd(pCmsCon);
+        while (recvMsg != NULL) {
+            cm_msg_type *msgTypePtr = (cm_msg_type*)recvMsg;
+            if (msgTypePtr->msg_type == (int)MSG_CM_CTL_QUERY_NODE_ACK) {
+                CmsToCtlOneNodeStat *ackMsg = (CmsToCtlOneNodeStat*)recvMsg;
+                return (ResStatus)ackMsg->isNodeOnline;
+            }
+            write_runlog(DEBUG1, "unknown the msg type is %d.\n", msgTypePtr->msg_type);
+            recvMsg = recv_cm_server_cmd(pCmsCon);
+            CmUsleep(CTL_RECV_CYCLE);
+        }
+    }
+    return false;
+}
+
 static ResStatus ResInstCheckGetResult(CM_Conn *pCmsCon)
 {
     struct timespec timeBegin = {0, 0};
@@ -90,6 +120,27 @@ ResStatus GetResInstStatus(uint32 instId)
     }
 
     ResStatus result = ResInstCheckGetResult(pCmsCon);
+    FINISH_CONNECTION_WITHOUT_EXITCODE(pCmsCon);
+
+    return result;
+}
+
+bool IsNodeStatOnline(uint32 nodeId)
+{
+    CM_Conn *pCmsCon = NULL;
+    if (ResInstCheckConCms(&pCmsCon) != CM_SUCCESS) {
+        write_runlog(DEBUG1, "connect cms primary failed.\n");
+        return CM_RES_STAT_UNKNOWN;
+    }
+
+    QueryOneNodeStatSt queryMsg = {0};
+    NodeCheckGetQueryMsg(&queryMsg, nodeId);
+    if (cm_client_send_msg(pCmsCon, 'C', (char*)&queryMsg, sizeof(queryMsg)) != 0) {
+        write_runlog(DEBUG1, "GetNodeStatus send query one res inst msg to cms fail!\n");
+        FINISH_CONNECTION_WITHOUT_EXITCODE(pCmsCon);
+        return false;
+    }
+    bool result = NodeCheckGetResult(pCmsCon);
     FINISH_CONNECTION_WITHOUT_EXITCODE(pCmsCon);
 
     return result;

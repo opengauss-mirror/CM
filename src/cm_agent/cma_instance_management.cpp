@@ -1531,9 +1531,10 @@ void fast_shutdown_nodes(void)
         /* Check if all resources have been cleaned up */
         bool areResourcesCleaned = true;
         for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
-           if (CheckOneResInst(&g_resConf[i]) == CUS_RES_CHECK_STAT_ONLINE) {
-               areResourcesCleaned = false;
-           }
+            if (CheckOneResInst(&g_resConf[i]) == CUS_RES_CHECK_STAT_ONLINE &&
+                !(g_enableWalRecord && strncmp(g_resConf[i].resName, CM_RES_RESTAPI, strlen(CM_RES_RESTAPI)) == 0)) {
+                areResourcesCleaned = false;
+            }
         }
         if (areResourcesCleaned) {
             StopCmInstance();

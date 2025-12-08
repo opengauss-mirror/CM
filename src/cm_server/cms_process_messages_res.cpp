@@ -892,6 +892,30 @@ void ProcessQueryOneResInst(MsgRecvInfo* recvMsgInfo, const QueryOneResInstStat 
     write_runlog(ERROR, "unknown res instId(%u).\n", destInstId);
 }
 
+void ProcessQueryOneNodeStat(MsgRecvInfo* recvMsgInfo, const QueryOneNodeStat *queryMsg)
+{
+    CmsToCtlOneNodeStat ackMsg = {0};
+    ackMsg.msgType = (int)MSG_CM_CTL_QUERY_NODE_ACK;
+
+    uint32 nodeId = queryMsg->nodeId;
+    for (uint32 i = 0; i < CusResCount(); ++i) {
+        for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
+            if (g_resStatus[i].status.resStat[j].nodeId != nodeId) {
+                continue;
+            }
+            (void)pthread_rwlock_rdlock(&g_resStatus[i].rwlock);
+            ackMsg.isNodeOnline = (g_resStatus[i].status.resStat[j].status == CM_RES_STAT_ONLINE) ? true : false;
+            (void)pthread_rwlock_unlock(&g_resStatus[i].rwlock);
+            if (ackMsg.isNodeOnline == false) {
+                (void)RespondMsg(recvMsgInfo, 'S', (char*)&(ackMsg), sizeof(ackMsg), DEBUG5);
+                return;
+            }
+        }
+    }
+    (void)RespondMsg(recvMsgInfo, 'S', (char*)&(ackMsg), sizeof(ackMsg), DEBUG5);
+    write_runlog(LOG, "node %u status is online.\n", nodeId);
+}
+
 static bool IsregIsNotUnknown(ResInstIsreg *isregList, uint32 isregCount)
 {
     for (uint32 i = 0; i < isregCount; ++i) {

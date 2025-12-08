@@ -44,6 +44,7 @@
 #define CLUSTER_STATE_CHECK_INTERVAL 10
 #define LTRAN_CHECK_INTERVAL 2
 #define LTRAN_CHECK_TIMES 30
+#define ONLY_GR_RES_CLUSTER 1
 
 static void start_and_check_etcd_cluster();
 static void start_cluster(void);
@@ -1916,6 +1917,9 @@ static int start_check_cluster()
 
 static bool IsAllResInstStarted(uint32 nodeId)
 {
+    if (g_enableWalRecord && CusResCount() > ONLY_GR_RES_CLUSTER) {
+        return IsNodeStatOnline(nodeId);
+    }
     for (uint32 i = 0; i < CusResCount(); ++i) {
         for (uint32 j = 0; j < g_resStatus[i].status.instanceCount; ++j) {
             if (g_resStatus[i].status.resStat[j].nodeId != nodeId) {

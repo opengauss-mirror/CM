@@ -56,6 +56,7 @@ typedef struct CmDoWriteOper_t {
 #define CM_SERVER_DATA_DIR "cm_server"
 #define CM_INSTANCE_REPLACE "instance_replace"
 #define PROC_NET_TCP "/proc/net/tcp"
+#define CM_RES_RESTAPI "CM-RestAPI"
 
 /*
  * ssh connect does not exit automatically when the network is fault,

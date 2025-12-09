@@ -263,6 +263,9 @@ static inline void CleanOneInstOnlineTimes(CmResConfList *resConf)
 void StopAllResInst()
 {
     for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
+        if (g_enableWalRecord && strncmp(g_resConf[i].resName, CM_RES_RESTAPI, strlen(CM_RES_RESTAPI)) == 0) {
+            continue;
+        }
         OneResInstClean(&g_resConf[i]);
     }
     StopCurNodeFloatIp();
@@ -521,8 +524,13 @@ int ResourceStoppedCheck(void)
     for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
         int ret = CheckOneResInst(&g_resConf[i]);
         if (ret == CUS_RES_CHECK_STAT_ONLINE || ret == CUS_RES_CHECK_STAT_ABNORMAL) {
-            write_runlog(LOG, "resource is running, script is %s\n", g_resConf[i].script);
-            return PROCESS_RUNNING;
+            if (g_enableWalRecord && strncmp(g_resConf[i].resName, CM_RES_RESTAPI, strlen(CM_RES_RESTAPI)) == 0) {
+                write_runlog(LOG, "resource %s is running, no need to stop\n", g_resConf[i].resName);
+                return PROCESS_NOT_EXIST;
+            } else {
+                write_runlog(LOG, "resource is running, script is %s\n", g_resConf[i].script);
+                return PROCESS_RUNNING;
+            }
         }
     }
     return PROCESS_NOT_EXIST;

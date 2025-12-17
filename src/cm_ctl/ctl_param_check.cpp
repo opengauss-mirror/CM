@@ -108,7 +108,7 @@ const char *g_cmsParamInfo[] = {
     "force_promote|int|0,1|NULL|NULL|",
     "backup_open|int|0,2|NULL|NULL|",
     "enable_dcf|bool|0,0|NULL|NULL|",
-    "ddb_type|int|0,1|NULL|NULL|",
+    "ddb_type|int|0,2|NULL|NULL|",
     "enable_ssl|bool|0,0|NULL|NULL|",
     "ssl_cert_expire_alert_threshold|int|7,180|NULL|NULL|",
     "ssl_cert_expire_check_interval|int|0,2147483647|NULL|NULL|",

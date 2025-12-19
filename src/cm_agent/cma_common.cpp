@@ -532,7 +532,7 @@ void UpdateDBStateFile(const char *path, const GaussState *state)
     return;
 }
 
-pgpid_t get_pgpid(char *pid_path, uint32 len)
+pgpid_t get_pgpid(const char *pid_path, uint32 len)
 {
     if (len == 0) {
         write_runlog(ERROR, "pidPath(%s) len is 0.\n", pid_path);
@@ -540,7 +540,6 @@ pgpid_t get_pgpid(char *pid_path, uint32 len)
     }
     long pid;
 
-    canonicalize_path(pid_path);
     FILE *pidf = fopen(pid_path, "re");
     if (pidf == NULL) {
         write_runlog(DEBUG5, "could not open PID file \"%s\"\n", pid_path);
@@ -1328,10 +1327,14 @@ void PrintInstanceStack(const char* dataPath, bool isPrintedOnce)
         return;
     }
 
+    long pgpid = get_pgpid(dataPath, MAXPGPATH);
+    if (pgpid <= 0) {
+        return;
+    }
     char command[CM_MAX_COMMAND_LEN];
     errno_t rc = snprintf_s(command, CM_MAX_COMMAND_LEN, CM_MAX_COMMAND_LEN - 1,
-        "gs_ctl stack -D %s >> \"%s\" 2>&1 &",
-        dataPath, system_call_log);
+        "gstack %ld >> \"%s\" 2>&1 &",
+        pgpid, system_call_log);
     securec_check_intval(rc, (void)rc);
 
     int ret = system(command);

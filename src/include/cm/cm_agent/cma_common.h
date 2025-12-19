@@ -62,7 +62,7 @@ int ReadDBStateFile(GaussState *state, const char *statePath);
 void UpdateDBStateFile(const char *path, const GaussState *state);
 extern uint64 g_obsDropCnXlog;
 
-pgpid_t get_pgpid(char* pid_path, uint32 len);
+pgpid_t get_pgpid(const char* pid_path, uint32 len);
 bool is_process_alive(pgpid_t pid);
 void set_disc_check_state(uint32 instanceId);
 bool agentCheckDisc(const char* path);

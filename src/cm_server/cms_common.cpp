@@ -225,11 +225,40 @@ uint32 findMinCmServerInstanceIdIndex()
     return minIndex;
 }
 
+static bool check_ip_in_all_cm_agent_ips(const char *ip)
+{
+    for (uint32 i = 0; i < g_node_num; i++) {
+        for (uint32 j = 0; j < g_node[i].cmAgentListenCount; j++) {
+            if (strcmp(g_node[i].cmAgentIP[j], ip) == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Helper function to check if an IP is in the allowed list for the given remote_type
+static bool check_ip_in_allowed_list(const char* ip, int remote_type)
+{
+    switch (remote_type) {
+        case CM_CTL:
+        case CM_AGENT:
+            return check_ip_in_all_cm_agent_ips(ip);
+        case CM_SERVER:
+            for (uint32 i = 0; i < g_currentNode->cmServerPeerHAListenCount; i++) {
+                if (strcmp(g_currentNode->cmServerPeerHAIP[i], ip) == 0) {
+                    return true;
+                }
+            }
+            break;
+        default:
+            break;
+    }
+    return false;
+}
+
 bool is_valid_host(const CM_Connection* con, int remote_type)
 {
-    uint32 i;
-    uint32 j;
-
     if (con == NULL) {
         return false;
     }
@@ -259,39 +288,28 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
         return false;
     }
 
-    switch (remote_type) {
-        case CM_AGENT:
-            for (i = 0; i < g_node_num; i++) {
-                for (j = 0; j < g_node[i].cmAgentListenCount; j++) {
-                    if (strcmp(g_node[i].cmAgentIP[j], peerIP) == 0) {
-                        return true;
-                    }
-                }
-            }
-            break;
-
-        case CM_CTL:
-            for (i = 0; i < g_node_num; i++) {
-                for (j = 0; j < g_node[i].cmAgentListenCount; j++) {
-                    if (strcmp(g_node[i].cmAgentIP[j], peerIP) == 0) {
-                        return true;
-                    }
-                }
-            }
-            break;
-
-        case CM_SERVER:
-            for (i = 0; i < g_currentNode->cmServerPeerHAListenCount; i++) {
-                if (strcmp(g_currentNode->cmServerPeerHAIP[i], peerIP) == 0) {
-                    return true;
-                }
-            }
-            break;
-        default:
-            break;
+    // First check the actual peer IP from getpeername
+    if (check_ip_in_allowed_list(peerIP, remote_type)) {
+        return true;
     }
 
-    write_runlog(ERROR, "invalid host(%s), sockfd=%d, remote_type=%d.\n", peerIP, con->port->sock, remote_type);
+    /*
+     * If the actual peer IP doesn't match, also check the localhost parameter from connection string
+     * This handles the case where the client has multiple network interfaces and the OS
+     * selects a different source IP than the one specified in the connection string
+    */
+    if (con->port->remote_host != NULL && strlen(con->port->remote_host) > 0) {
+        if (check_ip_in_allowed_list(con->port->remote_host, remote_type)) {
+            write_runlog(DEBUG1, "Peer IP (%s) doesn't match, but client declared IP (%s) is valid,"
+                " sockfd=%d, remote_type=%d.\n",
+                peerIP, con->port->remote_host, con->port->sock, remote_type);
+            return true;
+        }
+    }
+
+    write_runlog(ERROR, "invalid host: peerIP=%s, client_declared_ip=%s, sockfd=%d, remote_type=%d.\n",
+        peerIP, con->port->remote_host != NULL ? con->port->remote_host : "NULL",
+        con->port->sock, remote_type);
     return false;
 }
 

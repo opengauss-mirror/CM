@@ -298,7 +298,7 @@ extern char g_environmentThreshold[CM_PATH_LENGTH];
 extern char g_doradoIp[CM_IP_LENGTH];
 #ifndef ENABLE_MULTIPLE_NODES
 extern char g_dbServiceVip[CM_IP_LENGTH];
-extern char g_enableFenceDn[10];
+extern char g_enableFenceDn[BOOL_STR_MAX_LEN];
 extern bool g_isStorageWithDMSorDSS;
 extern char g_onDemandRealTimeBuildStatus;
 #endif

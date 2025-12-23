@@ -61,7 +61,7 @@ const char *g_cmaParamInfo[] = {
     "voting_disk_path|string|0,0|NULL|NULL|",
     "agent_rhb_interval|int|0,2147483647|NULL|NULL|",
 #ifndef ENABLE_MULTIPLE_NODES
-    "enable_fence_dn|string|0,0|NULL|NULL|",
+    "enable_fence_dn|bool|0,0|NULL|NULL|",
 #else
     "enable_cn_auto_repair|bool|0,0|NULL|NULL|",
     "enable_gtm_phony_dead_check|int|0,1|NULL|NULL|",

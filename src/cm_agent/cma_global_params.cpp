@@ -236,7 +236,7 @@ IpType g_ipType = IP_TYPE_INIT;
 bool g_supportIpV6 = false;
 #ifndef ENABLE_MULTIPLE_NODES
 char g_dbServiceVip[CM_IP_LENGTH] = {0};
-char g_enableFenceDn[10] = {0};
+char g_enableFenceDn[BOOL_STR_MAX_LEN] = {0};
 bool g_isStorageWithDMSorDSS = false;
 char g_onDemandRealTimeBuildStatus = 0;
 #endif

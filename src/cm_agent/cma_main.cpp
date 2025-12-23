@@ -1563,8 +1563,9 @@ int get_agent_global_params_from_configfile()
     }
 
 #ifndef ENABLE_MULTIPLE_NODES
-    if (get_config_param(configDir, "enable_fence_dn", g_enableFenceDn, sizeof(g_enableFenceDn)) < 0)
+    if (get_config_param(configDir, "enable_fence_dn", g_enableFenceDn, sizeof(g_enableFenceDn)) < 0) {
         write_runlog(ERROR, "get_config_param() get enable_fence_dn fail.\n");
+    }
 #endif
     GetEventTrigger();
 

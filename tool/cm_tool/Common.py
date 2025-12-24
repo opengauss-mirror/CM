@@ -20,6 +20,8 @@
 
 import os
 import subprocess
+import shlex
+import re
 from CMLog import CMLog
 from ErrorCode import ErrorCode
 
@@ -41,6 +43,37 @@ def executeCmdOnHost(host, cmd, isLocal = False):
         cmd = 'ssh -q -o ConnectTimeout=5 %s \"%s\"' % (host, cmd)
     status, output = subprocess.getstatusoutput(cmd)
     return status, output
+
+def execute_cmd_on_host_safely(host, cmd_args, is_local=False):
+    if is_local:
+        try:
+            result = subprocess.run(
+                cmd_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+                shell=False
+            )
+            return result.returncode, result.stdout
+        except Exception as exc:
+            return -1, str(exc)
+    else:
+        safe_host = shlex.quote(host)
+        safe_cmd = " ".join(shlex.quote(arg) for arg in cmd_args)
+        ssh_cmd = ['ssh', '-q', '-o', 'ConnectTimeout=5', safe_host, safe_cmd]
+        try:
+            result = subprocess.run(
+                ssh_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+                shell=False
+            )
+            return result.returncode, result.stdout
+        except Exception as e:
+            return -1, str(e)
 
 def checkXMLFile(xmlFile):
     """

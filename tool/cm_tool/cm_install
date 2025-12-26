@@ -286,7 +286,7 @@ General options:
         # check whether term of primary is invalid and biggest.
         primaryCount = 0
         primaryTerm = 0
-        sqlCmd = "select term from pg_last_xlog_replay_location();"
+        sqlCmd = "select term from pg_catalog.pg_last_xlog_replay_location();"
         for host in self.hostnames:
             isLocal = False
             if host == self.localhostName:

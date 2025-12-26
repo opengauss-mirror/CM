@@ -22,9 +22,11 @@ from curses.ascii import isdigit, islower, isupper
 import os
 import re
 import subprocess
+import shlex
 import getpass
 from ErrorCode import ErrorCode
 from Common import executeCmdOnHost
+from Common import execute_cmd_on_host_safely
 
 class InstallImpl:
     def __init__(self, install):
@@ -48,16 +50,52 @@ class InstallImpl:
             isLocal = True
         return executeCmdOnHost(host, cmd, isLocal)
 
+    def execute_cmd_on_host_safely(self, host, cmd, is_local = False):
+        if host == self.localhostName:
+            is_local = True
+        return execute_cmd_on_host_safely(host, cmd, is_local)
+
+    def validate_cmdir(cmdir):
+        """
+        Validate CM directory path legality, prohibit special symbols
+        """
+        if not isinstance(cmdir, str) or not cmdir.startswith("/"):
+            raise ValueError(f"cmdir must be an absolute path: {cmdir}")
+        # Allow only letters/numbers/slashes/underscores/hyphens/dots (forbid Shell special chars)
+        illegal_chars = re.findall(r'[^a-zA-Z0-9/_\-.]', cmdir)
+        if illegal_chars:
+            raise ValueError(f"CM directory contains illegal characters {illegal_chars}: {cmdir}")
+
+    def validate_hostname(hostname):
+        """
+        Validate hostname (IP/domain name) legality
+        """
+        # IP regex (with validity check, avoid invalid IP like 256.0.0.1)
+        ip_Pattern = r"^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$"
+        # Domain name regex (simplified version, extendable for actual scenarios)
+        domain_pattern = r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$"
+        if not re.match(ip_Pattern, hostname) and not re.match(domain_pattern, hostname):
+            raise ValueError(f" Invalid hostname: {hostname}")
+
     def prepareCMPath(self):
         """
         create path: cmdir、cmdir/cm_server、cmdir/cm_agent
         """
         self.logger.log("Preparing CM path.")
         for (cmdir, host) in zip(self.cmDirs, self.hostnames):
-            cmd = "mkdir -p {cmdir}/cm_server {cmdir}/cm_agent".format(cmdir=cmdir)
-            status, output = self.executeCmdOnHost(host, cmd)
+            try:
+                InstallImpl.validate_cmdir(cmdir)
+            except ValueError as e:
+                self.logger.logExit(f"Invalid cmdir parameter: {e}")
+            try:
+                InstallImpl.validate_hostname(host)
+            except ValueError as e:
+                self.logger.logExit(f"Invalid host parameter: {e}")
+
+            cmd_args = ["mkdir", "-p", f"{cmdir}/cm_server", f"{cmdir}/cm_agent"]
+            status, output = self.execute_cmd_on_host_safely(host, cmd_args)
             if status != 0:
-                self.logger.debug("Command: " + cmd)
+                self.logger.debug("Command: " + str(cmd_args))
                 errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
                 self.logger.logExit("Failed to create CM path." + errorDetail)
 
@@ -403,11 +441,24 @@ class InstallImpl:
         curPath = os.path.split(os.path.realpath(__file__))[0]
         createCMCACert = os.path.realpath(os.path.join(curPath, "CreateCMCACert.sh"))
         passwd = self._getPassword()
-        cmd = "source %s; echo \"%s\" | sh %s" % (self.envFile, passwd, createCMCACert)
-        # once used, set password to null and release it
+
+        safe_env_file = shlex.quote(self.envFile)
+        safe_script = shlex.quote(createCMCACert)
+        cmd = f"source '{safe_env_file}'; sh '{safe_script}'"
+        proc = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding='utf-8',
+            errors='replace'
+        )
+        output, stderr = proc.communicate(input=f"{passwd}\n")
+        status = proc.returncode
         passwd = ""
         del passwd
-        status, output = subprocess.getstatusoutput(cmd)
+
         cmd = ""
         del cmd
         if status != 0:

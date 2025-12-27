@@ -101,44 +101,68 @@ class CMLog:
         if os.path.islink(self.logFile):
             raise Exception(ErrorCode.GAUSS_502["GAUSS_50206"] % self.logFile)
 
+    def execute_cmd(self, cmd_args):
+        """
+        function: execute subprocess command safely
+        input: cmd_args - command arguments list
+        output: (returncode, stdout) tuple
+        """
+        try:
+            result = subprocess.run(
+                cmd_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+                shell=False
+            )
+            return result.returncode, result.stdout
+        except Exception as exc:
+            return -1, str(exc)
+
     def __checkLogFileExist(self):
         """
         check whether log file exists, if exist, get log file name
         log file name format: 
             prefix-YYYY-mm-DD_HHMMSSsuffix = cm_install-YYYY-mm-DD_HHMMSS.log
         """
-        logFileList = "%s/logFileList_%s.dat" % (self.logPath, self.pid)
-        cmd = "ls %s | grep '^%s-.*%s$' > %s" % (
-            self.logPath, self.prefix, self.suffix, logFileList)
-        (status, output) = subprocess.getstatusoutput(cmd)
-        if status != 0:
-            if os.path.exists(logFileList):
-                os.remove(logFileList)
-            return False
-        with open(logFileList, "r") as fp:
-            filenameList = []
-            while True:
-                # get real file name
-                filename = (fp.readline()).strip()
-                if not filename:
-                    break
+        filenameList = []
+        try:
+            if not os.path.exists(self.logPath) or not os.path.isdir(self.logPath):
+                return False
+            cmd_args = ['ls', self.logPath]
+            status, output = execute_cmd(cmd_args)
+            if status != 0:
+                self.logger.error("Failed to execute ls command: %s" % output)
+                return False
+            
+            # Escape special regex characters in prefix and suffix
+            escaped_prefix = re.escape(self.prefix)
+            escaped_suffix = re.escape(self.suffix)
+            # Build regex pattern: ^prefix-.*suffix$
+            pattern = r'^%s-.*%s$' % (escaped_prefix, escaped_suffix)
+            regex = re.compile(pattern)
+            
+            # Filter files by pattern from ls output
+            for filename in output.splitlines():
+                filename = filename.strip()
+                if not filename or not regex.match(filename):
+                    continue
+                # Additional validation
                 existedResList = filename.split(".")
                 if len(existedResList) > 2:
                     continue
-                (existedPrefix, existedSuffix) = \
-                    os.path.splitext(filename)
+                (existedPrefix, existedSuffix) = os.path.splitext(filename)
                 if existedSuffix != self.suffix:
                     continue
-                if len(filename) != len(self.prefix) + \
-                    len(self.suffix) + 18:
+                if len(filename) != len(self.prefix) + len(self.suffix) + 18:
                     continue
                 timeStamp = existedPrefix[-17:]
                 # check log file name
                 if self.__isValidDate(timeStamp):
                     filenameList.append(filename)
-        # cleanup logFileList
-        if os.path.exists(logFileList):
-            os.remove(logFileList)
+        except Exception:
+            return False
 
         if len(filenameList) == 0:
             return False
@@ -156,6 +180,9 @@ class CMLog:
         """
         try:
             if self.__checkLogFileExist():
+                if not os.access(self.logFile, os.W_OK):
+                    raise Exception(ErrorCode.GAUSS_502["GAUSS_50206"] % self.logFile +
+                                    " Error:\n%s" % ("No write permission"))
                 self.fp = open(self.logFile, "a")
                 return
             # get current time
@@ -176,6 +203,9 @@ class CMLog:
                     raise Exception(output)
             # open log file
             self.__checkLink()
+            if not os.access(self.logFile, os.W_OK):
+                raise Exception(ErrorCode.GAUSS_502["GAUSS_50206"] % self.logFile +
+                                " Error:\n%s" % ("No write permission"))
             self.fp = open(self.logFile, "a")
         except Exception as e:
             raise Exception(ErrorCode.GAUSS_502["GAUSS_50206"]

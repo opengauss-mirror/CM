@@ -25,8 +25,7 @@ import subprocess
 import shlex
 import getpass
 from ErrorCode import ErrorCode
-from Common import executeCmdOnHost
-from Common import execute_cmd_on_host_safely
+from Common import *
 
 class InstallImpl:
     def __init__(self, install):
@@ -104,10 +103,11 @@ class InstallImpl:
         if self.cmpkg == "":
             return
         # decompress cm pkg on localhost
-        decompressCmd = "tar -zxf %s -C %s" % (self.cmpkg, self.gaussHome)
-        status, output = subprocess.getstatusoutput(decompressCmd)
+        # Use common_execute_cmd to safely execute tar command, avoiding injection risk
+        cmd_args = ['tar', '-zxf', self.cmpkg, '-C', self.gaussHome]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
-            self.logger.debug("Command: " + decompressCmd)
+            self.logger.debug("Command: " + str(cmd_args))
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit("Failed to decompress cm pacakage to on localhost." + errorDetail)
 
@@ -121,25 +121,31 @@ class InstallImpl:
             if host == self.localhostName:
                 continue
             # copy cm pacakage to other hosts
+            # Use common_execute_cmd to safely execute scp command, avoiding injection risk
             if ":" in host:
                 host = "[" + host + "]"
-            scpCmd = "scp %s %s:%s" % (self.cmpkg, host, self.toolPath)
-            status, output = subprocess.getstatusoutput(scpCmd)
+            destination = "%s:%s" % (host, self.toolPath)
+            cmd_args = ['scp', self.cmpkg, destination]
+            status, output = common_execute_cmd(cmd_args)
             if status != 0:
-                self.logger.debug("Command: " + scpCmd)
+                self.logger.debug("Command: " + str(cmd_args))
                 errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
                 self.logger.logExit(("Failed to send cm pacakage to %s." % host) + errorDetail)
             pkgPath = os.path.join(self.toolPath, cmpkgName)
-            decompressCmd = "tar -zxf %s -C %s" % (pkgPath, self.gaussHome)
-            status, output = self.executeCmdOnHost(host, decompressCmd)
+            # Use execute_cmd_on_host_safely to safely execute tar command, avoiding injection risk
+            cmd_args = ['tar', '-zxf', pkgPath, '-C', self.gaussHome]
+            status, output = self.execute_cmd_on_host_safely(host, cmd_args)
             if status != 0:
-                self.logger.debug("Command: " + decompressCmd)
+                self.logger.debug("Command: " + str(cmd_args))
                 errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
                 self.logger.logExit(("Failed to decompress cm pacakage to on host %s." % host) + errorDetail)
 
     def checkCMPkgVersion(self):
-        getCMVersionCmd = "source %s; cm_ctl -V" % self.envFile
-        status, output = subprocess.getstatusoutput(getCMVersionCmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; cm_ctl -V" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
             self.logger.logExit("Failed to get CM pacakage version.")
         cmVersionList = re.findall(r'.*CM (\d.*\d) build', output)
@@ -147,8 +153,10 @@ class InstallImpl:
             self.logger.logExit("Failed to get CM pacakage version.")
         cmVersion = cmVersionList[0]
 
-        getGaussdbVersionCmd = "source %s; gaussdb -V" % self.envFile
-        status, output = subprocess.getstatusoutput(getGaussdbVersionCmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        cmd_str = "source %s; gaussdb -V" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
             self.logger.logExit("Failed to get gaussdb version.")
         gaussdbVersionList = re.findall(r'openGauss (\d.*\d) build', output)
@@ -208,15 +216,18 @@ class InstallImpl:
         self.logger.log("Setting om_monitor crontab.")
         # save old crontab content to cronContentTmpFile
         cronContentTmpFile = os.path.join(self.tmpPath, "cronContentTmpFile_" + str(os.getpid()))
-        listCronCmd = "crontab -l > %s" % cronContentTmpFile
-        status, output = self.executeCmdOnHost(self.localhostName, listCronCmd)
+        # Use common_execute_cmd to safely execute crontab command, avoiding injection risk
+        cmd_str = "crontab -l > %s" % cronContentTmpFile
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
-            self.logger.debug("Command: " + listCronCmd)
+            self.logger.debug("Command: " + str(cmd_args))
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit(ErrorCode.GAUSS_508["GAUSS_50804"] + errorDetail)
         # if old crontab content contains om_monitor, clear it
         clearMonitorCmd = "sed '/.*om_monitor.*/d' %s -i" % cronContentTmpFile
-        status, output = subprocess.getstatusoutput(clearMonitorCmd)
+        cmd_args = ['sed', '/.*om_monitor.*/d', cronContentTmpFile, '-i']
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
             os.remove(cronContentTmpFile)
             self.logger.debug("Command: " + clearMonitorCmd)
@@ -233,6 +244,7 @@ class InstallImpl:
             os.makedirs(monitorLogPath)
         startMonitorCmd += "nohup om_monitor -L %s/om_monitor >>/dev/null 2>&1 &" % monitorLogPath
         monitorCron = "*/1 * * * * " + startMonitorCmd + os.linesep
+        checkWritePermissionForDirectory(cronContentTmpFile)
         with open(cronContentTmpFile, 'a+', encoding='utf-8') as fp:
             fp.writelines(monitorCron)
             fp.flush()
@@ -248,16 +260,19 @@ class InstallImpl:
             # copy cronContentTmpFile to other host
             if ":" in host:
                 host = "[" + host + "]"
-            scpCmd = "scp %s %s:%s" % (cronContentTmpFile, host, self.tmpPath)
-            status, output = subprocess.getstatusoutput(scpCmd)
+            destination = "%s:%s" % (host, self.tmpPath)
+            cmd_args = ['scp', cronContentTmpFile, destination]
+            status, output = common_execute_cmd(cmd_args)
             if status != 0:
-                self.logger.debug("Command: " + scpCmd)
+                self.logger.debug("Command: " + str(cmd_args))
                 errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
                 self.logger.logExit(("Failed to copy cronContentTmpFile to %s." % host) + errorDetail)
             # set om_monitor crontab
-            status, output = self.executeCmdOnHost(host, setCronCmd)
+            cmd_args = ['crontab', cronContentTmpFile]
+            status, output = self.execute_cmd_on_host_safely(host, cmd_args)
             # cleanup cronContentTmpFile
-            self.executeCmdOnHost(host, cleanTmpFileCmd)
+            cmd_args = ['rm', cronContentTmpFile, '-f']
+            status, output = self.execute_cmd_on_host_safely(host, cmd_args)
             if status != 0:
                 self.logger.debug("Command: " + setCronCmd)
                 errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
@@ -272,25 +287,32 @@ class InstallImpl:
                 self.logger.logExit((ErrorCode.GAUSS_516["GAUSS_51607"] % "om_monitor") + errorDetail)
 
         # set crontab on localhost
-        status, output = subprocess.getstatusoutput(setCronCmd)
+        # Use common_execute_cmd to safely execute crontab command, avoiding injection risk
+        cmd_args = ['crontab', cronContentTmpFile]
+        status, output = common_execute_cmd(cmd_args)
         os.remove(cronContentTmpFile)
         if status != 0:
-            self.logger.debug("Command: " + setCronCmd)
+            self.logger.debug("Command: " + str(cmd_args))
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit(ErrorCode.GAUSS_508["GAUSS_50801"] + errorDetail)
 
-        status, output = subprocess.getstatusoutput(killMonitorCmd + startMonitorCmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        cmd_args = ['sh', '-c', killMonitorCmd + startMonitorCmd]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
-            self.logger.debug("Command: " + startMonitorCmd)
+            self.logger.debug("Command: " + str(cmd_args))
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit((ErrorCode.GAUSS_516["GAUSS_51607"] % "om_monitor") + errorDetail)
 
     def startCluster(self):
         self.logger.log("Starting cluster.")
-        startCmd = "source %s; cm_ctl start" % self.envFile
-        status, output = subprocess.getstatusoutput(startCmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; cm_ctl start" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
-            self.logger.debug("Command: " + startCmd)
+            self.logger.debug("Command: " + str(cmd_args))
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit("Failed to start cluster." + errorDetail)
 
@@ -298,10 +320,13 @@ class InstallImpl:
         if status != 0:
             self.logger.error("Failed to refresh dynamic file." + output)
 
-        queryCmd = "source %s; cm_ctl query -Cv" % self.envFile
-        status, output = subprocess.getstatusoutput(queryCmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; cm_ctl query -Cv" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
-            self.logger.debug("Command: " + queryCmd)
+            self.logger.debug("Command: " + str(cmd_args))
             errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
             self.logger.logExit("Failed to query cluster status." + errorDetail)
         self.logger.log(output)
@@ -318,24 +343,28 @@ class InstallImpl:
         refresh static and dynamic file using xml file with cm
         """
         # refresh static file
-        cmd = """
-            source {envFile};
-            gs_om -t generateconf -X {xmlFile} --distribute
-            """.format(envFile=envFile, xmlFile=xmlFile)
-        status, output = subprocess.getstatusoutput(cmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(envFile)
+        safe_xml_file = shlex.quote(xmlFile)
+        cmd_str = "source %s; gs_om -t generateconf -X %s --distribute" % (safe_env_file, safe_xml_file)
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         errorDetail = ""
         if status != 0:
-            errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (cmd, status, output)
+            errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (str(cmd_args), status, output)
         return status, errorDetail
 
     @staticmethod
     def refreshDynamicFile(envFile):
         # refresh dynamic file
-        refreshDynamicFileCmd = "source %s; gs_om -t refreshconf" % envFile
-        status, output = subprocess.getstatusoutput(refreshDynamicFileCmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(envFile)
+        cmd_str = "source %s; gs_om -t refreshconf" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         errorDetail = ""
         if status != 0:
-            errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (refreshDynamicFileCmd, status, output)
+            errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (str(cmd_args), status, output)
         return status, errorDetail
 
     def _refreshStaticFile(self):
@@ -366,7 +395,7 @@ class InstallImpl:
             elif c in specLetters:
                 kinds[3] += 1
             else:
-                print("The password contains illegal character: %s." % c)
+                print("The password contains illegal character, please check!")
                 return False
         kindsNum = 0
         for k in kinds:
@@ -411,7 +440,9 @@ class InstallImpl:
         v3Ca = os.linesep.join(v3CaL)
 
         # Create config file.
-        with open(os.path.join(certPath, "openssl.cnf"), "w") as fp:
+        ssl_conf_path = os.path.join(certPath, "openssl.cnf")
+        checkWritePermissionForDirectory(ssl_conf_path)
+        with open(ssl_conf_path, "w") as fp:
             # Write config item of Signature
             fp.write(v3Ca)
         self.logger.debug("OPENSSL: Successfully create config file.")
@@ -432,11 +463,15 @@ class InstallImpl:
     def _createCMCALocal(self):
         self.logger.debug("Creating Cm ca files locally.")
         certPath = os.path.join(self.gaussHome, "share/sslcert/cm")
-        mkdirCmd = "rm %s -rf; mkdir %s" % (certPath, certPath)
-        status, output = subprocess.getstatusoutput(mkdirCmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_cert_path = shlex.quote(certPath)
+        cmd_str = "rm %s -rf; mkdir %s" % (safe_cert_path, safe_cert_path)
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
-            self.logger.debug("Command: %s\nStatus: %sOutput: %s" % (mkdirCmd, status, output))
-            self.logger.logExit("Failed to create cert path.")
+            self.logger.debug("Command: " + str(cmd_args))
+            errorDetail = "\nStatus: %s\nOutput: %s" % (status, output)
+            self.logger.logExit("Failed to create cert path." + errorDetail)
         self._createCMSslConf(certPath)
         curPath = os.path.split(os.path.realpath(__file__))[0]
         createCMCACert = os.path.realpath(os.path.join(curPath, "CreateCMCACert.sh"))
@@ -485,9 +520,14 @@ class InstallImpl:
                 formatted_host = host
         
             # Create the scp command with the formatted host
-            scpCmd = "scp {certPath}/* {host}:{certPath}".format(certPath=certPath, host=formatted_host)
-            status, output = subprocess.getstatusoutput(scpCmd)
+            # Use common_execute_cmd to safely execute scp command, avoiding injection risk
+            safe_cert_path = shlex.quote(certPath)
+            safe_host = shlex.quote(formatted_host)
+            cmd_str = "scp %s/* %s:%s" % (safe_cert_path, safe_host, safe_cert_path)
+            cmd_args = ['sh', '-c', cmd_str]
+            status, output = common_execute_cmd(cmd_args)
             if status != 0:
+                self.logger.debug("Command: " + str(cmd_args))
                 errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s" % (scpCmd, status, output)
                 self.logger.debug(errorDetail)
                 self.logger.logExit("Failed to create CA for CM.")

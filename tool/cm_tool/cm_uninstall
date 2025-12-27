@@ -23,6 +23,7 @@ import os
 import sys
 import getopt
 import subprocess
+import shlex
 from CMLog import CMLog
 from ErrorCode import ErrorCode
 from InstallImpl import InstallImpl
@@ -98,9 +99,11 @@ General options:
             CMLog.exitWithError(ErrorCode.GAUSS_518["GAUSS_51802"] % 'MPPDB_ENV_SEPARATE_PATH' + ".")
 
     def checkXMLContainCMInfo(self):
-        cmd = "grep -E 'cmDir|cmsNum|cmServerPortBase|cmServerPortStandby|cmServerlevel|" \
-            "cmServerListenIp1|cmServerRelation' " + self.xmlFile
-        status, output = subprocess.getstatusoutput(cmd)
+        # Use common_execute_cmd to safely execute grep command, avoiding injection risk
+        safe_xml_file = shlex.quote(self.xmlFile)
+        cmd_str = "grep -E 'cmDir|cmsNum|cmServerPortBase|cmServerPortStandby|cmServerlevel|cmServerListenIp1|cmServerRelation' %s" % safe_xml_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status == 0:
             CMLog.exitWithError("%s should not contain CM infos.\nDetail:\n%s" % (self.xmlFile, output))
 
@@ -109,14 +112,23 @@ General options:
         Get hostnames of all nodes from static file.
         """
         self.logger.debug("Getting hostnames")
-        cmd = "source %s; cm_ctl view | grep 'nodeName'" % self.envFile
-        status, output = subprocess.getstatusoutput(cmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; cm_ctl view | grep 'nodeName'" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
             self.logger.logExit((ErrorCode.GAUSS_512["GAUSS_51203"] % "hostnames") + output)
         hostnames = output.split('\n')
         for i in range(0, len(hostnames)):
-            hostname = hostnames[i].split(':')[1].strip()
-            self.hostnames.append(hostname)
+            line = hostnames[i].strip()
+            if not line or ':' not in line:
+                continue
+            parts = line.split(':')
+            if len(parts) >= 2:
+                hostname = parts[1].strip()
+                if hostname:
+                    self.hostnames.append(hostname)
         self.logger.debug("hostnames=" + ','.join(self.hostnames))
 
     def getCMDataPaths(self):
@@ -126,14 +138,23 @@ General options:
         if not self.bDeleteData:
             return
         self.logger.debug("Getting CM datapaths.")
-        cmd = "source %s; cm_ctl view | grep -E 'cmDataPath'" % self.envFile
-        status, output = subprocess.getstatusoutput(cmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; cm_ctl view | grep -E 'cmDataPath'" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
             self.logger.logExit((ErrorCode.GAUSS_512["GAUSS_51203"] % "cmDataPaths") + output)
         cmDataPaths = output.split('\n')
         for p in cmDataPaths:
-            cmDataPath = p.split(':')[1].strip()
-            self.cmDataPaths.append(cmDataPath)
+            line = p.strip()
+            if not line or ':' not in line:
+                continue
+            parts = line.split(':')
+            if len(parts) >= 2:
+                cmDataPath = parts[1].strip()
+                if cmDataPath:
+                    self.cmDataPaths.append(cmDataPath)
         if self.cmDataPaths == []:
             self.logger.logExit("")
         self.logger.debug("cmDataPaths=" + ','.join(self.cmDataPaths))

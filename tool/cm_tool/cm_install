@@ -24,6 +24,7 @@ import getopt
 import os
 import sys
 import re
+import shlex
 import subprocess
 import xml.etree.cElementTree as ETree
 from CMLog import CMLog
@@ -134,11 +135,14 @@ General options:
         """
         check whether there is om tool
         """
-        cmd = "source %s; gs_om --version" % self.envFile
-        status, output = subprocess.getstatusoutput(cmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; gs_om --version" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
             errorDetail = "\nCommand: %s\nStatus: %s\nOutput: %s\n" % (
-                cmd, status, output)
+                str(cmd_args), status, output)
             self.logger.logExit("OM tool is required." + errorDetail)
 
     def checkXMLFileSecurity(self):
@@ -183,11 +187,14 @@ General options:
         self.localhostName = getLocalhostName()
 
         # get hostnames and port from static file
-        cmd = "source %s; gs_om -t view" % self.envFile
-        status, output = subprocess.getstatusoutput(cmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; gs_om -t view" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
-            self.logger.logExit((ErrorCode.GAUSS_514["GAUSS_51400"] % cmd) + \
-                "\nStatus:%d\nOutput:" + output)
+            self.logger.logExit((ErrorCode.GAUSS_514["GAUSS_51400"] % str(cmd_args)) + \
+                "\nStatus:%d\nOutput:%s" % (status, output))
         nodesStaticInfoStr = re.split("azName.*:.*", output)
         if len(nodesStaticInfoStr) == 0:
             self.logger.logExit("Failed to get cluster info from static file.")
@@ -259,9 +266,11 @@ General options:
         """
         Check whether there is CM in current cluster.
         """
-        checkCMExistCmd = "source %s; gs_om -t status --detail | " \
-            "grep 'CMServer State' > /dev/null" % self.envFile
-        status, output = subprocess.getstatusoutput(checkCMExistCmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; gs_om -t status --detail | grep 'CMServer State' > /dev/null" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status == 0:
             self.logger.logExit("CM exists in current cluster.")
 
@@ -269,11 +278,16 @@ General options:
         """
         check the status of the current cluster
         """
-        cmd = "source %s; gs_om -t status --detail" % self.envFile
-        status, output = subprocess.getstatusoutput(cmd)
+        # Use common_execute_cmd to safely execute command, avoiding injection risk
+        safe_env_file = shlex.quote(self.envFile)
+        cmd_str = "source %s; gs_om -t status --detail" % safe_env_file
+        cmd_args = ['sh', '-c', cmd_str]
+        status, output = common_execute_cmd(cmd_args)
         if status != 0:
-            erroeDetail = "Detail:\nCommand:\n" + cmd + "\noutput:" + output
-            self.logger.logExit(ErrorCode.GAUSS_516["GAUSS_51600"] + erroeDetail)
+            cmd_str = "source %s; gs_om -t status --detail" % safe_env_file
+            cmd_args = ['sh', '-c', cmd_str]
+            errorDetail = "Detail:\nCommand:\n" + str(cmd_args) + "\noutput:" + output
+            self.logger.logExit(ErrorCode.GAUSS_516["GAUSS_51600"] + errorDetail)
         if "cluster_state   : Unavailable" in output:
             # It’s permitted to deploy CM tool when cluster is stopped,
             # but not permitted when cluster is unavailable.

@@ -44,36 +44,33 @@ def executeCmdOnHost(host, cmd, isLocal = False):
     status, output = subprocess.getstatusoutput(cmd)
     return status, output
 
+def common_execute_cmd(cmd_args):
+    """
+    function: execute subprocess command safely
+    input: cmd_args - command arguments list
+    output: (returncode, stdout) tuple
+    """
+    try:
+        result = subprocess.run(
+            cmd_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+            shell=False
+        )
+        return result.returncode, result.stdout
+    except Exception as exc:
+        return -1, str(exc)
+
 def execute_cmd_on_host_safely(host, cmd_args, is_local=False):
     if is_local:
-        try:
-            result = subprocess.run(
-                cmd_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
-                shell=False
-            )
-            return result.returncode, result.stdout
-        except Exception as exc:
-            return -1, str(exc)
+        return common_execute_cmd(cmd_args)
     else:
         safe_host = shlex.quote(host)
         safe_cmd = " ".join(shlex.quote(arg) for arg in cmd_args)
         ssh_cmd = ['ssh', '-q', '-o', 'ConnectTimeout=5', safe_host, safe_cmd]
-        try:
-            result = subprocess.run(
-                ssh_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
-                shell=False
-            )
-            return result.returncode, result.stdout
-        except Exception as e:
-            return -1, str(e)
+        return common_execute_cmd(ssh_cmd)
 
 def checkXMLFile(xmlFile):
     """
@@ -107,3 +104,32 @@ def checkHostsTrust(hosts):
             hostsWithoutTrust.append(host)
     if hostsWithoutTrust != []:
         CMLog.exitWithError(ErrorCode.GAUSS_511["GAUSS_51100"] % ','.join(hostsWithoutTrust))
+
+def checkWritePermission(fileName):
+    """
+    function: check write permission for log file or log directory
+    input : NA
+    output: NA
+    """
+    # Check write permission for existing file
+    if not os.access(fileName, os.W_OK):
+        raise Exception(ErrorCode.GAUSS_502["GAUSS_50206"] % 
+                        (fileName + ": No write permission"))
+
+def checkWritePermissionForDirectory(fileName):
+    """
+    function: check write permission for log file or log directory
+    input : NA
+    output: NA
+    """
+    if os.path.exists(fileName):
+        # Check write permission for existing file
+        if not os.access(fileName, os.W_OK):
+            raise Exception(ErrorCode.GAUSS_502["GAUSS_50206"] % 
+                            (fileName + ": No write permission"))
+    else:
+        # Check write permission for directory if file doesn't exist
+        filePath = os.path.dirname(fileName)
+        if not os.access(filePath, os.W_OK):
+            CMLog.exitWithError(ErrorCode.GAUSS_502["GAUSS_50206"] % 
+                            (filePath + ": No write permission"))

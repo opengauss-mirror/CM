@@ -55,7 +55,7 @@ def common_execute_cmd(cmd_args):
             cmd_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
+            universal_newlines=True,
             check=False,
             shell=False
         )

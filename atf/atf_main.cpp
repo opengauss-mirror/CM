@@ -681,14 +681,14 @@ bool InitServer()
 /* Server main loop with self-pipe handling */
 /*
  * Reads from the self-pipe to clear the signal notification.
- * 
+ *
  * Why use self-pipe?
  * The epoll_wait() call blocks the thread until an event occurs. If we receive
  * a signal (like SIGINT/SIGTERM) to stop the server, the signal handler runs,
  * sets g_running = false, and returns. However, if there are no network events,
  * epoll_wait() will remain blocked, and the main loop won't have a chance to
  * check g_running and exit.
- * 
+ *
  * By writing to this pipe in the signal handler, we artificially create a
  * readable event. This wakes up epoll_wait(), causing it to return. We then
  * read the data here to empty the pipe buffer. The loop then proceeds to the

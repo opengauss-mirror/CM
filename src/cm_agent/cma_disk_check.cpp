@@ -73,7 +73,7 @@ void LoadDiskCheckConfig(const char *configFile)
         g_diskCheckBufferSize = DISK_CHECK_BUFFER_SIZE_DEFAULT;
         g_diskCheckBuffer = (char *) CmMalloc(sizeof(char) * g_diskCheckBufferSize);
     } else {
-        errno_t rc = memset_s(g_diskCheckBuffer, sizeof(g_diskCheckBuffer), 0, sizeof(g_diskCheckBuffer));
+        errno_t rc = memset_s(g_diskCheckBuffer, g_diskCheckBufferSize, 0, g_diskCheckBufferSize);
         securec_check_errno(rc, (void)rc);
     }
     pthread_rwlock_unlock(&g_diskCheckBufferLock);

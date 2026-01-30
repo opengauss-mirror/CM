@@ -44,6 +44,7 @@ static const uint32 ALL_AGENT_NODE_ID = 0xffffffff;
 static const uint32 MAX_MSG_BUF_POOL_SIZE = 102400;
 static const uint32 MAX_MSG_BUF_POOL_COUNT = 200;
 static const uint32 MAX_MSG_IN_QUE = 100;
+static char *g_envPath = NULL;
 
 struct DdbPreAgentCon {
     uint32 connCount;
@@ -311,30 +312,40 @@ int CMHandleCheckAuth(CM_Connection* con)
         return 0;
     }
 #endif // KRB5
-    char envPath[MAX_PATH_LEN] = {0};
     if (con->port == NULL) {
         write_runlog(ERROR, "port is null.\n");
         return -1;
     }
 
     /* 2. Prepare gss environment. */
-    if (cmserver_getenv("KRB5_KTNAME", envPath, (uint32)sizeof(envPath), DEBUG5) != EOK) {
+    (void)syscalllockAcquire(&g_cmEnvLock);
+    if (getenv("KRB5_KTNAME") != NULL) {
         /* check whether set guc parameter gtm_krb_server_keyfile or not */
         if (cm_krb_server_keyfile == NULL || strlen(cm_krb_server_keyfile) == 0) {
             write_runlog(ERROR, "out of memory, failed to malloc memory.\n");
+            (void)syscalllockRelease(&g_cmEnvLock);
             return -1;
         }
-        int rc = memset_s(envPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
+        FREE_AND_RESET(g_envPath);
+        g_envPath = (char*)malloc(MAX_PATH_LEN);
+        if (g_envPath == NULL) {
+            write_runlog(ERROR, "[%s][line:%d] out of memory, failed to malloc memory.\n", __FUNCTION__, __LINE__);
+            (void)syscalllockRelease(&g_cmEnvLock);
+            return -1;
+        }
+        int rc = memset_s(g_envPath, MAX_PATH_LEN, 0, MAX_PATH_LEN);
         securec_check_errno(rc, (void)rc);
-        rc = snprintf_s(envPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "KRB5_KTNAME=%s", cm_krb_server_keyfile);
+        rc = snprintf_s(g_envPath, MAX_PATH_LEN, MAX_PATH_LEN - 1, "KRB5_KTNAME=%s", cm_krb_server_keyfile);
         securec_check_intval(rc, (void)rc);
-        rc = putenv(envPath);
+        rc = putenv(g_envPath);
         if (rc != 0) {
             write_runlog(ERROR, "failed to putenv 'KRB5_KTNAME', return value: %d.\n", rc);
+            (void)syscalllockRelease(&g_cmEnvLock);
             return -1;
         }
-        write_runlog(DEBUG1, "Set KRB5_KTNAME to %s.\n", envPath);
+        write_runlog(DEBUG1, "Set KRB5_KTNAME to %s.\n", g_envPath);
     }
+    (void)syscalllockRelease(&g_cmEnvLock);
 
 #ifdef KRB5
     /* 3. Handle client GSS authentication message. */

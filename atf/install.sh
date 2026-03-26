@@ -9,8 +9,37 @@ fi
 
 # Variable Definition (Core: Add PREFIX definition to keep consistent with Makefile)
 VERSION="1.0.0"
-DEFAULT_USER="omm"
-DEFAULT_GROUP="dbgrp"
+
+DEFAULT_USER=""
+DEFAULT_GROUP=""
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -u|--user)
+            DEFAULT_USER="$2"
+            shift # past argument
+            ;;
+        -g|--group)
+            DEFAULT_GROUP="$2"
+            shift # past argument
+            ;;
+        *) # unknown option
+            echo "Unknown parameter: $1"
+            echo "Usage: $0 -u <user> -g <group>"
+            exit 1
+            ;;
+    esac
+    shift # past value
+done
+
+if [ -z "${DEFAULT_USER}" ] || [ -z "${DEFAULT_GROUP}" ]; then
+    echo "Error: Both user and group must be specified."
+    echo "Usage: $0 -u <user> -g <group>"
+    exit 1
+fi
+
+echo "Running installation for user: ${DEFAULT_USER}, group: ${DEFAULT_GROUP}"
+
 PREFIX="/usr/local/atf"
 DEFAULT_WORK_DIR="${PREFIX}"
 DEFAULT_SERVICE_FILE="/etc/systemd/system/atf.service"
@@ -19,17 +48,15 @@ SSL_LOCAL_DIR="./ssl"
 SSL_KEY="${SSL_LOCAL_DIR}/server.key"
 SSL_CSR="${SSL_LOCAL_DIR}/server.csr"
 SSL_PEM="${SSL_LOCAL_DIR}/server.pem"
-CM_CTL_PATH="/opt/huawei2/install/app/bin:/home/${DEFAULT_USER}/gauss_om/script:/opt/huawei2/install/om/script/gspylib/pssh/bin:/opt/huawei2/install/om/script:/usr/local/apache-maven-3.6.3/bin:/usr/local/bin:/usr/bin:/usr/local/maven/bin"
-CM_CTL_LD_PATH="/opt/huawei2/install/app/lib:/opt/huawei2/install/om/lib:/opt/huawei2/install/om/script/gspylib/clib:/script/gspylib/clib:/usr/local/softbus/ctrlbus/lib:"
-GAUSSHOME="/opt/huawei2/install/app"
+CM_CTL_PATH="/opt/huawei/install/app/bin:/usr/local/atf/bin:/usr/bin:/bin"
+CM_CTL_LD_PATH="/opt/software/openGauss/libcgroup/lib:/opt/huawei/install/app_d8b33b17/lib"
+GAUSSHOME="/opt/huawei/install/app"
+GAUSSLOG="/opt/huawei/gaussdb/log"
 GS_CLUSTER_NAME="dbCluster"
 PGPORT="26000"
 PGDATABASE="postgres"
-PGHOST="/opt/huawei2/tmp"
-PGDATA="/opt/huawei2/install/data/db1"
-GAUSSLOG="/var/log2/omm/omm"
 GAUSS_ENV="2"
-GAUSS_VERSION="7.0.0-RC2"
+GAUSS_VERSION="7.0.0-RC3"
 CODE_DIR="/home/omm/atf"
 cd "${CODE_DIR}" || { echo "Error: Code directory ${CODE_DIR} not found!"; exit 1; }
 
@@ -46,7 +73,7 @@ make clean >/dev/null 2>&1
 
 # Step 2: Switch to the omm user to compile
 echo "[2/11] Compiling the ATF server (as omm user)..."
-su - "${DEFAULT_USER}" -c "cd ${CODE_DIR} && make all -j$(nproc)"
+su - "${DEFAULT_USER}" -c "cd ${CODE_DIR} && export LD_LIBRARY_PATH=/lib64:/usr/lib64:\$LD_LIBRARY_PATH && make all -j$(nproc)"
 # Verify whether compilation artifacts exist
 if [ ! -f "${CODE_DIR}/dist/atf" ]; then
     echo "Error: Compilation failed! dist/atf not found."
@@ -60,7 +87,7 @@ openssl genrsa -out "./ssl/server.key" 2048 >/dev/null 2>&1
 openssl req -new -key "./ssl/server.key" -out "./ssl/server.csr" \
     -subj "/C=CN/ST=Beijing/L=Beijing/O=ATF/OU=ATFServer/CN=atf.local" >/dev/null 2>&1
 openssl x509 -req -days 3650 -in "./ssl/server.csr" -signkey "./ssl/server.key" -out "./ssl/server.pem" >/dev/null 2>&1
-chown -R omm:dbgrp "./ssl"
+chown -R "${DEFAULT_USER}:${DEFAULT_GROUP}" ./ssl
 chmod 600 "./ssl/server.key"
 chmod 644 "./ssl/server.csr" "./ssl/server.pem"
 
@@ -104,6 +131,8 @@ fi
 # Step 8: Create working directory and set permissions
 echo "[8/11] Configuring working directory permissions..."
 mkdir -p "${DEFAULT_WORK_DIR}"
+mkdir -p /var/log/atf
+mkdir -p /var/run/atf
 chown -R "${DEFAULT_USER}:${DEFAULT_GROUP}" "${DEFAULT_WORK_DIR}"
 chown -R "${DEFAULT_USER}:${DEFAULT_GROUP}" "${PREFIX}"
 chown -R "${DEFAULT_USER}:${DEFAULT_GROUP}" /var/log/atf
@@ -112,6 +141,18 @@ chmod 755 "${DEFAULT_WORK_DIR}"
 
 # Step 9: Create systemd service file (register service, root only)
 echo "[9/11] Registering ATF systemd service..."
+
+# Use su to run a non-interactive login shell for the user, which sources .bashrc/.profile
+# Then print the variables we need.
+# We use a unique separator to handle multi-line or complex variable values.
+SEPARATOR="--ENV_VAR_SEPARATOR--"
+ENV_VARS=$(su - "${DEFAULT_USER}" -c "
+    source ~/.bashrc >/dev/null 2>&1 || true;
+    env | grep -E '^(HOME|USER|LANG|PATH|LD_LIBRARY_PATH|GAUSSHOME|GAUSSLOG)=' | while IFS= read -r line; do
+        echo \"\${line}${SEPARATOR}\"
+    done
+")
+
 ATF_EXEC="${PREFIX}/bin/atf"
 cat > "${DEFAULT_SERVICE_FILE}" << EOF
 [Unit]
@@ -125,21 +166,18 @@ Group=${DEFAULT_GROUP}
 WorkingDirectory=${DEFAULT_WORK_DIR}
 ExecStart=${ATF_EXEC}
 
-Environment="HOME=/home/${DEFAULT_USER}"
-Environment="USER=${DEFAULT_USER}"
-Environment="LANG=en_US.UTF-8"
-
-Environment="PATH=${CM_CTL_PATH}"
-Environment="LD_LIBRARY_PATH=${CM_CTL_LD_PATH}"
-Environment="GAUSSHOME=${GAUSSHOME}"
-Environment="GS_CLUSTER_NAME=${GS_CLUSTER_NAME}"
-Environment="PGPORT=${PGPORT}"
-Environment="PGDATABASE=${PGDATABASE}"
-Environment="PGHOST=${PGHOST}"
-Environment="PGDATA=${PGDATA}"
-Environment="GAUSSLOG=${GAUSSLOG}"
-Environment="GAUSS_ENV=${GAUSS_ENV}"
-Environment="GAUSS_VERSION=${GAUSS_VERSION}"
+$(echo "${ENV_VARS}" | while IFS= read -r line; do
+    if [[ -n "$line" ]]; then
+        formatted_line=$(echo "$line" | sed "s/${SEPARATOR}$//")
+        
+        if [[ "${formatted_line}" == LD_LIBRARY_PATH=* ]]; then
+            original_val="${formatted_line#LD_LIBRARY_PATH=}"
+            echo "Environment=\"LD_LIBRARY_PATH=/lib64:/usr/lib64:${original_val}\""
+        else
+            echo "Environment=\"${formatted_line}\""
+        fi
+    fi
+done)
 
 Restart=on-failure
 RestartSec=3
@@ -179,5 +217,5 @@ echo "========================================"
 echo "Usage (run as ${DEFAULT_USER}):"
 echo "  Start ATF: atf_start"
 echo "  Stop ATF: atf_stop"
-echo "  Check status: systemctl status atf (as omm, with sudo)"
+echo "  Check status: systemctl status atf (as ${DEFAULT_USER}, with sudo)"
 echo "========================================"

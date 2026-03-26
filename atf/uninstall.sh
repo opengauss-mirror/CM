@@ -1,16 +1,50 @@
 #!/bin/bash
 set -e
 
-# Pre-check
+# Pre-check: Must be run as root
 if [ $EUID -ne 0 ]; then
     echo "Error: This script must be executed as the root user. Please use sudo or switch to root and run it."
     exit 1
 fi
 
+# --- Argument Parsing ---
+DEFAULT_USER=""
+# The -g flag is accepted for consistency, though not used in this script's logic.
+DEFAULT_GROUP="" 
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -u|--user)
+            DEFAULT_USER="$2"
+            shift # past argument
+            ;;
+        -g|--group)
+            DEFAULT_GROUP="$2" # Store group name, even if unused
+            shift # past argument
+            ;;
+        *) # unknown option
+            echo "Unknown parameter: $1"
+            echo "Usage: $0 -u <user> [-g <group>]"
+            exit 1
+            ;;
+    esac
+    shift # past value
+done
+
+if [ -z "${DEFAULT_USER}" ]; then
+    echo "Error: User must be specified for uninstallation."
+    echo "Usage: $0 -u <user> [-g <group>]"
+    exit 1
+fi
+
+echo "Running uninstallation for user: ${DEFAULT_USER}..."
+# --- End of Argument Parsing ---
+
+
 # Variable Definition
 DEFAULT_SERVICE_FILE="/etc/systemd/system/atf.service"
 PREFIX="/usr/local/atf"
-DEFAULT_USER="omm"
+# DEFAULT_USER="omm" # This is now set from command-line arguments
 SUDOERS_FILE="/etc/sudoers.d/atf"
 
 # Execution Flow
@@ -35,7 +69,7 @@ echo "ATF service file deleted"
 # Step 3: Remove sudoers configuration
 echo "[3/7] Cleaning up sudo permissions..."
 rm -f "${SUDOERS_FILE}"
-echo "Sudo configuration for ${DEFAULT_USER} removed"
+echo "Sudo configuration for user '${DEFAULT_USER}' removed" # Message now reflects the dynamic user
 
 # Step 4: Perform basic uninstallation (make uninstall)
 echo "[4/7] Uninstalling ATF core files..."
@@ -43,11 +77,12 @@ make uninstall PREFIX="${PREFIX}"
 
 # Step 5: Clean up ATF residual processes
 echo "[5/7] Cleaning up ATF residual processes..."
+# Use the user specified from the command line to find processes
 if pgrep -u "${DEFAULT_USER}" -f "atf" >/dev/null; then
     pkill -u "${DEFAULT_USER}" -f "atf"
     echo "Terminated ATF residual processes (user: ${DEFAULT_USER})"
 else
-    echo "No ATF residual processes"
+    echo "No ATF residual processes for user '${DEFAULT_USER}'"
 fi
 
 # Step 6: Clean up compilation artifacts in the source code directory

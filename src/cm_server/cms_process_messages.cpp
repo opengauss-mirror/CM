@@ -1583,6 +1583,13 @@ static void MsgDiskUsageStatus(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc
         AgentToCmDiskUsageStatusReport, agentToCmDiskUsagePtr, process_agent_to_cm_disk_usage_msg);
 }
 
+static void MsgPanicRebootAlarm(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
+{
+    AgentToCmPanicRebootAlarmReport *alarmMsg = NULL;
+    PROCESS_MSG_BY_TYPE_WITHOUT_CONN(
+        AgentToCmPanicRebootAlarmReport, alarmMsg, process_agent_to_cm_panic_reboot_alarm_msg);
+}
+
 static void MsgDatanodeInstanceBarrier(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     ProcessDnBarrierinfo(recvMsgInfo, (CM_StringInfo)&recvMsgInfo->msg);
@@ -1855,6 +1862,8 @@ static void InitCmCtlCmdProc()
     g_cmdProc[MSG_CTL_CM_NODE_KICK_COUNT] = MsgKickStatQuery;
     g_cmdProc[MSG_CTL_CM_FINISH_SWITCHOVER] = MsgFinishSwitchover;
     g_cmdProc[MSG_CTL_CM_QUERY_NODE] = MsgCmQueryOneNode;
+    g_cmdProc[MSG_AGENT_CM_PANIC_REBOOT_ALARM] = MsgPanicRebootAlarm;
+    g_cmdProc[MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY] = MsgPanicRebootAlarm;
 }
 
 static void InitCmAgentCmdProc()

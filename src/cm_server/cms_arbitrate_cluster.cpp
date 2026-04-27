@@ -104,6 +104,46 @@ static const int32 HEARTBEAT_INIT_TIME = 0;
 static volatile int32 g_resHeartBeatTimeout[CM_MAX_RES_INST_COUNT][MAX_CLUSTER_TYPE_CEIL] = {{0}};
 
 static volatile ThreadProcessStatus g_threadProcessStatus = THREAD_PROCESS_UNKNOWN;
+static pthread_rwlock_t g_forceKickNodeLock = PTHREAD_RWLOCK_INITIALIZER;
+static bool g_forceKickNodes[CM_NODE_MAXNUM] = {false};
+
+void RequestKickNodeByArbitrate(uint32 nodeId)
+{
+    if (nodeId == 0 || nodeId >= CM_NODE_MAXNUM) {
+        write_runlog(ERROR, "invalid request kick node id %u.\n", nodeId);
+        return;
+    }
+    (void)pthread_rwlock_wrlock(&g_forceKickNodeLock);
+    bool isNew = !g_forceKickNodes[nodeId];
+    g_forceKickNodes[nodeId] = true;
+    (void)pthread_rwlock_unlock(&g_forceKickNodeLock);
+    write_runlog(LOG, "request arbitrate thread kick node(%u), isNew=%d.\n", nodeId, (int)isNew);
+}
+
+static bool IsForceKickNode(uint32 nodeId)
+{
+    if (nodeId == 0 || nodeId >= CM_NODE_MAXNUM) {
+        return false;
+    }
+    (void)pthread_rwlock_rdlock(&g_forceKickNodeLock);
+    bool isForceKick = g_forceKickNodes[nodeId];
+    (void)pthread_rwlock_unlock(&g_forceKickNodeLock);
+    return isForceKick;
+}
+
+static void ClearForceKickNode(uint32 nodeId)
+{
+    if (nodeId == 0 || nodeId >= CM_NODE_MAXNUM) {
+        return;
+    }
+    (void)pthread_rwlock_wrlock(&g_forceKickNodeLock);
+    bool wasForceKick = g_forceKickNodes[nodeId];
+    g_forceKickNodes[nodeId] = false;
+    (void)pthread_rwlock_unlock(&g_forceKickNodeLock);
+    if (wasForceKick) {
+        write_runlog(LOG, "clear force-kick mark for node(%u).\n", nodeId);
+    }
+}
 
 static void PrintMaxNodeCluster(const MaxNodeCluster *maxNodeCluster, const char *str, int32 logLevel = LOG);
 
@@ -382,9 +422,14 @@ static MaxClusterResStatus GetDiskHeartbeatStat(uint32 nodeIndex, uint32 diskTim
 static bool IsAllResAvailInNode(int32 resIdx)
 {
     uint32 nodeIdx = g_clusterRes.map[resIdx].nodeIdx;
+    uint32 nodeId = g_node[nodeIdx].node;
+    if (IsForceKickNode(nodeId)) {
+        write_runlog(WARNING, "node(%u) is marked force-kick, exclude it from max cluster arbitration.\n", nodeId);
+        return false;
+    }
     MaxClusterResStatus heartbeatStatus = GetDiskHeartbeatStat(nodeIdx, g_diskTimeout, DEBUG5);
     bool heartbeatRes = IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_VOTE_DISK, heartbeatStatus);
-    MaxClusterResStatus nodeStatus = GetResNodeStat(g_node[nodeIdx].node, DEBUG5);
+    MaxClusterResStatus nodeStatus = GetResNodeStat(nodeId, DEBUG5);
     bool nodeRes = IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus);
 
     return (heartbeatRes && nodeRes);
@@ -1048,6 +1093,7 @@ static void PrintArbitrateResult(const MaxNodeCluster *lastCluster, const MaxNod
             uint32 nodeIdx = g_clusterRes.map[lastCluster->nodeCluster.cluster[i]].nodeIdx;
             WriteKeyEventLog(KEY_EVENT_RES_ARBITRATE, 0, "node(%u) kick out.", g_node[nodeIdx].node);
             PrintKickOutResult(lastCluster->nodeCluster.cluster[i], lastCluster);
+            ClearForceKickNode(g_node[nodeIdx].node);
         }
     }
 

@@ -280,6 +280,9 @@ typedef enum CM_MessageType_st {
     MSG_CTL_CM_FINISH_SWITCHOVER = 192,
     MSG_CTL_CM_QUERY_NODE = 193,
     MSG_CM_CTL_QUERY_NODE_ACK = 194,
+    MSG_AGENT_CM_PANIC_REBOOT_ALARM = 195,
+    MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY = 196,
+    MSG_CM_AGENT_CMS_PRIMARY_READY_ACK = 197,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
@@ -1342,6 +1345,18 @@ typedef struct {
     char reserved[16];
 } AgentToCmDiskUsageStatusReport;
 
+typedef struct AgentToCmPanicRebootAlarmReportSt {
+    int msgType;
+    uint32 sourceNodeId;
+    uint32 alarmNodeId;
+    uint32 cna;
+    uint32 alarmId;
+    uint32 alarmType;
+    int64 alarmTime;
+    char eid[CM_IP_LENGTH];
+    char alarmDesc[MAX_PATH_LEN];
+} AgentToCmPanicRebootAlarmReport;
+
 typedef struct agent_to_cm_heartbeat_st {
     int msg_type;
     uint32 node;
@@ -1471,6 +1486,12 @@ typedef struct cm_to_agent_heartbeat_st {
     int cluster_status;
     uint32 healthInstanceId;
 } cm_to_agent_heartbeat;
+
+typedef struct cm_to_agent_cms_primary_ready_ack_st {
+    int msg_type;
+    uint32 primaryNodeId;
+    int64 notifyTime;
+} cm_to_agent_cms_primary_ready_ack;
 
 typedef struct cm_to_cm_vote_st {
     int msg_type;

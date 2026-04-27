@@ -33,8 +33,10 @@
 uint32 g_cmSdServerNum = 0;
 static diskLrwHandler g_cmsArbitrateDiskHandler;
 static pthread_rwlock_t g_notifySdLock;
+static pthread_rwlock_t g_fastPromoteLock = PTHREAD_RWLOCK_INITIALIZER;
 static DDB_ROLE g_notifySd = DDB_ROLE_UNKNOWN;
 static DDB_ROLE g_dbRole = DDB_ROLE_FOLLOWER;
+static bool g_fastPromoteReq = false;
 static uint32 g_cmServerNum = 0;
 static int64 g_waitForTime = 0;
 static volatile int64 g_notifyBeginSec = 0;
@@ -287,6 +289,23 @@ static uint32 GetForceLockTimeOutCfg()
     return curForceLockTimeOut;
 }
 
+void DrvSdTriggerFastPromote(void)
+{
+    (void)pthread_rwlock_wrlock(&g_fastPromoteLock);
+    g_fastPromoteReq = true;
+    (void)pthread_rwlock_unlock(&g_fastPromoteLock);
+    write_runlog(LOG, "sharedisk: receive fast promote request from alarm path.\n");
+}
+
+static bool ConsumeFastPromoteReq()
+{
+    (void)pthread_rwlock_wrlock(&g_fastPromoteLock);
+    bool hasReq = g_fastPromoteReq;
+    g_fastPromoteReq = false;
+    (void)pthread_rwlock_unlock(&g_fastPromoteLock);
+    return hasReq;
+}
+
 static bool CheckDemoteDdbRole(SdArbitrateData *sdArbitrateData)
 {
     if (sdArbitrateData->lastDdbRole != DDB_ROLE_LEADER) {
@@ -328,6 +347,17 @@ static bool CheckDemoteDdbRole(SdArbitrateData *sdArbitrateData)
 
 static void CmNormalArbitrate(SdArbitrateData *sdArbitrateData)
 {
+    if (ConsumeFastPromoteReq()) {
+        sdArbitrateData->lockTime = 0;
+        sdArbitrateData->lockNotRefreshTimes = 0;
+        sdArbitrateData->lockFailBeginTime = 0;
+        int32 lockRst = cm_lockf_disklock();
+        g_dbRole = ((lockRst == 0) ? DDB_ROLE_LEADER : DDB_ROLE_FOLLOWER);
+        write_runlog(LOG, "CmNormalArbitrate: fast promote request trigger force lock first, result %d.\n", lockRst);
+        NotifyDdbRole(&sdArbitrateData->lastDdbRole);
+        return;
+    }
+
     disk_lock_info_t lockInfo = cm_lock_disklock();
     write_runlog(DEBUG1,
         "CmNormalArbitrate: cm_lock_disklock result %d. lockTime %ld, "

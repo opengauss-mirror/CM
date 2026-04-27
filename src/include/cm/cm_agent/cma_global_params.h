@@ -172,6 +172,7 @@ extern char g_enableLogCompress[BOOL_STR_MAX_LEN];
 extern bool g_enableXalarmdFeature;
 #ifdef ENABLE_XALARMD
 extern int g_xalarmClientId;
+extern int g_xalarmEventClientId;
 #endif
 extern char g_enableVtable[BOOL_STR_MAX_LEN];
 extern char instance_maintance_path[MAX_PATH_LEN];

@@ -179,6 +179,7 @@ extern "C" {
  * Handle xalarm call back
  */
 void HandleXalarm(struct alarm_info *param);
+void CreateXalarmEventCheckThread(void);
 #endif
 
 #endif

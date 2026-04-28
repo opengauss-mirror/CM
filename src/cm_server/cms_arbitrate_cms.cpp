@@ -29,6 +29,7 @@
 #include "cms_global_params.h"
 #include "cms_common.h"
 #include "cms_arbitrate_cms.h"
+#include "cms_process_messages.h"
 
 static void CMServerRecord()
 {

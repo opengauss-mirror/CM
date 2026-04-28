@@ -21,12 +21,15 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <ctime>
 #include "cms_global_params.h"
 #include "cms_process_messages.h"
 #include "cms_ddb.h"
 #include "cms_common.h"
 #include "cs_ssl.h"
 #include "cms_arbitrate_cluster.h"
+#include "cms_az.h"
+#include "cms_ddb_adapter.h"
 #include "cm_util.h"
 
 using namespace std;
@@ -39,6 +42,75 @@ typedef struct SyncGroup_t {
 } SyncGroup;
 
 static char *g_AvailDdbCmd = "/most_available_sync";
+
+static int32 GetCmsIndexByNodeId(uint32 nodeId)
+{
+    for (uint32 i = 0; i < g_cm_server_num; ++i) {
+        uint32 nodeIndex = g_nodeIndexForCmServer[i];
+        if (nodeIndex >= g_node_num) {
+            continue;
+        }
+        if (g_node[nodeIndex].node == nodeId) {
+            return (int32)i;
+        }
+    }
+    return -1;
+}
+
+static int32 GetCurrentPrimaryCmsIndex()
+{
+    for (uint32 i = 0; i < g_cm_server_num; ++i) {
+        if (g_instance_status_for_cm_server_pending[i]) {
+            continue;
+        }
+        if (g_instance_status_for_cm_server[i] == CM_SERVER_PRIMARY) {
+            return (int32)i;
+        }
+    }
+    if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
+        return GetCmsIndexByNodeId(g_currentNode->node);
+    }
+    return -1;
+}
+
+static void TriggerSharedStorageFastElectionIfNeed(const AgentToCmPanicRebootAlarmReport *alarmMsg)
+{
+    write_runlog(LOG, "TriggerSharedStorageFastElectionIfNeed, alarmNodeId=%u.\n", alarmMsg->alarmNodeId);
+    if (g_dbType != DB_SHAREDISK) {
+        return;
+    }
+
+    int32 primaryCmsIndex = GetCurrentPrimaryCmsIndex();
+    bool noPrimaryCms = (primaryCmsIndex < 0);
+    bool primaryOnFaultNode = false;
+    uint32 primaryNodeId = 0;
+    if (!noPrimaryCms) {
+        uint32 primaryNodeIndex = g_nodeIndexForCmServer[(uint32)primaryCmsIndex];
+        if (primaryNodeIndex < g_node_num) {
+            primaryNodeId = g_node[primaryNodeIndex].node;
+            primaryOnFaultNode = (g_node[primaryNodeIndex].node == alarmMsg->alarmNodeId);
+        }
+    }
+
+    if (!primaryOnFaultNode && !noPrimaryCms) {
+        write_runlog(LOG, "primary_not_on_fault_node, no need to trigger fast election.\n");
+        return;
+    }
+
+    if (g_HA_status->local_role == CM_SERVER_PRIMARY) {
+        write_runlog(WARNING,
+            "shared storage mode: receive panic/reboot alarm on node %u, local cms is already primary, "
+            "skip fast election trigger.\n",
+            alarmMsg->alarmNodeId);
+        return;
+    }
+
+    write_runlog(WARNING,
+        "shared storage mode: receive panic/reboot alarm on node %u, primaryOnFaultNode=%d, noPrimaryCms=%d, "
+        "trigger immediate cms election without waiting haHeartBeatTimeOut.\n",
+        alarmMsg->alarmNodeId, (int)primaryOnFaultNode, (int)noPrimaryCms);
+    TriggerFastCmsElection();
+}
 
 void process_agent_to_cm_fenced_UDF_status_report_msg(
     const agent_to_cm_fenced_UDF_status_report *agent_to_cm_fenced_UDF_status_ptr)
@@ -309,6 +381,50 @@ void process_agent_to_cm_disk_usage_msg(const AgentToCmDiskUsageStatusReport *di
             }
         }
     }
+}
+
+void process_agent_to_cm_panic_reboot_alarm_msg(const AgentToCmPanicRebootAlarmReport *alarmMsg)
+{
+    if (alarmMsg->alarmNodeId == 0 || alarmMsg->alarmNodeId >= CM_NODE_MAXNUM) {
+        write_runlog(ERROR,
+            "invalid panic/kernel reboot alarm node id: %u, sourceNodeId=%u, alarmId=%u, payload=%s.\n",
+            alarmMsg->alarmNodeId, alarmMsg->sourceNodeId, alarmMsg->alarmId, alarmMsg->alarmDesc);
+        return;
+    }
+
+    write_runlog(WARNING,
+        "receive panic/kernel reboot alarm from agent node %u, alarmNodeId=%u, "
+        "alarmId=%u, alarmType=%u, msgType=%d, cna=%u, eid=%s.\n",
+        alarmMsg->sourceNodeId, alarmMsg->alarmNodeId, alarmMsg->alarmId,
+        alarmMsg->alarmType, alarmMsg->msgType, alarmMsg->cna, alarmMsg->eid);
+
+    if (alarmMsg->msgType == MSG_AGENT_CM_PANIC_REBOOT_ALARM) {
+        TriggerSharedStorageFastElectionIfNeed(alarmMsg);
+        return;
+    }
+
+    if (alarmMsg->msgType != MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY) {
+        write_runlog(ERROR, "unexpected panic/kernel reboot alarm msgType=%d, alarmNodeId=%u.\n",
+            alarmMsg->msgType, alarmMsg->alarmNodeId);
+        return;
+    }
+
+    if (g_dbType == DB_SHAREDISK) {
+        RequestKickNodeByArbitrate(alarmMsg->alarmNodeId);
+        write_runlog(WARNING,
+            "shared storage mode: submit node %u kickout request to arbitrate thread.\n",
+            alarmMsg->alarmNodeId);
+        return;
+    }
+
+    bool isNewKick = g_stopNodes.insert((int)alarmMsg->alarmNodeId).second;
+    if (!isNewKick) {
+        write_runlog(LOG, "node %u is already in stop list, skip duplicate kickout.\n", alarmMsg->alarmNodeId);
+        return;
+    }
+
+    StartOrStopNodeInstanceByCommand(STOP_AZ, alarmMsg->alarmNodeId);
+    write_runlog(WARNING, "node %u has been kicked out due to panic/kernel reboot alarm.\n", alarmMsg->alarmNodeId);
 }
 
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))

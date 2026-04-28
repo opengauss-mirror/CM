@@ -64,6 +64,7 @@ extern int reason_counts[KICKOUT_TYPE_COUNT];
 
 void SetDelayArbiClusterTime();
 void NotifyResRegOrUnreg();
+void RequestKickNodeByArbitrate(uint32 nodeId);
 void CheckMaxClusterHeartbeartValue();
 void SetMaxClusterHeartBeatTimeout(int32 resIdx, MaxClusterResType type);
 bool IsCurResAvail(int32 resIdx, MaxClusterResType type, MaxClusterResStatus status);

@@ -1961,6 +1961,9 @@ int main(int argc, char** argv)
     CreateDiskUsageCheckThread();
     CreateOnDemandRedoCheckThread();
     CreateDiskHealthCheckThread();
+#ifdef ENABLE_XALARMD
+    CreateXalarmEventCheckThread();
+#endif
 
     err = CreateCheckSysStatusThread();
     if (err != 0) {

@@ -418,6 +418,11 @@ void CmaRhbUnInit()
         write_runlog(LOG, "xalarm unregister success, client id is %d\n", g_xalarmClientId);
         g_xalarmClientId = -1;
     }
+    if (g_xalarmEventClientId >= 0) {
+        xalarm_UnRegister(g_xalarmEventClientId);
+        write_runlog(LOG, "xalarm event unregister success, client id is %d\n", g_xalarmEventClientId);
+        g_xalarmEventClientId = -1;
+    }
 #endif
 }
 

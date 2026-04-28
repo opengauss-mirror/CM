@@ -66,6 +66,13 @@ static status_t CmaFlushMsg(CM_Conn* conn)
     return CM_SUCCESS;
 }
 
+status_t SendMsgToCmsByConn(CM_Conn* conn, const char *msgPtr, uint32 msgLen)
+{
+    CM_RETURN_IFERR(CmaSendMsg(conn, 'C', msgPtr, msgLen));
+    CM_RETURN_IFERR(CmaFlushMsg(conn));
+    return CM_SUCCESS;
+}
+
 static status_t GetSslRequestAck(char *receiveMsg, bool *enableSsl)
 {
     cm_msg_type *cm_msg_type_ptr = (cm_msg_type *)receiveMsg;
@@ -358,6 +365,50 @@ CM_Conn* GetConnToCmserver(uint32 nodeid)
         }
     }
 
+    return NULL;
+}
+
+CM_Conn* GetConnToLocalCmserver(void)
+{
+    if (g_currentNode == NULL || g_currentNode->cmServerLevel != 1) {
+        return NULL;
+    }
+
+    CM_Conn* conn = NULL;
+    char connstr[3][CONNSTR_LEN];
+    int rc;
+    int rcs;
+    int connTimeOut = (int)agent_connect_timeout;
+    if (connTimeOut < MAX_CONN_TIMEOUT) {
+        connTimeOut = MAX_CONN_TIMEOUT;
+    }
+
+    for (uint32 ii = 0; ii < g_currentNode->cmServerListenCount; ++ii) {
+        for (uint32 jj = 0; jj < g_currentNode->cmAgentListenCount; ++jj) {
+            rc = memset_s(connstr[jj], CONNSTR_LEN, 0, CONNSTR_LEN);
+            securec_check_errno(rc, (void)rc);
+            rcs = snprintf_s(connstr[jj], CONNSTR_LEN, CONNSTR_LEN - 1,
+                "host=%s port=%u localhost=%s connect_timeout=%d node_id=%u node_name=%s remote_type=%d postmaster=1",
+                g_currentNode->cmServer[ii], g_currentNode->port, g_currentNode->cmAgentIP[jj], connTimeOut,
+                g_currentNode->node, g_currentNode->nodeName, CM_AGENT);
+            securec_check_intval(rcs, (void)rcs);
+
+            conn = PQconnectCM(connstr[jj]);
+            if (conn == NULL || CMPQstatus(conn) != CONNECTION_OK) {
+                CMPQfinish(conn);
+                conn = NULL;
+                continue;
+            }
+
+            write_runlog(DEBUG1, "connect local cm_server and try ssl: %s\n", connstr[jj]);
+            if (TryGetSslConnToCmserver(conn, connTimeOut) != CM_SUCCESS) {
+                CMPQfinish(conn);
+                conn = NULL;
+                continue;
+            }
+            return conn;
+        }
+    }
     return NULL;
 }
 

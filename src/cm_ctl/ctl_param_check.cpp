@@ -39,6 +39,8 @@ const char *g_cmaParamInfo[] = {
     "disk_check_interval|int|0,2147483647|NULL|NULL|",
     "disk_check_buffer_size|int|0,2147483647|NULL|NULL|",
     "enable_xalarmd_slow_disk_check|bool|0,0|NULL|NULL|",
+    "enable_xalarm_event_check|bool|0,0|NULL|NULL|",
+    "xalarm_node_map|string|0,0|NULL|NULL|",
     "enable_log_compress|bool|0,0|NULL|NULL|",
     "enable_vtable|bool|0,0|NULL|NULL|",
     "enable_ssl|bool|0,0|NULL|NULL|",
@@ -963,6 +965,102 @@ static status_t CheckEnvThresholdSize(const char *value)
     return CM_SUCCESS;
 }
 
+static bool ParseUint32Text(const char *text, uint32 *value)
+{
+    if (text == NULL || text[0] == '\0' || value == NULL) {
+        return false;
+    }
+    char *endPtr = NULL;
+    errno = 0;
+    unsigned long parsedValue = strtoul(text, &endPtr, DECIMAL_NOTATION);
+    if (errno != 0 || endPtr == text || *endPtr != '\0' || parsedValue > UINT_MAX) {
+        return false;
+    }
+    *value = (uint32)parsedValue;
+    return true;
+}
+
+static status_t CheckXalarmNodeMap(const char *value)
+{
+    if (value == NULL || value[0] == '\0') {
+        write_runlog(ERROR, "The value of xalarm_node_map is empty.\n");
+        return CM_ERROR;
+    }
+    if (g_node_num == 0 || g_node_num > CM_NODE_MAXNUM) {
+        write_runlog(ERROR, "The cluster node count is invalid: %u.\n", g_node_num);
+        return CM_ERROR;
+    }
+
+    char mapText[MAX_PATH_LEN] = {0};
+    errno_t rc = strcpy_s(mapText, MAX_PATH_LEN, value);
+    securec_check_errno(rc, (void)rc);
+
+    bool nodeIdSeen[CM_NODE_MAXNUM + 1] = {false};
+    uint32 cnaList[CM_NODE_MAXNUM] = {0};
+    uint32 mapCount = 0;
+    char *savePtr = NULL;
+    char *entry = strtok_r(mapText, ";", &savePtr);
+    while (entry != NULL) {
+        char *pairText = trim(entry);
+        if (pairText == NULL || pairText[0] == '\0') {
+            write_runlog(ERROR, "Invalid xalarm_node_map item, empty nodeId:cna pair.\n");
+            return CM_ERROR;
+        }
+
+        char *sep = strchr(pairText, ':');
+        if (sep == NULL || strchr(sep + 1, ':') != NULL) {
+            write_runlog(ERROR, "Invalid xalarm_node_map item \"%s\", format must be nodeId:cna.\n", pairText);
+            return CM_ERROR;
+        }
+        *sep = '\0';
+        char *nodeIdText = trim(pairText);
+        char *cnaText = trim(sep + 1);
+        uint32 nodeId = 0;
+        uint32 cna = 0;
+        if (!ParseUint32Text(nodeIdText, &nodeId) || !ParseUint32Text(cnaText, &cna)) {
+            write_runlog(ERROR, "Invalid xalarm_node_map item \"%s:%s\", nodeId and cna must be positive integers.\n",
+                nodeIdText, cnaText);
+            return CM_ERROR;
+        }
+        if (nodeId == 0 || nodeId > g_node_num || cna == 0) {
+            write_runlog(ERROR, "xalarm_node_map item out of range, nodeId=%u (valid 1..%u), cna=%u.\n",
+                nodeId, g_node_num, cna);
+            return CM_ERROR;
+        }
+        if (nodeIdSeen[nodeId]) {
+            write_runlog(ERROR, "Duplicated nodeId in xalarm_node_map: %u.\n", nodeId);
+            return CM_ERROR;
+        }
+        for (uint32 i = 0; i < mapCount; ++i) {
+            if (cnaList[i] == cna) {
+                write_runlog(ERROR, "Duplicated cna in xalarm_node_map: %u.\n", cna);
+                return CM_ERROR;
+            }
+        }
+        nodeIdSeen[nodeId] = true;
+        cnaList[mapCount++] = cna;
+        if (mapCount > g_node_num) {
+            write_runlog(ERROR, "Too many xalarm_node_map items, expected %u.\n", g_node_num);
+            return CM_ERROR;
+        }
+        entry = strtok_r(NULL, ";", &savePtr);
+    }
+
+    if (mapCount != g_node_num) {
+        write_runlog(ERROR, "The number of xalarm_node_map items (%u) must equal cluster node count (%u).\n",
+            mapCount, g_node_num);
+        return CM_ERROR;
+    }
+    for (uint32 nodeId = 1; nodeId <= g_node_num; ++nodeId) {
+        if (!nodeIdSeen[nodeId]) {
+            write_runlog(ERROR, "xalarm_node_map missing nodeId %u, it must contain 1..%u exactly once.\n",
+                nodeId, g_node_num);
+            return CM_ERROR;
+        }
+    }
+    return CM_SUCCESS;
+}
+
 static status_t CheckStringTypeValue(const char *param, const char *value)
 {
     size_t valueLen = strlen(value);
@@ -988,6 +1086,9 @@ static status_t CheckStringTypeValue(const char *param, const char *value)
     }
     if (strncmp(param, "event_triggers", strlen("event_triggers")) == 0) {
         return CheckEventTriggers(value);
+    }
+    if (strncmp(param, "xalarm_node_map", strlen("xalarm_node_map")) == 0) {
+        return CheckXalarmNodeMap(value);
     }
 
     return CM_SUCCESS;

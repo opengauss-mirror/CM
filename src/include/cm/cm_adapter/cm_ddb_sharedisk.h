@@ -26,6 +26,7 @@
 #include "cm_ddb_adapter.h"
 
 DdbDriver *DrvSdGet(void);
+void DrvSdTriggerFastPromote(void);
 
 #define CANN_NOT_FIND_KV (1)
 #endif

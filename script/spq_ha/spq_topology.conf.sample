@@ -1,0 +1,43 @@
+#
+# SPQ 分布式拓扑配置
+# 部署到每个 CM agent 节点的 /opt/spq/spq_topology.conf
+#
+# 字段说明：
+#   - CN_*/DN_*_*：拓扑视图，所有节点上必须一致
+#   - GSQL_BIN：本节点的 gsql 路径，OM 多集群部署下每个节点不同
+#
+
+# CN 集群信息（支持多备机，空格分隔）
+CN_PRIMARY_HOST=192.168.1.1
+CN_STANDBY_HOSTS="192.168.1.2"
+CN_PORT=5432
+CN_DB=postgres
+CN_USER=omm
+
+# DN 集群信息
+# PRIMARY_HOST: 初始主机 IP
+# STANDBY_HOSTS: 备机 IP 列表（空格分隔，支持多个）
+# PORT: 数据库端口
+DN_1_PRIMARY_HOST=192.168.1.3
+DN_1_STANDBY_HOSTS="192.168.1.4"
+DN_1_PORT=5432
+
+DN_2_PRIMARY_HOST=192.168.1.5
+DN_2_STANDBY_HOSTS="192.168.1.6"
+DN_2_PORT=5432
+
+# DN 数量
+DN_COUNT=2
+
+# gsql 路径（按本节点实际安装位置配置）
+GSQL_BIN=/usr/local/opengauss/bin/gsql
+
+# 日志路径
+SPQ_HA_LOG=/var/log/spq_ha.log
+
+# 可选：回调脚本运行参数
+SPQ_GSQL_TIMEOUT=10
+SPQ_GSQL_RETRY_COUNT=30
+SPQ_GSQL_RETRY_INTERVAL=2
+SPQ_LOCK_WAIT=5
+SPQ_HA_LOCK_DIR=/tmp

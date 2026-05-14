@@ -84,7 +84,7 @@ install -m 755 on_cn_role_change.sh /opt/spq/
 
 ### 4. 配置 CM event_triggers
 
-在每个集群**所有节点**的 `cm_agent.conf` 末尾添加：
+在每个集群**所有节点**的 `cm_agent.conf` 添加：
 
 **DN 集群的 cm_agent.conf**：
 
@@ -97,6 +97,8 @@ event_triggers = {"on_failover":"/opt/spq/on_dn_role_change.sh","on_switchover":
 ```
 event_triggers = {"on_failover":"/opt/spq/on_cn_role_change.sh","on_switchover":"/opt/spq/on_cn_role_change.sh"}
 ```
+
+注意，如果参数中已有event_triggers参数，覆盖更新，否则两个不同取值，可能造成覆盖而不生效。
 
 配置后重启 CM 生效：
 
@@ -146,7 +148,6 @@ DN 脚本通过 gsql 远程连接 CN 时，设置 `PGOPTIONS="-c remotetype=coor
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `SPQ_HA_LOG` | `/var/log/spq_ha.log` | 日志路径 |
 | `SPQ_GSQL_TIMEOUT` | 10 | 单次 gsql 超时（秒） |
 | `SPQ_GSQL_RETRY_COUNT` | 30 | 重试次数 |
 | `SPQ_GSQL_RETRY_INTERVAL` | 2 | 重试间隔（秒） |
@@ -159,3 +160,4 @@ DN 脚本通过 gsql 远程连接 CN 时，设置 `PGOPTIONS="-c remotetype=coor
 - 如果 CN 和 DN 同时故障，DN 脚本会重试轮询所有已知 CN 地址
 - 回调脚本使用 flock 本地锁避免同类事件并发执行
 - `shared_preload_libraries = 'spq'` 必须在所有节点上都配置
+- 脚本日志输出见cm相关日志

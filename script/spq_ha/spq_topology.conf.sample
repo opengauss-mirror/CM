@@ -32,9 +32,6 @@ DN_COUNT=2
 # gsql 路径（按本节点实际安装位置配置）
 GSQL_BIN=/usr/local/opengauss/bin/gsql
 
-# 日志路径
-SPQ_HA_LOG=/var/log/spq_ha.log
-
 # 可选：回调脚本运行参数
 SPQ_GSQL_TIMEOUT=10
 SPQ_GSQL_RETRY_COUNT=30

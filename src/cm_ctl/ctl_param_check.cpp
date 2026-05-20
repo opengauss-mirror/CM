@@ -48,7 +48,7 @@ const char *g_cmaParamInfo[] = {
     "enable_xc_maintenance_mode|bool|0,0|NULL|NULL|",
     "log_threshold_check_interval|int|0,2147483647|NULL|NULL|",
     "log_max_size|int|0,2147483647|NULL|NULL|",
-    "log_max_count|int|0,10000|NULL|NULL|",
+    "log_max_count|int|0,30000|NULL|NULL|",
     "log_saved_days|int|0,1000|NULL|NULL|",
     "agent_phony_dead_check_interval|int|0,2147483647|NULL|NULL|",
     "unix_socket_directory|string|0,0|NULL|NULL|",

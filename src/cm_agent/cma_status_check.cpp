@@ -51,6 +51,8 @@ extern "C" {
 }
 #endif
 #include "cjson/cJSON.h"
+#include "cma_xalarm_event_compat.h"
+struct alarm_register *g_xalarmEventRegister = NULL;
 static const uint32 XALARM_TYPE_OCCUR = 1;
 static const uint32 XALARM_TYPE_RECOVER = 2;
 static const uint32 XALARM_REBOOT_EVENT_ID = 1003;
@@ -75,7 +77,6 @@ typedef struct XalarmNodeMapItemT {
     uint32 cna;
 } XalarmNodeMapItem;
 
-int g_xalarmEventClientId = -1;
 static XalarmNodeMapItem g_xalarmNodeMap[XALARM_EVENT_NODE_MAP_MAX];
 static uint32 g_xalarmNodeMapCount = 0;
 #endif
@@ -2717,6 +2718,55 @@ static bool IsNeedProcessXalarmEvent(int alarmId)
     return (alarmId == (int)XALARM_PANIC_EVENT_ID || alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
 }
 
+/* Map original xalarm event id to paired ACK id for xalarm_report_event; 0 means no ACK for this id. */
+static uint32 XalarmMapAlarmIdToAckEventId(int alarmId)
+{
+    switch (alarmId) {
+        case (int)XALARM_REBOOT_EVENT_ID:
+            return XALARM_REBOOT_ACK_EVENT_ID;
+        case (int)XALARM_OOM_EVENT_ID:
+            return XALARM_OOM_ACK_EVENT_ID;
+        case (int)XALARM_PANIC_EVENT_ID:
+            return XALARM_PANIC_ACK_EVENT_ID;
+        case (int)XALARM_KERNEL_REBOOT_EVENT_ID:
+            return XALARM_KERNEL_REBOOT_ACK_EVENT_ID;
+        default:
+            return 0;
+    }
+}
+
+static void ReportXalarmEventAck(int alarmId, const char *alarmDesc)
+{
+    uint32 ackId = XalarmMapAlarmIdToAckEventId(alarmId);
+    if (ackId == 0) {
+        return;
+    }
+
+    char ackBuf[8192] = {0};
+    errno_t rc;
+    if (alarmDesc != NULL && alarmDesc[0] != '\0') {
+        rc = strncpy_s(ackBuf, sizeof(ackBuf), alarmDesc, sizeof(ackBuf) - 1);
+        securec_check_errno(rc, (void)rc);
+    } else {
+        rc = snprintf_s(ackBuf, sizeof(ackBuf), sizeof(ackBuf) - 1, "{\"ack\":\"cm_agent\",\"alarm_id\":%d}", alarmId);
+        securec_check_intval(rc, (void)rc);
+    }
+
+    /* New libxalarm: len must equal strlen(pucParas) and <= 8191. Legacy: two-parameter API. */
+#ifdef CM_XALARM_REPORT_EVENT_HAS_LEN
+    size_t payloadLen = strlen(ackBuf);
+    int rptRet = xalarm_report_event((unsigned short)ackId, ackBuf, payloadLen);
+#else
+    int rptRet = xalarm_report_event((unsigned short)ackId, ackBuf);
+#endif
+    if (rptRet != 0) {
+        write_runlog(WARNING, "xalarm_report_event ack failed, ret=%d errno=%d ackId=%u srcAlarmId=%d.\n",
+            rptRet, errno, ackId, alarmId);
+    } else {
+        write_runlog(DEBUG1, "xalarm_report_event ack ok, ackId=%u srcAlarmId=%u.\n", ackId, (uint32)alarmId);
+    }
+}
+
 static bool WaitCmsPrimarySwitchByConnect(uint32 alarmNodeId, uint32 timeoutMs)
 {
     const uint32 retryIntervalMs = 500;
@@ -2808,6 +2858,7 @@ static void ProcessXalarmEventReport(struct alarm_info *param, int alarmId)
         write_runlog(ERROR, "xalarm desc is null, alarmId=%d.\n", alarmId);
         return;
     }
+    ReportXalarmEventAck(alarmId, alarmDesc);
 
     uint32 cna = 0;
     if (!ParseRemoteNodeAlarmDesc(alarmDesc, &cna)) {
@@ -2865,6 +2916,10 @@ static void HandleXalarmEvent(struct alarm_info *param)
     switch (alarmId) {
         case (int)XALARM_REBOOT_EVENT_ID:
         case (int)XALARM_OOM_EVENT_ID:
+            write_runlog(DEBUG1, "receive reserved xalarm event, alarmId=%d, alarmType=%d.\n",
+                alarmId, xalarm_gettype(param));
+            ReportXalarmEventAck(alarmId, xalarm_getdesc(param));
+            break;
         case (int)XALARM_UBUS_MEM_EVENT_ID:
         case (int)XALARM_REBOOT_ACK_EVENT_ID:
         case (int)XALARM_OOM_ACK_EVENT_ID:
@@ -2881,25 +2936,51 @@ static void HandleXalarmEvent(struct alarm_info *param)
 
 static void *XalarmEventCheckMain(void *arg)
 {
+    (void)arg;
+    int regRet = -1;
+    struct alarm_register *reg = NULL;
     write_runlog(LOG, "xalarm event check thread start.\n");
     struct alarm_subscription_info idFilter = {0};
     uint32 filterIdx = 0;
-    idFilter.id_list[filterIdx++] = XALARM_REBOOT_EVENT_ID;
-    idFilter.id_list[filterIdx++] = XALARM_OOM_EVENT_ID;
-    idFilter.id_list[filterIdx++] = XALARM_PANIC_EVENT_ID;
-    idFilter.id_list[filterIdx++] = XALARM_KERNEL_REBOOT_EVENT_ID;
-    idFilter.id_list[filterIdx++] = XALARM_UBUS_MEM_EVENT_ID;
-    idFilter.len = filterIdx;
-    g_xalarmEventClientId = xalarm_Register(HandleXalarmEvent, idFilter);
-    if (g_xalarmEventClientId < 0) {
-        write_runlog(ERROR, "xalarm event register failed.\n");
-        return NULL;
-    }
-    write_runlog(LOG, "xalarm event register success, client id is %d.\n", g_xalarmEventClientId);
+    idFilter.id_list[filterIdx++] = (int)XALARM_PANIC_EVENT_ID;
+    idFilter.id_list[filterIdx++] = (int)XALARM_KERNEL_REBOOT_EVENT_ID;
+    idFilter.len = (int)filterIdx;
 
     while (!g_shutdownRequest && !g_exitFlag) {
+        if (regRet < 0) {
+            regRet = xalarm_register_event(&reg, idFilter);
+            if (regRet < 0) {
+                write_runlog(ERROR, "xalarm_register_event (panic/reboot events) failed, ret=%d.\n", regRet);
+                cm_sleep(SHUTDOWN_SLEEP_TIME);
+                continue;
+            }
+            write_runlog(LOG, "xalarm event register success (event API).\n");
+        }
+        g_xalarmEventRegister = reg;
+
+        struct alarm_msg msg;
+        while (!g_shutdownRequest && !g_exitFlag) {
+            errno_t rc = memset_s(&msg, sizeof(msg), 0, sizeof(msg));
+            securec_check_errno(rc, (void)rc);
+            int getRet = xalarm_get_event(&msg, reg);
+            if (getRet < 0) {
+                write_runlog(WARNING, "xalarm_get_event (panic/reboot) failed, ret=%d errno=%d.\n", getRet, errno);
+                break;
+            }
+            struct alarm_info info;
+            CmaXalarmMsgToAlarmInfo(&msg, &info);
+            HandleXalarmEvent(&info);
+        }
+        if (g_xalarmEventRegister == reg && reg != NULL) {
+            CmaXalarmUnregisterEvent(&reg);
+            g_xalarmEventRegister = NULL;
+        }
+        if (g_shutdownRequest || g_exitFlag) {
+            break;
+        }
         cm_sleep(1);
     }
+    write_runlog(LOG, "xalarm event check thread exit.\n");
     return NULL;
 }
 

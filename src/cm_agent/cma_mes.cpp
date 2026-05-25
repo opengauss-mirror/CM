@@ -394,13 +394,7 @@ static void checkMesSslCertExpire()
 }
 
 #ifdef ENABLE_XALARMD
-#ifdef __cplusplus
-extern "C" {
-#endif
-#include <xalarm/register_xalarm.h>
-#ifdef __cplusplus
-}
-#endif
+#include "cma_xalarm_event_compat.h"
 #endif
 
 void CmaRhbUnInit()
@@ -412,16 +406,15 @@ void CmaRhbUnInit()
     write_runlog(LOG, "Got exit, Rhb UnInit is done!\n");
 
 #ifdef ENABLE_XALARMD
-    // unRegister xalarm
     if (g_xalarmClientId >= 0) {
         xalarm_UnRegister(g_xalarmClientId);
         write_runlog(LOG, "xalarm unregister success, client id is %d\n", g_xalarmClientId);
         g_xalarmClientId = -1;
     }
-    if (g_xalarmEventClientId >= 0) {
-        xalarm_UnRegister(g_xalarmEventClientId);
-        write_runlog(LOG, "xalarm event unregister success, client id is %d\n", g_xalarmEventClientId);
-        g_xalarmEventClientId = -1;
+    if (g_xalarmEventRegister != NULL) {
+        CmaXalarmUnregisterEvent(&g_xalarmEventRegister);
+        g_xalarmEventRegister = NULL;
+        write_runlog(LOG, "xalarm panic/reboot event unregister done.\n");
     }
 #endif
 }

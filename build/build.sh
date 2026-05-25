@@ -29,6 +29,9 @@ export SYMBOLS_NAME_PRE="openGauss-CM-Symbol"
 export PKG_PREFIX_NAME=""
 export VERSION="DEFAULT"
 export USE_LSE="OFF"
+export ENABLE_XALARMD="OFF"
+# When ENABLE_XALARMD=ON: ON matches new sysSentry libxalarm (third size_t len); OFF matches legacy two-parameter headers
+export ENABLE_XALARM_REPORT_EVENT_LEN="OFF"
 
 source ${PROJECT_ROOT_PATH}/build/get_PlatForm_str.sh
 declare package_pre_name
@@ -37,7 +40,10 @@ declare sha256_name
 
 function help() {
     echo "$0 [-m {release|debug|memcheck|cov}] [-3rd \${THIRD_BINARY_PATH}] [-o \${OUTPUT_PATH}] [--pkg] [--single] [--gcc {10.3|7.3}]
+        [--xalarmd {ON|OFF}] [--xalarm_report_len {ON|OFF}]
         default: $0 -m ${VERSION_MODE} -3rd \"${THIRD}\" -o \"${OUT_PATH}\""
+    echo "  --xalarmd ON|OFF          pass -DENABLE_XALARMD to cmake (default OFF)"
+    echo "  --xalarm_report_len ON|OFF  when xalarmd ON: OFF=legacy headers (default; 2-arg report, unregister *); ON=new sysSentry (3-arg report, unregister **)"
 }
 
 function build_dcc() {
@@ -308,7 +314,7 @@ function build_cm() {
     fi
 
     PKG_NAME="${PKG_NAME_PRE}_${VERSION_MODE}.tar.gz"
-    cmake_def="-DCMAKE_INSTALL_PREFIX="${OUT_PATH}" -DENABLE_PRIVATEGAUSS=${PRIVATEGAUSS} -DCMAKE_BUILD_TYPE=${build_type} ${cmake_def} -DENABLE_MULTIPLE_NODES=${MULTIPLE_NODES} -DENABLE_ETCD=${ETCD} -DENABLE_HOTPATCH=${HOTPATCH} -DENABLE_LIBPQ=${LIBPQ} -DENABLE_KRB=${KRB} -DENABLE_ALARM=${ALARM} -DUSE_LSE=${USE_LSE} -DENABLE_XALARMD=OFF"
+    cmake_def="-DCMAKE_INSTALL_PREFIX="${OUT_PATH}" -DENABLE_PRIVATEGAUSS=${PRIVATEGAUSS} -DCMAKE_BUILD_TYPE=${build_type} ${cmake_def} -DENABLE_MULTIPLE_NODES=${MULTIPLE_NODES} -DENABLE_ETCD=${ETCD} -DENABLE_HOTPATCH=${HOTPATCH} -DENABLE_LIBPQ=${LIBPQ} -DENABLE_KRB=${KRB} -DENABLE_ALARM=${ALARM} -DUSE_LSE=${USE_LSE} -DENABLE_XALARMD=${ENABLE_XALARMD} -DENABLE_XALARM_REPORT_EVENT_LEN=${ENABLE_XALARM_REPORT_EVENT_LEN}"
 
     echo "********************************************************************"
     echo "start build CM with <${VERSION_MODE}>
@@ -326,6 +332,8 @@ function build_cm() {
     pkg_name=[${PKG_NAME}]
     version=[${VERSION}]
     lse=[${USE_LSE}]
+    enable_xalarmd=[${ENABLE_XALARMD}]
+    xalarm_report_event_len=[${ENABLE_XALARM_REPORT_EVENT_LEN}]
     DCC=[${DCC}]
     output to [${OUT_PATH}]."
     echo "********************************************************************"
@@ -439,6 +447,22 @@ function main() {
             --single)
                 MULTIPLE_NODES="OFF"
                 shift
+                ;;
+            --xalarmd)
+                if [ "$2"X = X ]; then
+                    echo "no value for --xalarmd, use ON or OFF"
+                    exit 1
+                fi
+                ENABLE_XALARMD="$2"
+                shift 2
+                ;;
+            --xalarm_report_len)
+                if [ "$2"X = X ]; then
+                    echo "no value for --xalarm_report_len, use ON or OFF"
+                    exit 1
+                fi
+                ENABLE_XALARM_REPORT_EVENT_LEN="$2"
+                shift 2
                 ;;
             --clean)
                 rm -rf ${PROJECT_ROOT_PATH}/library

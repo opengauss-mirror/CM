@@ -952,8 +952,78 @@ static int ResIndexComparator(const void *arg1, const void *arg2)
     return (index1 - index2);
 }
 
+/*
+ * curCluster is lastCluster with only force-kick node(s) removed (panic/reboot path).
+ * Allow shrink without waiting for CHECK_DELAY_IN_ROLE_CHANGING after CMS switchover.
+ */
+static bool8 IsShrinkOnlyForceKickNodes(const NodeCluster *lastCluster, const NodeCluster *curCluster)
+{
+    if (curCluster->clusterNum <= 0 || lastCluster->clusterNum <= 0) {
+        return CM_FALSE;
+    }
+    if (curCluster->clusterNum >= lastCluster->clusterNum) {
+        return CM_FALSE;
+    }
+
+    for (int32 i = 0; i < curCluster->clusterNum; ++i) {
+        if (!IsCurResInMaxCluster(curCluster->cluster[i], lastCluster)) {
+            return CM_FALSE;
+        }
+    }
+
+    for (int32 i = 0; i < lastCluster->clusterNum; ++i) {
+        int32 resIdx = lastCluster->cluster[i];
+        if (IsCurResInMaxCluster(resIdx, curCluster)) {
+            continue;
+        }
+        if (!IsForceKickNode(GetNodeByPoint(resIdx))) {
+            return CM_FALSE;
+        }
+    }
+    return CM_TRUE;
+}
+
+static bool8 LastClusterHasForceKickNode(const NodeCluster *nodeCluster)
+{
+    for (int32 i = 0; i < nodeCluster->clusterNum; ++i) {
+        if (IsForceKickNode(GetNodeByPoint(nodeCluster->cluster[i]))) {
+            return CM_TRUE;
+        }
+    }
+    return CM_FALSE;
+}
+
+/* Remove force-kick nodes from cur so Compare/CanArbitrate can shrink even if RHB still lists them. */
+static void StripForceKickNodesFromCurCluster(NodeCluster *curCluster)
+{
+    int32 writeIdx = 0;
+    for (int32 i = 0; i < curCluster->clusterNum; ++i) {
+        uint32 nodeId = GetNodeByPoint(curCluster->cluster[i]);
+        if (IsForceKickNode(nodeId)) {
+            write_runlog(LOG, "strip force-kick node(%u) from curCluster before max cluster compare.\n", nodeId);
+            continue;
+        }
+        curCluster->cluster[writeIdx++] = curCluster->cluster[i];
+    }
+    if (writeIdx == curCluster->clusterNum) {
+        return;
+    }
+    curCluster->clusterNum = writeIdx;
+    if (writeIdx > 0) {
+#undef qsort
+        qsort(curCluster->cluster, (size_t)curCluster->clusterNum, sizeof(int32), ResIndexComparator);
+    }
+}
+
 static bool8 CanArbitrateMaxCluster(const NodeCluster *lastCluster, NodeCluster *curCluster)
 {
+    /* panic/reboot force-kick shrink: before delay so promote+10s does not skip this path */
+    if (IsShrinkOnlyForceKickNodes(lastCluster, curCluster)) {
+        write_runlog(LOG,
+            "allow max cluster shrink: only force-kick node(s) removed (panic/reboot), skip delay wait.\n");
+        return CM_TRUE;
+    }
+
     // process in starting or cms role has changed, it need to wait for the new info of agent report.
     if (g_delayArbiClusterTime >= GetTimeoutWaitForNewRes()) {
         return CM_TRUE;
@@ -1114,6 +1184,11 @@ static void CompareCurLastMaxNodeCluster(MaxNodeCluster *lastCluster, MaxNodeClu
     }
     bool8 result = IsLastClusterSameWithCur(lastCluster->nodeCluster.cluster, lastCluster->nodeCluster.clusterNum,
         curCluster->nodeCluster.cluster, curCluster->nodeCluster.clusterNum);
+    if (LastClusterHasForceKickNode(&(lastCluster->nodeCluster))) {
+        StripForceKickNodesFromCurCluster(&(curCluster->nodeCluster));
+        result = IsLastClusterSameWithCur(lastCluster->nodeCluster.cluster, lastCluster->nodeCluster.clusterNum,
+            curCluster->nodeCluster.cluster, curCluster->nodeCluster.clusterNum);
+    }
     if (result && (curCluster->version == lastCluster->version + 1)) {
         return;
     }

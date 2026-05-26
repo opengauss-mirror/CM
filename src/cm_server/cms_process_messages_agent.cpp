@@ -1069,6 +1069,9 @@ static bool checkSyncGroups(char *syncStandbyNames, char *curSyncLists)
                 int j = 0;
                 ptr++;
                 while (*ptr != '\0' && *ptr != ')') {
+                    if (j >= CM_NODE_NAME - 1) {
+                        return false;
+                    }
                     tmpSyncNames[j++] = *ptr;
                     ptr++;
                 }
@@ -1087,6 +1090,9 @@ static bool checkSyncGroups(char *syncStandbyNames, char *curSyncLists)
             } else {  //like node1,node2
                 int j = 0;
                 while (*ptr != '\0') {
+                    if (j >= CM_NODE_NAME - 1) {
+                        return false;
+                    }
                     tmpSyncNames[j++] = *ptr;
                     ptr++;
                 }

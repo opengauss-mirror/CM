@@ -1104,7 +1104,18 @@ void SetAgentDataReportMsg(MsgRecvInfo* recvMsgInfo, CM_StringInfo inBuffer)
 {
     agent_to_cm_datanode_status_report agent_to_cm_datanode_status_ptr = {0};
     if (GetAgentDataReportMsg(inBuffer, &agent_to_cm_datanode_status_ptr) != CM_SUCCESS) {
-            return;
+        return;
+    }
+
+    if (agent_to_cm_datanode_status_ptr.node != recvMsgInfo->connID.agentNodeId) {
+        write_runlog(ERROR,
+            "Reject datanode status report from invalid agent connection: "
+            "connNode=%u, reportNode=%u, instanceId=%u, remoteType=%d.\n",
+            recvMsgInfo->connID.agentNodeId,
+            agent_to_cm_datanode_status_ptr.node,
+            agent_to_cm_datanode_status_ptr.instanceId,
+            recvMsgInfo->connID.remoteType);
+        return;
     }
 
     agent_to_cm_datanode_status_ptr.local_status.disconn_host[CM_IP_LENGTH - 1] = '\0';

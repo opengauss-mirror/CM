@@ -117,6 +117,8 @@
 #define CLUSTER_QUERY_IN_SWITCHOVER 11
 
 #define DYNAMC_CONFIG_FILE "cluster_dynamic_config"
+/* Must match MAX_INSTANCE_NUM in cms_global_params.h (cm_server pre-allocated slot count). */
+#define MAX_DYNAMIC_CONFIG_RELATION_COUNT 9
 
 #define PROCESS_UNKNOWN -1
 #define PROCESS_NOT_EXIST 0

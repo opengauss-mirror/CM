@@ -21,6 +21,7 @@
 *
 * -------------------------------------------------------------------------
 */
+#include <ctype.h>
 #include "cm_defs.h"
 #include "elog.h"
 #include "cm_text.h"
@@ -84,6 +85,21 @@ static void CmJsonCheckForSecurity(const char *input)
     for (int i = 0; dangerCharList[i] != NULL; i++) {
         if (strstr(input, dangerCharList[i]) != NULL) {
             CmJsonWriteLog(FATAL, "invalid token %s in input:\"%s\".\n", dangerCharList[i], input);
+            exit(1);
+        }
+    }
+}
+
+static void CmJsonCheckScriptPath(const char *input)
+{
+    if (!is_absolute_path(input)) {
+        CmJsonWriteLog(FATAL, "invalid script path \"%s\", must be an absolute path.\n", input);
+        exit(1);
+    }
+
+    for (const char *p = input; *p != '\0'; ++p) {
+        if (isspace((unsigned char)*p) != 0) {
+            CmJsonWriteLog(FATAL, "invalid whitespace in script path:\"%s\".\n", input);
             exit(1);
         }
     }
@@ -176,6 +192,8 @@ static void ParseAppDnResConfJson(const cJSON *resJson, CusResConfJson *resConf)
     if (GetValueStrFromJson(resConf->resScript, CM_JSON_STR_LEN, resJson, "script") != 0) {
         rc = memset_s(resConf->resScript, CM_JSON_STR_LEN, 0, CM_JSON_STR_LEN);
         securec_check_errno(rc, (void)rc);
+    } else {
+        CmJsonCheckScriptPath(resConf->resScript);
     }
     if (GetValueIntFromJson(&resConf->checkInterval, resJson, "check_interval") != 0) {
         resConf->checkInterval = defValue;

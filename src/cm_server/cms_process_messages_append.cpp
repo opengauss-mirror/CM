@@ -189,7 +189,7 @@ void ProcessCtlToCmExecDccCmdMsg(MsgRecvInfo* recvMsgInfo, ExecDdbCmdMsg *msg)
 {
     msg->cmdLine[DCC_CMD_MAX_LEN - 1] = '\0';
     errno_t rc;
-    ExecDdbCmdAckMsg ackMsg;
+    ExecDdbCmdAckMsg ackMsg = {0};
 
     ackMsg.msgType = static_cast<int>(EXEC_DDB_COMMAND_ACK);
 

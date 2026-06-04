@@ -1802,6 +1802,14 @@ static void CheckReadNoMessage(CM_Connection *con, int epollFd)
     }
 }
 
+static void CloseStartupConnection(int epollFd, CM_Connection* con, const char* logMsg)
+{
+    remove_unauthen_connection(con);
+    EventDel(epollFd, con);
+    write_runlog(LOG, "%s", logMsg);
+    ConnCloseAndFree(con);
+}
+
 void ProcessStartupPacket(int epollFd, void* arg)
 {
     int qtype;
@@ -1834,10 +1842,7 @@ void ProcessStartupPacket(int epollFd, void* arg)
             break;
         case 'X':
         case EOF:
-            remove_unauthen_connection(con);
-            EventDel(epollFd, con);
-            write_runlog(LOG, "connection closed by client\n");
-            ConnCloseAndFree(con);
+            CloseStartupConnection(epollFd, con, "connection closed by client\n");
             break;
 
         case TCP_SOCKET_ERROR_NO_MESSAGE:
@@ -1846,10 +1851,7 @@ void ProcessStartupPacket(int epollFd, void* arg)
             break;
 
         case TCP_SOCKET_ERROR_EPIPE:
-            remove_unauthen_connection(con);
-            EventDel(epollFd, con);
-            write_runlog(LOG, "connection was broken\n");
-            ConnCloseAndFree(con);
+            CloseStartupConnection(epollFd, con, "connection was broken\n");
             break;
 
         default:

@@ -444,7 +444,21 @@ int etcd_get(EtcdSession session, char* key, char* value, int maxSize, const Get
         return -1;
     }
 
-    rc = strncpy_s(value, (size_t)maxSize, valueInGo, strlen(valueInGo));
+    if (valueInGo == NULL) {
+        rc = strncpy_s(g_err, ERR_LEN, "etcd get value is null\n", ERR_LEN - 1);
+        securec_check_c(rc, "", "");
+        return -1;
+    }
+
+    size_t valueLen = strlen(valueInGo);
+    if (valueLen >= (size_t)maxSize) {
+        rc = strncpy_s(g_err, ERR_LEN, "etcd get value is too long\n", ERR_LEN - 1);
+        securec_check_c(rc, "", "");
+        free(valueInGo);
+        return -1;
+    }
+
+    rc = strncpy_s(value, (size_t)maxSize, valueInGo, valueLen);
     securec_check_c(rc, "", "");
     value[maxSize - 1] = '\0';
     free(valueInGo);

@@ -41,19 +41,46 @@ ClientConn *GetClientConnect()
     return g_clientConnect;
 }
 
+static void EpollEventDel(int epollfd, int sock);
+
+static void ConnectReset(ClientConn *con)
+{
+    con->sock = AGENT_INVALID_SOCKET;
+    con->isClosed = true;
+    con->cmInstanceId = 0;
+    con->resInstanceId = 0;
+    errno_t rc = strcpy_s(con->resName, CM_MAX_RES_NAME, "unknown");
+    securec_check_errno(rc, (void)rc);
+}
+
 static void ConnectClose(ClientConn *con)
 {
     if (con->isClosed) {
         return;
     }
 
-    (void)close((int)con->sock);
-    con->sock = AGENT_INVALID_SOCKET;
-    con->isClosed = true;
-    con->cmInstanceId = 0;
-    con->resInstanceId = 0;
-    error_t rc = strcpy_s(con->resName, CM_MAX_RES_NAME, "unknown");
-    securec_check_errno(rc, (void)rc);
+    int sock = (int)con->sock;
+    ConnectReset(con);
+    if (sock != AGENT_INVALID_SOCKET) {
+        (void)close(sock);
+    }
+}
+
+static void CloseClientAndCleanMsgQueue(int epollfd, uint32 conId)
+{
+    if (conId >= CM_MAX_RES_COUNT) {
+        return;
+    }
+
+    ClientConn *con = &g_clientConnect[conId];
+    if (!con->isClosed) {
+        int sock = (int)con->sock;
+        if (sock != AGENT_INVALID_SOCKET) {
+            EpollEventDel(epollfd, sock);
+        }
+        ConnectReset(con);
+    }
+    CleanClientMsgQueue(conId);
 }
 
 static status_t EpollEventAdd(int epollfd, int sock)
@@ -195,15 +222,15 @@ static void RecvHeartBeatProcess(const MsgHead &head, int epollfd)
 
     if (TcpRecvMsg(g_clientConnect[head.conId].sock, (char*)&recvMsg.version, sizeof(uint64)) != CM_SUCCESS) {
         write_runlog(LOG, "[CLIENT] Recv heartbeat Msg failed, close the connect.\n");
-        EpollEventDel(epollfd, g_clientConnect[head.conId].sock);
-        ConnectClose(&g_clientConnect[head.conId]);
-        CleanClientMsgQueue(head.conId);
+        CloseClientAndCleanMsgQueue(epollfd, head.conId);
         return;
     }
 
     rc = memcpy_s(&recvMsg.head, sizeof(MsgHead), &head, sizeof(MsgHead));
     securec_check_errno(rc, (void)rc);
-    PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientHbMsg), head.conId);
+    if (!PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientHbMsg), head.conId)) {
+        CloseClientAndCleanMsgQueue(epollfd, head.conId);
+    }
 }
 
 static void RecvInitDataProcess(const MsgHead &head, int epollfd)
@@ -214,15 +241,15 @@ static void RecvInitDataProcess(const MsgHead &head, int epollfd)
 
     if (TcpRecvMsg(g_clientConnect[head.conId].sock, (char*)&recvMsg.resInfo, sizeof(ResInfo)) != CM_SUCCESS) {
         write_runlog(LOG, "[CLIENT] Recv InitMsg failed, close the connect.\n");
-        EpollEventDel(epollfd, g_clientConnect[head.conId].sock);
-        ConnectClose(&g_clientConnect[head.conId]);
-        CleanClientMsgQueue(head.conId);
+        CloseClientAndCleanMsgQueue(epollfd, head.conId);
         return;
     }
 
     rc = memcpy_s(&recvMsg.head, sizeof(MsgHead), &head, sizeof(MsgHead));
     securec_check_errno(rc, (void)rc);
-    PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientInitMsg), head.conId);
+    if (!PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientInitMsg), head.conId)) {
+        CloseClientAndCleanMsgQueue(epollfd, head.conId);
+    }
 }
 
 static void RecvCmResLockProcess(const MsgHead &head, int epollfd)
@@ -233,8 +260,7 @@ static void RecvCmResLockProcess(const MsgHead &head, int epollfd)
 
     if (TcpRecvMsg(g_clientConnect[head.conId].sock, (char*)&recvMsg.info, sizeof(LockInfo)) != CM_SUCCESS) {
         write_runlog(LOG, "[CLIENT] Recv ClientCmLockMsg failed, close the connect.\n");
-        EpollEventDel(epollfd, g_clientConnect[head.conId].sock);
-        ConnectClose(&g_clientConnect[head.conId]);
+        CloseClientAndCleanMsgQueue(epollfd, head.conId);
         return;
     }
 
@@ -249,7 +275,10 @@ static void RecvCmResLockProcess(const MsgHead &head, int epollfd)
 
     rc = memcpy_s(&recvMsg.head, sizeof(MsgHead), &head, sizeof(MsgHead));
     securec_check_errno(rc, (void)rc);
-    PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientCmLockMsg), head.conId);
+    if (!PushMsgToClientRecvQue((char*)&recvMsg, sizeof(ClientCmLockMsg), head.conId)) {
+        CloseClientAndCleanMsgQueue(epollfd, head.conId);
+        return;
+    }
 }
 
 static void RecvClientMessage(const uint32 &conId, int epollfd)
@@ -257,9 +286,7 @@ static void RecvClientMessage(const uint32 &conId, int epollfd)
     MsgHead head = {0};
 
     if (TcpRecvMsg(g_clientConnect[conId].sock, (char*)&head, sizeof(MsgHead)) != CM_SUCCESS) {
-        EpollEventDel(epollfd, g_clientConnect[conId].sock);
-        ConnectClose(&g_clientConnect[conId]);
-        CleanClientMsgQueue(conId);
+        CloseClientAndCleanMsgQueue(epollfd, conId);
         write_runlog(LOG, "[CLIENT] Recv msg type failed, close the connect.\n");
         return;
     }
@@ -275,9 +302,7 @@ static void RecvClientMessage(const uint32 &conId, int epollfd)
             RecvCmResLockProcess(head, epollfd);
             break;
         default:
-            EpollEventDel(epollfd, g_clientConnect[conId].sock);
-            ConnectClose(&g_clientConnect[conId]);
-            CleanClientMsgQueue(conId);
+            CloseClientAndCleanMsgQueue(epollfd, conId);
             write_runlog(ERROR, "[CLIENT] Recv unknown msg, %u.\n", head.msgType);
             return;
     }
@@ -317,9 +342,7 @@ static void RecvClientMsgMain(int epollfd, int eventNums, const ListenPort *list
         (void)clock_gettime(CLOCK_MONOTONIC, &currentTime);
         if ((currentTime.tv_sec - g_clientConnect[i].recvTime.tv_sec) > HEARTBEAT_TIMEOUT) {
             write_runlog(ERROR, "[CLIENT] Agent rec no hb from %s client more than 5s.\n", g_clientConnect[i].resName);
-            EpollEventDel(epollfd, g_clientConnect[i].sock);
-            ConnectClose(&g_clientConnect[i]);
-            CleanClientMsgQueue((uint32)i);
+            CloseClientAndCleanMsgQueue(epollfd, (uint32)i);
             continue;
         }
     }

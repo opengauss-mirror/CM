@@ -929,8 +929,19 @@ static int init_new_instance_role_group_ptr(const cm_instance_role_group_0* inst
 
     int count = (int)g_dynamic_header->relationCount;
     for (int i = 0; i < count; i++) {
+        if (instance_role_group_ptr_0[i].count < 0 ||
+            instance_role_group_ptr_0[i].count > CM_PRIMARY_STANDBY_MAX_NUM_0 ||
+            instance_role_group_ptr_0[i].count > CM_PRIMARY_STANDBY_MAX_NUM) {
+            write_runlog(ERROR,
+                "legacy dynamic config instance count %d is invalid, max legacy count is %d "
+                "and current max count is %d.\n",
+                instance_role_group_ptr_0[i].count,
+                CM_PRIMARY_STANDBY_MAX_NUM_0,
+                CM_PRIMARY_STANDBY_MAX_NUM);
+            return -1;
+        }
         g_instance_role_group_ptr[i].count = instance_role_group_ptr_0[i].count;
-        for (int j = 0; j < instance_role_group_ptr_0[i].count; j++) {
+        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             g_instance_role_group_ptr[i].instanceMember[j].node = instance_role_group_ptr_0[i].instanceMember[j].node;
             g_instance_role_group_ptr[i].instanceMember[j].instanceId =
                 instance_role_group_ptr_0[i].instanceMember[j].instanceId;
@@ -944,6 +955,19 @@ static int init_new_instance_role_group_ptr(const cm_instance_role_group_0* inst
         }
     }
     return 0;
+}
+
+static bool IsDynamicRelationCountValid(uint32 relationCount)
+{
+    if (relationCount > g_cluster_total_instance_group_num || relationCount > MAX_INSTANCE_NUM) {
+        write_runlog(ERROR,
+            "dynamic config relation count %u is invalid, max static group count is %u and max runtime count is %d.\n",
+            relationCount,
+            g_cluster_total_instance_group_num,
+            MAX_INSTANCE_NUM);
+        return false;
+    }
+    return true;
 }
 
 /*
@@ -1083,6 +1107,9 @@ static int static_dynamic_config_file_check(void)
         }
         /* set version number */
         g_dynamic_header->version = CMS_CURRENT_VERSION;
+        if (!IsDynamicRelationCountValid(g_dynamic_header->relationCount)) {
+            goto read_failed;
+        }
 
         if (dynamic_version == 0) {
             write_runlog(LOG,

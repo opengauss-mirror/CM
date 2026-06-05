@@ -35,6 +35,7 @@ typedef struct AgentMsgQueueSt {
 AgentMsgQueue *g_sendQueue = NULL;
 AgentMsgQueue *g_recvQueue = NULL;
 pthread_t g_recvSendThreadId = 0;
+static const uint32 MSG_QUEUE_MAX_COUNT = 512;
 
 void AllocCmaMsgQueueMemory()
 {
@@ -73,7 +74,20 @@ static inline void WakeCmaSendThread()
     }
 }
 
-void PushMsgToCmsSendQue(const char *msgPtr, uint32 msgLen, const char *msgInfo)
+static inline bool PushToAgentMsgQue(const AgentMsgPkg *msgPkg, MsgQueue *msgQue)
+{
+    (void)pthread_mutex_lock(&msgQue->lock);
+    if (msgQue->msg.size() >= MSG_QUEUE_MAX_COUNT) {
+        (void)pthread_mutex_unlock(&msgQue->lock);
+        return false;
+    }
+    msgQue->msg.push(*msgPkg);
+    (void)pthread_mutex_unlock(&msgQue->lock);
+    (void)pthread_cond_signal(&msgQue->cond);
+    return true;
+}
+
+bool PushMsgToCmsSendQue(const char *msgPtr, uint32 msgLen, const char *msgInfo)
 {
     if (msgPtr != NULL && msgLen >= sizeof(int32) && *(int32*)msgPtr == 0) {
         write_runlog(LOG, "%s msgPtr is 0. it may be error.\n", msgInfo);
@@ -82,22 +96,20 @@ void PushMsgToCmsSendQue(const char *msgPtr, uint32 msgLen, const char *msgInfo)
     AgentMsgPkg msgPkg = {0};
     msgPkg.msgLen = msgLen;
     msgPkg.msgPtr = GetMsgBufAndFillBuf(msgPtr, msgLen);
-    CM_RETURN_IF_NULL(msgPkg.msgPtr);
+    if (msgPkg.msgPtr == NULL) {
+        return false;
+    }
 
     write_runlog(DEBUG5, "push [%s] msg to send que:msgLen=%u.\n", msgInfo, msgPkg.msgLen);
 
-    (void)pthread_mutex_lock(&g_sendQueue->cms.lock);
-    g_sendQueue->cms.msg.push(msgPkg);
-    WakeCmaSendThread();
-    (void)pthread_mutex_unlock(&g_sendQueue->cms.lock);
-}
+    if (!PushToAgentMsgQue(&msgPkg, &g_sendQueue->cms)) {
+        write_runlog(ERROR, "[CLIENT] cms send queue is full, drop msg.\n");
+        FreeBufFromMsgPool(msgPkg.msgPtr);
+        return false;
+    }
 
-static inline void PushToAgentMsgQue(const AgentMsgPkg *msgPkg, MsgQueue *msgQue)
-{
-    (void)pthread_mutex_lock(&msgQue->lock);
-    msgQue->msg.push(*msgPkg);
-    (void)pthread_mutex_unlock(&msgQue->lock);
-    (void)pthread_cond_signal(&msgQue->cond);
+    WakeCmaSendThread();
+    return true;
 }
 
 void PushMsgToAllClientSendQue(const char *msgPtr, uint32 msgLen)
@@ -122,7 +134,10 @@ void PushMsgToClientSendQue(const char *msgPtr, uint32 msgLen, uint32 conId)
     const char *resName = GetClientConnect()[conId].resName;
     write_runlog(DEBUG5, "push msg to res(%s) client send que:msgLen=%u.\n", resName, msgPkg.msgLen);
 
-    PushToAgentMsgQue(&msgPkg, &g_sendQueue->client);
+    if (!PushToAgentMsgQue(&msgPkg, &g_sendQueue->client)) {
+        write_runlog(ERROR, "[CLIENT] client send queue is full, drop msg.\n");
+        FreeBufFromMsgPool(msgPkg.msgPtr);
+    }
 }
 
 void PushMsgToCmsRecvQue(const char *msgPtr, uint32 msgLen)
@@ -134,20 +149,31 @@ void PushMsgToCmsRecvQue(const char *msgPtr, uint32 msgLen)
 
     write_runlog(DEBUG5, "push msg to recv que:msgLen=%u.\n", msgPkg.msgLen);
 
-    PushToAgentMsgQue(&msgPkg, &g_recvQueue->cms);
+    if (!PushToAgentMsgQue(&msgPkg, &g_recvQueue->cms)) {
+        write_runlog(ERROR, "[CLIENT] cms recv queue is full, drop msg.\n");
+        FreeBufFromMsgPool(msgPkg.msgPtr);
+    }
 }
 
-void PushMsgToClientRecvQue(const char *msgPtr, uint32 msgLen, uint32 conId)
+bool PushMsgToClientRecvQue(const char *msgPtr, uint32 msgLen, uint32 conId)
 {
     AgentMsgPkg msgPkg = {0};
     msgPkg.msgLen = msgLen;
+    msgPkg.conId = conId;
     msgPkg.msgPtr = GetMsgBufAndFillBuf(msgPtr, msgLen);
-    CM_RETURN_IF_NULL(msgPkg.msgPtr);
+    if (msgPkg.msgPtr == NULL) {
+        return false;
+    }
 
     const char *resName = GetClientConnect()[conId].resName;
     write_runlog(DEBUG5, "push msg to res(%s) client recv que:msgLen=%u.\n", resName, msgPkg.msgLen);
 
-    PushToAgentMsgQue(&msgPkg, &g_recvQueue->client);
+    if (!PushToAgentMsgQue(&msgPkg, &g_recvQueue->client)) {
+        write_runlog(ERROR, "[CLIENT] client recv queue is full, drop msg.\n");
+        FreeBufFromMsgPool(msgPkg.msgPtr);
+        return false;
+    }
+    return true;
 }
 
 void CleanCmsMsgQueueCore(AgentMsgQueue *msgQueue)

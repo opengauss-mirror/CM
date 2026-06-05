@@ -78,6 +78,14 @@ typedef struct {
 
 CltCmdProc g_cmdProc[MSG_CM_TYPE_CEIL] = {0};
 
+static bool IsCtlRequestMsg(int msgType, const char *msgName)
+{
+    if (msgType == MSG_EXEC_DDB_COMMAND || msgType == MSG_CLIENT_CM_DDB_OPER) {
+        return true;
+    }
+    return (msgName != NULL && strncmp(msgName, "MSG_CTL_", 8) == 0);
+}
+
 static bool judgeHAStatus(const int* normalStandbyDn, const int* dnNum, int azIndex, uint32 groupIndex)
 {
     bool haNeedRepair = false;
@@ -1929,8 +1937,13 @@ void cm_server_process_msg(MsgRecvInfo* recvMsgInfo)
         return;
     }
 
-    write_runlog(DEBUG5, "receive command type %d:%s \n", msgType,
-        cluster_msg_int_to_string(msgType));
+    const char *msgName = cluster_msg_int_to_string(msgType);
+    if (recvMsgInfo->connID.remoteType != CM_CTL && IsCtlRequestMsg(msgType, msgName)) {
+        write_runlog(ERROR, "reject %s from remote_type %d.\n", msgName, recvMsgInfo->connID.remoteType);
+        return;
+    }
+
+    write_runlog(DEBUG5, "receive command type %d:%s \n", msgType, msgName);
 
     recvMsgInfo->msgProcFlag = g_msgProcFlag[msgType];
 

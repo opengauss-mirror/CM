@@ -2213,7 +2213,7 @@ static void ParseEventTriggers(const char *value)
             break;
         }
 
-        eventTriggers[type] = (char*)CmMalloc(strlen(valuePtr));
+        eventTriggers[type] = (char*)CmMalloc(strlen(valuePtr) + 1);
         int ret = snprintf_s(eventTriggers[type], MAX_PATH_LEN,
             MAX_PATH_LEN - 1, "%s", valuePtr);
         securec_check_intval(ret, (void)ret);
@@ -2237,9 +2237,8 @@ static void ParseEventTriggers(const char *value)
                 FREE_AND_RESET(g_eventTriggers[i]);
             }
         } else {
-            if (g_eventTriggers[i] == NULL) {
-                g_eventTriggers[i] = (char*)CmMalloc(strlen(eventTriggers[i]));
-            }
+            FREE_AND_RESET(g_eventTriggers[i]);
+            g_eventTriggers[i] = (char*)CmMalloc(strlen(eventTriggers[i]) + 1);
             int ret = snprintf_s(g_eventTriggers[i], MAX_PATH_LEN,
                 MAX_PATH_LEN - 1, "%s", eventTriggers[i]);
             securec_check_intval(ret, (void)ret);

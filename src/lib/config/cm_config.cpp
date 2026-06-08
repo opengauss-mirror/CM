@@ -108,6 +108,8 @@ bool g_isCmRead = false;
 
 static int read_all_logic_config_file(const logicClusterList lcList, int *err_no);
 static int read_logic_config_file(const logicClusterInfo lcInfo, int *err_no);
+static bool is_valid_logic_cluster_name(const char *name);
+static bool is_path_under_directory(const char *path, const char *dir);
 
 void check_input_for_security(const char *input)
 {
@@ -1136,6 +1138,36 @@ void set_cm_read_flag(bool falg)
     g_isCmRead = falg;
 }
 
+static bool is_valid_logic_cluster_name(const char *name)
+{
+    if (name == NULL || name[0] == '\0') {
+        return false;
+    }
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        return false;
+    }
+    for (const char *p = name; *p != '\0'; p++) {
+        char c = *p;
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+              c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool is_path_under_directory(const char *path, const char *dir)
+{
+    size_t dir_len = strlen(dir);
+    if (strncmp(path, dir, dir_len) != 0) {
+        return false;
+    }
+    if (path[dir_len] != '\0' && path[dir_len] != '/') {
+        return false;
+    }
+    return true;
+}
+
 /* read the logic_cluster_name.txt file */
 int read_logic_cluster_name(const char *file_path, logicClusterList &lcList, int *err_no)
 {
@@ -1155,6 +1187,15 @@ int read_logic_cluster_name(const char *file_path, logicClusterList &lcList, int
             return READ_FILE_ERROR;
         }
         if (strlen(lcList.lcInfoArray[logic_cluster_Index].logicClusterName) != 0) {
+            if (!is_valid_logic_cluster_name(lcList.lcInfoArray[logic_cluster_Index].logicClusterName)) {
+                (void)fprintf(stderr,
+                    "Invalid logic cluster name in %s: %s\n",
+                    file_path,
+                    lcList.lcInfoArray[logic_cluster_Index].logicClusterName);
+                (void)fclose(fd);
+                *err_no = EINVAL;
+                return READ_FILE_ERROR;
+            }
             lcList.lcInfoArray[logic_cluster_Index].logicClusterId = logic_cluster_Index;
             logic_cluster_Index++;
         }
@@ -1189,23 +1230,38 @@ static int read_all_logic_config_file(const logicClusterList lcList, int *err_no
 
 static FILE *OpenLogicConfigFile(const char *logicClusterName, int *err_no)
 {
+    char bin_dir[MAX_PATH_LEN] = {0};
     char file_path[MAX_PATH_LEN] = {0};
     char exec_path[MAX_PATH_LEN] = {0};
+
+    if (!is_valid_logic_cluster_name(logicClusterName)) {
+        (void)fprintf(stderr,
+            "Invalid logic cluster name: %s\n",
+            logicClusterName != NULL ? logicClusterName : "(null)");
+        *err_no = EINVAL;
+        return NULL;
+    }
 
     int rcs = cmconfig_getenv("GAUSSHOME", exec_path, sizeof(exec_path));
     if (rcs != EOK) {
         (void)fprintf(stderr, "Get GAUSSHOME failed, please check.\n");
         return NULL;
-    } else {
-        errno_t rc = snprintf_s(file_path,
-            MAX_PATH_LEN,
-            MAX_PATH_LEN - 1,
-            "%s/bin/%s.cluster_static_config",
-            exec_path,
-            logicClusterName);
-        securec_check_ss_c(rc, "", "");
     }
+
+    errno_t rc = snprintf_s(bin_dir, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/bin", exec_path);
+    securec_check_ss_c(rc, "", "");
+    canonicalize_path(bin_dir);
+
+    rc = snprintf_s(file_path, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%s/%s.cluster_static_config",
+        bin_dir, logicClusterName);
+    securec_check_ss_c(rc, "", "");
     canonicalize_path(file_path);
+
+    if (!is_path_under_directory(file_path, bin_dir)) {
+        (void)fprintf(stderr, "Logic cluster config path escapes GAUSSHOME/bin: %s\n", file_path);
+        *err_no = EINVAL;
+        return NULL;
+    }
 
     FILE *fd = fopen(file_path, "r");
     if (fd == NULL) {
@@ -1747,12 +1803,25 @@ bool has_static_config()
     char *gausshome = gs_getenv_r("GAUSSHOME");
     check_input_for_security(gausshome);
 
+    char bin_dir[MAXPGPATH] = {0};
+    nRet = snprintf_s(bin_dir, MAXPGPATH, MAXPGPATH - 1, "%s/bin", gausshome);
+    securec_check_ss_c(nRet, "", "");
+    canonicalize_path(bin_dir);
+
     if (g_lcname != NULL) {
-        nRet = snprintf_s(path, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s.%s", gausshome, g_lcname, STATIC_CONFIG_FILE);
+        if (!is_valid_logic_cluster_name(g_lcname)) {
+            return false;
+        }
+        nRet = snprintf_s(path, MAXPGPATH, MAXPGPATH - 1, "%s/%s.%s", bin_dir, g_lcname, STATIC_CONFIG_FILE);
     } else {
-        nRet = snprintf_s(path, MAXPGPATH, MAXPGPATH - 1, "%s/bin/%s", gausshome, STATIC_CONFIG_FILE);
+        nRet = snprintf_s(path, MAXPGPATH, MAXPGPATH - 1, "%s/%s", bin_dir, STATIC_CONFIG_FILE);
     }
     securec_check_ss_c(nRet, "", "");
+    canonicalize_path(path);
+
+    if (!is_path_under_directory(path, bin_dir)) {
+        return false;
+    }
 
     if (checkPath(path) != 0) {
         return false;

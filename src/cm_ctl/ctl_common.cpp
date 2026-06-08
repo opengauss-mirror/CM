@@ -1892,3 +1892,19 @@ bool IsTimeOut(const cmTime_t *lastTime, const char *str)
     }
     return false;
 }
+
+status_t CheckDynamicRelationCount(uint32 relationCount, size_t *roleGroupsBytesOut)
+{
+    const size_t elemSize = sizeof(cm_instance_role_group);
+    if (relationCount > MAX_DYNAMIC_CONFIG_RELATION_COUNT) {
+        return CM_ERROR;
+    }
+    size_t bytes = (size_t)relationCount * elemSize;
+    if (relationCount != 0 && bytes / elemSize != relationCount) {
+        return CM_ERROR;
+    }
+    if (roleGroupsBytesOut != NULL) {
+        *roleGroupsBytesOut = bytes;
+    }
+    return CM_SUCCESS;
+}

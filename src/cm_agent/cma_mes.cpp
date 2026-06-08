@@ -343,7 +343,7 @@ status_t CmaRhbInit(const RhbCtx *ctx)
         CM_RETURN_ERR_IF_INTERR(mes_set_param("SSL_KEY", g_sslOption.ssl_para.key_file));
         CM_RETURN_ERR_IF_INTERR(mes_set_param("SSL_CERT", g_sslOption.ssl_para.cert_file));
         if (g_sslOption.ssl_para.crl_file != NULL) {
-            CM_RETURN_ERR_IF_INTERR(mes_set_param("SSL_CRL", g_sslOption.ssl_para.cert_file));
+            CM_RETURN_ERR_IF_INTERR(mes_set_param("SSL_CRL", g_sslOption.ssl_para.crl_file));
         }
 
         char notifyTime[PASSWD_MAX_LEN] = {0};

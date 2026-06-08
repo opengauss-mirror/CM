@@ -1111,6 +1111,25 @@ static int static_dynamic_config_file_check(void)
             goto read_failed;
         }
 
+        /* Reject oversized counts before any payload read or conversion. */
+        if (dynamic_version == 0) {
+            if (g_dynamic_header->relationCount > g_cluster_total_instance_group_num ||
+                g_dynamic_header->relationCount > (uint32)MAX_INSTANCE_NUM) {
+                write_runlog(ERROR,
+                    "dynamic config relationCount %u exceeds legacy capacity %u or instance capacity %u.\n",
+                    g_dynamic_header->relationCount,
+                    g_cluster_total_instance_group_num,
+                    (uint32)MAX_INSTANCE_NUM);
+                goto read_failed;
+            }
+        } else if (g_dynamic_header->relationCount > (uint32)MAX_INSTANCE_NUM) {
+            write_runlog(ERROR,
+                "dynamic config relationCount %u exceeds current capacity %u.\n",
+                g_dynamic_header->relationCount,
+                (uint32)MAX_INSTANCE_NUM);
+            goto read_failed;
+        }
+
         if (dynamic_version == 0) {
             write_runlog(LOG,
                 "dynamic configuration file history version is %d,current version is %d, need to update.\n",

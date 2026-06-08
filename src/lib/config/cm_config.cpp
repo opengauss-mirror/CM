@@ -330,15 +330,15 @@ static int alloc_node_buffer(bool inReload)
     }
 
     if (g_node == NULL) {
-        g_node = (staticNodeConfig *)malloc(sizeof(staticNodeConfig) * g_nodeHeader.nodeCount);
+        g_node = (staticNodeConfig *)malloc(sizeof(staticNodeConfig) * CM_NODE_MAXNUM);
         if (g_node == NULL) {
             return OUT_OF_MEMORY;
         }
     }
 
     /* g_node size may be larger than SECUREC_STRING_MAX_LEN in large cluster. */
-    rcs = memset_s(g_node, sizeof(staticNodeConfig) * g_nodeHeader.nodeCount,
-        0, sizeof(staticNodeConfig) * g_nodeHeader.nodeCount);
+    rcs = memset_s(g_node, sizeof(staticNodeConfig) * CM_NODE_MAXNUM,
+        0, sizeof(staticNodeConfig) * CM_NODE_MAXNUM);
     if (rcs != EOK && rcs != ERANGE) {
         (void)printf("FATAL at %s : %d : Initialize is failed, error num is: %d.\n", __FUNCTION__, __LINE__, rcs);
         free(g_node);
@@ -986,7 +986,7 @@ int read_lc_config_file(const char *file_path, int *err_no)
     }
 
     if (g_node == NULL) {
-        g_node = (staticNodeConfig *)malloc(sizeof(staticNodeConfig) * g_node_num);
+        g_node = (staticNodeConfig *)malloc(sizeof(staticNodeConfig) * CM_NODE_MAXNUM);
         if (g_node == NULL) {
             (void)fclose(fd);
             return OUT_OF_MEMORY;

@@ -1626,10 +1626,11 @@ void CMPerformAuthentication(CM_Connection *con)
 int get_authentication_type(const char* config_file)
 {
     char buf[BUF_LEN];
-    int type = CM_AUTH_TRUST;
+    int type = CM_AUTH_REJECT;
 
     if (config_file == NULL) {
-        return CM_AUTH_TRUST;  /* default level */
+        write_runlog(ERROR, "Invalid config file when reading cm_auth_method, use reject.\n");
+        return CM_AUTH_REJECT;
     }
 
     FILE *fd = fopen(config_file, "r");
@@ -1639,6 +1640,8 @@ int get_authentication_type(const char* config_file)
     }
 
     while (!feof(fd)) {
+        char *subStr = NULL;
+        char *saveptr1 = NULL;
         errno_t rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
         securec_check_errno(rc, (void)rc);
         (void)fgets(buf, BUF_LEN, fd);
@@ -1647,18 +1650,51 @@ int get_authentication_type(const char* config_file)
             continue;  /* skip  # comment */
         }
 
-        if (strstr(buf, "cm_auth_method") != NULL) {
-            /* check all lines */
-            if (strstr(buf, "trust") != NULL) {
-                type = CM_AUTH_TRUST;
-            }
-
-#ifdef KRB5
-            if (strstr(buf, "gss") != NULL) {
-                type = CM_AUTH_GSS;
-            }
-#endif // KRB5
+        subStr = strtok_r(buf, "=", &saveptr1);
+        if (subStr == NULL || strcmp(trim(subStr), "cm_auth_method") != 0) {
+            continue;
         }
+
+        if (saveptr1 == NULL) {
+            type = CM_AUTH_REJECT;
+            continue;
+        }
+        subStr = trim(saveptr1);
+        if (subStr == NULL) {
+            type = CM_AUTH_REJECT;
+            continue;
+        }
+        subStr = strtok_r(subStr, "#", &saveptr1);
+        if (subStr == NULL) {
+            continue;
+        }
+        subStr = strtok_r(subStr, "\n", &saveptr1);
+        if (subStr == NULL) {
+            continue;
+        }
+        subStr = strtok_r(subStr, "\r", &saveptr1);
+        if (subStr == NULL) {
+            continue;
+        }
+
+        subStr = trim(subStr);
+        if (strcmp(subStr, "trust") == 0) {
+            type = CM_AUTH_TRUST;
+            continue;
+        }
+#ifdef KRB5
+        if (strcmp(subStr, "gss") == 0) {
+            type = CM_AUTH_GSS;
+            continue;
+        }
+#endif // KRB5
+        if (strcmp(subStr, "reject") == 0) {
+            type = CM_AUTH_REJECT;
+            continue;
+        }
+
+        type = CM_AUTH_REJECT;
+        write_runlog(ERROR, "Invalid cm_auth_method '%s' in %s, use reject.\n", subStr, config_file);
     }
 
     (void)fclose(fd);

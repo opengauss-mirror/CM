@@ -2088,6 +2088,8 @@ static status_t cms_init_ssl()
     }
 
     g_sslOption.verify_peer = strlen(g_sslOption.ssl_para.ca_file) == 0 ? CM_FALSE : g_sslOption.verify_peer;
+    // Keep the server SSL config in sync with the acceptor input so mTLS is enforced when required.
+    g_sslOption.ssl_para.verify_peer = (g_sslOption.verify_peer == CM_TRUE);
     write_runlog(LOG, "cms_init_ssl verify_file_stat.\n");
     CheckFileExists();
 

@@ -1079,6 +1079,9 @@ static bool checkSyncGroups(char *syncStandbyNames, char *curSyncLists)
                 if (!anyMode && !firstMode) {
                     matchNum = 1;
                 }
+                if (syncGroupNum >= CM_PRIMARY_STANDBY_NUM) {
+                    return false;
+                }
                 parseSyncGroup(&groups[syncGroupNum++], tmpSyncNames, matchNum);
                 if (*ptr == ')') {
                     ptr++;
@@ -1098,6 +1101,9 @@ static bool checkSyncGroups(char *syncStandbyNames, char *curSyncLists)
                 }
                 tmpSyncNames[j] = '\0';
                 matchNum = 1;
+                if (syncGroupNum >= CM_PRIMARY_STANDBY_NUM) {
+                    return false;
+                }
                 parseSyncGroup(&groups[syncGroupNum++], tmpSyncNames, matchNum);
             }
         }

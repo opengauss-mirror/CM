@@ -1836,6 +1836,7 @@ static void CheckReadNoMessage(CM_Connection *con, int epollFd)
         isRecvTimeOut = true;
     }
     if (time(NULL) >= con->last_active + AUTHENTICATION_TIMEOUT || isRecvTimeOut) {
+        remove_unauthen_connection(con);
         EventDel(epollFd, con);
         if (con->port != NULL) {
             write_runlog(LOG, "connection TIMEOUT, node=[%s: %u], socket=%d, isRecvTimeOut=%d.\n",
@@ -1847,6 +1848,14 @@ static void CheckReadNoMessage(CM_Connection *con, int epollFd)
     }
 }
 
+static void CloseStartupConnection(int epollFd, CM_Connection* con, const char* logMsg)
+{
+    remove_unauthen_connection(con);
+    EventDel(epollFd, con);
+    write_runlog(LOG, "%s", logMsg);
+    ConnCloseAndFree(con);
+}
+
 void ProcessStartupPacket(int epollFd, void* arg)
 {
     int qtype;
@@ -1855,7 +1864,6 @@ void ProcessStartupPacket(int epollFd, void* arg)
         return;
     }
 
-    remove_unauthen_connection(con);
     set_socket_timeout(con->port, AUTHENTICATION_TIMEOUT);
     qtype = ReadCommand(con, "ProcessStartupPacket");
     write_runlog(DEBUG5, "Startup pack type is %d, msglen =%d len =%d ,msg:%s\n",
@@ -1865,6 +1873,7 @@ void ProcessStartupPacket(int epollFd, void* arg)
 #ifdef KRB5
             con->gss_check = false;
 #endif // KRB5
+            remove_unauthen_connection(con);
             con->last_active = time(NULL);
             con->msgFirstPartRecvTime = 0;
             if (cm_server_process_startup_packet(epollFd, con, con->inBuffer) == 0) {
@@ -1879,9 +1888,7 @@ void ProcessStartupPacket(int epollFd, void* arg)
             break;
         case 'X':
         case EOF:
-            EventDel(epollFd, con);
-            write_runlog(LOG, "connection closed by client\n");
-            ConnCloseAndFree(con);
+            CloseStartupConnection(epollFd, con, "connection closed by client\n");
             break;
 
         case TCP_SOCKET_ERROR_NO_MESSAGE:
@@ -1890,12 +1897,11 @@ void ProcessStartupPacket(int epollFd, void* arg)
             break;
 
         case TCP_SOCKET_ERROR_EPIPE:
-            EventDel(epollFd, con);
-            write_runlog(LOG, "connection was broken\n");
-            ConnCloseAndFree(con);
+            CloseStartupConnection(epollFd, con, "connection was broken\n");
             break;
 
         default:
+            remove_unauthen_connection(con);
             write_runlog(LOG, "StartupPacket read Unknown msg qtype %d, fd %d.\n", qtype, con->fd);
             EventDel(epollFd, con);
             ConnCloseAndFree(con);

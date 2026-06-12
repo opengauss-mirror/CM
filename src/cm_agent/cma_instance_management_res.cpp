@@ -21,22 +21,14 @@
  *
  * -------------------------------------------------------------------------
  */
-#include <ctype.h>
-#include <fcntl.h>
-#include <spawn.h>
 #include <sys/wait.h>
-#include <unistd.h>
 #include "cm/cm_json_config.h"
 #include "cma_global_params.h"
 #include "cma_alarm.h"
 #include "cma_instance_management.h"
 #include "cma_instance_management_res.h"
 
-extern char **environ;
-
 uint32 g_localResConfCount = 0;
-static const int CUS_RES_CMD_PREFIX_ARGC = 5;
-static const int CUS_RES_CMD_MAX_ARGC = MAX_OPTION_LEN + 8;
 
 static const char* StatToString(int stat)
 {
@@ -58,136 +50,42 @@ static const char* StatToString(int stat)
     }
 }
 
-static int SplitCusResOper(char *operBuf, char *argv[], int maxArgc)
-{
-    int argc = 0;
-    char *src = operBuf;
-
-    while (*src != '\0') {
-        while (isspace((unsigned char)*src) != 0) {
-            ++src;
-        }
-        if (*src == '\0') {
-            break;
-        }
-
-        if (argc >= maxArgc - 1) {
-            return -1;
-        }
-        argv[argc++] = src;
-
-        bool inQuote = false;
-        char *dst = src;
-        while (*src != '\0') {
-            if (*src == '\'') {
-                inQuote = !inQuote;
-                ++src;
-                continue;
-            }
-            if (!inQuote && isspace((unsigned char)*src) != 0) {
-                break;
-            }
-            *dst++ = *src++;
-        }
-
-        if (inQuote) {
-            return -1;
-        }
-
-        *dst = '\0';
-        if (*src == '\0') {
-            break;
-        }
-        ++src;
-    }
-
-    argv[argc] = NULL;
-    return argc;
-}
-
 static int CusResCmdExecute(const char *scriptPath, const char *oper, uint32 timeout, bool8 needNohup)
 {
-    char operBuf[MAX_OPTION_LEN] = {0};
-    char timeoutArg[32] = {0};
-    char timeoutCmd[] = "timeout";
-    char timeoutOpt[] = "-s";
-    char timeoutSignal[] = "SIGKILL";
-    char *cmdArgv[CUS_RES_CMD_MAX_ARGC] = {0};
-    posix_spawn_file_actions_t fileActions;
-    pid_t pid = 0;
+    char command[MAX_PATH_LEN + MAX_OPTION_LEN] = {0};
     int ret;
-    int status;
-    int waitRet;
-
-    if ((scriptPath == NULL) || (oper == NULL)) {
-        write_runlog(ERROR, "run script command failed, invalid input.\n");
-        return -1;
+    if (needNohup) {
+        ret = snprintf_s(command,
+            MAX_PATH_LEN + MAX_OPTION_LEN,
+            MAX_PATH_LEN + MAX_OPTION_LEN - 1,
+            SYSTEMQUOTE "nohup timeout -s SIGKILL %us %s %s > %s &" SYSTEMQUOTE,
+            timeout,
+            scriptPath,
+            oper,
+            CM_DEVNULL);
+    } else {
+        ret = snprintf_s(command,
+            MAX_PATH_LEN + MAX_OPTION_LEN,
+            MAX_PATH_LEN + MAX_OPTION_LEN - 1,
+            SYSTEMQUOTE "timeout -s SIGKILL %us %s %s > %s" SYSTEMQUOTE,
+            timeout,
+            scriptPath,
+            oper,
+            CM_DEVNULL);
     }
-
-    ret = strcpy_s(operBuf, sizeof(operBuf), oper);
-    securec_check_errno(ret, (void)ret);
-
-    ret = snprintf_s(timeoutArg, sizeof(timeoutArg), sizeof(timeoutArg) - 1, "%us", timeout);
     securec_check_intval(ret, (void)ret);
-
-    cmdArgv[0] = timeoutCmd;
-    cmdArgv[1] = timeoutOpt;
-    cmdArgv[2] = timeoutSignal;
-    cmdArgv[3] = timeoutArg;
-    cmdArgv[4] = const_cast<char *>(scriptPath);
-    ret = SplitCusResOper(operBuf, &cmdArgv[CUS_RES_CMD_PREFIX_ARGC], CUS_RES_CMD_MAX_ARGC - CUS_RES_CMD_PREFIX_ARGC);
-    if (ret < 0) {
-        write_runlog(ERROR, "split custom resource command failed %s %s.\n", scriptPath, oper);
+    int status = system(command);
+    if (status == -1) {
+        write_runlog(ERROR, "run system command failed %s, errno(%d).\n", command, errno);
         return -1;
     }
-
-    if (needNohup) {
-        ret = posix_spawn_file_actions_init(&fileActions);
-        if (ret != 0) {
-            errno = ret;
-            write_runlog(ERROR, "init spawn file actions failed %s %s, errno(%d).\n", scriptPath, oper, errno);
-            return -1;
-        }
-        ret = posix_spawn_file_actions_addopen(&fileActions, STDOUT_FILENO, CM_DEVNULL, O_WRONLY, 0);
-        if (ret != 0) {
-            errno = ret;
-            (void)posix_spawn_file_actions_destroy(&fileActions);
-            write_runlog(ERROR, "add spawn file actions failed %s %s, errno(%d).\n", scriptPath, oper, errno);
-            return -1;
-        }
-    }
-
-    ret = posix_spawnp(&pid, timeoutCmd, needNohup ? &fileActions : NULL, NULL, cmdArgv, environ);
-    if (needNohup) {
-        (void)posix_spawn_file_actions_destroy(&fileActions);
-    }
-    if (ret != 0) {
-        errno = ret;
-        write_runlog(ERROR, "run script command failed %s %s, errno(%d).\n", scriptPath, oper, errno);
-        return -1;
-    }
-
-    if (needNohup) {
-        write_runlog(DEBUG1, "run script command %s %s, pid:%d.\n", scriptPath, oper, pid);
-        return 0;
-    }
-
-    do {
-        waitRet = waitpid(pid, &status, 0);
-    } while ((waitRet == -1) && (errno == EINTR));
-    if (waitRet != pid) {
-        write_runlog(ERROR, "run script command failed %s %s, waitpid ret=%d, errno(%d).\n",
-            scriptPath, oper, waitRet, errno);
-        return -1;
-    }
-
     if (WIFEXITED(status)) {
         ret = WEXITSTATUS(status);
         write_runlog(DEBUG1, "run script command %s %s, ret=%d.\n", scriptPath, oper, ret);
         return ret;
     }
 
-    write_runlog(ERROR, "run script command failed %s %s, status=%d, errno(%d).\n", scriptPath, oper, status, errno);
+    write_runlog(ERROR, "run system command failed %s, status=%d, errno(%d).\n", command, status, errno);
     return -1;
 }
 

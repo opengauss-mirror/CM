@@ -66,11 +66,10 @@ mkdir -p /opt/spq
 cp spq_topology.conf.sample /opt/spq/spq_topology.conf
 ```
 
-**拓扑字段**（`CN_*`、`DN_*_*`、`DN_COUNT`）在所有节点上**保持一致**。
-**`GSQL_BIN`** 按本节点安装路径配置；OM 多集群部署下各节点路径不同。
+**只需配置 `CN_*` 段**，在所有节点上**保持一致**。
+DN 的主备/端口由回调脚本运行时用 `cm_ctl` 实时获取，`gsql` 固定用本机 `$GAUSSHOME/bin/gsql`，均无需在此配置。
 
-> 增加 DN 集群时，在配置中补充 `DN_3_*` 等字段并更新 `DN_COUNT`。
-> 增加备机时，在 `CN_STANDBY_HOSTS` 或 `DN_x_STANDBY_HOSTS` 中追加 IP（空格分隔）。
+> 增加备机时，在 `CN_STANDBY_HOSTS` 中追加 IP（空格分隔）。
 
 ### 3. 部署脚本
 
@@ -114,10 +113,11 @@ cm_ctl start
 ```
 DN 主故障/计划切换
   → CM 提升备为新主
-  → cm_agent 调用 on_dn_role_change.sh
-  → 脚本检测本机 IP（新主 IP）
-  → 通过 pg_is_in_recovery() 找到 CN 主（跳过 CN 备）
-  → 连接 CN 执行 spq_update_node(<nodeid>, '<新IP>', <port>)
+  → cm_agent 调用 on_dn_role_change.sh（继承 GAUSSHOME）
+  → 脚本用 $GAUSSHOME/bin/cm_ctl query 解析 Datanode State，取本 DN 集群当前主 IP/端口与全部成员 IP（不再用 hostname 猜本机 IP）
+  → 通过 pg_is_in_recovery() 在 CN_PRIMARY_HOST/CN_STANDBY_HOSTS 中找到 CN 主（跳过 CN 备）
+  → 连 CN 在 pg_dist_node 中按「成员 IP 集合 + 端口 + primary」定位 nodeid
+  → 执行 spq_update_node(<nodeid>, '<新主IP>', <新主端口>)
   → SPQ 后续查询自动路由到新主
 ```
 
@@ -152,12 +152,14 @@ DN 脚本通过 gsql 远程连接 CN 时，设置 `PGOPTIONS="-c remotetype=coor
 | `SPQ_GSQL_RETRY_COUNT` | 30 | 重试次数 |
 | `SPQ_GSQL_RETRY_INTERVAL` | 2 | 重试间隔（秒） |
 | `SPQ_LOCK_WAIT` | 5 | 并发锁等待（秒） |
+| `SPQ_HA_LOG` | `$GAUSSLOG/cm/spq_ha/spq_ha.log` | 回调日志路径（GAUSSLOG 缺失时回退 /var/log、/tmp） |
+| `SPQ_HA_LOCK_DIR` | `$GAUSSLOG/cm/spq_ha` | flock 锁目录（多集群按各自 $GAUSSLOG 自然隔离） |
 
 ## 注意事项
 
 - `on_failover` 回调参数是新主的实例 ID（整数），`on_switchover` 无参数
 - 脚本由 cm_agent 异步执行，不阻塞 CM 的倒换流程
 - 如果 CN 和 DN 同时故障，DN 脚本会重试轮询所有已知 CN 地址
-- 回调脚本使用 flock 本地锁避免同类事件并发执行
+- 回调脚本使用 flock 本地锁避免同类事件并发执行；锁文件位于 $GAUSSLOG/cm/spq_ha/，多 DN 集群同机时按各自 $GAUSSLOG 自然隔离、互不阻塞，无需放开 /tmp 权限
 - `shared_preload_libraries = 'spq'` 必须在所有节点上都配置
-- 脚本日志输出见cm相关日志
+- 脚本日志默认写入 cm_agent 日志目录下的 $GAUSSLOG/cm/spq_ha/spq_ha.log；脚本 stderr 同时被 cm_agent 收进 $GAUSSLOG/cm/cm_agent/system_call-*.log

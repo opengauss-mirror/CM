@@ -12,11 +12,16 @@ CONF_FILE="${SPQ_TOPOLOGY_CONF:-/opt/spq/spq_topology.conf}"
 [ -f "${CONF_FILE}" ] || { echo "ERROR: topology config not found: ${CONF_FILE}"; exit 1; }
 source "${CONF_FILE}"
 
-LOG="${SPQ_HA_LOG:-/var/log/spq_ha.log}"
 GSQL_TIMEOUT="${SPQ_GSQL_TIMEOUT:-10}"
 GSQL_RETRY_COUNT="${SPQ_GSQL_RETRY_COUNT:-30}"
 GSQL_RETRY_INTERVAL="${SPQ_GSQL_RETRY_INTERVAL:-2}"
-LOCK_DIR="${SPQ_HA_LOCK_DIR:-/tmp}"
+
+# 日志与锁默认落到 cm_agent 日志树下的专属子目录 $GAUSSLOG/cm/spq_ha（多集群按各自 $GAUSSLOG 自然隔离、属主天然正确）；
+# GAUSSLOG 缺失时回退 /var/log 与 /tmp；仍可被 conf 的 SPQ_HA_LOG / SPQ_HA_LOCK_DIR 覆盖。
+if [ -n "${GAUSSLOG:-}" ]; then SPQ_HA_DIR="$GAUSSLOG/cm/spq_ha"; else SPQ_HA_DIR=""; fi
+LOG="${SPQ_HA_LOG:-${SPQ_HA_DIR:+$SPQ_HA_DIR/spq_ha.log}}"
+LOG="${LOG:-/var/log/spq_ha.log}"
+LOCK_DIR="${SPQ_HA_LOCK_DIR:-${SPQ_HA_DIR:-/tmp}}"
 
 init_log() {
     local log_dir
@@ -81,12 +86,14 @@ validate_config() {
     require_uint CN_PORT
     require_var CN_DB
     require_var CN_USER
-    require_var GSQL_BIN
+    require_var GAUSSHOME
+    [ -d "${GAUSSHOME}" ] || die "GAUSSHOME is not a directory: ${GAUSSHOME}"
+    GSQL_BIN="${GSQL_BIN:-${GAUSSHOME}/bin/gsql}"
     [ -x "${GSQL_BIN}" ] || die "GSQL_BIN is not executable: ${GSQL_BIN}"
 }
 
 acquire_lock() {
-    mkdir -p "${LOCK_DIR}"
+    mkdir -p "${LOCK_DIR}" 2>/dev/null || { LOCK_DIR=/tmp; mkdir -p "${LOCK_DIR}"; }
     exec 9>"${LOCK_DIR}/spq_ha_cn_role_change.lock"
     if command -v flock >/dev/null 2>&1; then
         flock -w "${SPQ_LOCK_WAIT:-5}" 9 || die "another CN role-change callback is still running"

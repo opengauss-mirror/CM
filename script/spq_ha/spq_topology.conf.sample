@@ -1,40 +1,28 @@
 #
-# SPQ 分布式拓扑配置
-# 部署到每个 CM agent 节点的 /opt/spq/spq_topology.conf
+# SPQ 分布式拓扑配置（部署到每个 CM agent 节点的 /opt/spq/spq_topology.conf）
 #
-# 字段说明：
-#   - CN_*/DN_*_*：拓扑视图，所有节点上必须一致
-#   - GSQL_BIN：本节点的 gsql 路径，OM 多集群部署下每个节点不同
+# DN 的主/备/端口由回调脚本运行时用 cm_ctl 实时获取，无需在此配置；
+# gsql 固定用本机 $GAUSSHOME/bin/gsql，也无需配置。
+# 本文件只需提供 CN 侧连接信息。
 #
 
-# CN 集群信息（支持多备机，空格分隔）
+# ===== 必填：CN 集群连接信息 =====
+# CN 所有节点 IP（主+各备，空格分隔），CN 主会漂移，脚本按列表逐个探测当前主
 CN_PRIMARY_HOST=192.168.1.1
-CN_STANDBY_HOSTS="192.168.1.2"
+CN_STANDBY_HOSTS='192.168.1.2'
 CN_PORT=5432
 CN_DB=postgres
 CN_USER=omm
 
-# DN 集群信息
-# PRIMARY_HOST: 初始主机 IP
-# STANDBY_HOSTS: 备机 IP 列表（空格分隔，支持多个）
-# PORT: 数据库端口
-DN_1_PRIMARY_HOST=192.168.1.3
-DN_1_STANDBY_HOSTS="192.168.1.4"
-DN_1_PORT=5432
+# ===== 可选：回调运行调参（均有默认值，一般无需修改）=====
+#SPQ_GSQL_TIMEOUT=10
+#SPQ_GSQL_RETRY_COUNT=30
+#SPQ_GSQL_RETRY_INTERVAL=2
+#SPQ_LOCK_WAIT=5
 
-DN_2_PRIMARY_HOST=192.168.1.5
-DN_2_STANDBY_HOSTS="192.168.1.6"
-DN_2_PORT=5432
-
-# DN 数量
-DN_COUNT=2
-
-# gsql 路径（按本节点实际安装位置配置）
-GSQL_BIN=/usr/local/opengauss/bin/gsql
-
-# 可选：回调脚本运行参数
-SPQ_GSQL_TIMEOUT=10
-SPQ_GSQL_RETRY_COUNT=30
-SPQ_GSQL_RETRY_INTERVAL=2
-SPQ_LOCK_WAIT=5
-SPQ_HA_LOCK_DIR=/tmp
+# ===== 可选：日志与锁位置 =====
+# 默认写入 cm_agent 日志目录下的 $GAUSSLOG/cm/spq_ha/
+# （多 DN 集群同机时按各自 $GAUSSLOG 自然隔离，互不阻塞、无需放开 /tmp 权限；
+#  GAUSSLOG 缺失时回退 /var/log 与 /tmp）。仅需自定义位置时才取消注释：
+#SPQ_HA_LOG=/opt/spq/log/spq_ha.log
+#SPQ_HA_LOCK_DIR=/opt/spq/log

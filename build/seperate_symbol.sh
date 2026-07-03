@@ -54,9 +54,13 @@ function seperate_symbol() {
                 ;;
         esac
 
-        objcopy --only-keep-debug "${obj_name}" "${obj_symbol_name}"
-
+		set +e
+		objcopy --only-keep-debug "${obj_name}" "${obj_symbol_name}" > /dev/null 2>&1
         objcopy ${STRIP_MODE} "${obj_name}"
+		ret=$?
+	    if [ $ret -ne 0 ]; then
+        	echo "objcopy error $ret"
+		fi
 
         objcopy --add-gnu-debuglink="${obj_symbol_name}" "${obj_name}"
 

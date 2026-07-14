@@ -179,6 +179,8 @@ static bool IsSendBuild(int32 localRole)
 static void ProcessDatanodeCommandResult(const ctl_to_cm_build *buildMsg, cm_to_ctl_command_ack *ackMsg,
     const cm_local_replconninfo *dnStatus)
 {
+    write_runlog(LOG, "(build) role = %d, state = %d, build reason = %d.\n",
+        dnStatus->local_role, dnStatus->db_state, dnStatus->buildReason);
     if (((buildMsg->force_build == CM_CTL_FORCE_BUILD) || (dnStatus->db_state == INSTANCE_HA_STATE_NEED_REPAIR)) &&
         (IsSendBuild(dnStatus->local_role)) &&
         (dnStatus->buildReason != INSTANCE_HA_DATANODE_BUILD_REASON_DISCONNECT) &&
@@ -198,8 +200,8 @@ static void ProcessDatanodeCommandResult(const ctl_to_cm_build *buildMsg, cm_to_
 static void ProcessZengineCommandResult(const ctl_to_cm_build *buildMsg, cm_to_ctl_command_ack *ackMsg,
     const cm_local_replconninfo *dnStatus)
 {
-    write_runlog(LOG, "(build) role = %d, state = %d, build reason = %d.\n", dnStatus->local_role, dnStatus->db_state,
-        dnStatus->buildReason);
+    write_runlog(LOG, "(build) role = %d, state = %d, build reason = %d.\n",
+        dnStatus->local_role, dnStatus->db_state, dnStatus->buildReason);
     if (dnStatus->local_role == INSTANCE_ROLE_STANDBY && (dnStatus->db_state == INSTANCE_HA_STATE_NORMAL ||
         dnStatus->db_state == INSTANCE_HA_STATE_NEED_REPAIR || buildMsg->force_build == CM_CTL_FORCE_BUILD)) {
         ackMsg->command_result = CM_CAN_PRCESS_COMMAND;
@@ -210,6 +212,24 @@ static void ProcessZengineCommandResult(const ctl_to_cm_build *buildMsg, cm_to_c
     }
 
     return;
+}
+
+static void ProcessDatanodeBuildCommandResult(const ctl_to_cm_build *buildMsg, cm_to_ctl_command_ack *ackMsg,
+    const cm_local_replconninfo *dnStatus)
+{
+    for (int retryCount = 0; retryCount < CMS_BUILD_COMMAND_CHECK_RETRY_NUM; ++retryCount) {
+        if (g_clusterType == V3SingleInstCluster) {
+            ProcessZengineCommandResult(buildMsg, ackMsg, dnStatus);
+        } else {
+            ProcessDatanodeCommandResult(buildMsg, ackMsg, dnStatus);
+        }
+        if (ackMsg->command_result == CM_CAN_PRCESS_COMMAND) {
+            return;
+        }
+        if (retryCount + 1 < CMS_BUILD_COMMAND_CHECK_RETRY_NUM) {
+            cm_sleep(CMS_BUILD_COMMAND_CHECK_RETRY_INTERVAL);
+        }
+    }
 }
 
 static status_t ExeScpCommand(uint32 index)
@@ -348,15 +368,11 @@ void ProcessCtlToCmBuildMsg(MsgRecvInfo* recvMsgInfo, ctl_to_cm_build *buildMsg)
     ackMsg.node = buildMsg->node;
     ackMsg.instanceId = instInfo->instanceId;
     ackMsg.instance_type = instInfo->instanceType;
+    ackMsg.command_result = CM_INVALID_COMMAND;
 
     if (ackMsg.instance_type == INSTANCE_TYPE_DATANODE) {
-        if (g_clusterType == V3SingleInstCluster) {
-            ProcessZengineCommandResult(buildMsg, &ackMsg, &instStatus->data_node_member[memberIndex].local_status);
-        } else {
-            ProcessDatanodeCommandResult(buildMsg, &ackMsg, &instStatus->data_node_member[memberIndex].local_status);
-        }
-    } else {
-        ackMsg.command_result = CM_INVALID_COMMAND;
+        ProcessDatanodeBuildCommandResult(buildMsg, &ackMsg,
+            &instStatus->data_node_member[memberIndex].local_status);
     }
 
     ackMsg.command_status = instStatus->command_member[memberIndex].command_status;

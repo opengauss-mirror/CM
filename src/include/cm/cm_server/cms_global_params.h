@@ -195,6 +195,8 @@ typedef enum ThreadProcessStatusE {
 #define THREAHOLD_LEN 10
 #define BYTENUM 4
 #define SWITCHOVER_SEND_CHECK_NUM 3
+#define CMS_BUILD_COMMAND_CHECK_RETRY_NUM 3
+#define CMS_BUILD_COMMAND_CHECK_RETRY_INTERVAL 1  /* seconds, wait for agent to report new status */
 #define MAX_VALUE_OF_CM_PRIMARY_HEARTBEAT 86400
 #define MAX_COUNT_OF_NOTIFY_CN 86400
 #define MAX_VALUE_OF_PRINT 86400

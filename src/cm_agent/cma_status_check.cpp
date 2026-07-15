@@ -23,6 +23,7 @@
  */
 #include <mntent.h>
 #include <errno.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/vfs.h>
 #include <arpa/inet.h>
@@ -38,6 +39,44 @@
 #include "cma_instance_check.h"
 #ifdef ENABLE_MULTIPLE_NODES
 #include "cma_coordinator.h"
+#endif
+#ifdef ENABLE_XALARMD
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <xalarm/register_xalarm.h>
+#ifdef __cplusplus
+}
+#endif
+#include "cjson/cJSON.h"
+#include "cma_xalarm_event_compat.h"
+struct alarm_register *g_xalarmEventRegister = NULL;
+static const uint32 XALARM_TYPE_OCCUR = 1;
+static const uint32 XALARM_TYPE_RECOVER = 2;
+static const uint32 XALARM_REBOOT_EVENT_ID = 1003;
+static const uint32 XALARM_REBOOT_ACK_EVENT_ID = 1004;
+static const uint32 XALARM_OOM_EVENT_ID = 1005;
+static const uint32 XALARM_OOM_ACK_EVENT_ID = 1006;
+static const uint32 XALARM_PANIC_EVENT_ID = 1007;
+static const uint32 XALARM_PANIC_ACK_EVENT_ID = 1008;
+static const uint32 XALARM_KERNEL_REBOOT_EVENT_ID = 1009;
+static const uint32 XALARM_KERNEL_REBOOT_ACK_EVENT_ID = 1010;
+static const uint32 XALARM_UBUS_MEM_EVENT_ID = 1013;
+static const uint32 XALARM_EVENT_NODE_MAP_MAX = CM_NODE_MAXNUM;
+static const uint32 XALARM_EVENT_MAP_TEXT_LEN = MAX_PATH_LEN * 4;
+static const uint32 XALARM_EVENT_COUNT = 5;
+static const uint32 INVALID_ALARM_NODE_ID = 0;
+static const int DECIMAL_BASE = 10;
+static const uint32 MICROSECONDS_PER_MILLISECOND = 1000;
+static const uint32 CMS_PRIMARY_SWITCH_WAIT_TIMEOUT_MS = 30000;
+
+typedef struct XalarmNodeMapItemT {
+    uint32 nodeId;
+    uint32 cna;
+} XalarmNodeMapItem;
+
+static XalarmNodeMapItem g_xalarmNodeMap[XALARM_EVENT_NODE_MAP_MAX];
+static uint32 g_xalarmNodeMapCount = 0;
 #endif
 #include "cma_status_check.h"
 #include "cm_ip.h"
@@ -2085,3 +2124,400 @@ void* ETCDConnectionStatusCheckMain(void* arg)
 
     return NULL;
 }
+
+#ifdef ENABLE_XALARMD
+static void TrimTrailingBlanks(char *str)
+{
+    if (str == NULL) {
+        return;
+    }
+    int32 len = (int32)strlen(str);
+    while (len > 0 && isspace((unsigned char)str[len - 1])) {
+        str[len - 1] = '\0';
+        --len;
+    }
+}
+
+static char *SkipLeadingBlanks(char *str)
+{
+    if (str == NULL) {
+        return NULL;
+    }
+    while (*str != '\0' && isspace((unsigned char)*str)) {
+        ++str;
+    }
+    return str;
+}
+
+static bool ParseNodeMapEntry(char *entry, XalarmNodeMapItem *mapItem)
+{
+    char *entryStart = SkipLeadingBlanks(entry);
+    if (entryStart == NULL || *entryStart == '\0') {
+        return false;
+    }
+    TrimTrailingBlanks(entryStart);
+
+    char *firstSep = strchr(entryStart, ':');
+    if (firstSep == NULL) {
+        return false;
+    }
+    *firstSep = '\0';
+    char *nodeIdText = SkipLeadingBlanks(entryStart);
+    char *cnaText = SkipLeadingBlanks(firstSep + 1);
+    TrimTrailingBlanks(nodeIdText);
+    TrimTrailingBlanks(cnaText);
+    if (nodeIdText == NULL || cnaText == NULL || nodeIdText[0] == '\0' || cnaText[0] == '\0') {
+        return false;
+    }
+
+    mapItem->nodeId = (uint32)strtoul(nodeIdText, NULL, DECIMAL_BASE);
+    mapItem->cna = (uint32)strtoul(cnaText, NULL, DECIMAL_BASE);
+    return (mapItem->nodeId != 0 && mapItem->cna != 0);
+}
+
+static bool LoadXalarmNodeMap()
+{
+    g_xalarmNodeMapCount = 0;
+    char mapText[XALARM_EVENT_MAP_TEXT_LEN] = {0};
+    if (get_config_param(configDir, "xalarm_node_map", mapText, sizeof(mapText)) < 0) {
+        write_runlog(LOG, "xalarm_node_map is not configured, xalarm event will not be mapped.\n");
+        return false;
+    }
+
+    char *savePtr = NULL;
+    char *entry = strtok_r(mapText, ";", &savePtr);
+    while (entry != NULL && g_xalarmNodeMapCount < XALARM_EVENT_NODE_MAP_MAX) {
+        XalarmNodeMapItem mapItem = {0};
+        if (ParseNodeMapEntry(entry, &mapItem)) {
+            g_xalarmNodeMap[g_xalarmNodeMapCount++] = mapItem;
+        } else {
+            write_runlog(ERROR, "invalid xalarm_node_map entry: %s.\n", entry);
+        }
+        entry = strtok_r(NULL, ";", &savePtr);
+    }
+
+    write_runlog(LOG, "loaded %u xalarm map items from cm_agent.conf.\n", g_xalarmNodeMapCount);
+    return (g_xalarmNodeMapCount > 0);
+}
+
+static uint32 FindAlarmNodeByCna(uint32 cna)
+{
+    for (uint32 i = 0; i < g_xalarmNodeMapCount; ++i) {
+        if (g_xalarmNodeMap[i].cna == cna) {
+            return g_xalarmNodeMap[i].nodeId;
+        }
+    }
+    return INVALID_ALARM_NODE_ID;
+}
+
+static bool ParseRemoteNodeAlarmDesc(const char *alarmDesc, uint32 *cna)
+{
+    const char *payload = strstr(alarmDesc, "{cna:");
+    if (payload == NULL) {
+        return false;
+    }
+    int ret = sscanf_s(payload, "{cna:%u", cna);
+    return (ret == 1);
+}
+
+static bool IsNeedProcessXalarmEvent(int alarmId)
+{
+    return (alarmId == (int)XALARM_PANIC_EVENT_ID || alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
+}
+
+/* Map original xalarm event id to paired ACK id for xalarm_report_event; 0 means no ACK for this id. */
+static uint32 XalarmMapAlarmIdToAckEventId(int alarmId)
+{
+    switch (alarmId) {
+        case (int)XALARM_REBOOT_EVENT_ID:
+            return XALARM_REBOOT_ACK_EVENT_ID;
+        case (int)XALARM_OOM_EVENT_ID:
+            return XALARM_OOM_ACK_EVENT_ID;
+        case (int)XALARM_PANIC_EVENT_ID:
+            return XALARM_PANIC_ACK_EVENT_ID;
+        case (int)XALARM_KERNEL_REBOOT_EVENT_ID:
+            return XALARM_KERNEL_REBOOT_ACK_EVENT_ID;
+        default:
+            return 0;
+    }
+}
+
+static void ReportXalarmEventAck(int alarmId, const char *alarmDesc)
+{
+    uint32 ackId = XalarmMapAlarmIdToAckEventId(alarmId);
+    if (ackId == 0) {
+        return;
+    }
+
+    char ackBuf[8192] = {0};
+    errno_t rc;
+    if (alarmDesc != NULL && alarmDesc[0] != '\0') {
+        rc = strncpy_s(ackBuf, sizeof(ackBuf), alarmDesc, sizeof(ackBuf) - 1);
+        securec_check_errno(rc, (void)rc);
+    } else {
+        rc = snprintf_s(ackBuf, sizeof(ackBuf), sizeof(ackBuf) - 1, "{\"ack\":\"cm_agent\",\"alarm_id\":%d}", alarmId);
+        securec_check_intval(rc, (void)rc);
+    }
+
+    /* New libxalarm: len must equal strlen(pucParas) and <= 8191. Legacy: two-parameter API. */
+#ifdef CM_XALARM_REPORT_EVENT_HAS_LEN
+    size_t payloadLen = strlen(ackBuf);
+    int rptRet = xalarm_report_event((unsigned short)ackId, ackBuf, payloadLen);
+#else
+    int rptRet = xalarm_report_event((unsigned short)ackId, ackBuf);
+#endif
+    if (rptRet != 0) {
+        write_runlog(WARNING, "xalarm_report_event ack failed, ret=%d errno=%d ackId=%u srcAlarmId=%d.\n",
+            rptRet, errno, ackId, alarmId);
+    } else {
+        write_runlog(DEBUG1, "xalarm_report_event ack ok, ackId=%u srcAlarmId=%u.\n", ackId, (uint32)alarmId);
+    }
+}
+
+static bool WaitCmsPrimarySwitchByConnect(uint32 alarmNodeId, uint32 timeoutMs)
+{
+    const uint32 retryIntervalMs = 500;
+    uint32 waitedMs = 0;
+    while (waitedMs < timeoutMs) {
+        if (g_shutdownRequest || g_exitFlag) {
+            return false;
+        }
+        CM_Conn *primaryConn = GetConnToCmserver(0);
+        if (primaryConn != NULL) {
+            uint32 primaryNodeId = g_serverNodeId;
+            CMPQfinish(primaryConn);
+            if (primaryNodeId != alarmNodeId) {
+                write_runlog(LOG,
+                    "confirm cms primary switched by connect check, alarmNodeId=%u, currentPrimaryNodeId=%u.\n",
+                    alarmNodeId, primaryNodeId);
+                return true;
+            }
+            write_runlog(DEBUG1,
+                "cms primary still on alarm node, alarmNodeId=%u, currentPrimaryNodeId=%u, waited=%u ms.\n",
+                alarmNodeId, primaryNodeId, waitedMs);
+        }
+        CmUsleep(retryIntervalMs * MICROSECONDS_PER_MILLISECOND);
+        waitedMs += retryIntervalMs;
+    }
+    write_runlog(WARNING, "wait cms primary switch by connect timeout, alarmNodeId=%u, waited %u ms.\n",
+        alarmNodeId, timeoutMs);
+    return false;
+}
+
+static void SendXalarmEventToLocalCms(const AgentToCmPanicRebootAlarmReport *alarmMsg)
+{
+    if (g_currentNode == NULL || g_currentNode->cmServerLevel != 1) {
+        return;
+    }
+
+    CM_Conn *localConn = GetConnToLocalCmserver();
+    if (localConn == NULL) {
+        write_runlog(WARNING, "xalarm event cannot connect local cms, nodeId=%u, alarmId=%u.\n",
+            g_currentNode->node, alarmMsg->alarmId);
+        return;
+    }
+
+    AgentToCmPanicRebootAlarmReport localAlarmMsg = *alarmMsg;
+    localAlarmMsg.msgType = MSG_AGENT_CM_PANIC_REBOOT_ALARM;
+    if (SendMsgToCmsByConn(localConn, (const char *)&localAlarmMsg, (uint32)sizeof(localAlarmMsg)) != CM_SUCCESS) {
+        write_runlog(ERROR, "xalarm event report to local cms failed, nodeId=%u, alarmId=%u.\n",
+            g_currentNode->node, alarmMsg->alarmId);
+    } else {
+        write_runlog(LOG, "xalarm event reported to local cms first, nodeId=%u, alarmId=%u.\n",
+            g_currentNode->node, alarmMsg->alarmId);
+    }
+    CMPQfinish(localConn);
+}
+
+static bool SendXalarmEventToPrimaryCms(const AgentToCmPanicRebootAlarmReport *alarmMsg)
+{
+    const uint32 retryCount = 10;
+    const uint32 retryIntervalMs = 500;
+    for (uint32 i = 0; i < retryCount; ++i) {
+        if (g_shutdownRequest || g_exitFlag) {
+            return false;
+        }
+        CM_Conn *primaryConn = GetConnToCmserver(0);
+        if (primaryConn != NULL) {
+            AgentToCmPanicRebootAlarmReport primaryAlarmMsg = *alarmMsg;
+            primaryAlarmMsg.msgType = MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY;
+            bool sendOk = (SendMsgToCmsByConn(
+                primaryConn, (const char *)&primaryAlarmMsg, (uint32)sizeof(primaryAlarmMsg)) == CM_SUCCESS);
+            uint32 primaryNodeId = g_serverNodeId;
+            CMPQfinish(primaryConn);
+            if (sendOk) {
+                write_runlog(LOG, "xalarm event reported to primary cms, primaryNodeId=%u, alarmId=%u.\n",
+                    primaryNodeId, alarmMsg->alarmId);
+                return true;
+            }
+            write_runlog(ERROR, "xalarm event report to primary cms failed, retry=%u, alarmId=%u.\n",
+                i + 1, alarmMsg->alarmId);
+        }
+        CmUsleep(retryIntervalMs * MICROSECONDS_PER_MILLISECOND);
+    }
+    return false;
+}
+
+static void ProcessXalarmEventReport(struct alarm_info *param, int alarmId)
+{
+    char *alarmDesc = xalarm_getdesc(param);
+    if (alarmDesc == NULL) {
+        write_runlog(ERROR, "xalarm desc is null, alarmId=%d.\n", alarmId);
+        return;
+    }
+    ReportXalarmEventAck(alarmId, alarmDesc);
+
+    uint32 cna = 0;
+    if (!ParseRemoteNodeAlarmDesc(alarmDesc, &cna)) {
+        write_runlog(ERROR, "failed to parse xalarm payload, alarmId=%d, payload=%s.\n", alarmId, alarmDesc);
+        return;
+    }
+
+    uint32 alarmNodeId = FindAlarmNodeByCna(cna);
+    if (alarmNodeId == INVALID_ALARM_NODE_ID) {
+        write_runlog(ERROR, "cannot find node mapping for xalarm, alarmId=%d, cna=%u.\n", alarmId, cna);
+        return;
+    }
+
+    AgentToCmPanicRebootAlarmReport alarmMsg = {0};
+    alarmMsg.msgType = MSG_AGENT_CM_PANIC_REBOOT_ALARM;
+    alarmMsg.sourceNodeId = g_currentNode->node;
+    alarmMsg.alarmNodeId = alarmNodeId;
+    alarmMsg.cna = cna;
+    alarmMsg.alarmId = (uint32)alarmId;
+    alarmMsg.alarmType = (uint32)xalarm_gettype(param);
+    alarmMsg.alarmTime = (int64)xalarm_gettime(param);
+    alarmMsg.eid[0] = '\0';
+    errno_t rc = strncpy_s(alarmMsg.alarmDesc, sizeof(alarmMsg.alarmDesc), alarmDesc, sizeof(alarmMsg.alarmDesc) - 1);
+    securec_check_errno(rc, (void)rc);
+
+    SendXalarmEventToLocalCms(&alarmMsg);
+    if (!WaitCmsPrimarySwitchByConnect(alarmNodeId, CMS_PRIMARY_SWITCH_WAIT_TIMEOUT_MS)) {
+        write_runlog(ERROR, "xalarm event wait cms primary switch timeout, alarmId=%d, nodeId=%u.\n",
+            alarmId, alarmNodeId);
+        return;
+    }
+    write_runlog(LOG, "send xalarm event to primary cms, alarmId=%d, nodeId=%u, cna=%u.\n",
+        alarmId, alarmNodeId, cna);
+    if (!SendXalarmEventToPrimaryCms(&alarmMsg)) {
+        write_runlog(ERROR, "report xalarm event to primary cms failed after retries, alarmId=%d, nodeId=%u.\n",
+            alarmId, alarmNodeId);
+        return;
+    }
+    write_runlog(LOG, "reported xalarm event to cms done, alarmId=%d, nodeId=%u, cna=%u.\n",
+        alarmId, alarmNodeId, cna);
+}
+
+static void HandleXalarmEvent(struct alarm_info *param)
+{
+    if (g_shutdownRequest || g_exitFlag) {
+        return;
+    }
+    int alarmId = xalarm_getid(param);
+    if (IsNeedProcessXalarmEvent(alarmId)) {
+        write_runlog(LOG, "receive xalarm panic/kernel reboot event, alarmId=%d, alarmType=%d, alarmTime=%lld.\n",
+            alarmId, xalarm_gettype(param), (long long)xalarm_gettime(param));
+        ProcessXalarmEventReport(param, alarmId);
+        return;
+    }
+    switch (alarmId) {
+        case (int)XALARM_REBOOT_EVENT_ID:
+        case (int)XALARM_OOM_EVENT_ID:
+            write_runlog(DEBUG1, "receive reserved xalarm event, alarmId=%d, alarmType=%d.\n",
+                alarmId, xalarm_gettype(param));
+            ReportXalarmEventAck(alarmId, xalarm_getdesc(param));
+            break;
+        case (int)XALARM_UBUS_MEM_EVENT_ID:
+        case (int)XALARM_REBOOT_ACK_EVENT_ID:
+        case (int)XALARM_OOM_ACK_EVENT_ID:
+        case (int)XALARM_PANIC_ACK_EVENT_ID:
+        case (int)XALARM_KERNEL_REBOOT_ACK_EVENT_ID:
+            write_runlog(DEBUG1, "receive reserved xalarm event, alarmId=%d, alarmType=%d.\n",
+                alarmId, xalarm_gettype(param));
+            break;
+        default:
+            write_runlog(DEBUG1, "receive unsupported xalarm event, alarmId=%d.\n", alarmId);
+            break;
+    }
+}
+
+static void *XalarmEventCheckMain(void *arg)
+{
+    (void)arg;
+    int regRet = -1;
+    struct alarm_register *reg = NULL;
+    write_runlog(LOG, "xalarm event check thread start.\n");
+    struct alarm_subscription_info idFilter = {0};
+    uint32 filterIdx = 0;
+    idFilter.id_list[filterIdx++] = (int)XALARM_PANIC_EVENT_ID;
+    idFilter.id_list[filterIdx++] = (int)XALARM_KERNEL_REBOOT_EVENT_ID;
+    idFilter.len = (int)filterIdx;
+
+    while (!g_shutdownRequest && !g_exitFlag) {
+        if (regRet < 0) {
+            regRet = xalarm_register_event(&reg, idFilter);
+            if (regRet < 0) {
+                write_runlog(ERROR, "xalarm_register_event (panic/reboot events) failed, ret=%d.\n", regRet);
+                cm_sleep(SHUTDOWN_SLEEP_TIME);
+                continue;
+            }
+            write_runlog(LOG, "xalarm event register success (event API).\n");
+        }
+        g_xalarmEventRegister = reg;
+
+        struct alarm_msg msg;
+        while (!g_shutdownRequest && !g_exitFlag) {
+            errno_t rc = memset_s(&msg, sizeof(msg), 0, sizeof(msg));
+            securec_check_errno(rc, (void)rc);
+            int getRet = xalarm_get_event(&msg, reg);
+            if (getRet < 0) {
+                write_runlog(WARNING, "xalarm_get_event (panic/reboot) failed, ret=%d errno=%d.\n", getRet, errno);
+                break;
+            }
+            struct alarm_info info;
+            CmaXalarmMsgToAlarmInfo(&msg, &info);
+            HandleXalarmEvent(&info);
+        }
+        if (g_xalarmEventRegister == reg && reg != NULL) {
+            CmaXalarmUnregisterEvent(&reg);
+            g_xalarmEventRegister = NULL;
+        }
+        if (g_shutdownRequest || g_exitFlag) {
+            break;
+        }
+        cm_sleep(1);
+    }
+    write_runlog(LOG, "xalarm event check thread exit.\n");
+    return NULL;
+}
+
+void CreateXalarmEventCheckThread(void)
+{
+    char enableParam[BOOL_STR_MAX_LEN] = {0};
+    if (get_config_param(configDir, "enable_xalarm_event_check", enableParam, sizeof(enableParam)) < 0) {
+        if (get_config_param(configDir, "enable_xalarm_panic_reboot_check", enableParam, sizeof(enableParam)) < 0) {
+            write_runlog(LOG, "enable_xalarm_event_check is not configured, xalarm event thread is skipped.\n");
+            return;
+        }
+    }
+    if (!CheckBoolConfigParam(enableParam)) {
+        write_runlog(ERROR, "invalid enable_xalarm_event_check value: %s,"
+            "xalarm event thread is skipped.\n", enableParam);
+        return;
+    }
+    if (!IsBoolCmParamTrue(enableParam)) {
+        write_runlog(LOG, "xalarm event check disabled by config.\n");
+        return;
+    }
+    if (!LoadXalarmNodeMap()) {
+        write_runlog(ERROR, "xalarm event check enabled, but xalarm_node_map is invalid.\n");
+        return;
+    }
+
+    pthread_t threadId;
+    if (pthread_create(&threadId, NULL, XalarmEventCheckMain, NULL) != 0) {
+        write_runlog(ERROR, "failed to create xalarm event check thread.\n");
+        return;
+    }
+}
+#endif

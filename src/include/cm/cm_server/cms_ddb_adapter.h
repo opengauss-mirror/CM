@@ -64,6 +64,7 @@ void ClearDdbNodeInfo(const DdbConn *ddbConn);
 status_t InitDdbArbitrate(DrvApiInfo *drvApiInfo);
 status_t CreateCmsInstInfo(void);
 void NotifyDdb(DDB_ROLE dbRole);
+void TriggerFastCmsElection(void);
 void SetDdbMinority(bool isMinority);
 Alarm *GetDdbAlarm(int index);
 bool IsNeedSyncDdb(void);

@@ -413,7 +413,8 @@ void ReloadParametersFromConfigfile()
     if (get_config_param(configDir, "security_mode", g_enableOnlineOrOffline, sizeof(g_enableOnlineOrOffline)) < 0) {
         write_runlog(ERROR, "get_config_param() get security_mode fail.\n");
     }
-    if (get_config_param(configDir, "incremental_build", g_enableIncrementalBuild, sizeof(g_enableIncrementalBuild)) < 0) {
+    if (get_config_param(configDir, "incremental_build", g_enableIncrementalBuild,
+        sizeof(g_enableIncrementalBuild)) < 0) {
         write_runlog(ERROR, "get_config_param() get incremental_build fail.\n");
     }
 

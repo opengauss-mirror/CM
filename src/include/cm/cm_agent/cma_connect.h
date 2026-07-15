@@ -33,6 +33,8 @@
 
 extern CM_Conn* agent_cm_server_connect;
 extern CM_Conn* GetConnToCmserver(uint32 nodeid);
+extern CM_Conn* GetConnToLocalCmserver(void);
+extern status_t SendMsgToCmsByConn(CM_Conn* conn, const char *msgPtr, uint32 msgLen);
 
 void *SendAndRecvCmsMsgMain(void *arg);
 

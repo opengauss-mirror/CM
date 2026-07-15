@@ -32,6 +32,10 @@ if (ENABLE_KRB)
     list(APPEND CMA_LINK_LIBS ${KRB_LIBS} gssrpc_gauss)
 endif ()
 
+if (ENABLE_XALARMD)
+    list(APPEND CMA_LINK_LIBS xalarm)
+endif ()
+
 link_directories(${CMA_LIB_PATHS})
 
 if (ENABLE_UT)

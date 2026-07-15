@@ -99,6 +99,46 @@ static const int32 HEARTBEAT_INIT_TIME = 0;
 static volatile int32 g_resHeartBeatTimeout[CM_MAX_RES_INST_COUNT][MAX_CLUSTER_TYPE_CEIL] = {{0}};
 
 static volatile ThreadProcessStatus g_threadProcessStatus = THREAD_PROCESS_UNKNOWN;
+static pthread_rwlock_t g_forceKickNodeLock = PTHREAD_RWLOCK_INITIALIZER;
+static bool g_forceKickNodes[CM_NODE_MAXNUM] = {false};
+
+void RequestKickNodeByArbitrate(uint32 nodeId)
+{
+    if (nodeId == 0 || nodeId >= CM_NODE_MAXNUM) {
+        write_runlog(ERROR, "invalid request kick node id %u.\n", nodeId);
+        return;
+    }
+    (void)pthread_rwlock_wrlock(&g_forceKickNodeLock);
+    bool isNew = !g_forceKickNodes[nodeId];
+    g_forceKickNodes[nodeId] = true;
+    (void)pthread_rwlock_unlock(&g_forceKickNodeLock);
+    write_runlog(LOG, "request arbitrate thread kick node(%u), isNew=%d.\n", nodeId, (int)isNew);
+}
+
+static bool IsForceKickNode(uint32 nodeId)
+{
+    if (nodeId == 0 || nodeId >= CM_NODE_MAXNUM) {
+        return false;
+    }
+    (void)pthread_rwlock_rdlock(&g_forceKickNodeLock);
+    bool isForceKick = g_forceKickNodes[nodeId];
+    (void)pthread_rwlock_unlock(&g_forceKickNodeLock);
+    return isForceKick;
+}
+
+static void ClearForceKickNode(uint32 nodeId)
+{
+    if (nodeId == 0 || nodeId >= CM_NODE_MAXNUM) {
+        return;
+    }
+    (void)pthread_rwlock_wrlock(&g_forceKickNodeLock);
+    bool wasForceKick = g_forceKickNodes[nodeId];
+    g_forceKickNodes[nodeId] = false;
+    (void)pthread_rwlock_unlock(&g_forceKickNodeLock);
+    if (wasForceKick) {
+        write_runlog(LOG, "clear force-kick mark for node(%u).\n", nodeId);
+    }
+}
 
 static void PrintMaxNodeCluster(const MaxNodeCluster *maxNodeCluster, const char *str, int32 logLevel = LOG);
 
@@ -377,9 +417,14 @@ static MaxClusterResStatus GetDiskHeartbeatStat(uint32 nodeIndex, uint32 diskTim
 static bool IsAllResAvailInNode(int32 resIdx)
 {
     uint32 nodeIdx = g_clusterRes.map[resIdx].nodeIdx;
+    uint32 nodeId = g_node[nodeIdx].node;
+    if (IsForceKickNode(nodeId)) {
+        write_runlog(WARNING, "node(%u) is marked force-kick, exclude it from max cluster arbitration.\n", nodeId);
+        return false;
+    }
     MaxClusterResStatus heartbeatStatus = GetDiskHeartbeatStat(nodeIdx, g_diskTimeout, DEBUG5);
     bool heartbeatRes = IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_VOTE_DISK, heartbeatStatus);
-    MaxClusterResStatus nodeStatus = GetResNodeStat(g_node[nodeIdx].node, DEBUG5);
+    MaxClusterResStatus nodeStatus = GetResNodeStat(nodeId, DEBUG5);
     bool nodeRes = IsCurResAvail(resIdx, MAX_CLUSTER_TYPE_RES_STATUS, nodeStatus);
     return (heartbeatRes && nodeRes);
 }
@@ -900,8 +945,78 @@ static int ResIndexComparator(const void *arg1, const void *arg2)
     return (index1 - index2);
 }
 
+/*
+ * curCluster is lastCluster with only force-kick node(s) removed (panic/reboot path).
+ * Allow shrink without waiting for CHECK_DELAY_IN_ROLE_CHANGING after CMS switchover.
+ */
+static bool8 IsShrinkOnlyForceKickNodes(const NodeCluster *lastCluster, const NodeCluster *curCluster)
+{
+    if (curCluster->clusterNum <= 0 || lastCluster->clusterNum <= 0) {
+        return CM_FALSE;
+    }
+    if (curCluster->clusterNum >= lastCluster->clusterNum) {
+        return CM_FALSE;
+    }
+
+    for (int32 i = 0; i < curCluster->clusterNum; ++i) {
+        if (!IsCurResInMaxCluster(curCluster->cluster[i], lastCluster)) {
+            return CM_FALSE;
+        }
+    }
+
+    for (int32 i = 0; i < lastCluster->clusterNum; ++i) {
+        int32 resIdx = lastCluster->cluster[i];
+        if (IsCurResInMaxCluster(resIdx, curCluster)) {
+            continue;
+        }
+        if (!IsForceKickNode(GetNodeByPoint(resIdx))) {
+            return CM_FALSE;
+        }
+    }
+    return CM_TRUE;
+}
+
+static bool8 LastClusterHasForceKickNode(const NodeCluster *nodeCluster)
+{
+    for (int32 i = 0; i < nodeCluster->clusterNum; ++i) {
+        if (IsForceKickNode(GetNodeByPoint(nodeCluster->cluster[i]))) {
+            return CM_TRUE;
+        }
+    }
+    return CM_FALSE;
+}
+
+/* Remove force-kick nodes from cur so Compare/CanArbitrate can shrink even if RHB still lists them. */
+static void StripForceKickNodesFromCurCluster(NodeCluster *curCluster)
+{
+    int32 writeIdx = 0;
+    for (int32 i = 0; i < curCluster->clusterNum; ++i) {
+        uint32 nodeId = GetNodeByPoint(curCluster->cluster[i]);
+        if (IsForceKickNode(nodeId)) {
+            write_runlog(LOG, "strip force-kick node(%u) from curCluster before max cluster compare.\n", nodeId);
+            continue;
+        }
+        curCluster->cluster[writeIdx++] = curCluster->cluster[i];
+    }
+    if (writeIdx == curCluster->clusterNum) {
+        return;
+    }
+    curCluster->clusterNum = writeIdx;
+    if (writeIdx > 0) {
+#undef qsort
+        qsort(curCluster->cluster, (size_t)curCluster->clusterNum, sizeof(int32), ResIndexComparator);
+    }
+}
+
 static bool8 CanArbitrateMaxCluster(const NodeCluster *lastCluster, NodeCluster *curCluster)
 {
+    /* panic/reboot force-kick shrink: before delay so promote+10s does not skip this path */
+    if (IsShrinkOnlyForceKickNodes(lastCluster, curCluster)) {
+        write_runlog(LOG,
+            "allow max cluster shrink: only force-kick node(s) removed (panic/reboot), skip delay wait.\n");
+        return CM_TRUE;
+    }
+
     // process in starting or cms role has changed, it need to wait for the new info of agent report.
     if (g_delayArbiClusterTime >= GetTimeoutWaitForNewRes()) {
         return CM_TRUE;
@@ -1007,6 +1122,7 @@ static void PrintArbitrateResult(const MaxNodeCluster *lastCluster, const MaxNod
             uint32 nodeIdx = g_clusterRes.map[lastCluster->nodeCluster.cluster[i]].nodeIdx;
             WriteKeyEventLog(KEY_EVENT_RES_ARBITRATE, 0, "node(%u) kick out.", g_node[nodeIdx].node);
             PrintKickOutResult(lastCluster->nodeCluster.cluster[i], lastCluster);
+            ClearForceKickNode(g_node[nodeIdx].node);
         }
     }
 
@@ -1027,6 +1143,11 @@ static void CompareCurLastMaxNodeCluster(MaxNodeCluster *lastCluster, MaxNodeClu
     }
     bool8 result = IsLastClusterSameWithCur(lastCluster->nodeCluster.cluster, lastCluster->nodeCluster.clusterNum,
         curCluster->nodeCluster.cluster, curCluster->nodeCluster.clusterNum);
+    if (LastClusterHasForceKickNode(&(lastCluster->nodeCluster))) {
+        StripForceKickNodesFromCurCluster(&(curCluster->nodeCluster));
+        result = IsLastClusterSameWithCur(lastCluster->nodeCluster.cluster, lastCluster->nodeCluster.clusterNum,
+            curCluster->nodeCluster.cluster, curCluster->nodeCluster.clusterNum);
+    }
     if (result && (curCluster->version == lastCluster->version + 1)) {
         return;
     }

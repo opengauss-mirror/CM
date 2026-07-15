@@ -45,6 +45,7 @@ typedef enum MaxClusterResTypeE {
 struct MsgRecvInfo;
 void SetDelayArbiClusterTime();
 void NotifyResRegOrUnreg();
+void RequestKickNodeByArbitrate(uint32 nodeId);
 void CheckMaxClusterHeartbeartValue();
 void SetMaxClusterHeartBeatTimeout(int32 resIdx, MaxClusterResType type);
 bool IsCurResAvail(int32 resIdx, MaxClusterResType type, MaxClusterResStatus status);

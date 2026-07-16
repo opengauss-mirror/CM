@@ -304,6 +304,7 @@ bool IsNodeIdValid(int nodeId);
 void FreeSslOpton();
 
 status_t IsReachableIP(char *ip);
+status_t IsTcpHostPortReachable(const char *host, uint32 port, uint32 timeoutSec);
 bool IsIPAddrValid(const char *ipAddr);
 
 bool IsNeedCheckFloatIp();

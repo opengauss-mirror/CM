@@ -27,10 +27,14 @@
 #include "cm_ddb_sharedisk_cmd.h"
 #include "cm_ddb_sharedisk_disklock.h"
 #include "cm_ddb_sharedisk.h"
+#include "cm_sync.h"
+#include "cm_util.h"
 
 uint32 g_cmSdServerNum = 0;
 static diskLrwHandler g_cmsArbitrateDiskHandler;
 static pthread_rwlock_t g_notifySdLock;
+static cm_event_t g_shareDiskLockEvent;
+static bool g_shareDiskLockEventInited = false;
 static pthread_rwlock_t g_fastPromoteLock = PTHREAD_RWLOCK_INITIALIZER;
 static DDB_ROLE g_notifySd = DDB_ROLE_UNKNOWN;
 static DDB_ROLE g_dbRole = DDB_ROLE_FOLLOWER;
@@ -217,6 +221,9 @@ static void DrvNotifySd(DDB_ROLE dbRole)
         g_notifySd = dbRole;
         ddbNotiStatusFun(dbRole);
         (void)pthread_rwlock_unlock(&g_notifySdLock);
+        if (g_shareDiskLockEventInited) {
+            cm_event_notify(&g_shareDiskLockEvent);
+        }
         write_runlog(LOG, "receive notify msg, it has set ddb role, dbRole is [%d: %d], g_waitForTime is %ld, "
             "g_cmServerNum is %u.\n", (int32)dbRole, (int32)g_dbRole, g_waitForTime, g_cmServerNum);
     }
@@ -287,6 +294,9 @@ void DrvSdTriggerFastPromote(void)
     (void)pthread_rwlock_wrlock(&g_fastPromoteLock);
     g_fastPromoteReq = true;
     (void)pthread_rwlock_unlock(&g_fastPromoteLock);
+    if (g_shareDiskLockEventInited) {
+        cm_event_notify(&g_shareDiskLockEvent);
+    }
     write_runlog(LOG, "sharedisk: receive fast promote request from alarm path.\n");
 }
 
@@ -529,6 +539,12 @@ static void *GetShareDiskLockMain(void *arg)
     struct timespec checkEnd = {0, 0};
     uint32 twoSec = 2;
 
+    if (cm_event_init(&g_shareDiskLockEvent) != CM_SUCCESS) {
+        write_runlog(ERROR, "init share disk lock event failed.\n");
+        return NULL;
+    }
+    g_shareDiskLockEventInited = true;
+
     for (;;) {
         (void)clock_gettime(CLOCK_MONOTONIC, &checkBegin);
         if (!HaveNotifySd(&sdArbitrateData)) {
@@ -544,9 +560,11 @@ static void *GetShareDiskLockMain(void *arg)
             write_runlog(
                 LOG, "it takes %u seconds %ld nanoseconds to cmserver share disk arbitrate.\n", second, nanosecond);
         } else {
-            (void)sleep(1);
+            (void)cm_event_timedwait(&g_shareDiskLockEvent, (uint32)CM_MS_COUNT_PER_SEC);
         }
     }
+    g_shareDiskLockEventInited = false;
+    cm_event_destory(&g_shareDiskLockEvent);
     return NULL;
 }
 

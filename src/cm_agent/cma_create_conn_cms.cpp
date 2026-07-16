@@ -389,8 +389,8 @@ void* ConnCmsPMain(void* arg)
 
     for (;;) {
         if (g_exitFlag || g_shutdownRequest) {
-            write_runlog(LOG, "Get exit flag, ConnCmsPM thread will exit!\n");
-            cm_sleep(5);
+            write_runlog(LOG, "[ConnCmsPMain] ConnCmsPMain shutdown request.\n");
+            break;
         }
         (void)gettimeofday(&checkBeginFunction, NULL);
         isToStopInstances = false;
@@ -476,6 +476,7 @@ void* ConnCmsPMain(void* arg)
 
         CmUsleep(AGENT_RECV_CYCLE);
     }
+    write_runlog(LOG, "[ConnCmsPMain] ConnCmsPMain exit.\n");
     return NULL;
 }
 

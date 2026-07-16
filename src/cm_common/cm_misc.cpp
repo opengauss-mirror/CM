@@ -840,6 +840,9 @@ cluster_msg_string cluster_msg_map_string[] = {
     {"MSG_CMA_PING_DN_FLOAT_IP_FAIL", (int32)MSG_CMA_PING_DN_FLOAT_IP_FAIL},
     {"MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP", (int32)MSG_CMS_NOTIFY_PRIMARY_DN_RESET_FLOAT_IP},
     {"MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED", (int32)MSG_CM_AGENT_ISREG_CHECK_LIST_CHANGED},
+    {"MSG_AGENT_CM_PANIC_REBOOT_ALARM", (int32)MSG_AGENT_CM_PANIC_REBOOT_ALARM},
+    {"MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY", (int32)MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY},
+    {"MSG_CM_AGENT_CMS_PRIMARY_READY_ACK", (int32)MSG_CM_AGENT_CMS_PRIMARY_READY_ACK},
     {NULL, MSG_TYPE_BUTT},
 };
 
@@ -1373,4 +1376,29 @@ bool IsNeedCheckFloatIp()
         return true;
     }
     return false;
+}
+
+bool IsStringInList(const char *str, const char * const *strList, uint32 listNums)
+{
+    if (str == NULL) {
+        return false;
+    }
+    for (uint32 i = 0; i < listNums; i++) {
+        if (strcasecmp(strList[i], str) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+uint32 GetArrayLength(const char* arr[]) {
+    if (arr == NULL) {
+        return 0;
+    }
+    uint32 length = 0;
+    for (const char **p = arr; *p != NULL; p++) {
+        length++;
+    }
+    return length;
 }

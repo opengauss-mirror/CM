@@ -184,20 +184,28 @@ int GetHomePath(char *outputEnvValue, uint32 envValueLen, int32 logLevel)
     return 0;
 }
 
-bool IsBoolCmParamTrue(const char *param)
+bool IsBoolCmParamTrue(const char *value)
 {
-    return (strcasecmp(param, "on") == 0) || (strcasecmp(param, "yes") == 0) || (strcasecmp(param, "true") == 0) ||
-           (strcasecmp(param, "1") == 0);
+    return (strcasecmp(value, "on") == 0) || (strcasecmp(value, "yes") == 0) ||
+           (strcasecmp(value, "true") == 0) || (strcasecmp(value, "1") == 0) ||
+           (strcasecmp(value, "y") == 0) || (strcasecmp(value, "t") == 0);
+}
+
+bool IsBoolCmParamFalse(const char *value)
+{
+    return (strcasecmp(value, "off") == 0) || (strcasecmp(value, "no") == 0) ||
+           (strcasecmp(value, "false") == 0) || (strcasecmp(value, "0") == 0) ||
+           (strcasecmp(value, "n") == 0) || (strcasecmp(value, "f") == 0);
 }
 
 bool CheckBoolConfigParam(const char* value)
 {
-    if (strcasecmp(value, "on") == 0 || strcasecmp(value, "yes") == 0 || strcasecmp(value, "true") == 0 ||
-        strcasecmp(value, "1") == 0 || strcasecmp(value, "off") == 0 || strcasecmp(value, "no") == 0 ||
-        strcasecmp(value, "false") == 0 || strcasecmp(value, "0") == 0) {
-        return true;
-    }
-    return false;
+    return (strcasecmp(value, "on") == 0) || (strcasecmp(value, "yes") == 0) ||
+           (strcasecmp(value, "true") == 0) || (strcasecmp(value, "1") == 0) ||
+           (strcasecmp(value, "y") == 0) || (strcasecmp(value, "t") == 0) ||
+           (strcasecmp(value, "off") == 0) || (strcasecmp(value, "no") == 0) ||
+           (strcasecmp(value, "false") == 0) || (strcasecmp(value, "0") == 0) ||
+           (strcasecmp(value, "n") == 0) || (strcasecmp(value, "f") == 0);
 }
 
 bool IsSharedStorageMode()

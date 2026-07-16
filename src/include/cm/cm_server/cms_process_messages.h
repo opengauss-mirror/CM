@@ -107,6 +107,7 @@ uint32 AssignCnForAutoRepair(uint32 nodeId);
 void process_agent_to_cm_heartbeat_msg(
     MsgRecvInfo* recvMsgInfo, const agent_to_cm_heartbeat* agent_to_cm_heartbeat_ptr);
 void process_agent_to_cm_disk_usage_msg(const AgentToCmDiskUsageStatusReport *diskUsage);
+void process_agent_to_cm_panic_reboot_alarm_msg(const AgentToCmPanicRebootAlarmReport *alarmMsg);
 void process_agent_to_cm_current_time_msg(const agent_to_cm_current_time_report* etcd_time_ptr);
 void process_agent_to_cm_kerberos_status_report_msg(
     agent_to_cm_kerberos_status_report *agent_to_cm_kerberos_status_ptr);

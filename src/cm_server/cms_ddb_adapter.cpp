@@ -23,6 +23,7 @@
  */
 #include "cm/cm_elog.h"
 #include "cm/cs_ssl.h"
+#include "cm_ddb_sharedisk.h"
 #include "cms_common.h"
 #include "cms_ddb.h"
 #include "cms_conn.h"
@@ -426,6 +427,15 @@ void NotifyDdb(DDB_ROLE dbRole)
         return;
     }
     DdbNotify(ddbConn, dbRole);
+}
+
+void TriggerFastCmsElection(void)
+{
+    if (g_dbType == DB_SHAREDISK) {
+        DrvSdTriggerFastPromote();
+        return;
+    }
+    NotifyDdb(DDB_ROLE_LEADER);
 }
 
 void SetDdbMinority(bool isMinority)

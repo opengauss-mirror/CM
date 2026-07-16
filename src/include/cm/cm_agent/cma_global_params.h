@@ -129,6 +129,9 @@ extern struct timespec g_disconnectTime;
 extern TlsAuthPath g_tlsPath;
 extern pthread_t g_threadId[CM_MAX_THREAD_NUM];
 
+/* Global Thread pthread_t */
+extern pthread_t g_cmsConnThread;
+
 extern const char* g_progname;
 extern char configDir[MAX_PATH_LEN];
 extern char g_alarmConfigDir[MAX_PATH_LEN];
@@ -163,7 +166,13 @@ extern char g_votingDiskPath[MAX_PATH_LEN];
 extern char g_logBasePath[MAXPGPATH];
 extern char g_enableCnAutoRepair[BOOL_STR_MAX_LEN];
 extern char g_enableOnlineOrOffline[BOOL_STR_MAX_LEN];
+extern char g_enableIncrementalBuild[BOOL_STR_MAX_LEN];
 extern char g_enableLogCompress[BOOL_STR_MAX_LEN];
+#ifdef ENABLE_XALARMD
+struct alarm_register;
+extern struct alarm_register *g_xalarmEventRegister;
+#endif
+extern char g_enableVtable[BOOL_STR_MAX_LEN];
 extern char instance_maintance_path[MAX_PATH_LEN];
 
 extern volatile bool g_repairCn;

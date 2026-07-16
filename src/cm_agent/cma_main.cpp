@@ -81,6 +81,8 @@ pthread_rwlock_t g_gtmsFailoverLock;
 pthread_rwlock_t g_cnDropLock;
 pthread_rwlock_t g_coordinatorsCancelLock;
 
+pthread_t g_cmsConnThread = 0;
+
 bool g_poolerPingEndRequest = false;
 
 int g_gtmConnFailTimes = 0;
@@ -1385,6 +1387,11 @@ void GetAgentConfigEx()
         (void)fprintf(stderr, "get_config_param() get security_mode fail.\n");
     }
 
+    if (get_config_param(configDir, "incremental_build", g_enableIncrementalBuild,
+        sizeof(g_enableIncrementalBuild)) < 0) {
+        (void)fprintf(stderr, "get_config_param() get incremental_build fail.\n");
+    }
+
     if (get_config_param(configDir, "unix_socket_directory", g_unixSocketDirectory, sizeof(g_unixSocketDirectory)) <
         0) {
         (void)fprintf(stderr, "get_config_param() get unix_socket_directory fail.\n");
@@ -1848,6 +1855,9 @@ int main(int argc, char** argv)
     CreateKerberosStatusCheckThread();
     CreateDiskUsageCheckThread();
     CreateOnDemandRedoCheckThread();
+#ifdef ENABLE_XALARMD
+    CreateXalarmEventCheckThread();
+#endif
 
 #ifdef ENABLE_MULTIPLE_NODES
     err = CreateCheckNodeStatusThread();

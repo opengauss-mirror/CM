@@ -71,4 +71,18 @@ void InitResStatCommInfo(OneNodeResourceStatus *nodeStat);
 int CreateCheckNodeStatusThread(void);
 void *VotingDiskMain(void *arg);
 
+#ifdef ENABLE_XALARMD
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <xalarm/register_xalarm.h>
+#ifdef __cplusplus
+}
+#endif
+/*
+ * Handle xalarm call back
+ */
+ void CreateXalarmEventCheckThread(void);
+#endif
+
 #endif

@@ -244,6 +244,8 @@ extern void print_environ(void);
 extern const char* CmGetmsgtype(const CM_StringInfo msg, int datalen);
 extern const char* CmGetmsgbytes(CM_StringInfo msg, int datalen);
 extern const char* CmGetmsgbytesPtr(const CM_Result *msg, int datalen);
+extern bool IsStringInList(const char *str, const char * const *strList, uint32 listNums);
+extern uint32 GetArrayLength(const char* arr[]);
 
 /**
  * @brief

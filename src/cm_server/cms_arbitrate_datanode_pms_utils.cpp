@@ -35,12 +35,11 @@
 bool CheckPotentialTermRollback()
 {
     for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-            if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.term >
-                FirstTerm) {
-                write_runlog(FATAL, "We are in danger of a term-rollback. Abort this arbitration!\n");
-                return true;
-            }
+        if (g_instance_role_group_ptr[i].instanceMember[0].instanceType != INSTANCE_TYPE_DATANODE) {
+            continue;
+        }
+        if (!CheckGroupTermRollbackRisk(i)) {
+            return true;
         }
     }
     return false;
@@ -238,20 +237,6 @@ void InitDnArbitInfo(DnArbitInfo *info)
     info->staRoleIndex = -1;
 }
 
-void UpdateGlobalTermByMaxTerm(uint32 maxTerm)
-{
-    (void)pthread_rwlock_wrlock(&term_update_rwlock);
-    uint32 currentTerm = g_dynamic_header->term;
-    if (maxTerm > currentTerm) {
-        currentTerm = maxTerm + CM_INCREMENT_TERM_VALUE;
-        write_runlog(LOG, "global term %u is smaller than instance maxterm %u, update global term to %u\n",
-            g_dynamic_header->term, maxTerm, currentTerm);
-        g_dynamic_header->term = currentTerm;
-        (void)SetTermToDdb(currentTerm);
-    }
-    (void)pthread_rwlock_unlock(&term_update_rwlock);
-}
-
 void GetDnArbitInfo(uint32 groupIdx, DnArbitInfo *info)
 {
     int32 count = GetInstanceCountsInGroup(groupIdx);
@@ -269,8 +254,7 @@ void GetDnArbitInfo(uint32 groupIdx, DnArbitInfo *info)
             info->switchoverIdx = i;
         }
     }
-    /* term may increment without cm, the global term needs to be synchronized */
-    UpdateGlobalTermByMaxTerm(info->maxTerm);
+    UpdateDnGroupTermByMaxTerm(groupIdx, info->maxTerm);
 }
 
 uint32 GetInstanceTerm(uint32 groupIndex, int memberIndex)

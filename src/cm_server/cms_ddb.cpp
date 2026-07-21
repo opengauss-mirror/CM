@@ -44,7 +44,14 @@ uint64 GetTimeMinus(const struct timeval checkEnd, const struct timeval checkBeg
 }
 
 static inline void UpdateStatusRoleByDdbValue(cm_instance_role_status *status, const char *valueOfDynConf);
-static int GetTermFromDdb(uint32* term, bool& firstStart);
+static uint32 GetMaxReportedDnTermInGroup(uint32 groupIdx);
+static uint32 GetMaxPersistedDnInstTermInGroup(uint32 groupIdx);
+static uint32 GetBaseDnTermForGroup(uint32 groupIdx);
+static bool CheckCurrentDnTermValid(uint32 groupIndex);
+static uint32 AssignDnTermForGroup(uint32 groupIdx);
+static void SyncAllDnGroupTermsToDdb(void);
+static uint32 GetMaxGroupTerm();
+static int SetFirstCmsEpochToDdb();
 static int SetExceptSyncListStatusValue(
     char *value, size_t len, uint32 groupIndex, const CurrentInstanceStatus *statusInstances);
 static status_t GetIdxFromKeyValue(DrvKeyValue *keyValue, uint32 len, uint32 instanceId, uint32 *idx);
@@ -944,120 +951,203 @@ void GetCoordinatorDynamicConfigChangeFromDdb(uint32 groupIdx)
     SetSyncLock(groupIdx, cmsSyncFromDdbFlag, INSTANCE_TYPE_COORDINATE);
 }
 
-static bool CheckTotalTermValid()
+static uint32 GetMaxReportedDnTermInGroup(uint32 groupIdx)
 {
-    uint32 term = g_dynamic_header->term;
-    if (term >= FirstTerm) {
+    uint32 maxTerm = InvalidTerm;
+    int32 count = g_instance_role_group_ptr[groupIdx].count;
+    cm_instance_datanode_report_status *dnReport =
+        g_instance_group_report_status_ptr[groupIdx].instance_status.data_node_member;
+    for (int32 i = 0; i < count; ++i) {
+        if (dnReport[i].local_status.term > maxTerm) {
+            maxTerm = dnReport[i].local_status.term;
+        }
+    }
+    return maxTerm;
+}
+
+static uint32 GetMaxPersistedDnInstTermInGroup(uint32 groupIdx)
+{
+    uint32 maxTerm = InvalidTerm;
+    int32 count = g_instance_role_group_ptr[groupIdx].count;
+    for (int32 i = 0; i < count; ++i) {
+        uint32 instTerm = InvalidTerm;
+        bool firstStart = false;
+        uint32 instanceId = g_instance_role_group_ptr[groupIdx].instanceMember[i].instanceId;
+        if (GetDnInstTermFromDdb(instanceId, &instTerm, firstStart) == 0 && instTerm > maxTerm) {
+            maxTerm = instTerm;
+        }
+    }
+    return maxTerm;
+}
+
+static uint32 GetBaseDnTermForGroup(uint32 groupIdx)
+{
+    uint32 baseTerm = InvalidTerm;
+    uint32 reportedTerm = GetMaxReportedDnTermInGroup(groupIdx);
+    uint32 groupTerm = g_instance_group_report_status_ptr[groupIdx].instance_status.term;
+    uint32 ddbGroupTerm = InvalidTerm;
+    bool firstStart = false;
+    uint32 instTerm = GetMaxPersistedDnInstTermInGroup(groupIdx);
+
+    if (GetDnGroupTermFromDdb(groupIdx, &ddbGroupTerm, firstStart) != 0 && firstStart) {
+        uint32 legacyTerm = InvalidTerm;
+        bool legacyFirstStart = false;
+        if (GetCmsEpochFromDdb(&legacyTerm, legacyFirstStart) == 0) {
+            ddbGroupTerm = legacyTerm;
+        }
+    }
+
+    baseTerm = reportedTerm;
+    if (groupTerm > baseTerm) {
+        baseTerm = groupTerm;
+    }
+    if (ddbGroupTerm > baseTerm) {
+        baseTerm = ddbGroupTerm;
+    }
+    if (instTerm > baseTerm) {
+        baseTerm = instTerm;
+    }
+    return baseTerm;
+}
+
+bool CheckGroupTermRollbackRisk(uint32 groupIndex)
+{
+    uint32 groupTerm = g_instance_group_report_status_ptr[groupIndex].instance_status.term;
+    uint32 ddbGroupTerm = InvalidTerm;
+    bool firstStart = false;
+    if (GetDnGroupTermFromDdb(groupIndex, &ddbGroupTerm, firstStart) == 0 && ddbGroupTerm > groupTerm) {
+        groupTerm = ddbGroupTerm;
+    }
+
+    uint32 instMaxTerm = GetMaxPersistedDnInstTermInGroup(groupIndex);
+    if (instMaxTerm > groupTerm) {
+        groupTerm = instMaxTerm;
+    }
+
+    /*
+     * DN group term is initialized: safe to assign next term based on persisted/reported values.
+     * Only when group term is not yet initialized, having DN term > FirstTerm indicates rollback risk.
+     */
+    if (groupTerm >= FirstTerm) {
         return true;
     }
-    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
-        if (g_instance_role_group_ptr[i].instanceMember[0].instanceType != INSTANCE_TYPE_DATANODE) {
-            continue;
-        }
-        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
-            if (g_instance_group_report_status_ptr[i].instance_status.data_node_member[j].local_status.term >
-                FirstTerm) {
-                write_runlog(FATAL, "We are in danger of a term-rollback. Abort this arbitration!\n");
-                return false;
-            }
+
+    for (int j = 0; j < g_instance_role_group_ptr[groupIndex].count; j++) {
+        if (g_instance_group_report_status_ptr[groupIndex].instance_status.data_node_member[j].local_status.term >
+            FirstTerm) {
+            write_runlog(FATAL, "We are in danger of a term-rollback. Abort this arbitration!\n");
+            return false;
         }
     }
     return true;
 }
 
-static bool CheckCurrentTermValid(uint32 groupIndex)
+static bool CheckCurrentDnTermValid(uint32 groupIndex)
 {
-    uint32 term = g_dynamic_header->term;
-    if (!CheckTotalTermValid()) {
+    if (!CheckGroupTermRollbackRisk(groupIndex)) {
         return false;
     }
 
-    if (term == CM_UINT32_MAX) {
-        write_runlog(FATAL, "Term value is the max. Abort this arbitration!\n");
+    uint32 groupTerm = g_instance_group_report_status_ptr[groupIndex].instance_status.term;
+    if (groupTerm >= CM_DN_TERM_MAX) {
+        write_runlog(FATAL, "DN group term value is the max. Abort this arbitration!\n");
         return false;
     }
 
-    term++;
-    if (term < g_instance_group_report_status_ptr[groupIndex].instance_status.term) {
-        write_runlog(ERROR, "line %d: memory term(%u) is smaller than group term(%u)!.\n",
-            __LINE__, term, g_instance_group_report_status_ptr[groupIndex].instance_status.term);
-        return false;
+    uint32 maxReported = GetMaxReportedDnTermInGroup(groupIndex);
+    if (maxReported > groupTerm) {
+        g_instance_group_report_status_ptr[groupIndex].instance_status.term = maxReported;
+        (void)SetDnGroupTermToDdb(groupIndex, maxReported);
+        write_runlog(LOG, "sync group %u term to reported max %u before assigning new term.\n",
+            groupIndex, maxReported);
     }
 
     return true;
 }
 
-static uint32 ReadTermByMinority()
+static uint32 ReadDnTermByMinority(uint32 groupIdx)
 {
     (void)pthread_rwlock_wrlock(&term_update_rwlock);
+    uint32 groupTerm = g_instance_group_report_status_ptr[groupIdx].instance_status.term;
     write_runlog(LOG,
-        "Minority AZ Force Starting. In ReadTermFromDdb() read term in minority mode. current_term:%u/%u\n",
-        g_dynamic_header->term,
+        "Minority AZ Force Starting. Assign DN term in minority mode. group_term:%u, cached_term:%u\n",
+        groupTerm,
         g_termCache);
-    /* increase term value in case of minority mode */
-    if (g_dynamic_header->term >= (g_termCache - 1)) {
+    if (groupTerm >= CM_DN_TERM_MAX) {
+        (void)pthread_rwlock_unlock(&term_update_rwlock);
+        write_runlog(FATAL, "DN group term value is the max. Abort minority arbitration!\n");
+        return InvalidTerm;
+    }
+    if (groupTerm >= (g_termCache - 1)) {
         if (!IncrementTermToFile()) {
             (void)pthread_rwlock_unlock(&term_update_rwlock);
             write_runlog(ERROR, "Minority AZ Force Starting. IncrementTermToFile Failed\n");
             return InvalidTerm;
         }
     }
-    g_dynamic_header->term++;
-    uint32 term = g_dynamic_header->term;
+    uint32 newTerm = groupTerm + 1;
+    if (newTerm < FirstTerm) {
+        newTerm = FirstTerm;
+    }
+    g_instance_group_report_status_ptr[groupIdx].instance_status.term = newTerm;
     (void)pthread_rwlock_unlock(&term_update_rwlock);
-    /* update term value into dynamic config file */
-    return term;
+    return newTerm;
 }
 
-/* This function serves as a helper function for each place that needs only to read term from DDB (with read lock) */
-uint32 ReadTermFromDdb(uint32 groupIdx)
+static uint32 AssignDnTermForGroup(uint32 groupIdx)
 {
-    uint32 term = InvalidTerm;
-    /* In in miniority mode we assume DDB is not available */
-    if (cm_arbitration_mode == MINORITY_ARBITRATION) {
-        return ReadTermByMinority();
+    uint32 baseTerm = GetBaseDnTermForGroup(groupIdx);
+    uint32 newTerm;
+
+    if (baseTerm >= CM_DN_TERM_MAX) {
+        write_runlog(FATAL, "DN group term base value is the max. Abort this arbitration!\n");
+        return InvalidTerm;
     }
 
-    /* In primary-standby-dummystandby mode, term is set to FirstTerm which is 1. */
+    if (baseTerm < FirstTerm) {
+        newTerm = FirstTerm;
+    } else {
+        newTerm = baseTerm + 1;
+    }
+
+    if (SetDnGroupTermToDdb(groupIdx, newTerm) != 0) {
+        write_runlog(ERROR, "Failed to persist DN group term %u for group %u.\n", newTerm, groupIdx);
+        return InvalidTerm;
+    }
+
+    g_instance_group_report_status_ptr[groupIdx].instance_status.term = newTerm;
+    write_runlog(LOG, "Assign DN term for group %u: base=%u, new=%u.\n", groupIdx, baseTerm, newTerm);
+    return newTerm;
+}
+
+/* Assign a DN term for switchover/failover; CMS epoch is managed separately. */
+uint32 ReadTermFromDdb(uint32 groupIdx)
+{
+    if (cm_arbitration_mode == MINORITY_ARBITRATION) {
+        return ReadDnTermByMinority(groupIdx);
+    }
+
     if (!g_multi_az_cluster || !IsNeedSyncDdb() || IsBoolCmParamTrue(g_enableDcf)) {
         return FirstTerm;
     }
 
     (void)pthread_rwlock_wrlock(&term_update_rwlock);
-    if (g_arbitrationChangedFromMinority && (SetTermIfArbitrationChanged(&term) != 0)) {
+    if (g_arbitrationChangedFromMinority && (SetTermIfArbitrationChanged(NULL) != 0)) {
         (void)pthread_rwlock_unlock(&term_update_rwlock);
         return InvalidTerm;
     }
 
-    if (g_needIncTermToDdbAgain) {
-        if (IncrementTermToDdb() != 0) {
-            (void)pthread_rwlock_unlock(&term_update_rwlock);
-            return InvalidTerm;
-        }
-    }
-
-    if (!CheckCurrentTermValid(groupIdx)) {
+    if (!CheckCurrentDnTermValid(groupIdx)) {
         (void)pthread_rwlock_unlock(&term_update_rwlock);
         return InvalidTerm;
     }
 
-    term = g_dynamic_header->term;
-    term++;
-    if (term % CM_INCREMENT_TERM_VALUE == 0) {
-        if (SetTermToDdb(term) != 0) {
-            (void)pthread_rwlock_unlock(&term_update_rwlock);
-            return InvalidTerm;
-        }
-    }
-
-    write_runlog(DEBUG1, "memory current term is %u.\n", term);
-    g_dynamic_header->term = term;
+    uint32 term = AssignDnTermForGroup(groupIdx);
     (void)pthread_rwlock_unlock(&term_update_rwlock);
-
     return term;
 }
 
-static int GetTermFromDdb(uint32 *term, bool &firstStart)
+int GetCmsEpochFromDdb(uint32 *epoch, bool &firstStart)
 {
     char statusKey[MAX_PATH_LEN] = {0};
     char getValue[DDB_MIN_VALUE_LEN] = {0};
@@ -1068,8 +1158,51 @@ static int GetTermFromDdb(uint32 *term, bool &firstStart)
     DDB_RESULT dbResult = SUCCESS_GET_VALUE;
     status_t st = GetKVAndLogLevel(statusKey, getValue, DDB_MIN_VALUE_LEN, &dbResult, LOG);
     if (st != CM_SUCCESS) {
+        *epoch = InvalidTerm;
+        write_runlog(ERROR, "get cms epoch ddb key %s error %d\n", statusKey, dbResult);
+        firstStart = (dbResult == CAN_NOT_FIND_THE_KEY);
+        return -1;
+    }
+
+    *epoch = (uint32)strtoul(getValue, NULL, 0);
+    return 0;
+}
+
+int GetDnGroupTermFromDdb(uint32 groupIdx, uint32 *term, bool &firstStart)
+{
+    char statusKey[MAX_PATH_LEN] = {0};
+    char getValue[DDB_MIN_VALUE_LEN] = {0};
+    firstStart = false;
+
+    errno_t rc = snprintf_s(statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+        "/%s/CMServer/status_key/dn_term/%u", pw->pw_name, groupIdx);
+    securec_check_intval(rc, (void)rc);
+    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVAndLogLevel(statusKey, getValue, DDB_MIN_VALUE_LEN, &dbResult, LOG);
+    if (st != CM_SUCCESS) {
         *term = InvalidTerm;
-        write_runlog(ERROR, "get ddb key %s error %d\n", statusKey, dbResult);
+        write_runlog(DEBUG1, "get dn group term ddb key %s error %d\n", statusKey, dbResult);
+        firstStart = (dbResult == CAN_NOT_FIND_THE_KEY);
+        return -1;
+    }
+
+    *term = (uint32)strtoul(getValue, NULL, 0);
+    return 0;
+}
+
+int GetDnInstTermFromDdb(uint32 instanceId, uint32 *term, bool &firstStart)
+{
+    char statusKey[MAX_PATH_LEN] = {0};
+    char getValue[DDB_MIN_VALUE_LEN] = {0};
+    firstStart = false;
+
+    errno_t rc = snprintf_s(statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+        "/%s/CMServer/status_key/dn_inst_term/%u", pw->pw_name, instanceId);
+    securec_check_intval(rc, (void)rc);
+    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
+    status_t st = GetKVAndLogLevel(statusKey, getValue, DDB_MIN_VALUE_LEN, &dbResult, LOG);
+    if (st != CM_SUCCESS) {
+        *term = InvalidTerm;
         firstStart = (dbResult == CAN_NOT_FIND_THE_KEY);
         return -1;
     }
@@ -1092,75 +1225,55 @@ static uint32 GetMaxGroupTerm()
     return maxGrpTerm;
 }
 
+static void SyncAllDnGroupTermsToDdb(void)
+{
+    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
+        if (g_instance_role_group_ptr[i].instanceMember[0].instanceType != INSTANCE_TYPE_DATANODE) {
+            continue;
+        }
+        uint32 syncedTerm = GetBaseDnTermForGroup(i);
+        if (syncedTerm == InvalidTerm) {
+            syncedTerm = FirstTerm;
+        }
+        if (SetDnGroupTermToDdb(i, syncedTerm) != 0) {
+            write_runlog(ERROR, "Failed to sync DN group term %u for group %u while mode changed.\n", syncedTerm, i);
+            continue;
+        }
+        g_instance_group_report_status_ptr[i].instance_status.term = syncedTerm;
+    }
+}
+
 int SetTermIfArbitrationChanged(uint32* term)
 {
-    /*
-     * If we get here, we must be in MAJORITY scenario so DDB is available and the term
-     * value we fetched here need further
-     */
-    uint32 ddbTerm = InvalidTerm;
+    uint32 cmsEpoch = InvalidTerm;
     bool firstStart = false;
-    int res = GetTermFromDdb(&ddbTerm, firstStart);
-    if (res != 0) {
-        write_runlog(ERROR, "Cannot term information from ddb while arbitration changed to majorrity.\n");
+    if (GetCmsEpochFromDdb(&cmsEpoch, firstStart) != 0 && !firstStart) {
+        write_runlog(ERROR, "Cannot get cms epoch from ddb while arbitration changed to majority.\n");
         return -1;
     }
 
-    uint32 currentTerm = g_dynamic_header->term;
+    write_runlog(LOG,
+        "Minority AZ Force Starting. Go back to majority mode. cms_epoch:%u memory_cms_epoch:%u\n",
+        cmsEpoch,
+        g_dynamic_header->term);
 
-    write_runlog(LOG, "Minority AZ Force Starting. "
-        "Go back to majority mode to check term sync-up to ddb current_term:%u ddbTerm:%u\n",
-        currentTerm, ddbTerm);
+    SyncAllDnGroupTermsToDdb();
 
-    /*
-     * Check if current term is greater than that read from in DDB, if yes it
-     * indicates there is DN primary & standby exchange after switch to MINORITY,
-     * so we have to sync its newest term value into DDB
-     *
-     * Note: g_dynamic_header->term is always up-to-date, we set it in caller
-     * function ReadTermFromDdb()
-     */
-    if (currentTerm > ddbTerm) {
-        if (currentTerm == CM_UINT32_MAX) {
-            write_runlog(FATAL, "line %d:Term value is the max. Abort this arbitration!\n", __LINE__);
-            return -1;
-        }
-        ddbTerm = currentTerm + 1;
-    } else {
-        write_runlog(ERROR, "line %d:ddbTerm %u is greater than memory currnent term %u, It should not happen.\n",
-            __LINE__, ddbTerm, currentTerm);
-        if (ddbTerm >= CM_UINT32_MAX - CM_INCREMENT_TERM_VALUE) {
-            write_runlog(FATAL, "line %d:get term from ddb value %u is too big "
-                    "while processing arbitration changing.\n", __LINE__, ddbTerm);
-            return -1;
-        }
-        ddbTerm += CM_INCREMENT_TERM_VALUE;
+    if (cmsEpoch > g_dynamic_header->term) {
+        g_dynamic_header->term = cmsEpoch;
     }
 
-    uint32 maxGrpTerm = GetMaxGroupTerm();
-    if (ddbTerm < maxGrpTerm) {
-        write_runlog(ERROR, "line %d: DDB term(%u) is smaller than group term(%u).\n", __LINE__, ddbTerm, maxGrpTerm);
-        return -1;
-    }
-
-    if (SetTermToDdb(ddbTerm) != 0) {
-        return -1;
-    }
-
-    g_dynamic_header->term = ddbTerm;
-    /*
-     * Mark minority2majority flag to false, from now we go regular DDB-term
-     * fetching processing code path
-     */
     g_arbitrationChangedFromMinority = false;
-    /* Remove the for start info file after we use it */
     (void)unlink(cm_force_start_file_path);
-    *term = ddbTerm;
+
+    if (term != NULL) {
+        *term = GetMaxGroupTerm();
+    }
 
     return 0;
 }
 
-int SetTermToDdb(uint32 term)
+int SetCmsEpochToDdb(uint32 epoch)
 {
     char statusKey[MAX_PATH_LEN] = {0};
     char termValue[MAX_PATH_LEN] = {0};
@@ -1168,62 +1281,186 @@ int SetTermToDdb(uint32 term)
 
     rc = snprintf_s(statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CMServer/status_key/term", pw->pw_name);
     securec_check_intval(rc, (void)rc);
+    rc = snprintf_s(termValue, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%u", epoch);
+    securec_check_intval(rc, (void)rc);
+
+    status_t st = SetKV2Ddb(statusKey, MAX_PATH_LEN, termValue, MAX_PATH_LEN, NULL);
+    if (st != CM_SUCCESS) {
+        write_runlog(ERROR, "%d: set cms epoch failed. key = %s, epoch = %u.\n", __LINE__, statusKey, epoch);
+        return -1;
+    }
+
+    write_runlog(DEBUG1, "%d: set cms epoch Success. key = %s, epoch = %u.\n", __LINE__, statusKey, epoch);
+    return 0;
+}
+
+int SetDnGroupTermToDdb(uint32 groupIdx, uint32 term)
+{
+    char statusKey[MAX_PATH_LEN] = {0};
+    char termValue[MAX_PATH_LEN] = {0};
+    errno_t rc;
+
+    rc = snprintf_s(statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+        "/%s/CMServer/status_key/dn_term/%u", pw->pw_name, groupIdx);
+    securec_check_intval(rc, (void)rc);
     rc = snprintf_s(termValue, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%u", term);
     securec_check_intval(rc, (void)rc);
 
     status_t st = SetKV2Ddb(statusKey, MAX_PATH_LEN, termValue, MAX_PATH_LEN, NULL);
     if (st != CM_SUCCESS) {
-        write_runlog(ERROR, "%d: set ddb term failed. key = %s, term = %u.\n", __LINE__, statusKey, term);
+        write_runlog(ERROR, "%d: set dn group term failed. key = %s, term = %u.\n", __LINE__, statusKey, term);
         return -1;
     }
 
-    write_runlog(DEBUG1, "%d: set ddb term Success. key = %s, term = %u.\n", __LINE__, statusKey, term);
+    write_runlog(DEBUG1, "%d: set dn group term Success. key = %s, term = %u.\n", __LINE__, statusKey, term);
     return 0;
 }
 
-int SetFirstTermToDdb()
+int SetDnInstTermToDdb(uint32 instanceId, uint32 term)
 {
-    uint32 term = FirstTerm;
-    if (SetTermToDdb(term) != 0) {
-        write_runlog(ERROR, "%d: Failed to set first term to ddb when first start ", __LINE__);
+    char statusKey[MAX_PATH_LEN] = {0};
+    char termValue[MAX_PATH_LEN] = {0};
+    errno_t rc;
+
+    rc = snprintf_s(statusKey, MAX_PATH_LEN, MAX_PATH_LEN - 1,
+        "/%s/CMServer/status_key/dn_inst_term/%u", pw->pw_name, instanceId);
+    securec_check_intval(rc, (void)rc);
+    rc = snprintf_s(termValue, MAX_PATH_LEN, MAX_PATH_LEN - 1, "%u", term);
+    securec_check_intval(rc, (void)rc);
+
+    status_t st = SetKV2Ddb(statusKey, MAX_PATH_LEN, termValue, MAX_PATH_LEN, NULL);
+    if (st != CM_SUCCESS) {
+        write_runlog(ERROR, "%d: set dn inst term failed. key = %s, term = %u.\n", __LINE__, statusKey, term);
         return -1;
     }
-    g_dynamic_header->term = term;
-    write_runlog(LOG, "%d: set first term to ddb success. term = %u.\n", __LINE__, term);
+
+    return 0;
+}
+
+void SyncDnInstTermToDdb(uint32 instanceId, uint32 term)
+{
+    if (!IsNeedSyncDdb() || IsBoolCmParamTrue(g_enableDcf) || term <= InvalidTerm) {
+        return;
+    }
+
+    uint32 storedTerm = InvalidTerm;
+    bool firstStart = false;
+    if (GetDnInstTermFromDdb(instanceId, &storedTerm, firstStart) != 0) {
+        if (!firstStart) {
+            return;
+        }
+    } else if (term <= storedTerm) {
+        return;
+    }
+
+    (void)SetDnInstTermToDdb(instanceId, term);
+}
+
+void UpdateDnGroupTermByMaxTerm(uint32 groupIdx, uint32 maxTerm)
+{
+    if (!IsNeedSyncDdb() || IsBoolCmParamTrue(g_enableDcf) || maxTerm <= InvalidTerm) {
+        return;
+    }
+
+    (void)pthread_rwlock_wrlock(&term_update_rwlock);
+    uint32 groupTerm = g_instance_group_report_status_ptr[groupIdx].instance_status.term;
+    if (maxTerm > groupTerm) {
+        groupTerm = maxTerm;
+        g_instance_group_report_status_ptr[groupIdx].instance_status.term = groupTerm;
+        (void)SetDnGroupTermToDdb(groupIdx, groupTerm);
+        write_runlog(LOG, "update DN group %u term to %u according to reported max term.\n", groupIdx, groupTerm);
+    }
+    (void)pthread_rwlock_unlock(&term_update_rwlock);
+}
+
+void InitAllTermsFromDdb(void)
+{
+    if (!IsNeedSyncDdb() || IsBoolCmParamTrue(g_enableDcf)) {
+        return;
+    }
+
+    uint32 cmsEpoch = FirstTerm;
+    bool firstStart = false;
+    if (GetCmsEpochFromDdb(&cmsEpoch, firstStart) == 0) {
+        g_dynamic_header->term = cmsEpoch;
+        write_runlog(LOG, "Init cms epoch from ddb: %u.\n", cmsEpoch);
+    } else if (firstStart) {
+        (void)SetCmsEpochToDdb(FirstTerm);
+        g_dynamic_header->term = FirstTerm;
+        cmsEpoch = FirstTerm;
+        write_runlog(LOG, "Init cms epoch to first term: %u.\n", FirstTerm);
+    }
+
+    for (uint32 i = 0; i < g_dynamic_header->relationCount; i++) {
+        if (g_instance_role_group_ptr[i].instanceMember[0].instanceType != INSTANCE_TYPE_DATANODE) {
+            continue;
+        }
+        uint32 dnGroupTerm = InvalidTerm;
+        bool dnFirstStart = false;
+        if (GetDnGroupTermFromDdb(i, &dnGroupTerm, dnFirstStart) == 0) {
+            g_instance_group_report_status_ptr[i].instance_status.term = dnGroupTerm;
+            write_runlog(LOG, "Init DN group %u term from ddb: %u.\n", i, dnGroupTerm);
+        } else if (dnFirstStart) {
+            uint32 initTerm = (cmsEpoch > FirstTerm) ? cmsEpoch : FirstTerm;
+            g_instance_group_report_status_ptr[i].instance_status.term = initTerm;
+            (void)SetDnGroupTermToDdb(i, initTerm);
+            write_runlog(LOG, "Init DN group %u term by migration: %u.\n", i, initTerm);
+        }
+    }
+}
+
+int SetTermToDdb(uint32 term)
+{
+    return SetCmsEpochToDdb(term);
+}
+
+static int SetFirstCmsEpochToDdb()
+{
+    uint32 epoch = FirstTerm;
+    if (SetCmsEpochToDdb(epoch) != 0) {
+        write_runlog(ERROR, "%d: Failed to set first cms epoch to ddb when first start ", __LINE__);
+        return -1;
+    }
+    g_dynamic_header->term = epoch;
+    write_runlog(LOG, "%d: set first cms epoch to ddb success. epoch = %u.\n", __LINE__, epoch);
+
+    return 0;
+}
+
+int IncrementCmsEpochToDdb(uint32 incTerm)
+{
+    uint32 epoch = 0;
+    bool firstStart = false;
+    int ret = GetCmsEpochFromDdb(&epoch, firstStart);
+    if (ret != 0) {
+        if (firstStart && SetFirstCmsEpochToDdb() == 0) {
+            g_needIncTermToDdbAgain = false;
+            return 0;
+        }
+        g_needIncTermToDdbAgain = true;
+        return -1;
+    } else if (epoch == InvalidTerm || epoch >= CM_UINT32_MAX - incTerm) {
+        write_runlog(ERROR, "Cannot get valid cms epoch %u from ddb while trying to increment.\n", epoch);
+        g_needIncTermToDdbAgain = true;
+        return -1;
+    }
+
+    epoch += incTerm;
+    if (SetCmsEpochToDdb(epoch) != 0) {
+        g_needIncTermToDdbAgain = true;
+        return -1;
+    }
+
+    g_dynamic_header->term = epoch;
+    g_needIncTermToDdbAgain = false;
+    write_runlog(LOG, "Success set cms epoch to ddb, cms epoch is %u.\n", epoch);
 
     return 0;
 }
 
 int IncrementTermToDdb(uint32 incTerm)
 {
-    uint32 term = 0;
-    bool firstStart = false;
-    int ret = GetTermFromDdb(&term, firstStart);
-    if (ret != 0) {
-        if (firstStart && SetFirstTermToDdb() == 0) {
-            g_needIncTermToDdbAgain = false;
-            return 0;
-        }
-        g_needIncTermToDdbAgain = true;
-        return -1;
-    } else if (term == InvalidTerm || term >= CM_UINT32_MAX - CM_INCREMENT_TERM_VALUE) {
-        write_runlog(ERROR, "Cannot get valid term information %u from ddb while trying to increment term.\n", term);
-        g_needIncTermToDdbAgain = true;
-        return -1;
-    }
-
-    term += incTerm;
-    if (SetTermToDdb(term) != 0) {
-        g_needIncTermToDdbAgain = true;
-        return -1;
-    }
-
-    g_dynamic_header->term = term;
-    g_needIncTermToDdbAgain = false;
-    write_runlog(
-        LOG, "Success set term to ddb, ddb term is %u, current term is %u\n", term, g_dynamic_header->term);
-
-    return 0;
+    return IncrementCmsEpochToDdb(incTerm);
 }
 
 /* set static primary role and set other gtm static standby role, keep atomicity */

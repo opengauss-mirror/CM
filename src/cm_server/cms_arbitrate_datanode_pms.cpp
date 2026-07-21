@@ -499,6 +499,8 @@ static void SaveDnStatusFromReport(const agent_to_cm_datanode_status_report *age
     /* cluster streaming standby ignore term */
     if (backup_open == CLUSTER_STREAMING_STANDBY) {
         ctx->localRep->local_status.term = FirstTerm;
+    } else {
+        SyncDnInstTermToDdb(ctx->instId, ctx->localRep->local_status.term);
     }
 
     if (g_instance_group_report_status_ptr[ctx->groupIdx]

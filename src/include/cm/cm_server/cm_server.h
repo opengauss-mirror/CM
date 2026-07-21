@@ -49,9 +49,12 @@
 
 #define INVALIDFD (-1)
 
-#define CM_INCREMENT_TERM_VALUE 100
+#define CM_INCREMENT_TERM_VALUE 20
 
-#define CM_INCREMENT_BIG_TERM_VALUE 10000
+#define CM_INCREMENT_BIG_TERM_VALUE 1000
+
+/* DN xl_term upper bound, aligned with openGauss XLOG_MASK_TERM */
+#define CM_DN_TERM_MAX 0x7FFFFFFFU
 
 #define CM_UINT32_MAX 0xFFFFFFFFU
 

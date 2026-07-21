@@ -1201,7 +1201,7 @@ static void DdbMinorityWorkModeSetInMajority()
     write_runlog(LOG, "go into minority work mode with minVoteNum: %d g_bigVoteNumInMinorityMode: %d.\n",
         minVoteNum, g_bigVoteNumInMinorityMode);
     (void)pthread_rwlock_wrlock(&term_update_rwlock);
-    IncrementTermToDdb(CM_INCREMENT_BIG_TERM_VALUE);
+    IncrementCmsEpochToDdb(CM_INCREMENT_BIG_TERM_VALUE);
     (void)pthread_rwlock_unlock(&term_update_rwlock);
 }
 

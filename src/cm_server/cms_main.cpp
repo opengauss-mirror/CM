@@ -2704,6 +2704,7 @@ int main(int argc, char** argv)
         write_runlog(FATAL, "init res status failed.\n");
         return -1;
     }
+    InitAllTermsFromDdb();
     if (IsCusResExist() && (InitCusResVariable() != CM_SUCCESS)) {
         write_runlog(FATAL, "init cus res variable failed.\n");
         return -1;

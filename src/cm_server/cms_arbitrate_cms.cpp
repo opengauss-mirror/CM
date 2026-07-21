@@ -272,10 +272,12 @@ static void HandleStartMode(cm_start_mode startMode)
         /* Make sure we are not in case of arbitration mode changed from MINORITY to MAJORITY */
         g_arbitrationChangedFromMinority = false;
 
-        /* Read term value from "force_start.info" file if exists  */
-        if (g_dynamic_header->term == InvalidTerm) {
-            g_dynamic_header->term = GetTermForMinorityStart();
-            (void)IncrementTermToFile();
+        /* Read DN term cache from force_start.info for minority AZ startup */
+        if (g_termCache == 0) {
+            g_termCache = GetTermForMinorityStart();
+            if (g_termCache > 0) {
+                (void)IncrementTermToFile();
+            }
         }
 
         write_runlog(LOG,

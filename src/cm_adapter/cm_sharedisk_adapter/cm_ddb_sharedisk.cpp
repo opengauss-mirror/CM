@@ -42,8 +42,12 @@ static int64 g_waitForTime = 0;
 static volatile int64 g_notifyBeginSec = 0;
 const uint32 ONE_PRIMARY_ONE_STANDBY = 2;
 static DdbArbiCon *g_arbiCon = NULL;
-static const time_t MAX_VALID_LOCK_TIME = 125;
-static const time_t BASE_VALID_LOCK_TIME = 1;
+static const time_t MAX_VALID_LOCK_TIME_DORADO = 125;
+static const time_t BASE_VALID_LOCK_TIME_DORADO = 1;
+static const time_t MAX_VALID_LOCK_TIME_NORMAL = 128;
+static const time_t BASE_VALID_LOCK_TIME_NORMAL = 0;
+static const int CM_DL_ERR_OCCUPIED = 2;
+static const int CM_DL_ERR_TIMEOUT = 4;
 #ifdef ENABLE_MEMCHECK
 static const uint32 DEFAULT_CMD_TIME_OUT = 120;
 #else
@@ -345,6 +349,32 @@ static bool CheckDemoteDdbRole(SdArbitrateData *sdArbitrateData)
     return false;
 }
 
+/*
+ * Compatible lock_time for both managers:
+ * - Dorado: CalcLockTime -> [1,125]
+ * - Normal: (monotonic_ns % 128) -> [0,127], peer-held usually OCCUPIED(2)/TIMEOUT(4)
+ */
+static bool IsShareDiskLockTimeValid(const disk_lock_info_t *lockInfo)
+{
+    if (lockInfo == NULL) {
+        return false;
+    }
+    if (lockInfo->lock_result == 0) {
+        return true;
+    }
+
+    if (g_shareDiskLockType == DISK_LOCK_MGR_DORADO) {
+        return (lockInfo->lock_time >= BASE_VALID_LOCK_TIME_DORADO &&
+            lockInfo->lock_time <= MAX_VALID_LOCK_TIME_DORADO);
+    }
+
+    if (lockInfo->lock_result == CM_DL_ERR_OCCUPIED || lockInfo->lock_result == CM_DL_ERR_TIMEOUT) {
+        return (lockInfo->lock_time >= BASE_VALID_LOCK_TIME_NORMAL &&
+            lockInfo->lock_time < MAX_VALID_LOCK_TIME_NORMAL);
+    }
+    return false;
+}
+
 static void CmNormalArbitrate(SdArbitrateData *sdArbitrateData)
 {
     if (ConsumeFastPromoteReq()) {
@@ -374,7 +404,7 @@ static void CmNormalArbitrate(SdArbitrateData *sdArbitrateData)
         return;
     }
 
-    if (lockInfo.lock_time >= BASE_VALID_LOCK_TIME && lockInfo.lock_time <= MAX_VALID_LOCK_TIME) {
+    if (IsShareDiskLockTimeValid(&lockInfo)) {
         g_dbRole = DDB_ROLE_FOLLOWER;
         sdArbitrateData->lockFailBeginTime = 0;
         // get lock failed, check lock time if refreshed by other process
@@ -454,7 +484,7 @@ static status_t ExePromoteCmd(SdArbitrateData *sdArbitrateData)
     disk_lock_info_t lockInfo = cm_lock_disklock();
     if (lockInfo.lock_result != 0) {
         write_runlog(WARNING, "ExePromoteCmd: Execute get lock failed, lockResult %d!\n", lockInfo.lock_result);
-        if (lockInfo.lock_time >= BASE_VALID_LOCK_TIME && lockInfo.lock_time <= MAX_VALID_LOCK_TIME) {
+        if (IsShareDiskLockTimeValid(&lockInfo)) {
             int32 lockRst = cm_lockf_disklock();
             if (lockRst != 0) {
                 write_runlog(WARNING, "ExePromoteCmd: Execute cm_lockf_disklock failed, result %d!\n", lockRst);

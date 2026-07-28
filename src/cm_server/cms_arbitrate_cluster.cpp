@@ -33,6 +33,8 @@
 #include "cms_common_res.h"
 #include "cms_rhb.h"
 #include "cms_arbitrate_cluster.h"
+#include "cm_sync.h"
+#include "cm_util.h"
 
 #ifdef ENABLE_UT
 #define static
@@ -101,6 +103,14 @@ static volatile int32 g_resHeartBeatTimeout[CM_MAX_RES_INST_COUNT][MAX_CLUSTER_T
 static volatile ThreadProcessStatus g_threadProcessStatus = THREAD_PROCESS_UNKNOWN;
 static pthread_rwlock_t g_forceKickNodeLock = PTHREAD_RWLOCK_INITIALIZER;
 static bool g_forceKickNodes[CM_NODE_MAXNUM] = {false};
+static cm_event_t g_maxClusterArbitrateEvent;
+static bool g_maxClusterArbitrateEventInited = false;
+static pthread_mutex_t g_maxClusterArbitrateEventLifeLock = PTHREAD_MUTEX_INITIALIZER;
+
+static void MaxClusterArbitrateTimedWait(uint32 sleepIntervalSec)
+{
+    (void)cm_event_timedwait(&g_maxClusterArbitrateEvent, sleepIntervalSec * (uint32)CM_MS_COUNT_PER_SEC);
+}
 
 void RequestKickNodeByArbitrate(uint32 nodeId)
 {
@@ -113,6 +123,14 @@ void RequestKickNodeByArbitrate(uint32 nodeId)
     g_forceKickNodes[nodeId] = true;
     (void)pthread_rwlock_unlock(&g_forceKickNodeLock);
     write_runlog(LOG, "request arbitrate thread kick node(%u), isNew=%d.\n", nodeId, (int)isNew);
+    if (!isNew) {
+        return;
+    }
+    (void)pthread_mutex_lock(&g_maxClusterArbitrateEventLifeLock);
+    if (g_maxClusterArbitrateEventInited) {
+        cm_event_notify(&g_maxClusterArbitrateEvent);
+    }
+    (void)pthread_mutex_unlock(&g_maxClusterArbitrateEventLifeLock);
 }
 
 static bool IsForceKickNode(uint32 nodeId)
@@ -1216,6 +1234,15 @@ void *MaxNodeClusterArbitrateMain(void *arg)
     }
     g_curRhbStat.baseTime = time(NULL);
     GetRhbStat(g_curRhbStat.hbs, &g_curRhbStat.hwl);
+
+    if (cm_event_init(&g_maxClusterArbitrateEvent) != CM_SUCCESS) {
+        write_runlog(FATAL, "init max cluster arbitrate event failed.\n");
+        exit(-1);
+    }
+    (void)pthread_mutex_lock(&g_maxClusterArbitrateEventLifeLock);
+    g_maxClusterArbitrateEventInited = true;
+    (void)pthread_mutex_unlock(&g_maxClusterArbitrateEventLifeLock);
+
     for (;;) {
         if (got_stop) {
             g_threadProcessStatus = THREAD_PROCESS_STOP;
@@ -1229,12 +1256,12 @@ void *MaxNodeClusterArbitrateMain(void *arg)
         }
 
         if (CheckCmNodeClusterArbitrate(&hasHistory, &cmsSt) != CM_SUCCESS) {
-            cm_sleep(sleepInterval);
+            MaxClusterArbitrateTimedWait(sleepInterval);
             continue;
         }
 
         if (CheckVotingDisk() != CM_SUCCESS) {
-            cm_sleep(sleepInterval);
+            MaxClusterArbitrateTimedWait(sleepInterval);
             continue;
         }
 
@@ -1243,8 +1270,12 @@ void *MaxNodeClusterArbitrateMain(void *arg)
         FindMaxNodeCluster(&g_curCluster);
 
         CompareCurLastMaxNodeCluster(&g_lastCluster, &g_curCluster);
-        cm_sleep(sleepInterval);
+        MaxClusterArbitrateTimedWait(sleepInterval);
     }
+    (void)pthread_mutex_lock(&g_maxClusterArbitrateEventLifeLock);
+    g_maxClusterArbitrateEventInited = false;
+    cm_event_destory(&g_maxClusterArbitrateEvent);
+    (void)pthread_mutex_unlock(&g_maxClusterArbitrateEventLifeLock);
     g_threadProcessStatus = THREAD_PROCESS_STOP;
     FreeVotingDiskMem();
     ReleaseMaxNodeMemory();

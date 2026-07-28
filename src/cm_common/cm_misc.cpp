@@ -49,6 +49,9 @@
 #include "cm/cm_cipher.h"
 #include "cm/cm_misc.h"
 #include "cm/cm_ip.h"
+#include <netdb.h>
+#include <sys/select.h>
+#include <sys/socket.h>
 
 /*
  * ssh connect does not exit automatically when the network is fault,
@@ -1339,6 +1342,104 @@ bool IsNodeIdValid(int nodeId)
         }
     }
     return false;
+}
+
+static const uint32 CM_TCP_PORT_STR_LEN = 16;
+
+static bool IsTcpConnectParamValid(const char *host, uint32 port, uint32 timeoutSec)
+{
+    return host != NULL && host[0] != '\0' && port != 0 && timeoutSec != 0;
+}
+
+static status_t BuildTcpAddrInfo(const char *host, uint32 port, struct addrinfo **res)
+{
+    char portStr[CM_TCP_PORT_STR_LEN] = {0};
+    int rc = snprintf_s(portStr, sizeof(portStr), sizeof(portStr) - 1, "%u", port);
+    securec_check_intval(rc, (void)rc);
+
+    struct addrinfo hints;
+    rc = memset_s(&hints, sizeof(hints), 0, sizeof(hints));
+    securec_check_errno(rc, (void)rc);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(host, portStr, &hints, res) != 0 || *res == NULL) {
+        if (*res != NULL) {
+            freeaddrinfo(*res);
+            *res = NULL;
+        }
+        return CM_ERROR;
+    }
+    return CM_SUCCESS;
+}
+
+static void SetSocketNonBlocking(int sock)
+{
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags >= 0) {
+        (void)fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+    }
+}
+
+static bool IsSocketConnectCompleted(int sock, uint32 timeoutSec)
+{
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(sock, &wfds);
+    struct timeval tv;
+    tv.tv_sec = (time_t)timeoutSec;
+    tv.tv_usec = 0;
+    int selRet = select(sock + 1, NULL, &wfds, NULL, &tv);
+    if (selRet <= 0 || !FD_ISSET(sock, &wfds)) {
+        return false;
+    }
+    int soErr = 0;
+    socklen_t soErrLen = sizeof(soErr);
+    return getsockopt(sock, SOL_SOCKET, SO_ERROR, &soErr, &soErrLen) == 0 && soErr == 0;
+}
+
+static bool TryTcpConnectOneAddr(const struct addrinfo *ai, uint32 timeoutSec)
+{
+    int sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if (sock < 0) {
+        return false;
+    }
+    SetSocketNonBlocking(sock);
+    int connRet = connect(sock, ai->ai_addr, (socklen_t)ai->ai_addrlen);
+    bool connected = false;
+    if (connRet == 0) {
+        connected = true;
+    } else if (errno == EINPROGRESS) {
+        connected = IsSocketConnectCompleted(sock, timeoutSec);
+    }
+    (void)close(sock);
+    return connected;
+}
+
+static status_t TryTcpConnectAddrs(struct addrinfo *res, uint32 timeoutSec)
+{
+    for (struct addrinfo *ai = res; ai != NULL; ai = ai->ai_next) {
+        if (TryTcpConnectOneAddr(ai, timeoutSec)) {
+            return CM_SUCCESS;
+        }
+    }
+    return CM_ERROR;
+}
+
+status_t IsTcpHostPortReachable(const char *host, uint32 port, uint32 timeoutSec)
+{
+    if (!IsTcpConnectParamValid(host, port, timeoutSec)) {
+        return CM_ERROR;
+    }
+
+    struct addrinfo *res = NULL;
+    if (BuildTcpAddrInfo(host, port, &res) != CM_SUCCESS) {
+        return CM_ERROR;
+    }
+
+    status_t result = TryTcpConnectAddrs(res, timeoutSec);
+    freeaddrinfo(res);
+    return result;
 }
 
 status_t IsReachableIP(char *ip)

@@ -32,6 +32,7 @@
 #include "cms_alarm.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <fcntl.h>
 #include "cm_ip.h"
 #include "cm_msg_version_convert.h"
 
@@ -1245,12 +1246,17 @@ static status_t CheckDdbType(DDB_TYPE toDdbType)
 static status_t CreateMaintainPath(const char *maintainFile)
 {
     std::string ddbStr = to_string(static_cast<int>(g_dbType));
-    FILE *fp = fopen(maintainFile, "w+");
-    if (fp == NULL) {
+    int fd = open(maintainFile, O_RDWR | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
         write_runlog(ERROR, "[switch] can't open file \"%s\", errno(%d).\n", maintainFile, errno);
         return CM_ERROR;
     }
-    (void)chmod(maintainFile, S_IRUSR | S_IWUSR);
+    FILE *fp = fdopen(fd, "w+");
+    if (fp == NULL) {
+        write_runlog(ERROR, "[switch] can't fdopen file \"%s\", errno(%d).\n", maintainFile, errno);
+        (void)close(fd);
+        return CM_ERROR;
+    }
 
     if (fwrite(ddbStr.c_str(), ddbStr.size(), 1, fp) != 1) {
         write_runlog(ERROR, "[switch] could not write file \"%s\", errno(%d)\n", maintainFile, errno);

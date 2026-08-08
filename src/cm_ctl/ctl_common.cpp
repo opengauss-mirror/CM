@@ -22,6 +22,7 @@
  * -------------------------------------------------------------------------
  */
 #include <signal.h>
+#include <fcntl.h>
 #include "common/config/cm_config.h"
 #include "cm/libpq-fe.h"
 #include "cm/cm_misc.h"
@@ -215,7 +216,12 @@ int SshExec(const staticNodeConfig *node, const char *cmd)
     int rc = -1;
     int ret = 0;
 
+    if (mpp_env_separate_file[0] != '\0') {
+        check_shell_param_for_security(mpp_env_separate_file);
+    }
+
     for (uint32 ii = 0; ii < node->sshCount; ii++) {
+        check_shell_param_for_security(node->sshChannel[ii]);
         if (mpp_env_separate_file[0] == '\0') {
             ret = snprintf_s(actualCmd,
                 MAXPGPATH,
@@ -575,11 +581,19 @@ void init_hosts()
     uint32 i, j;
     g_execNodes = 0;
 
-    FILE* fd = fopen(hosts_path, "w");
+    int hostsFd = open(hosts_path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
+    if (hostsFd < 0) {
+        char errBuffer[ERROR_LIMIT_LEN];
+        write_runlog(
+            ERROR, "could not open hosts file \"%s\": %s\n", hosts_path, strerror_r(errno, errBuffer, ERROR_LIMIT_LEN));
+        exit(1);
+    }
+    FILE* fd = fdopen(hostsFd, "w");
     if (fd == NULL) {
         char errBuffer[ERROR_LIMIT_LEN];
         write_runlog(
             ERROR, "could not open hosts file \"%s\": %s\n", hosts_path, strerror_r(errno, errBuffer, ERROR_LIMIT_LEN));
+        (void)close(hostsFd);
         exit(1);
     }
 

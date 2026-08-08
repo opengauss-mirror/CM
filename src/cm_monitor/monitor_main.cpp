@@ -32,6 +32,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <sys/file.h>
+#include <fcntl.h>
 
 #include "cm/pqsignal.h"
 #include "cm/stringinfo.h"
@@ -769,15 +770,10 @@ static int get_current_timestamp(char *timestamp, size_t len)
 
 static void CreateEtcdLog()
 {
-    if (access(g_curEtcdLogFile, F_OK) != -1) {
-        return;
-    }
-
     char createTime[LEN_TIMESTAMP] = {0};
     char buff[LOG_MAX_TIMELEN];
     size_t counter;
     int rcs;
-    mode_t oumask;
 
     if (get_current_timestamp(createTime, LEN_TIMESTAMP) != 0) {
         write_runlog(ERROR, "create etcd log get timestamp error\n");
@@ -786,11 +782,19 @@ static void CreateEtcdLog()
 
     rcs = snprintf_s(buff, LOG_MAX_TIMELEN, LOG_MAX_TIMELEN - 1, "log_file_create_time=%s\n", createTime);
     securec_check_intval(rcs, (void)rcs);
-    oumask = umask((mode_t)((~(mode_t)(S_IRUSR | S_IWUSR | S_IXUSR)) & (S_IRWXU | S_IRWXG | S_IRWXO)));
-    FILE *etcdLogFile = fopen(g_curEtcdLogFile, "w+");
-    (void)umask(oumask);
+
+    int fd = open(g_curEtcdLogFile, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        if (errno == EEXIST) {
+            return;
+        }
+        write_runlog(ERROR, "create etcd log file failed! errno is %s\n", strerror(errno));
+        return;
+    }
+    FILE *etcdLogFile = fdopen(fd, "w");
     if (etcdLogFile == NULL) {
         write_runlog(ERROR, "create etcd log file failed! errno is %s\n", strerror(errno));
+        (void)close(fd);
         return;
     }
     counter = fwrite(buff, sizeof(char), LOG_MAX_TIMELEN, etcdLogFile);

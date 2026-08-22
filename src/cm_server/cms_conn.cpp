@@ -43,7 +43,6 @@ static const int EPOLL_TIMEOUT = 1000;
 static const uint32 ALL_AGENT_NODE_ID = 0xffffffff;
 static const uint32 MAX_MSG_BUF_POOL_SIZE = 102400;
 static const uint32 MAX_MSG_BUF_POOL_COUNT = 200;
-static const uint32 MAX_MSG_IN_QUE = 100;
 static char *g_envPath = NULL;
 
 struct DdbPreAgentCon {
@@ -630,6 +629,24 @@ void* CM_WorkThreadMain(void* argp)
     return thrinfo;
 }
 
+static bool PushRecvMsgToQueue(CM_IOThread *thrinfo, CM_Connection *con, MsgRecvInfo *msgInfo)
+{
+    uint64 t1 = GetMonotonicTimeMs();
+    msgInfo->connID.t1 = t1;
+    MsgSourceType src = (con->port->remote_type == CM_CTL) ? MsgSrcCtl : MsgSrcAgent;
+    if (!pushRecvMsg((PriMsgQues*)thrinfo->recvMsgQue, msgInfo, src)) {
+        write_runlog(ERROR,
+            "recv queue is full, close connection sock [fd=%d], type is %d, nodeid %u.\n",
+            con->port->sock, con->port->remote_type, con->port->node_id);
+        FreeBufFromMsgPool((void *)msgInfo);
+        DisableRemoveConn(con);
+        return false;
+    }
+    uint64 t2 = GetMonotonicTimeMs();
+    thrinfo->pushRecvQueWaitTime += (uint32)(t2 - t1);
+    return true;
+}
+
 void pushMsgToQue(CM_IOThread *thrinfo, CM_Connection* con)
 {
     uint32 totalFreeCount, totalAllocCount, freeCount, allocCount, typeCount;
@@ -676,16 +693,9 @@ void pushMsgToQue(CM_IOThread *thrinfo, CM_Connection* con)
         msgInfo->msg.qtype,
         msgInfo->msg.len);
 
-    // push the message to the queue
-    uint64 t1 = GetMonotonicTimeMs();
-    msgInfo->connID.t1 = t1;
-    if (con->port->remote_type == CM_CTL) {
-        pushRecvMsg((PriMsgQues*)thrinfo->recvMsgQue, msgInfo, MsgSrcCtl);
-    } else {
-        pushRecvMsg((PriMsgQues*)thrinfo->recvMsgQue, msgInfo, MsgSrcAgent);
+    if (!PushRecvMsgToQueue(thrinfo, con, msgInfo)) {
+        return;
     }
-    uint64 t2 = GetMonotonicTimeMs();
-    thrinfo->pushRecvQueWaitTime += (uint32)(t2 - t1);
 }
 
 static bool checkMsg(CM_Connection* con)
@@ -1616,10 +1626,11 @@ void CMPerformAuthentication(CM_Connection *con)
 int get_authentication_type(const char* config_file)
 {
     char buf[BUF_LEN];
-    int type = CM_AUTH_TRUST;
+    int type = CM_AUTH_REJECT;
 
     if (config_file == NULL) {
-        return CM_AUTH_TRUST;  /* default level */
+        write_runlog(ERROR, "Invalid config file when reading cm_auth_method, use reject.\n");
+        return CM_AUTH_REJECT;
     }
 
     FILE *fd = fopen(config_file, "r");
@@ -1629,6 +1640,8 @@ int get_authentication_type(const char* config_file)
     }
 
     while (!feof(fd)) {
+        char *subStr = NULL;
+        char *saveptr1 = NULL;
         errno_t rc = memset_s(buf, BUF_LEN, 0, BUF_LEN);
         securec_check_errno(rc, (void)rc);
         (void)fgets(buf, BUF_LEN, fd);
@@ -1637,18 +1650,51 @@ int get_authentication_type(const char* config_file)
             continue;  /* skip  # comment */
         }
 
-        if (strstr(buf, "cm_auth_method") != NULL) {
-            /* check all lines */
-            if (strstr(buf, "trust") != NULL) {
-                type = CM_AUTH_TRUST;
-            }
-
-#ifdef KRB5
-            if (strstr(buf, "gss") != NULL) {
-                type = CM_AUTH_GSS;
-            }
-#endif // KRB5
+        subStr = strtok_r(buf, "=", &saveptr1);
+        if (subStr == NULL || strcmp(trim(subStr), "cm_auth_method") != 0) {
+            continue;
         }
+
+        if (saveptr1 == NULL) {
+            type = CM_AUTH_REJECT;
+            continue;
+        }
+        subStr = trim(saveptr1);
+        if (subStr == NULL) {
+            type = CM_AUTH_REJECT;
+            continue;
+        }
+        subStr = strtok_r(subStr, "#", &saveptr1);
+        if (subStr == NULL) {
+            continue;
+        }
+        subStr = strtok_r(subStr, "\n", &saveptr1);
+        if (subStr == NULL) {
+            continue;
+        }
+        subStr = strtok_r(subStr, "\r", &saveptr1);
+        if (subStr == NULL) {
+            continue;
+        }
+
+        subStr = trim(subStr);
+        if (strcmp(subStr, "trust") == 0) {
+            type = CM_AUTH_TRUST;
+            continue;
+        }
+#ifdef KRB5
+        if (strcmp(subStr, "gss") == 0) {
+            type = CM_AUTH_GSS;
+            continue;
+        }
+#endif // KRB5
+        if (strcmp(subStr, "reject") == 0) {
+            type = CM_AUTH_REJECT;
+            continue;
+        }
+
+        type = CM_AUTH_REJECT;
+        write_runlog(ERROR, "Invalid cm_auth_method '%s' in %s, use reject.\n", subStr, config_file);
     }
 
     (void)fclose(fd);

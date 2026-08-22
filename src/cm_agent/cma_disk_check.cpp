@@ -542,7 +542,7 @@ void CreateDiskHealthCheckThread()
 #ifdef ENABLE_XALARMD
     if (g_enableXalarmdFeature) {
         struct alarm_subscription_info id_filter;
-        id_filter.id_list[0] = XALARM_SLOW_DISK_ID;
+        id_filter.id_list[0] = (int)XALARM_SLOW_DISK_ID;
         id_filter.len = 1;
         g_xalarmClientId = xalarm_Register(HandleXalarm, id_filter);
         if (g_xalarmClientId < 0) {

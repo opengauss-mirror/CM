@@ -43,10 +43,10 @@ typedef struct MsgQueueSt {
 void AllocCmaMsgQueueMemory();
 void FreeMsgQueueMemory();
 
-void PushMsgToCmsSendQue(const char *msgPtr, uint32 msgLen, const char *msgInfo);
+bool PushMsgToCmsSendQue(const char *msgPtr, uint32 msgLen, const char *msgInfo);
 void PushMsgToCmsRecvQue(const char *msgPtr, uint32 msgLen);
 void PushMsgToClientSendQue(const char *msgPtr, uint32 msgLen, uint32 conId);
-void PushMsgToClientRecvQue(const char *msgPtr, uint32 msgLen, uint32 conId);
+bool PushMsgToClientRecvQue(const char *msgPtr, uint32 msgLen, uint32 conId);
 void PushMsgToAllClientSendQue(const char *msgPtr, uint32 msgLen);
 
 void CleanCmsMsgQueue();

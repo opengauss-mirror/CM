@@ -1063,7 +1063,16 @@ int CheckDatanodeSyncCommit(uint32 instd, AgentToCmserverDnSyncAvailable *syncMs
                 write_runlog(ERROR, "instd is %u, synchronous_commit is NULL.\n", instd);
                 CLEAR_AND_CLOSE_CONNECTION(nodeResult, (*curDnConn));
             }
-            rc = strcpy_s(syncMsg->syncCommit, DN_SYNC_LEN, result);
+            size_t resultLen = strlen(result);
+            if (resultLen >= sizeof(syncMsg->syncCommit)) {
+                write_runlog(ERROR,
+                    "instd is %u, synchronous_commit is too long, len is %lu, max len is %lu.\n",
+                    instd,
+                    resultLen,
+                    sizeof(syncMsg->syncCommit) - 1);
+                CLEAR_AND_CLOSE_CONNECTION(nodeResult, (*curDnConn));
+            }
+            rc = strcpy_s(syncMsg->syncCommit, sizeof(syncMsg->syncCommit), result);
             securec_check_errno(rc, (void)rc);
             write_runlog(DEBUG1, "instd is %u, result=%s, len is %lu, report_msg->syncCommit=%s.\n", instd, result,
                 strlen(result), syncMsg->syncCommit);

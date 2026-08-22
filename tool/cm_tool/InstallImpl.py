@@ -72,7 +72,7 @@ class InstallImpl:
         # IP regex (with validity check, avoid invalid IP like 256.0.0.1)
         ip_Pattern = r"^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$"
         # Domain name regex (simplified version, extendable for actual scenarios)
-        domain_pattern = r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$"
+        domain_pattern = r"^[a-zA-Z0-9_]([a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?(\.[a-zA-Z0-9_]([a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?)*$"
         if not re.match(ip_Pattern, hostname) and not re.match(domain_pattern, hostname):
             raise ValueError(f" Invalid hostname: {hostname}")
 

@@ -304,5 +304,6 @@ void getPauseStatus();
 void getWalrecordMode();
 uint32 GetLockOwnerInstanceId();
 
+status_t CheckDynamicRelationCount(uint32 relationCount, size_t *roleGroupsBytesOut);
 
 #endif

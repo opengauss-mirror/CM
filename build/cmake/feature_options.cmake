@@ -6,3 +6,5 @@ option(ENABLE_LIBPQ "add libpq client(V5) support" ON)
 option(ENABLE_KRB "add kerberos support" OFF)
 option(ENABLE_ALARM "add alarm support" ON)
 option(ENABLE_XALARMD "add xalarm plugin support" OFF)
+# When ENABLE_XALARMD is ON: match installed libxalarm header - ON=new ABI int xalarm_report_event(..., size_t len), OFF=legacy 2-parameter API
+option(ENABLE_XALARM_REPORT_EVENT_LEN "xalarm_report_event third len parameter (new libxalarm ABI)" OFF)

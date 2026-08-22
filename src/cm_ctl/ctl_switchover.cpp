@@ -656,14 +656,20 @@ static bool get_instance_role_groups(dynamicConfigHeader **header_out, dynamic_c
             break;
         }
 
-        instance_groups = (cm_instance_role_group *)malloc(sizeof(cm_instance_role_group) * header->relationCount);
+        size_t roleGroupsBytes = 0;
+        if (CheckDynamicRelationCount(header->relationCount, &roleGroupsBytes) != CM_SUCCESS) {
+            write_runlog(LOG, "Invalid relationCount %u in dynamic config file, max is %u.\n",
+                header->relationCount, MAX_DYNAMIC_CONFIG_RELATION_COUNT);
+            break;
+        }
+        instance_groups = (cm_instance_role_group *)malloc(roleGroupsBytes);
         if (instance_groups == NULL) {
             write_runlog(LOG, "Failed to malloc instance_groups\n");
             break;
         }
 
-        returnCode = read(fd, instance_groups, sizeof(cm_instance_role_group) * header->relationCount);
-        if (returnCode != (ssize_t)(sizeof(cm_instance_role_group) * header->relationCount)) {
+        returnCode = read(fd, instance_groups, roleGroupsBytes);
+        if (returnCode != (ssize_t)roleGroupsBytes) {
             write_runlog(LOG, "Failed to read instance_groups\n");
             break;
         }

@@ -1075,12 +1075,18 @@ static bool checkSyncGroups(char *syncStandbyNames, char *curSyncLists)
                 int j = 0;
                 ptr++;
                 while (*ptr != '\0' && *ptr != ')') {
+                    if (j >= CM_NODE_NAME - 1) {
+                        return false;
+                    }
                     tmpSyncNames[j++] = *ptr;
                     ptr++;
                 }
                 tmpSyncNames[j] = '\0';
                 if (!anyMode && !firstMode) {
                     matchNum = 1;
+                }
+                if (syncGroupNum >= CM_PRIMARY_STANDBY_NUM) {
+                    return false;
                 }
                 parseSyncGroup(&groups[syncGroupNum++], tmpSyncNames, matchNum);
                 if (*ptr == ')') {
@@ -1093,11 +1099,17 @@ static bool checkSyncGroups(char *syncStandbyNames, char *curSyncLists)
             } else {  //like node1,node2
                 int j = 0;
                 while (*ptr != '\0') {
+                    if (j >= CM_NODE_NAME - 1) {
+                        return false;
+                    }
                     tmpSyncNames[j++] = *ptr;
                     ptr++;
                 }
                 tmpSyncNames[j] = '\0';
                 matchNum = 1;
+                if (syncGroupNum >= CM_PRIMARY_STANDBY_NUM) {
+                    return false;
+                }
                 parseSyncGroup(&groups[syncGroupNum++], tmpSyncNames, matchNum);
             }
         }
@@ -1391,7 +1403,8 @@ void NofityCmaDoFloatIpOper(MsgRecvInfo *recvMsgInfo, const CmaWrFloatIp *floatI
 static bool IsWrFloatIpMsgValid(const MsgRecvInfo *recvMsgInfo, const CmaWrFloatIp *wrFloatIp)
 {
     if (recvMsgInfo == NULL || wrFloatIp == NULL || recvMsgInfo->connID.remoteType != CM_AGENT ||
-        recvMsgInfo->connID.agentNodeId != wrFloatIp->node || wrFloatIp->count > MAX_FLOAT_IP_COUNT ||
+        recvMsgInfo->connID.agentNodeId != wrFloatIp->node || wrFloatIp->node >= CM_NODE_MAXNUM ||
+        wrFloatIp->count > MAX_FLOAT_IP_COUNT ||
         wrFloatIp->instId != RES_INSTANCE_ID_MIN + wrFloatIp->node) {
         return false;
     }

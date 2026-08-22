@@ -77,16 +77,21 @@ bool existMsg(const PriMsgQues *priQue)
     return false;
 }
 
-void pushRecvMsg(PriMsgQues *priQue, MsgRecvInfo *msg, MsgSourceType src)
+bool pushRecvMsg(PriMsgQues *priQue, MsgRecvInfo *msg, MsgSourceType src)
 {
     Assert(src >= 0 && src < MSG_SRC_COUNT);
 
     (void)CMFairMutexLock(priQue->ques[src].fairLock, CMFairMutexType::CM_MUTEX_WRITE);
+    if (priQue->ques[src].que.size() >= MAX_MSG_IN_QUE) {
+        CMFairMutexUnLock(priQue->ques[src].fairLock);
+        return false;
+    }
     msg->connID.t2 = GetMonotonicTimeMs();
     priQue->ques[src].que.push_back((const char *)msg);
     CMFairMutexUnLock(priQue->ques[src].fairLock);
 
     (void)pthread_cond_broadcast(&priQue->msgCond);
+    return true;
 }
 
 static const MsgRecvInfo *getRecvMsgInner(PriMsgQues *priQue, MsgSourceType src, void *threadInfo)

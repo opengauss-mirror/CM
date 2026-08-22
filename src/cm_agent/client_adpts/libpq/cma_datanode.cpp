@@ -252,6 +252,7 @@ int DatanodeStatusCheck(DnStatus *dnStatus, uint32 dataNodeIndex, int32 dnProces
     }
 
     if (g_dnConn[dataNodeIndex] == NULL) {
+        write_runlog(ERROR, "DatanodeStatusCheck: g_dnConn[%u] is NULL. retry to connect.\n", dataNodeIndex);
         rcs = snprintf_s(gaussdbStatePath, MAXPGPATH, MAXPGPATH - 1, "%s/gaussdb.state", dataPath);
         securec_check_intval(rcs, (void)rcs);
         rcs = snprintf_s(redo_state_path, MAXPGPATH, MAXPGPATH - 1, "%s/redo.state", dataPath);

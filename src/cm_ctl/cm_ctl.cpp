@@ -697,12 +697,25 @@ bool do_dynamic_view()
         return false;
     }
 
+    size_t roleGroupsBytes = 0;
+    if (CheckDynamicRelationCount(g_dynamic_header->relationCount, &roleGroupsBytes) != CM_SUCCESS) {
+        write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
+            errmsg("Invalid relationCount %u in dynamic config file, max is %u.",
+                g_dynamic_header->relationCount, MAX_DYNAMIC_CONFIG_RELATION_COUNT),
+            errdetail("N/A"), errmodule(MOD_CMCTL),
+            errcause("The dynamic config file is corrupted or tampered."),
+            erraction("Please check or regenerate the dynamic config file."));
+        (void)close(fd);
+        FREE_AND_RESET(g_dynamic_header);
+        FREE_AND_RESET(g_timeline);
+        return false;
+    }
+
     cm_instance_role_group *g_instance_role_group_ptr =
-        (cm_instance_role_group *)malloc(sizeof(cm_instance_role_group) * g_dynamic_header->relationCount);
+        (cm_instance_role_group *)malloc(roleGroupsBytes);
     if (g_instance_role_group_ptr == NULL) {
         write_runlog2(FATAL, errcode(ERRCODE_OUT_OF_MEMORY),
-            errmsg("Failed to malloc memory, size = %lu.",
-                sizeof(cm_instance_role_group) * g_dynamic_header->relationCount),
+            errmsg("Failed to malloc memory, size = %lu.", roleGroupsBytes),
             errdetail("N/A"), errmodule(MOD_CMCTL), errcause("out of memeory."),
             erraction("Please check the system memory and try again."));
         (void)close(fd);
@@ -711,9 +724,8 @@ bool do_dynamic_view()
         return false;
     }
 
-    returnCode =
-        read(fd, g_instance_role_group_ptr, (g_dynamic_header->relationCount) * sizeof(cm_instance_role_group));
-    if (returnCode != (ssize_t)((g_dynamic_header->relationCount) * sizeof(cm_instance_role_group))) {
+    returnCode = read(fd, g_instance_role_group_ptr, roleGroupsBytes);
+    if (returnCode != (ssize_t)roleGroupsBytes) {
         write_runlog(FATAL, "read instance role failed!\n");
         (void)close(fd);
         FREE_AND_RESET(g_dynamic_header);

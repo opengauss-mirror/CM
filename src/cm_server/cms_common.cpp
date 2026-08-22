@@ -229,6 +229,8 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
 {
     uint32 i;
     uint32 j;
+    uint32 nodeIndex = 0;
+    uint32 nodeId = 0;
 
     if (con == NULL) {
         return false;
@@ -261,15 +263,14 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
 
     switch (remote_type) {
         case CM_AGENT:
-            {
-                uint32 nodeIndex = 0;
-                if (find_node_index_by_nodeid(con->port->node_id, &nodeIndex) != 0) {
-                    break;
-                }
-                for (j = 0; j < g_node[nodeIndex].cmAgentListenCount; j++) {
-                    if (strcmp(g_node[nodeIndex].cmAgentIP[j], peerIP) == 0) {
-                        return true;
-                    }
+            nodeId = con->port->node_id;
+            if (nodeId >= CM_MAX_CONNECTIONS || find_node_index_by_nodeid(nodeId, &nodeIndex) != 0) {
+                write_runlog(ERROR, "invalid agent nodeId(%u), sockfd=%d.\n", nodeId, con->port->sock);
+                return false;
+            }
+            for (j = 0; j < g_node[nodeIndex].cmAgentListenCount; j++) {
+                if (strcmp(g_node[nodeIndex].cmAgentIP[j], peerIP) == 0) {
+                    return true;
                 }
             }
             break;

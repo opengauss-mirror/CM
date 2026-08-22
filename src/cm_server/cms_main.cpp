@@ -929,8 +929,19 @@ static int init_new_instance_role_group_ptr(const cm_instance_role_group_0* inst
 
     int count = (int)g_dynamic_header->relationCount;
     for (int i = 0; i < count; i++) {
+        if (instance_role_group_ptr_0[i].count < 0 ||
+            instance_role_group_ptr_0[i].count > CM_PRIMARY_STANDBY_MAX_NUM_0 ||
+            instance_role_group_ptr_0[i].count > CM_PRIMARY_STANDBY_MAX_NUM) {
+            write_runlog(ERROR,
+                "legacy dynamic config instance count %d is invalid, max legacy count is %d "
+                "and current max count is %d.\n",
+                instance_role_group_ptr_0[i].count,
+                CM_PRIMARY_STANDBY_MAX_NUM_0,
+                CM_PRIMARY_STANDBY_MAX_NUM);
+            return -1;
+        }
         g_instance_role_group_ptr[i].count = instance_role_group_ptr_0[i].count;
-        for (int j = 0; j < instance_role_group_ptr_0[i].count; j++) {
+        for (int j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             g_instance_role_group_ptr[i].instanceMember[j].node = instance_role_group_ptr_0[i].instanceMember[j].node;
             g_instance_role_group_ptr[i].instanceMember[j].instanceId =
                 instance_role_group_ptr_0[i].instanceMember[j].instanceId;
@@ -944,6 +955,19 @@ static int init_new_instance_role_group_ptr(const cm_instance_role_group_0* inst
         }
     }
     return 0;
+}
+
+static bool IsDynamicRelationCountValid(uint32 relationCount)
+{
+    if (relationCount > g_cluster_total_instance_group_num || relationCount > MAX_INSTANCE_NUM) {
+        write_runlog(ERROR,
+            "dynamic config relation count %u is invalid, max static group count is %u and max runtime count is %d.\n",
+            relationCount,
+            g_cluster_total_instance_group_num,
+            MAX_INSTANCE_NUM);
+        return false;
+    }
+    return true;
 }
 
 /*
@@ -1083,6 +1107,28 @@ static int static_dynamic_config_file_check(void)
         }
         /* set version number */
         g_dynamic_header->version = CMS_CURRENT_VERSION;
+        if (!IsDynamicRelationCountValid(g_dynamic_header->relationCount)) {
+            goto read_failed;
+        }
+
+        /* Reject oversized counts before any payload read or conversion. */
+        if (dynamic_version == 0) {
+            if (g_dynamic_header->relationCount > g_cluster_total_instance_group_num ||
+                g_dynamic_header->relationCount > (uint32)MAX_INSTANCE_NUM) {
+                write_runlog(ERROR,
+                    "dynamic config relationCount %u exceeds legacy capacity %u or instance capacity %u.\n",
+                    g_dynamic_header->relationCount,
+                    g_cluster_total_instance_group_num,
+                    (uint32)MAX_INSTANCE_NUM);
+                goto read_failed;
+            }
+        } else if (g_dynamic_header->relationCount > (uint32)MAX_INSTANCE_NUM) {
+            write_runlog(ERROR,
+                "dynamic config relationCount %u exceeds current capacity %u.\n",
+                g_dynamic_header->relationCount,
+                (uint32)MAX_INSTANCE_NUM);
+            goto read_failed;
+        }
 
         if (dynamic_version == 0) {
             write_runlog(LOG,
@@ -1790,6 +1836,7 @@ static void CheckReadNoMessage(CM_Connection *con, int epollFd)
         isRecvTimeOut = true;
     }
     if (time(NULL) >= con->last_active + AUTHENTICATION_TIMEOUT || isRecvTimeOut) {
+        remove_unauthen_connection(con);
         EventDel(epollFd, con);
         if (con->port != NULL) {
             write_runlog(LOG, "connection TIMEOUT, node=[%s: %u], socket=%d, isRecvTimeOut=%d.\n",
@@ -1801,6 +1848,14 @@ static void CheckReadNoMessage(CM_Connection *con, int epollFd)
     }
 }
 
+static void CloseStartupConnection(int epollFd, CM_Connection* con, const char* logMsg)
+{
+    remove_unauthen_connection(con);
+    EventDel(epollFd, con);
+    write_runlog(LOG, "%s", logMsg);
+    ConnCloseAndFree(con);
+}
+
 void ProcessStartupPacket(int epollFd, void* arg)
 {
     int qtype;
@@ -1809,7 +1864,6 @@ void ProcessStartupPacket(int epollFd, void* arg)
         return;
     }
 
-    remove_unauthen_connection(con);
     set_socket_timeout(con->port, AUTHENTICATION_TIMEOUT);
     qtype = ReadCommand(con, "ProcessStartupPacket");
     write_runlog(DEBUG5, "Startup pack type is %d, msglen =%d len =%d ,msg:%s\n",
@@ -1819,6 +1873,7 @@ void ProcessStartupPacket(int epollFd, void* arg)
 #ifdef KRB5
             con->gss_check = false;
 #endif // KRB5
+            remove_unauthen_connection(con);
             con->last_active = time(NULL);
             con->msgFirstPartRecvTime = 0;
             if (cm_server_process_startup_packet(epollFd, con, con->inBuffer) == 0) {
@@ -1833,9 +1888,7 @@ void ProcessStartupPacket(int epollFd, void* arg)
             break;
         case 'X':
         case EOF:
-            EventDel(epollFd, con);
-            write_runlog(LOG, "connection closed by client\n");
-            ConnCloseAndFree(con);
+            CloseStartupConnection(epollFd, con, "connection closed by client\n");
             break;
 
         case TCP_SOCKET_ERROR_NO_MESSAGE:
@@ -1844,12 +1897,11 @@ void ProcessStartupPacket(int epollFd, void* arg)
             break;
 
         case TCP_SOCKET_ERROR_EPIPE:
-            EventDel(epollFd, con);
-            write_runlog(LOG, "connection was broken\n");
-            ConnCloseAndFree(con);
+            CloseStartupConnection(epollFd, con, "connection was broken\n");
             break;
 
         default:
+            remove_unauthen_connection(con);
             write_runlog(LOG, "StartupPacket read Unknown msg qtype %d, fd %d.\n", qtype, con->fd);
             EventDel(epollFd, con);
             ConnCloseAndFree(con);
@@ -2042,6 +2094,8 @@ static status_t cms_init_ssl()
     }
 
     g_sslOption.verify_peer = strlen(g_sslOption.ssl_para.ca_file) == 0 ? CM_FALSE : g_sslOption.verify_peer;
+    // Keep the server SSL config in sync with the acceptor input so mTLS is enforced when required.
+    g_sslOption.ssl_para.verify_peer = (g_sslOption.verify_peer == CM_TRUE);
     write_runlog(LOG, "cms_init_ssl verify_file_stat.\n");
     CheckFileExists();
 
@@ -2650,6 +2704,7 @@ int main(int argc, char** argv)
         write_runlog(FATAL, "init res status failed.\n");
         return -1;
     }
+    InitAllTermsFromDdb();
     if (IsCusResExist() && (InitCusResVariable() != CM_SUCCESS)) {
         write_runlog(FATAL, "init cus res variable failed.\n");
         return -1;

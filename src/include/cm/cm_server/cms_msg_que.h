@@ -36,6 +36,8 @@ enum MsgSourceType {
     MSG_SRC_COUNT
 };
 
+static const uint32 MAX_MSG_IN_QUE = 100;
+
 struct ConnID {
     int32 remoteType; // CM_AGENT,CM_CTL
     uint64 connSeq;
@@ -94,7 +96,7 @@ typedef bool (*CanProcThisMsgFunType)(void *threadInfo, const char *msgData);
 void InitMsgQue(PriMsgQues &que);
 size_t getMsgCount(PriMsgQues *priQue);
 
-void pushRecvMsg(PriMsgQues* priQue, MsgRecvInfo* msg, MsgSourceType src);
+bool pushRecvMsg(PriMsgQues* priQue, MsgRecvInfo* msg, MsgSourceType src);
 const MsgRecvInfo *getRecvMsg(PriMsgQues *priQue, MsgSourceType src, uint32 waitTime, void *threadInfo);
 bool existRecvMsg();
 

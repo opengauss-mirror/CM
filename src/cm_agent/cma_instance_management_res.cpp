@@ -81,11 +81,11 @@ static int CusResCmdExecute(const char *scriptPath, const char *oper, uint32 tim
     }
     if (WIFEXITED(status)) {
         ret = WEXITSTATUS(status);
-        write_runlog(DEBUG1, "run script command %s, ret=%d.\n", command, ret);
+        write_runlog(DEBUG1, "run script command %s %s, ret=%d.\n", scriptPath, oper, ret);
         return ret;
-    } else {
-        write_runlog(ERROR, "run system command failed %s, ret=%d, errno(%d).\n", command, WEXITSTATUS(status), errno);
     }
+
+    write_runlog(ERROR, "run system command failed %s, status=%d, errno(%d).\n", command, status, errno);
     return -1;
 }
 

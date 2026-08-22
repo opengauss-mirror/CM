@@ -261,9 +261,13 @@ bool is_valid_host(const CM_Connection* con, int remote_type)
 
     switch (remote_type) {
         case CM_AGENT:
-            for (i = 0; i < g_node_num; i++) {
-                for (j = 0; j < g_node[i].cmAgentListenCount; j++) {
-                    if (strcmp(g_node[i].cmAgentIP[j], peerIP) == 0) {
+            {
+                uint32 nodeIndex = 0;
+                if (find_node_index_by_nodeid(con->port->node_id, &nodeIndex) != 0) {
+                    break;
+                }
+                for (j = 0; j < g_node[nodeIndex].cmAgentListenCount; j++) {
+                    if (strcmp(g_node[nodeIndex].cmAgentIP[j], peerIP) == 0) {
                         return true;
                     }
                 }

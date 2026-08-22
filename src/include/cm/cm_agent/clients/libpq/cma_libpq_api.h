@@ -25,6 +25,7 @@
 #define CMA_LIBPQ_API_H
 
 #include <assert.h>
+#include <stddef.h>
 
 typedef void cltPqConn_t;
 typedef void cltPqResult_t;
@@ -63,6 +64,7 @@ const int MAXCONNINFO = 1024;
 cltPqConn_t *Connect(const char *conninfo);
 bool IsConnOk(const cltPqConn_t *conn);
 cltPqResult_t *Exec(cltPqConn_t *conn, const char *query);
+size_t EscapeStringConn(cltPqConn_t *conn, char *to, const char *from, size_t length, int *error);
 cltPqStatusType_t ResultStatus(const cltPqResult_t *res);
 void Clear(cltPqResult_t *res);
 int Ntuples(const cltPqResult_t *res);

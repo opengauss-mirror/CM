@@ -41,6 +41,7 @@ typedef char *(*PQgetvalueT)(const PGresult *res, int tupNum, int fieldNum);
 typedef ConnStatusType (*PQstatusT)(const PGconn *conn);
 typedef int (*PQsendQueryT)(PGconn *conn, const char *query);
 typedef char *(*PQerrorMessageT)(const PGconn *conn);
+typedef size_t (*PQescapeStringConnT)(PGconn *conn, char *to, const char *from, size_t length, int *error);
 
 typedef struct StatusTypeRelationT {
     cltPqStatusType_t me;
@@ -69,6 +70,7 @@ typedef struct LibpqApiT {
     PQgetvalueT getvalue;
     PQsendQueryT sendQuery;
     PQerrorMessageT errorMsg;
+    PQescapeStringConnT escapeStringConn;
 } LibpqApi;
 
 static LibpqApi g_libpqApi = {0, false};
@@ -88,6 +90,7 @@ static void LoadLibpqApi(LIB_HANDLE h)
     LIB_GETSYMBOL(h, "PQgetvalue", g_libpqApi.getvalue, PQgetvalueT);
     LIB_GETSYMBOL(h, "PQsendQuery", g_libpqApi.sendQuery, PQsendQueryT);
     LIB_GETSYMBOL(h, "PQerrorMessage", g_libpqApi.errorMsg, PQerrorMessageT);
+    LIB_GETSYMBOL(h, "PQescapeStringConn", g_libpqApi.escapeStringConn, PQescapeStringConnT);
 }
 
 static status_t LoadLibpq()
@@ -155,6 +158,11 @@ int Status(const cltPqConn_t *conn)
 cltPqResult_t *Exec(cltPqConn_t *conn, const char *query)
 {
     return (cltPqResult_t *)g_libpqApi.exec((PGconn *)conn, query);
+}
+
+size_t EscapeStringConn(cltPqConn_t *conn, char *to, const char *from, size_t length, int *error)
+{
+    return g_libpqApi.escapeStringConn((PGconn *)conn, to, from, length, error);
 }
 
 cltPqStatusType_t ResultStatus(const cltPqResult_t *res)

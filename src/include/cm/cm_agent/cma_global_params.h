@@ -163,6 +163,7 @@ extern char g_cmClusterReplacePath[MAX_PATH_LEN];
 extern char system_call_log[MAXPGPATH];
 extern char g_unixSocketDirectory[MAXPGPATH];
 extern char g_votingDiskPath[MAX_PATH_LEN];
+extern volatile bool g_votingDiskInited;
 extern char g_logBasePath[MAXPGPATH];
 extern char g_enableCnAutoRepair[BOOL_STR_MAX_LEN];
 extern char g_enableOnlineOrOffline[BOOL_STR_MAX_LEN];

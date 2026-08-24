@@ -112,7 +112,7 @@ void process_agent_to_cm_current_time_msg(const agent_to_cm_current_time_report*
 void process_agent_to_cm_kerberos_status_report_msg(
     agent_to_cm_kerberos_status_report *agent_to_cm_kerberos_status_ptr);
 void process_agent_to_cm_fenced_UDF_status_report_msg(
-    const agent_to_cm_fenced_UDF_status_report* agent_to_cm_fenced_UDF_status_ptr);
+    MsgRecvInfo *recvMsgInfo, const agent_to_cm_fenced_UDF_status_report* agent_to_cm_fenced_UDF_status_ptr);
 void ProcessCtlToCmQueryGlobalBarrierMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtlToCmQueryBarrierMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtlToCmQueryKickStatMsg(MsgRecvInfo* recvMsgInfo);

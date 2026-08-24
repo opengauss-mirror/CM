@@ -25,6 +25,7 @@
 #include <sys/vfs.h>
 #include <sys/wait.h>
 #include <string>
+#include <cstring>
 #include <algorithm>
 #include "cm/cm_c.h"
 #include "cm/cm_elog.h"
@@ -40,6 +41,11 @@
 #include "cma_disk_check.h"
 
 static const int DISK_USAGE_DEFAULT_THRESHOLD = 90;
+
+static bool IsBarrierStringValid(const char *barrier)
+{
+    return barrier != NULL && memchr(barrier, '\0', BARRIERLEN) != NULL;
+}
 
 void save_thread_id(pthread_t thrId)
 {
@@ -1231,7 +1237,7 @@ static void RefreshQueryBarrier(const cm_to_agent_barrier_info *barrierRespMsg)
     /* updata queryBarrier */
     if (g_agentQueryBarrier[0] == '\0' ||
         strncmp(g_agentQueryBarrier, barrierRespMsg->queryBarrier, BARRIERLEN - 1) < 0) {
-        rc = memcpy_s(g_agentQueryBarrier, BARRIERLEN - 1, barrierRespMsg->queryBarrier, BARRIERLEN - 1);
+        rc = strcpy_s(g_agentQueryBarrier, BARRIERLEN, barrierRespMsg->queryBarrier);
         securec_check_errno(rc, (void)rc);
         write_runlog(LOG, "[RefreshQueryBarrier]querybarrier info refresh, querybarrier: %s.\n", g_agentQueryBarrier);
     } else {
@@ -1254,7 +1260,7 @@ static void RefreshTargetBarrier(const cm_to_agent_barrier_info *barrierRespMsg)
     /* update targetBarrier */
     if (g_agentTargetBarrier[0] == '\0' ||
         strncmp(g_agentTargetBarrier, barrierRespMsg->targetBarrier, BARRIERLEN - 1) < 0) {
-        rc = memcpy_s(g_agentTargetBarrier, BARRIERLEN - 1, barrierRespMsg->targetBarrier, BARRIERLEN - 1);
+        rc = strcpy_s(g_agentTargetBarrier, BARRIERLEN, barrierRespMsg->targetBarrier);
         securec_check_errno(rc, (void)rc);
         write_runlog(LOG, "[RefreshTargetBarrier]targetbarrier info refresh, targetbarrier: %s.\n",
             g_agentTargetBarrier);
@@ -1267,6 +1273,11 @@ static void RefreshTargetBarrier(const cm_to_agent_barrier_info *barrierRespMsg)
 
 int ProcessDnBarrierInfoResp(const cm_to_agent_barrier_info *barrierRespMsg)
 {
+    if (barrierRespMsg == NULL || !IsBarrierStringValid(barrierRespMsg->queryBarrier) ||
+        !IsBarrierStringValid(barrierRespMsg->targetBarrier)) {
+        write_runlog(ERROR, "invalid barrier response: barrier value is not NUL terminated.\n");
+        return -1;
+    }
     RefreshQueryBarrier(barrierRespMsg);
     RefreshTargetBarrier(barrierRespMsg);
     return 0;

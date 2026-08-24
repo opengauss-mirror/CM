@@ -1830,7 +1830,8 @@ static bool DyPrimaryIsUnheal(DnArbCtx *ctx, const char *str)
     /* instance is doing other command, cannot restart the dynamic primary */
     bool res = IsInstanceNoCmd(ctx, str);
     if (!res) {
-        return false;
+        /* A pending command blocks arbitration; do not change the static primary. */
+        return true;
     }
     res = MoreDyPrimary(ctx, str);
     if (res) {

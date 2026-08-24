@@ -21,6 +21,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <cstring>
 #include "cm/cm_elog.h"
 #include "cma_connect.h"
 #include "cma_connect_client.h"
@@ -239,11 +240,26 @@ static inline void UpdateResStatusList(CmResStatList *resStat, const OneResStatL
     (void)pthread_rwlock_unlock(&(resStat->rwlock));
 }
 
-void ProcessResStatusList(const CmsReportResStatList *msg)
+static bool IsResStatusListValid(const CmsReportResStatList *msg)
 {
+    if (msg == NULL) {
+        return false;
+    }
     if (msg->resList.instanceCount > CM_MAX_RES_INST_COUNT) {
         write_runlog(ERROR, "cms send to cma, custom resource instance count (%u) is unavail, range[0, %d].\n",
             msg->resList.instanceCount, CM_MAX_RES_INST_COUNT);
+        return false;
+    }
+    if (memchr(msg->resList.resName, '\0', CM_MAX_RES_NAME) == NULL) {
+        write_runlog(ERROR, "cms send to cma, resource name is not NUL terminated.\n");
+        return false;
+    }
+    return true;
+}
+
+void ProcessResStatusList(const CmsReportResStatList *msg)
+{
+    if (!IsResStatusListValid(msg)) {
         return;
     }
 
@@ -259,6 +275,9 @@ void ProcessResStatusList(const CmsReportResStatList *msg)
 
 void ProcessResStatusChanged(const CmsReportResStatList *msg)
 {
+    if (!IsResStatusListValid(msg)) {
+        return;
+    }
     ProcessResStatusList(msg);
     uint32 index = 0;
     if (GetGlobalResStatusIndex(msg->resList.resName, index) != CM_SUCCESS) {

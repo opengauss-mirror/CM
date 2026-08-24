@@ -113,8 +113,14 @@ static void TriggerSharedStorageFastElectionIfNeed(const AgentToCmPanicRebootAla
 }
 
 void process_agent_to_cm_fenced_UDF_status_report_msg(
-    const agent_to_cm_fenced_UDF_status_report *agent_to_cm_fenced_UDF_status_ptr)
+    MsgRecvInfo *recvMsgInfo, const agent_to_cm_fenced_UDF_status_report *agent_to_cm_fenced_UDF_status_ptr)
 {
+    if (recvMsgInfo == NULL || agent_to_cm_fenced_UDF_status_ptr == NULL ||
+        recvMsgInfo->connID.remoteType != CM_AGENT ||
+        recvMsgInfo->connID.agentNodeId != agent_to_cm_fenced_UDF_status_ptr->nodeid) {
+        write_runlog(ERROR, "reject fenced UDF report because message node does not match Agent connection.\n");
+        return;
+    }
     if (agent_to_cm_fenced_UDF_status_ptr->nodeid >= CM_NODE_MAXNUM) {
         write_runlog(ERROR, "udf nodeId(%u) is more than %d, cannot get udf report msg.\n",
             agent_to_cm_fenced_UDF_status_ptr->nodeid, CM_NODE_MAXNUM);
@@ -1394,8 +1400,23 @@ void NofityCmaDoFloatIpOper(MsgRecvInfo *recvMsgInfo, const CmaWrFloatIp *floatI
     (void)RespondMsg(recvMsgInfo, 'S', (const char *)(&ack), sizeof(CmsWrFloatIpAck));
 }
 
+static bool IsWrFloatIpMsgValid(const MsgRecvInfo *recvMsgInfo, const CmaWrFloatIp *wrFloatIp)
+{
+    if (recvMsgInfo == NULL || wrFloatIp == NULL || recvMsgInfo->connID.remoteType != CM_AGENT ||
+        recvMsgInfo->connID.agentNodeId != wrFloatIp->node || wrFloatIp->node >= CM_NODE_MAXNUM ||
+        wrFloatIp->count > MAX_FLOAT_IP_COUNT ||
+        wrFloatIp->instId != RES_INSTANCE_ID_MIN + wrFloatIp->node) {
+        return false;
+    }
+    return true;
+}
+
 void ArbitateWrFloatIp(MsgRecvInfo *recvMsgInfo, const CmaWrFloatIp *wrFloatIp)
 {
+    if (!IsWrFloatIpMsgValid(recvMsgInfo, wrFloatIp)) {
+        write_runlog(ERROR, "reject WR float IP report because message identity or count is invalid.\n");
+        return;
+    }
     uint32 ownerInstanceId = GetLockOwnerInstanceId();
     if (ownerInstanceId == wrFloatIp->instId) {
         for (uint32 i = 0; i < wrFloatIp->count; i++) {

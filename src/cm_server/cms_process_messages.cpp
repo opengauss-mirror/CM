@@ -1502,8 +1502,8 @@ static void MsgDataInstanceReport(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgP
 static void MsgFencedUdf(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)
 {
     agent_to_cm_fenced_UDF_status_report *agentToCmFencedUdfStatusPtr;
-    PROCESS_MSG_BY_TYPE_WITHOUT_CONN(agent_to_cm_fenced_UDF_status_report, agentToCmFencedUdfStatusPtr,
-        process_agent_to_cm_fenced_UDF_status_report_msg);
+    PROCESS_MSG_BY_TYPE(agent_to_cm_fenced_UDF_status_report, agentToCmFencedUdfStatusPtr,
+        process_agent_to_cm_fenced_UDF_status_report_msg, recvMsgInfo, msgType);
 }
 
 static void MsgHeatbeat(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msgProc)

@@ -52,6 +52,24 @@ const char *RoleCandicate = "CANDIDATE";
 
 static int g_errCountPgStatBadBlock[CM_MAX_DATANODE_PER_NODE] = {0};
 
+static int EscapeBarrierForSql(cltPqConn_t *conn, const char *barrier, char *escapedBarrier, size_t escapedLen)
+{
+    if (conn == NULL || barrier == NULL || escapedBarrier == NULL || escapedLen == 0) {
+        return -1;
+    }
+
+    int error = 0;
+    size_t barrierLen = strlen(barrier);
+    size_t resultLen = EscapeStringConn(conn, escapedBarrier, barrier, barrierLen, &error);
+    if (error != 0 || resultLen >= escapedLen) {
+        write_runlog(ERROR, "failed to escape barrier value for SQL, error=%d, resultLen=%lu.\n",
+            error, (unsigned long)resultLen);
+        return -1;
+    }
+    escapedBarrier[resultLen] = '\0';
+    return 0;
+}
+
 static void fill_sql6_report_msg1(agent_to_cm_datanode_status_report* report_msg, const cltPqResult_t* node_result)
 {
     int rc = sscanf_s(Getvalue(node_result, 0, 0), "%lu", &(report_msg->parallel_redo_status.redo_start_ptr));
@@ -1113,6 +1131,7 @@ int StandbyClusterCheckQueryBarrierID(cltPqConn_t* &conn, AgentToCmBarrierStatus
 {
     char *tmpResult = NULL;
     char queryBarrier[BARRIERLEN] = {0};
+    char escapedQueryBarrier[BARRIERLEN * 2 + 1] = {0};
     char sqlCommand[MAX_PATH_LEN] = {0};
 
     errno_t rc = memcpy_s(queryBarrier, BARRIERLEN - 1, g_agentQueryBarrier, BARRIERLEN - 1);
@@ -1128,8 +1147,11 @@ int StandbyClusterCheckQueryBarrierID(cltPqConn_t* &conn, AgentToCmBarrierStatus
         barrierInfo->is_barrier_exist = true;
         return 0;
     }
+    if (EscapeBarrierForSql(conn, queryBarrier, escapedQueryBarrier, sizeof(escapedQueryBarrier)) != 0) {
+        return -1;
+    }
     rc = snprintf_s(sqlCommand, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-        "select pg_catalog.gs_query_standby_cluster_barrier_id_exist('%s');", queryBarrier);
+        "select pg_catalog.gs_query_standby_cluster_barrier_id_exist('%s');", escapedQueryBarrier);
     securec_check_intval(rc, (void)rc);
     cltPqResult_t *nodeResult = Exec(conn, sqlCommand);
     if (nodeResult == NULL) {
@@ -1166,6 +1188,7 @@ int StandbyClusterSetTargetBarrierID(cltPqConn_t* &conn)
     int maxRows = 0;
     char *tmpResult = NULL;
     char targetBarrier[BARRIERLEN] = {0};
+    char escapedTargetBarrier[BARRIERLEN * 2 + 1] = {0};
     char sqlCommand[MAX_PATH_LEN] = {0};
     int rc;
     // need locked
@@ -1175,8 +1198,11 @@ int StandbyClusterSetTargetBarrierID(cltPqConn_t* &conn)
         write_runlog(LOG, "target barrier is NULL when setting it.\n");
         return 0;
     }
+    if (EscapeBarrierForSql(conn, targetBarrier, escapedTargetBarrier, sizeof(escapedTargetBarrier)) != 0) {
+        return -1;
+    }
     rc = snprintf_s(sqlCommand, MAX_PATH_LEN, MAX_PATH_LEN - 1,
-        "select pg_catalog.gs_set_standby_cluster_target_barrier_id('%s');", targetBarrier);
+        "select pg_catalog.gs_set_standby_cluster_target_barrier_id('%s');", escapedTargetBarrier);
     securec_check_intval(rc, (void)rc);
     cltPqResult_t *nodeResult = Exec(conn, sqlCommand);
     if (nodeResult == NULL) {

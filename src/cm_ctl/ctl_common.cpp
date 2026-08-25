@@ -185,7 +185,12 @@ int ssh_exec(const staticNodeConfig* node, const char* cmd, int32 logLevel)
     int rc = -1;
     int ret;
 
+    if (mpp_env_separate_file[0] != '\0') {
+        check_shell_param_for_security(mpp_env_separate_file);
+    }
+
     for (uint32 ii = 0; ii < node->sshCount; ii++) {
+        check_shell_param_for_security(node->sshChannel[ii]);
         if (mpp_env_separate_file[0] == '\0') {
             ret = snprintf_s(actualCmd, MAX_COMMAND_LEN, MAX_COMMAND_LEN - 1,
                 "pssh %s -s -H %s \"( %s ) > %s 2>&1\" > /dev/null 2>&1",
@@ -1370,6 +1375,10 @@ void exec_system_ssh(uint32 remote_nodeid, const char *cmd, int *result, const c
     }
 
     if (g_node[remote_nodeid].sshCount != 0) {
+        check_shell_param_for_security(g_node[remote_nodeid].sshChannel[0]);
+        if (mppEnvSeperateFile[0] != '\0') {
+            check_shell_param_for_security(mppEnvSeperateFile);
+        }
         if (mppEnvSeperateFile[0] == '\0') {
             ret = snprintf_s(command, MAXPGPATH, MAXPGPATH - 1, "pssh %s -s -H %s \"%s", PSSH_TIMEOUT_OPTION,
                              g_node[remote_nodeid].sshChannel[0], cmd);

@@ -731,6 +731,13 @@ restop:
             "You can wait for a while and check whether the instance stops, or immediately stop the instance using "
             "\"cm_ctl stop -D <datapath> -m i\".\n",
             g_waitSeconds);
+    } else {
+        write_runlog(ERROR,
+            "stop command failed in (%d)s!\n\n"
+            "HINT: Maybe the stop operation is still running in the background.\n"
+            "You can wait for a while and check whether the stop completes, or retry the stop using "
+            "\"cm_ctl stop -m i\".\n",
+            g_waitSeconds);
     }
 
     exit(-1);

@@ -51,6 +51,7 @@ extern "C" {
 #endif
 #include "cjson/cJSON.h"
 #include "cma_xalarm_event_compat.h"
+#include "cma_ub_fence.h"
 struct alarm_register *g_xalarmEventRegister = NULL;
 static const uint32 XALARM_TYPE_OCCUR = 1;
 static const uint32 XALARM_TYPE_RECOVER = 2;
@@ -1643,48 +1644,40 @@ static void PingPeerIP(int* count, const char localIP[CM_IP_LENGTH], const char 
     return;
 }
 
-void* DNConnectionStatusCheckMain(void *arg)
+void GetPingSuccessCount(int i, int* count)
 {
-    int i = *(int*)arg;
-    pthread_t threadId = pthread_self();
-
-    if (g_currentNode->datanode[i].datanodeListenCount == 1 &&
-        g_currentNode->datanode[i].datanodeLocalHAListenCount == 1 &&
-        strcmp(g_currentNode->datanode[i].datanodeListenIP[0], g_currentNode->datanode[i].datanodeLocalHAIP[0]) == 0) {
-        write_runlog(LOG, "datanodeListenIP is same with datanodeLocalHAIP no need connection status check.\n");
-        return NULL;
-    }
-    if (g_single_node_cluster || IsBoolCmParamTrue(g_agentEnableDcf)) {
-        return NULL;
-    }
-    write_runlog(LOG, "dn(%d) connection status check thread start, threadid %lu.\n", i, threadId);
-    for (;;) {
-        set_thread_state(threadId);
-        if (g_shutdownRequest) {
-            cm_sleep(5);
-            continue;
+    if (g_multi_az_cluster) {
+        for (uint32 j = 0; j < g_dn_replication_num - 1; ++j) {
+            PingPeerIP(count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
+                       g_currentNode->datanode[i].peerDatanodes[j].datanodePeerHAIP[0]);
         }
+    } else {
+        PingPeerIP(count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
+                   g_currentNode->datanode[i].datanodePeerHAIP[0]);
+        PingPeerIP(count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
+                   g_currentNode->datanode[i].datanodePeer2HAIP[0]);
+    }
+}
 
-        if (!g_mostAvailableSync[i]) {
-            int count = 0;
-            if (g_multi_az_cluster) {
-                for (uint32 j = 0; j < g_dn_replication_num - 1; ++j) {
-                    PingPeerIP(&count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
-                        g_currentNode->datanode[i].peerDatanodes[j].datanodePeerHAIP[0]);
-                }
-            } else {
-                PingPeerIP(&count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
-                    g_currentNode->datanode[i].datanodePeerHAIP[0]);
-                PingPeerIP(&count, g_currentNode->datanode[i].datanodeLocalHAIP[0],
-                    g_currentNode->datanode[i].datanodePeer2HAIP[0]);
+void CheckDNConnectionStatus(int i, int alarmIndex, const char *instanceName)
+{
+    if (!g_mostAvailableSync[i]) {
+        int count = 0;
+        GetPingSuccessCount(i, &count);
+        if (count == 0) {
+            write_runlog(LOG, "dn(%u) is disconnected from other dn.\n", g_currentNode->datanode[i].datanodeId);
+            bool networkPartitionSuspected = false;
+            if (!g_isPauseArbitration) {
+                networkPartitionSuspected = ShouldKillPrimaryOnDnPingAllFailed();
             }
-            if (count == 0) {
-                write_runlog(LOG, "dn(%u) is disconnected from other dn.\n", g_currentNode->datanode[i].datanodeId);
-                g_dnPingFault[i] = true;
-                if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY  && 
-                    !g_isPauseArbitration) {
-                    immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
-                }
+            /*
+             * Only mark ping fault when network partition is suspected (peer still alive on voting disk).
+             * When peer is down (e.g. reboot), ping fails but local primary should keep normal status.
+             */
+            g_dnPingFault[i] = networkPartitionSuspected;
+            if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+                networkPartitionSuspected) {
+                immediate_stop_one_instance(g_currentNode->datanode[i].datanodeLocalDataPath, INSTANCE_DN);
             } else {
                 g_dnPingFault[i] = false;
             }
@@ -1694,6 +1687,40 @@ void* DNConnectionStatusCheckMain(void *arg)
 
         cm_sleep(agent_report_interval);
     }
+}
+
+void* DNConnectionStatusCheckMain(void *arg)
+{
+    int i = *(int*)arg;
+    int alarmIndex = i;
+    char instanceName[CM_NODE_NAME] = {0};
+    pthread_t threadId = pthread_self();
+
+    if ((i < 0) || (i >= CM_MAX_DATANODE_PER_NODE)) {
+        write_runlog(ERROR, "DN index [%d] is invalid, failed to start DNConnection thread.\n", i);
+        return NULL;
+    }
+    if (g_single_node_cluster || IsBoolCmParamTrue(g_agentEnableDcf)) {
+        write_runlog(LOG, "instanceId(%u) is single node cluster or in dcf mode, no need connection status check.\n",
+            g_currentNode->datanode[i].datanodeId);
+        return NULL;
+    }
+    write_runlog(LOG, "dn(%d) connection status check thread start, threadid %lu.\n", i, threadId);
+    int ret = snprintf_s(instanceName, sizeof(instanceName), sizeof(instanceName) - 1,
+        "%s_%u", "dn", g_currentNode->datanode[i].datanodeId);
+    securec_check_intval(ret, (void)ret);
+    for (;;) {
+        set_thread_state(threadId);
+        if (g_shutdownRequest) {
+            cm_sleep(5);
+            continue;
+        }
+        CheckDNConnectionStatus(i, alarmIndex, instanceName);
+        if (g_mostAvailableSync[i]) {
+            cm_sleep(agent_report_interval);
+        }
+    }
+    return NULL;
 }
 
 static bool IsDeviceNameSame(const char *device, int deviceCount, char * const *deviceName)
@@ -2292,6 +2319,12 @@ static bool IsNeedProcessXalarmEvent(int alarmId)
     return (alarmId == (int)XALARM_PANIC_EVENT_ID || alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
 }
 
+static bool IsXalarmUbFenceTriggerEvent(int alarmId)
+{
+    return (alarmId == (int)XALARM_REBOOT_EVENT_ID || alarmId == (int)XALARM_PANIC_EVENT_ID ||
+        alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
+}
+
 static bool IsXalarmEarlyAckEvent(int alarmId)
 {
     return (alarmId == (int)XALARM_PANIC_EVENT_ID || alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
@@ -2400,6 +2433,13 @@ static bool WaitCmsPrimarySwitchByConnect(uint32 alarmNodeId, uint32 timeoutMs)
         if (g_shutdownRequest || g_exitFlag) {
             return false;
         }
+        if (agent_cm_server_connect != NULL && g_serverNodeId != 0 && g_serverNodeId < CM_NODE_MAXNUM &&
+            g_serverNodeId != alarmNodeId) {
+            write_runlog(LOG,
+                "confirm cms primary switched by long conn, alarmNodeId=%u, currentPrimaryNodeId=%u.\n",
+                alarmNodeId, g_serverNodeId);
+            return true;
+        }
         CM_Conn *primaryConn = GetConnToCmserver(0);
         if (primaryConn != NULL) {
             uint32 primaryNodeId = g_serverNodeId;
@@ -2447,15 +2487,35 @@ static void SendXalarmEventToLocalCms(const AgentToCmPanicRebootAlarmReport *ala
     CMPQfinish(localConn);
 }
 
+static bool RefreshPrimaryCmsNodeId(void)
+{
+    if (g_serverNodeId != 0 && g_serverNodeId < CM_NODE_MAXNUM) {
+        return true;
+    }
+    CM_Conn *discoverConn = GetConnToCmserver(0);
+    if (discoverConn == NULL) {
+        return false;
+    }
+    CMPQfinish(discoverConn);
+    return (g_serverNodeId != 0 && g_serverNodeId < CM_NODE_MAXNUM);
+}
+
 static bool SendXalarmEventToPrimaryCms(const AgentToCmPanicRebootAlarmReport *alarmMsg)
 {
     const uint32 retryCount = 10;
     const uint32 retryIntervalMs = 500;
+
     for (uint32 i = 0; i < retryCount; ++i) {
         if (g_shutdownRequest || g_exitFlag) {
             return false;
         }
-        CM_Conn *primaryConn = GetConnToCmserver(0);
+        if (g_serverNodeId == 0 || g_serverNodeId >= CM_NODE_MAXNUM) {
+            if (!RefreshPrimaryCmsNodeId()) {
+                CmUsleep(retryIntervalMs * MICROSECONDS_PER_MILLISECOND);
+                continue;
+            }
+        }
+        CM_Conn *primaryConn = GetConnToCmserverOnNode(g_serverNodeId);
         if (primaryConn != NULL) {
             AgentToCmPanicRebootAlarmReport primaryAlarmMsg = *alarmMsg;
             primaryAlarmMsg.msgType = MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY;
@@ -2470,6 +2530,10 @@ static bool SendXalarmEventToPrimaryCms(const AgentToCmPanicRebootAlarmReport *a
             }
             write_runlog(ERROR, "xalarm event report to primary cms failed, retry=%u, alarmId=%u.\n",
                 i + 1, alarmMsg->alarmId);
+        } else {
+            write_runlog(ERROR, "xalarm event connect to primary cms node %u failed, retry=%u, alarmId=%u.\n",
+                g_serverNodeId, i + 1, alarmMsg->alarmId);
+            (void)RefreshPrimaryCmsNodeId();
         }
         CmUsleep(retryIntervalMs * MICROSECONDS_PER_MILLISECOND);
     }
@@ -2487,6 +2551,10 @@ static void ProcessXalarmFaultFlow(struct alarm_info *param, int alarmId, uint32
         return;
     }
     write_runlog(LOG, "xalarm desc, alarmId=%d, desc=%s.\n", alarmId, alarmDesc);
+
+    if (IsXalarmUbFenceTriggerEvent(alarmId)) {
+        TriggerLocalUbFenceOnXalarm(alarmNodeId);
+    }
 
     AgentToCmPanicRebootAlarmReport alarmMsg = {0};
     alarmMsg.msgType = MSG_AGENT_CM_PANIC_REBOOT_ALARM;

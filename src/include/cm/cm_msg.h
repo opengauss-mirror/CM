@@ -282,9 +282,16 @@ typedef enum CM_MessageType_st {
     MSG_AGENT_CM_PANIC_REBOOT_ALARM = 195,
     MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY = 196,
     MSG_CM_AGENT_CMS_PRIMARY_READY_ACK = 197,
+    MSG_CM_AGENT_UB_FENCE = 198,
+    MSG_AGENT_CM_UB_FENCE_ACK = 199,
 
     MSG_CM_TYPE_CEIL,  // new message types should be added before this.
 } CM_MessageType;
+
+#define UB_FENCE_ACK_OK 0
+#define UB_FENCE_ACK_TIMEOUT 1
+#define UB_FENCE_ACK_FAIL 2
+#define UB_FENCE_ACK_SKIP 3
 
 #define UNDEFINED_LOCKMODE 0
 #define POLLING_CONNECTION 1
@@ -1462,6 +1469,22 @@ typedef struct cm_to_agent_cms_primary_ready_ack_st {
     uint32 primaryNodeId;
     int64 notifyTime;
 } cm_to_agent_cms_primary_ready_ack;
+
+typedef struct cm_to_agent_ub_fence_st {
+    int msg_type;
+    uint32 faultNodeId;
+    uint64 fenceSeq;
+    uint32 timeoutMs;
+} cm_to_agent_ub_fence;
+
+typedef struct agent_to_cm_ub_fence_ack_st {
+    int msg_type;
+    uint32 sourceNodeId;
+    uint32 faultNodeId;
+    uint64 fenceSeq;
+    int ackResult;
+    int sigbusSent;
+} agent_to_cm_ub_fence_ack;
 
 typedef struct cm_to_cm_vote_st {
     int msg_type;

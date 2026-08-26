@@ -62,6 +62,7 @@ char g_enableOnlineOrOffline[BOOL_STR_MAX_LEN] = {0};
 char g_enableIncrementalBuild[BOOL_STR_MAX_LEN] = {0};
 char g_unixSocketDirectory[MAXPGPATH] = {'\0'};
 char g_votingDiskPath[MAX_PATH_LEN] = {0};
+volatile bool g_votingDiskInited = false;
 char g_enableCnAutoRepair[BOOL_STR_MAX_LEN] = {0};
 /* root directory of trace */
 char g_logBasePath[MAXPGPATH];

@@ -37,6 +37,7 @@
 CM_Conn* agent_cm_server_connect = NULL;
 
 int g_connCmServerTimes = 0;
+static const uint32 MICROSECONDS_PER_MILLISECOND = 1000;
 extern uint32 g_serverNodeId;
 
 static status_t CmaSendMsg(CM_Conn *conn, char msgtype, const char *s, size_t lenmsg)
@@ -410,6 +411,98 @@ CM_Conn* GetConnToLocalCmserver(void)
         }
     }
     return NULL;
+}
+
+CM_Conn* GetConnToCmserverOnNode(uint32 cmsNodeId)
+{
+    if (g_currentNode == NULL || cmsNodeId == 0 || cmsNodeId >= CM_NODE_MAXNUM) {
+        return NULL;
+    }
+
+    uint32 nodeIndex = INVALID_NODE_NUM;
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        if (g_node[i].node == cmsNodeId) {
+            nodeIndex = i;
+            break;
+        }
+    }
+    if (nodeIndex == INVALID_NODE_NUM || g_node[nodeIndex].cmServerLevel != 1) {
+        write_runlog(ERROR, "GetConnToCmserverOnNode: invalid cms node id %u.\n", cmsNodeId);
+        return NULL;
+    }
+
+    CM_Conn* conn = NULL;
+    char connstr[3][CONNSTR_LEN];
+    int rc;
+    int rcs;
+    int connTimeOut = (int)agent_connect_timeout;
+    if (connTimeOut < MAX_CONN_TIMEOUT) {
+        connTimeOut = MAX_CONN_TIMEOUT;
+    }
+
+    for (uint32 ii = 0; ii < g_node[nodeIndex].cmServerListenCount; ++ii) {
+        for (uint32 jj = 0; jj < g_currentNode->cmAgentListenCount; ++jj) {
+            rc = memset_s(connstr[jj], CONNSTR_LEN, 0, CONNSTR_LEN);
+            securec_check_errno(rc, (void)rc);
+            rcs = snprintf_s(connstr[jj], CONNSTR_LEN, CONNSTR_LEN - 1,
+                "host=%s port=%u localhost=%s connect_timeout=%d node_id=%u node_name=%s remote_type=%d postmaster=1",
+                g_node[nodeIndex].cmServer[ii], g_node[nodeIndex].port, g_currentNode->cmAgentIP[jj], connTimeOut,
+                g_currentNode->node, g_currentNode->nodeName, CM_AGENT);
+            securec_check_intval(rcs, (void)rcs);
+
+            conn = PQconnectCM(connstr[jj]);
+            if (conn == NULL || CMPQstatus(conn) != CONNECTION_OK) {
+                CMPQfinish(conn);
+                conn = NULL;
+                continue;
+            }
+
+            write_runlog(DEBUG1, "connect cm_server node %u and try ssl: %s\n", cmsNodeId, connstr[jj]);
+            if (TryGetSslConnToCmserver(conn, connTimeOut) != CM_SUCCESS) {
+                CMPQfinish(conn);
+                conn = NULL;
+                continue;
+            }
+            return conn;
+        }
+    }
+
+    write_runlog(ERROR, "GetConnToCmserverOnNode: connect to cms node %u failed.\n", cmsNodeId);
+    return NULL;
+}
+
+bool EnsureAgentCmsLongConnection(uint32 timeoutMs)
+{
+    const uint32 pollIntervalMs = 100;
+    const uint32 settleMs = 300;
+    uint32 waitedMs = 0;
+
+    /*
+     * xalarm probe connections (GetConnToCmserver for primary discovery) may replace
+     * then clear CMS gConns slot. Force agent long conn refresh so CMS re-registers
+     * the persistent connection before ub fence is triggered.
+     */
+    g_cmServerNeedReconnect = true;
+
+    while (waitedMs < timeoutMs) {
+        if (g_shutdownRequest || g_exitFlag) {
+            return false;
+        }
+        if (agent_cm_server_connect != NULL && agent_cm_server_connect->status == CONNECTION_OK &&
+            !g_cmServerNeedReconnect) {
+            CmUsleep(settleMs * MICROSECONDS_PER_MILLISECOND);
+            write_runlog(LOG,
+                "ensure cms long connection ready, serverNodeId=%u, waited=%u ms.\n",
+                g_serverNodeId, waitedMs);
+            return true;
+        }
+        CmUsleep(pollIntervalMs * MICROSECONDS_PER_MILLISECOND);
+        waitedMs += pollIntervalMs;
+    }
+
+    write_runlog(WARNING, "ensure cms long connection timeout, waited=%u ms.\n", timeoutMs);
+    return (agent_cm_server_connect != NULL && agent_cm_server_connect->status == CONNECTION_OK &&
+        !g_cmServerNeedReconnect);
 }
 
 static void CloseConnToCmserver(void)

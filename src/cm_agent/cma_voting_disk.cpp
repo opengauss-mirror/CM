@@ -23,7 +23,94 @@
  */
 
 #include "cma_global_params.h"
+#include "cm_config.h"
 #include "cm_voting_disk.h"
+
+/* VotingDiskMain writes heartbeat every 1s; use a short window for ping-fault decision. */
+static const uint32 VOTING_DISK_PEER_ALIVE_CHECK_INTERVAL_SEC = 2;
+
+static bool IsVotingDiskPathConfigured(void)
+{
+    return (g_votingDiskPath[0] != '\0' && strcmp(g_votingDiskPath, "\'\'") != 0);
+}
+
+static status_t ReadPeerVotingDiskHeartbeats(time_t peerTimes[VOTING_DISK_MAX_NODE_NUM], uint32 *peerCount)
+{
+    *peerCount = 0;
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        if (i == g_nodeId) {
+            continue;
+        }
+        VotingDiskNodeInfo nodeInfo = {0};
+        if (GetVotingDiskSingleNodeInfo(&nodeInfo, i) != CM_SUCCESS) {
+            return CM_ERROR;
+        }
+        peerTimes[i] = nodeInfo.nodeTime;
+        (*peerCount)++;
+    }
+    return CM_SUCCESS;
+}
+
+static bool IsPeerVotingDiskHeartbeatUpdating(time_t firstTime, time_t secondTime)
+{
+    if (secondTime > firstTime) {
+        return true;
+    }
+    if (firstTime == 0 && secondTime > 0) {
+        return true;
+    }
+    return false;
+}
+
+bool ShouldKillPrimaryOnDnPingAllFailed(void)
+{
+    uint32 alivePeerCount = 0;
+    uint32 deadPeerCount = 0;
+    if (!IsVotingDiskPathConfigured()) {
+        write_runlog(WARNING,
+            "dn ping all failed without voting disk path, local network partition suspected, kill local primary.\n");
+        return true;
+    }
+    if (!g_votingDiskInited) {
+        write_runlog(WARNING, "voting disk is not initialized yet, skip kill local primary on ping fault.\n");
+        return false;
+    }
+
+    time_t firstTimes[VOTING_DISK_MAX_NODE_NUM] = {0};
+    time_t secondTimes[VOTING_DISK_MAX_NODE_NUM] = {0};
+    uint32 peerCount = 0;
+    if (ReadPeerVotingDiskHeartbeats(firstTimes, &peerCount) != CM_SUCCESS || peerCount == 0) {
+        write_runlog(WARNING, "read peer voting disk heartbeat failed on ping fault, "
+            "local network partition suspected, kill local primary.\n");
+        return true;
+    }
+    cm_sleep(VOTING_DISK_PEER_ALIVE_CHECK_INTERVAL_SEC);
+    if (ReadPeerVotingDiskHeartbeats(secondTimes, &peerCount) != CM_SUCCESS) {
+        write_runlog(WARNING, "read peer voting disk heartbeat again failed on ping fault, "
+            "local network partition suspected, kill local primary.\n");
+        return true;
+    }
+
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        if (i == g_nodeId) {
+            continue;
+        }
+        if (IsPeerVotingDiskHeartbeatUpdating(firstTimes[i], secondTimes[i])) {
+            alivePeerCount++;
+        } else {
+            deadPeerCount++;
+        }
+    }
+
+    if (alivePeerCount > 0) {
+        write_runlog(WARNING, "dn ping all failed but %u peer(s) still update voting disk heartbeat, "
+            "local network partition suspected, kill local primary.\n", alivePeerCount);
+        return true;
+    }
+    write_runlog(LOG, "dn ping all failed and all %u peer(s) voting disk heartbeat stale, "
+        "skip kill local primary.\n", deadPeerCount);
+    return false;
+}
 
 static void StopCurrentNode()
 {
@@ -82,6 +169,7 @@ void *VotingDiskMain(void *arg)
         write_runlog(FATAL, "Init voting disk failed!\n");
         exit(-1);
     }
+    g_votingDiskInited = true;
     VotingDiskNodeInfo nodeInfo;
 
     for (;;) {

@@ -240,18 +240,15 @@ static inline void UpdateResStatusList(CmResStatList *resStat, const OneResStatL
     (void)pthread_rwlock_unlock(&(resStat->rwlock));
 }
 
-static bool IsResStatusListValid(const CmsReportResStatList *msg)
+static bool CopyAndSanitizeResStatList(CmsReportResStatList *local, const CmsReportResStatList *msg)
 {
-    if (msg == NULL) {
+    if (local == NULL || msg == NULL) {
         return false;
     }
-    if (msg->resList.instanceCount > CM_MAX_RES_INST_COUNT) {
-        write_runlog(ERROR, "cms send to cma, custom resource instance count (%u) is unavail, range[0, %d].\n",
-            msg->resList.instanceCount, CM_MAX_RES_INST_COUNT);
-        return false;
-    }
-    if (memchr(msg->resList.resName, '\0', CM_MAX_RES_NAME) == NULL) {
-        write_runlog(ERROR, "cms send to cma, resource name is not NUL terminated.\n");
+    errno_t rc = memcpy_s(local, sizeof(CmsReportResStatList), msg, sizeof(CmsReportResStatList));
+    securec_check_errno(rc, (void)rc);
+    if (!CmFixedCStrHasTerminator(local->resList.resName, CM_MAX_RES_NAME)) {
+        write_runlog(ERROR, "[CLIENT] resName is not NUL-terminated, drop the message.\n");
         return false;
     }
     return true;
@@ -259,34 +256,44 @@ static bool IsResStatusListValid(const CmsReportResStatList *msg)
 
 void ProcessResStatusList(const CmsReportResStatList *msg)
 {
-    if (!IsResStatusListValid(msg)) {
+    CmsReportResStatList local = {0};
+    if (!CopyAndSanitizeResStatList(&local, msg)) {
+        return;
+    }
+
+    if (local.resList.instanceCount > CM_MAX_RES_INST_COUNT) {
+        write_runlog(ERROR, "cms send to cma, custom resource instance count (%u) is unavail, range[0, %d].\n",
+            local.resList.instanceCount, CM_MAX_RES_INST_COUNT);
         return;
     }
 
     uint32 index = 0;
-    if (GetGlobalResStatusIndex(msg->resList.resName, index) != CM_SUCCESS) {
-        write_runlog(ERROR, "[CLIENT] ProcessResStatusList, unknown the res(%s) of client.\n", msg->resList.resName);
+    if (GetGlobalResStatusIndex(local.resList.resName, index) != CM_SUCCESS) {
+        write_runlog(ERROR, "[CLIENT] ProcessResStatusList, unknown the res(%s) of client.\n", local.resList.resName);
         return;
     }
 
-    UpdateResStatusList(&g_resStatus[index], &msg->resList);
-    PrintCusInfoResList(&msg->resList, __FUNCTION__);
+    UpdateResStatusList(&g_resStatus[index], &local.resList);
+    PrintCusInfoResList(&local.resList, __FUNCTION__);
 }
 
 void ProcessResStatusChanged(const CmsReportResStatList *msg)
 {
-    if (!IsResStatusListValid(msg)) {
+    CmsReportResStatList local = {0};
+    if (!CopyAndSanitizeResStatList(&local, msg)) {
         return;
     }
-    ProcessResStatusList(msg);
+
+    ProcessResStatusList(&local);
     uint32 index = 0;
-    if (GetGlobalResStatusIndex(msg->resList.resName, index) != CM_SUCCESS) {
-        write_runlog(ERROR, "[CLIENT] ProcessResStatusChanged, unknown the res(%s) of client.\n", msg->resList.resName);
+    if (GetGlobalResStatusIndex(local.resList.resName, index) != CM_SUCCESS) {
+        write_runlog(ERROR, "[CLIENT] ProcessResStatusChanged, unknown the res(%s) of client.\n",
+            local.resList.resName);
         return;
     }
     ClientConn *clientCon = GetClientConnect();
     for (uint32 i = 0; i < CM_MAX_RES_COUNT; ++i) {
-        if (clientCon[i].isClosed || strcmp(clientCon[i].resName, msg->resList.resName) != 0) {
+        if (clientCon[i].isClosed || strcmp(clientCon[i].resName, local.resList.resName) != 0) {
             continue;
         }
         SendStatusListToClient(g_resStatus[index], i, true);
@@ -295,6 +302,17 @@ void ProcessResStatusChanged(const CmsReportResStatList *msg)
 
 void ProcessResLockAckFromCms(const CmsReportLockResult *recvMsg)
 {
+    if (recvMsg->conId >= CM_MAX_RES_COUNT) {
+        write_runlog(ERROR, "[CLIENT] ProcessResLockAckFromCms, invalid conId(%u).\n", recvMsg->conId);
+        return;
+    }
+
+    ClientConn *clientCon = GetClientConnect();
+    if (clientCon[recvMsg->conId].isClosed) {
+        write_runlog(ERROR, "[CLIENT] ProcessResLockAckFromCms, conId(%u) is closed.\n", recvMsg->conId);
+        return;
+    }
+
     AgentToClientResLockResult sendMsg;
     errno_t rc = memset_s(&sendMsg, sizeof(AgentToClientResLockResult), 0, sizeof(AgentToClientResLockResult));
     securec_check_errno(rc, (void)rc);
@@ -304,8 +322,6 @@ void ProcessResLockAckFromCms(const CmsReportLockResult *recvMsg)
     sendMsg.result.error = recvMsg->error;
     rc = strcpy_s(sendMsg.result.lockName, CM_MAX_LOCK_NAME, recvMsg->lockName);
     securec_check_errno(rc, (void)rc);
-
-    ClientConn *clientCon = GetClientConnect();
     if (recvMsg->lockOpt == (uint32)CM_RES_GET_LOCK_OWNER && recvMsg->error == 0) {
         uint32 index = 0;
         if (GetGlobalResStatusIndex(clientCon[sendMsg.head.conId].resName, index) != CM_SUCCESS) {

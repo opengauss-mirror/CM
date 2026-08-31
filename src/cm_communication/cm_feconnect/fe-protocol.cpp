@@ -77,14 +77,19 @@ static CM_Result *pqParseInput(CM_Conn *conn)
 
     /*
      * Try to validate message type/length here.  A length less than 4 is
-     * definitely broken.  Large lengths should only be believed for a few
-     * message types.
+     * definitely broken.  S/E may be larger than short messages, but still
+     * cannot exceed the result payload size.
      */
     if (msgLength < 4) {
         handleSyncLoss(conn, id, msgLength);
         return NULL;
     }
-    if (msgLength > 30000 && !VALID_LONG_MESSAGE_TYPE(id)) {
+    if (VALID_LONG_MESSAGE_TYPE(id)) {
+        if (msgLength > CM_LONG_MSG_MAX_WIRE_LENGTH) {
+            handleSyncLoss(conn, id, msgLength);
+            return NULL;
+        }
+    } else if (msgLength > CM_SHORT_MSG_MAX_WIRE_LENGTH) {
         handleSyncLoss(conn, id, msgLength);
         return NULL;
     }
@@ -103,7 +108,8 @@ static CM_Result *pqParseInput(CM_Conn *conn)
          * recovery strategy if we are unable to make the buffer big
          * enough.
          */
-        if (cmpqCheckInBufferSpace((size_t)(conn->inCursor + msgLength), conn)) {
+        size_t bytesNeeded = (size_t)conn->inCursor + (size_t)msgLength;
+        if (cmpqCheckInBufferSpace(bytesNeeded, conn)) {
             /*
              * XXX add some better recovery code... plan is to skip over
              * the message using its length, then report an error. For the
@@ -245,6 +251,12 @@ CM_Result *cmpqGetResult(CM_Conn *conn)
 static int cmpqParseSuccess(CM_Conn *conn, CM_Result *result)
 {
     errno_t rc;
+
+    if (result->gr_msglen < 0 || result->gr_msglen > CM_MSG_MAX_LENGTH) {
+        handleSyncLoss(conn, 'S', result->gr_msglen);
+        result->gr_status = CM_RESULT_ERROR;
+        return result->gr_status;
+    }
 
     result->gr_status = CM_RESULT_OK;
     rc = memcpy_s(&(result->gr_resdata), CM_MSG_MAX_LENGTH, conn->inBuffer + conn->inCursor, result->gr_msglen);

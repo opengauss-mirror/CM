@@ -30,8 +30,13 @@
 #define HEARTBEAT_TIMEOUT 5
 #define CM_MAX_RES_NAME 32
 #define CM_MAX_LOCK_NAME 32
+#define CM_RES_NAME_DMS "dms_res"
+#define CM_LOCK_NAME_DMS_REFORMER "dms_reformer_lock"
+#define CM_RES_NAME_DSS "dss"
+#define CM_LOCK_NAME_DSS "dss cm lock"
 #define CM_MAX_RES_INST_COUNT 64
 #define CM_MAX_RES_COUNT 16
+#define CM_MAX_RES_LOCK_COUNT 10
 #define CM_MAX_RES_NODE_COUNT 16
 const uint32 CM_MAX_VIP_COUNT = 16;
 
@@ -118,6 +123,7 @@ void GetCmConfJsonPath(char *path, uint32 pathLen);
 int ReadCmConfJson(void *logFunc);
 status_t InitAllResStat(int logLevel = LOG);
 status_t GetGlobalResStatusIndex(const char *resName, uint32 &index);
+bool CmFixedCStrHasTerminator(const char *buf, uint32 bufLen);
 bool IsResInstIdValid(int instId);
 bool IsOneResInstWork(const char *resName, uint32 cmInstId);
 bool IsReadConfJsonSuccess(int ret);

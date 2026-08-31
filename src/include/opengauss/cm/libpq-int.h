@@ -120,6 +120,12 @@ struct cm_conn {
     ssl_ctx_t *ssl_connector_fd;
 };
 
+#define CM_SHORT_MSG_MAX_WIRE_LENGTH 30000
+#define CM_LONG_MSG_MAX_WIRE_LENGTH (CM_MSG_MAX_LENGTH + 4)
+#define CM_INBUFFER_CHUNK_SIZE 8192
+#define CM_INBUFFER_GROW_FACTOR 2
+#define CM_INBUFFER_MAX_SIZE (CM_MSG_MAX_LENGTH + CM_INBUFFER_CHUNK_SIZE)
+
 /* === in fe-misc.c === */
 
 /*

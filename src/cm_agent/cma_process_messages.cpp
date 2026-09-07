@@ -1401,12 +1401,17 @@ static void ProcessDdbOperFromCms(const CmSendDdbOperRes *msgDdbOper)
 
 static void ProcessSharedStorageModeFromCms(const CmsSharedStorageInfo *recvMsg)
 {
-    if (strcmp(g_doradoIp, recvMsg->doradoIp) != 0) {
-        write_runlog(LOG, "cma recv g_doradoIp has change from \"%s\" to \"%s\"\n", g_doradoIp, recvMsg->doradoIp);
-        errno_t rc = strcpy_s(g_doradoIp, CM_IP_LENGTH, recvMsg->doradoIp);
+    char doradoIp[CM_IP_LENGTH] = {0};
+    errno_t rc = memcpy_s(doradoIp, CM_IP_LENGTH, recvMsg->doradoIp, CM_IP_LENGTH);
+    securec_check_errno(rc, (void)rc);
+    doradoIp[CM_IP_LENGTH - 1] = '\0';
+
+    if (strcmp(g_doradoIp, doradoIp) != 0) {
+        write_runlog(LOG, "cma recv g_doradoIp has change from \"%s\" to \"%s\"\n", g_doradoIp, doradoIp);
+        rc = strcpy_s(g_doradoIp, CM_IP_LENGTH, doradoIp);
         securec_check_errno(rc, (void)rc);
     } else {
-        write_runlog(DEBUG5, "cma recv g_doradoIp = %s\n", recvMsg->doradoIp);
+        write_runlog(DEBUG5, "cma recv g_doradoIp = %s\n", doradoIp);
     }
     return;
 }

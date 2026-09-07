@@ -1686,9 +1686,10 @@ static bool MoreDyPrimary(DnArbCtx *ctx, const char *typeName)
                 "are the most(%u). Due to auto crash recovery is disabled, no need send restart msg to instance(%u),  "
                 "waiting for manual intervention.\n", typeName, __LINE__, ctx->info.term, ctx->maxTerm, ctx->instId);
 
-            /* compare local term, local lsn, noidid */
+            /* compare current instance term/lsn with group max; stop object must match compare object */
             if (XLByteWE_W_TERM(ctx->maxTerm, ctx->cond.maxLsn,
-                ctx->dnReport[memIdx].local_status.term, ctx->dnReport[memIdx].local_status.last_flush_lsn) ||
+                ctx->dnReport[ctx->memIdx].local_status.term,
+                ctx->dnReport[ctx->memIdx].local_status.last_flush_lsn) ||
                 IsInstanceIdMax(ctx)) {
                 ReportClusterDoublePrimaryAlarm(
                     ALM_AT_Event,
@@ -1962,7 +1963,13 @@ static status_t SendFailoverByBuild(DnArbCtx *ctx)
     }
 
     if (cond->isDegrade) {
-        if (cond->buildCount == (cond->vaildCount - 1)) {
+        /*
+         * Require at least one other valid member in BUILD_FAILED. Otherwise
+         * vaildCount == 1 and buildCount == 0 still satisfy (vaildCount - 1),
+         * and a NEED_REPAIR static primary would be promoted with an empty set.
+         */
+        if (cond->vaildCount > 1 && cond->buildCount > 0 &&
+            cond->buildCount == (cond->vaildCount - 1)) {
             SendMsg_t sfMsg = {"[FailoverByBuild]", "a majority of others are building"};
             SendFailoverMsg(ctx, cond->arbitInterval, false, &sfMsg);
             return CM_TIMEDOUT;

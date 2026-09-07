@@ -270,6 +270,28 @@ int cmpqCheckOutBufferSpace(size_t bytes_needed, CM_Conn* conn)
     return EOF;
 }
 
+static bool cmpqEnlargeInBuffer(CM_Conn* conn, size_t newsize)
+{
+    char* newbuf = NULL;
+
+    if (newsize == 0 || newsize > (size_t)CM_INBUFFER_MAX_SIZE) {
+        return false;
+    }
+
+    newbuf = (char*)malloc(newsize);
+    if (newbuf == NULL) {
+        return false;
+    }
+    if (conn->inBuffer != NULL) {
+        errno_t rc = memcpy_s(newbuf, newsize, conn->inBuffer, (size_t)conn->inBufSize);
+        securec_check_errno(rc, (void)rc);
+        FREE_AND_RESET(conn->inBuffer);
+    }
+    conn->inBuffer = newbuf;
+    conn->inBufSize = (int)newsize;
+    return true;
+}
+
 /*
  * Make sure conn's input buffer can hold bytes_needed bytes (caller must
  * include already-stored data into the value!)
@@ -278,53 +300,48 @@ int cmpqCheckOutBufferSpace(size_t bytes_needed, CM_Conn* conn)
  */
 int cmpqCheckInBufferSpace(size_t bytes_needed, CM_Conn* conn)
 {
-    int newsize = conn->inBufSize;
-    char* newbuf = NULL;
+    size_t newsize;
 
-    if (bytes_needed <= (size_t)newsize) {
+    if (bytes_needed > (size_t)CM_INBUFFER_MAX_SIZE) {
+        printfCMPQExpBuffer(&conn->errorMessage,
+            "needed input buffer size %zu exceeds maximum %d\n", bytes_needed, CM_INBUFFER_MAX_SIZE);
+        return EOF;
+    }
+
+    if (conn->inBufSize > 0 && bytes_needed <= (size_t)conn->inBufSize) {
         return 0;
     }
 
-    do {
-        newsize *= 2;
-    } while (newsize > 0 && bytes_needed > (size_t)newsize);
-
-    if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-        newbuf = (char*)malloc((size_t)newsize);
-        if (newbuf != NULL) {
-            /* realloc succeeded */
-            if (conn->inBuffer != NULL) {
-                errno_t rc = memcpy_s(newbuf, (size_t)newsize, conn->inBuffer, (size_t)conn->inBufSize);
-                securec_check_errno(rc, (void)rc);
-                FREE_AND_RESET(conn->inBuffer);
-            }
-            conn->inBuffer = newbuf;
-            conn->inBufSize = newsize;
-            return 0;
+    newsize = (conn->inBufSize > 0) ? (size_t)conn->inBufSize : (size_t)CM_INBUFFER_CHUNK_SIZE;
+    while (newsize < bytes_needed) {
+        if (newsize > ((size_t)CM_INBUFFER_MAX_SIZE / CM_INBUFFER_GROW_FACTOR)) {
+            newsize = (size_t)CM_INBUFFER_MAX_SIZE;
+            break;
         }
+        newsize *= CM_INBUFFER_GROW_FACTOR;
+    }
+    if (newsize > (size_t)CM_INBUFFER_MAX_SIZE) {
+        newsize = (size_t)CM_INBUFFER_MAX_SIZE;
+    }
+    if (newsize >= bytes_needed && cmpqEnlargeInBuffer(conn, newsize)) {
+        return 0;
     }
 
-    newsize = conn->inBufSize;
-    do {
-        newsize += 8192;
-    } while (newsize > 0 && bytes_needed > (size_t)newsize);
-
-    if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-        newbuf = (char*)malloc((size_t)newsize);
-        if (newbuf != NULL) {
-            /* realloc succeeded */
-            if (conn->inBuffer != NULL) {
-                errno_t rc = memcpy_s(newbuf, (size_t)newsize, conn->inBuffer, (size_t)conn->inBufSize);
-                securec_check_errno(rc, (void)rc);
-                FREE_AND_RESET(conn->inBuffer);
-            }
-            conn->inBuffer = newbuf;
-            conn->inBufSize = newsize;
-            return 0;
+    newsize = (conn->inBufSize > 0) ? (size_t)conn->inBufSize : (size_t)CM_INBUFFER_CHUNK_SIZE;
+    while (newsize < bytes_needed) {
+        if (newsize > ((size_t)CM_INBUFFER_MAX_SIZE - CM_INBUFFER_CHUNK_SIZE)) {
+            newsize = (size_t)CM_INBUFFER_MAX_SIZE;
+            break;
         }
+        newsize += CM_INBUFFER_CHUNK_SIZE;
+    }
+    if (newsize > (size_t)CM_INBUFFER_MAX_SIZE) {
+        newsize = (size_t)CM_INBUFFER_MAX_SIZE;
+    }
+    if (newsize >= bytes_needed && cmpqEnlargeInBuffer(conn, newsize)) {
+        return 0;
     }
 
-    /* realloc failed. Probably out of memory */
     printfCMPQExpBuffer(&conn->errorMessage, "cannot allocate memory for input buffer\n");
     return EOF;
 }

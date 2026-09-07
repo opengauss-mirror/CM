@@ -421,6 +421,63 @@ void ProcessRequestLatestResStatusListMsg(MsgRecvInfo *recvMsgInfo, RequestLates
     }
 }
 
+static bool IsAllowedResLockName(const char *resName, const char *lockName)
+{
+    uint32 index = 0;
+
+    if (resName == NULL || lockName == NULL) {
+        return false;
+    }
+    if (!CmFixedCStrHasTerminator(resName, CM_MAX_RES_NAME) ||
+        !CmFixedCStrHasTerminator(lockName, CM_MAX_LOCK_NAME)) {
+        return false;
+    }
+    if (resName[0] == '\0' || lockName[0] == '\0') {
+        return false;
+    }
+    return (GetGlobalResStatusIndex(resName, index) == CM_SUCCESS);
+}
+
+static uint32 CountResLockKeys(const char *resName)
+{
+    DrvKeyValue kvs[CM_MAX_RES_LOCK_COUNT];
+    errno_t rc = memset_s(kvs, sizeof(kvs), 0, sizeof(kvs));
+    securec_check_errno(rc, (void)rc);
+
+    char key[MAX_PATH_LEN] = {0};
+    int ret = snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CM/LockOwner/%s", pw->pw_name, resName);
+    securec_check_intval(ret, (void)ret);
+
+    DDB_RESULT dbResult = SUCCESS_GET_VALUE;
+    if (GetAllKVFromDDb(key, MAX_PATH_LEN, kvs, CM_MAX_RES_LOCK_COUNT, &dbResult) != CM_SUCCESS) {
+        if (dbResult == CAN_NOT_FIND_THE_KEY) {
+            return 0;
+        }
+        write_runlog(ERROR, "[CLIENT] res(%s) count lock keys failed.\n", resName);
+        return CM_MAX_RES_LOCK_COUNT;
+    }
+
+    uint32 count = 0;
+    for (uint32 i = 0; i < CM_MAX_RES_LOCK_COUNT; ++i) {
+        if (kvs[i].key[0] == '\0') {
+            break;
+        }
+        count++;
+    }
+    return count;
+}
+
+static bool CanCreateNewResLock(const char *resName)
+{
+    uint32 count = CountResLockKeys(resName);
+    if (count >= CM_MAX_RES_LOCK_COUNT) {
+        write_runlog(ERROR, "[CLIENT] res(%s) lock count(%u) reaches max(%d), reject new lock.\n",
+            resName, count, CM_MAX_RES_LOCK_COUNT);
+        return false;
+    }
+    return true;
+}
+
 static inline void GetResLockDdbKey(char *key, uint32 keyLen, const char *resName, const char *lockName)
 {
     int ret = snprintf_s(key, keyLen, keyLen - 1, "/%s/CM/LockOwner/%s/%s", pw->pw_name, resName, lockName);
@@ -494,9 +551,9 @@ static status_t SetLockOwner4FirstReform()
     char officialId[MAX_PATH_LEN] = {0};
     errno_t rc;
 
-    rc = strncpy_s(resName, CM_MAX_RES_NAME, "dms_res", strlen("dms_res"));
+    rc = strncpy_s(resName, CM_MAX_RES_NAME, CM_RES_NAME_DMS, strlen(CM_RES_NAME_DMS));
     securec_check_errno(rc, (void)rc);
-    rc = strncpy_s(lockName, CM_MAX_LOCK_NAME, "dms_reformer_lock", strlen("dms_reformer_lock"));
+    rc = strncpy_s(lockName, CM_MAX_LOCK_NAME, CM_LOCK_NAME_DMS_REFORMER, strlen(CM_LOCK_NAME_DMS_REFORMER));
     securec_check_errno(rc, (void)rc);
     GetResLockDdbKey(key, MAX_PATH_LEN, resName, lockName);
 
@@ -575,23 +632,22 @@ static status_t DeleteLockKey(const char *resName, const char *lockName)
 void ReleaseResLockOwner(const char *resName, uint32 instId)
 {
     // get all kv need known kv count, dynamic arrays need to be added.
-    const uint32 kvCount = 10;
-    DrvKeyValue kvs[kvCount];
-    errno_t rc = memset_s(kvs, sizeof(DrvKeyValue) * kvCount, 0, sizeof(DrvKeyValue) * kvCount);
+    DrvKeyValue kvs[CM_MAX_RES_LOCK_COUNT];
+    errno_t rc = memset_s(kvs, sizeof(kvs), 0, sizeof(kvs));
     securec_check_errno(rc, (void)rc);
     char key[MAX_PATH_LEN] = {0};
     int ret = snprintf_s(key, MAX_PATH_LEN, MAX_PATH_LEN - 1, "/%s/CM/LockOwner/%s", pw->pw_name, resName);
     securec_check_intval(ret, (void)ret);
     DDB_RESULT dbResult = SUCCESS_GET_VALUE;
-    if (GetAllKVFromDDb(key, MAX_PATH_LEN, kvs, kvCount, &dbResult) != CM_SUCCESS) {
+    if (GetAllKVFromDDb(key, MAX_PATH_LEN, kvs, CM_MAX_RES_LOCK_COUNT, &dbResult) != CM_SUCCESS) {
         if (dbResult != CAN_NOT_FIND_THE_KEY) {
             write_runlog(ERROR, "[CLIENT] res(%s) release lock owner failed, get kvs fail.\n", resName);
         }
         return;
     }
-    PrintKeyValueMsg(key, kvs, kvCount, DEBUG5);
+    PrintKeyValueMsg(key, kvs, CM_MAX_RES_LOCK_COUNT, DEBUG5);
 
-    for (uint32 i = 0; i < kvCount; ++i) {
+    for (uint32 i = 0; i < CM_MAX_RES_LOCK_COUNT; ++i) {
         if (kvs[i].key[0] == '\0' || kvs[i].value[0] == '\0') {
             break;
         }
@@ -608,7 +664,7 @@ void ReleaseResLockOwner(const char *resName, uint32 instId)
 
 static bool RealTimeBuildIsOff(const char *resName, const char* lockName, uint32 cmInstId)
 {
-    if (strcmp(lockName, "dms_reformer_lock") != 0) {
+    if (strcmp(lockName, CM_LOCK_NAME_DMS_REFORMER) != 0) {
         return false;
     }
 
@@ -703,6 +759,9 @@ static ClientError CmResLock(const CmaToCmsResLock *lockMsg)
             lockMsg->resName, lockMsg->lockName, curLockOwner, lockMsg->cmInstId);
         return CM_RES_CLIENT_CANNOT_DO;
     }
+    if (!CanCreateNewResLock(lockMsg->resName)) {
+        return CM_RES_CLIENT_CANNOT_DO;
+    }
     if (SetNewLockOwner(lockMsg->resName, lockMsg->lockName, curLockOwner, lockMsg->cmInstId) != CM_SUCCESS) {
         write_runlog(ERROR, "[CLIENT] res(%s) instance(%u) (%s)lock failed.\n",
             lockMsg->resName, lockMsg->cmInstId, lockMsg->lockName);
@@ -793,46 +852,76 @@ static ClientError TransLockOwner(const CmaToCmsResLock *lockMsg)
     return CM_RES_CLIENT_SUCCESS;
 }
 
-void ProcessCmResLock(MsgRecvInfo* recvMsgInfo, CmaToCmsResLock *lockMsg)
+static bool PrepareResLockMsg(CmaToCmsResLock *local, const CmaToCmsResLock *lockMsg)
 {
-    lockMsg->resName[CM_MAX_RES_NAME - 1] = '\0';
-    lockMsg->lockName[CM_MAX_LOCK_NAME - 1] = '\0';
-
-    CmsReportLockResult ackMsg = {0};
-    ackMsg.msgType = (int)MSG_CM_RES_LOCK_ACK;
-    ackMsg.conId = lockMsg->conId;
-    ackMsg.lockOpt = lockMsg->lockOpt;
-    ackMsg.lockOwner = 0;
-    errno_t rc = strcpy_s(ackMsg.lockName, CM_MAX_LOCK_NAME, lockMsg->lockName);
-    securec_check_errno(rc, (void)rc);
-
-    switch (lockMsg->lockOpt) {
-        case (uint32)CM_RES_LOCK: {
-            ackMsg.error = (uint32)CmResLock(lockMsg);
-            break;
-        }
-        case (uint32)CM_RES_UNLOCK: {
-            ackMsg.error = (uint32)CmResUnlock(lockMsg);
-            break;
-        }
-        case (uint32)CM_RES_GET_LOCK_OWNER: {
-            ackMsg.error = (uint32)ResGetLockOwner(lockMsg->resName, lockMsg->lockName, ackMsg.lockOwner);
-            break;
-        }
-        case (uint32)CM_RES_LOCK_TRANS: {
-            ackMsg.error = (uint32)TransLockOwner(lockMsg);
-            break;
-        }
-        default: {
-            write_runlog(ERROR, "[CLIENT] unknown lockOpt(%u).\n", lockMsg->lockOpt);
-            ackMsg.error = (uint32)CM_RES_CLIENT_CANNOT_DO;
-            break;
-        }
+    if (local == NULL || lockMsg == NULL) {
+        return false;
     }
+    errno_t rc = memcpy_s(local, sizeof(CmaToCmsResLock), lockMsg, sizeof(CmaToCmsResLock));
+    securec_check_errno(rc, (void)rc);
+    if (!CmFixedCStrHasTerminator(local->resName, CM_MAX_RES_NAME) ||
+        !CmFixedCStrHasTerminator(local->lockName, CM_MAX_LOCK_NAME)) {
+        return false;
+    }
+    return true;
+}
 
-    if (RespondMsg(recvMsgInfo, 'S', (char *)(&ackMsg), sizeof(CmsReportLockResult), DEBUG5) != 0) {
+static void SendResLockAck(MsgRecvInfo *recvMsgInfo, CmsReportLockResult *ackMsg)
+{
+    if (RespondMsg(recvMsgInfo, 'S', (char *)ackMsg, sizeof(CmsReportLockResult), DEBUG5) != 0) {
         write_runlog(ERROR, "[CLIENT] send lock ack msg failed.\n");
     }
+}
+
+static ClientError DispatchResLockOpt(CmaToCmsResLock *local, uint32 &lockOwner)
+{
+    switch (local->lockOpt) {
+        case (uint32)CM_RES_LOCK:
+            return CmResLock(local);
+        case (uint32)CM_RES_UNLOCK:
+            return CmResUnlock(local);
+        case (uint32)CM_RES_GET_LOCK_OWNER:
+            return ResGetLockOwner(local->resName, local->lockName, lockOwner);
+        case (uint32)CM_RES_LOCK_TRANS:
+            return TransLockOwner(local);
+        default:
+            write_runlog(ERROR, "[CLIENT] unknown lockOpt(%u).\n", local->lockOpt);
+            return CM_RES_CLIENT_CANNOT_DO;
+    }
+}
+
+void ProcessCmResLock(MsgRecvInfo* recvMsgInfo, CmaToCmsResLock *lockMsg)
+{
+    CmaToCmsResLock local = {0};
+    CmsReportLockResult ackMsg = {0};
+    ackMsg.msgType = (int)MSG_CM_RES_LOCK_ACK;
+
+    if (!PrepareResLockMsg(&local, lockMsg)) {
+        write_runlog(ERROR, "[CLIENT] res lock msg name is not NUL-terminated.\n");
+        if (lockMsg != NULL) {
+            ackMsg.conId = lockMsg->conId;
+            ackMsg.lockOpt = lockMsg->lockOpt;
+        }
+        ackMsg.error = (uint32)CM_RES_CLIENT_CANNOT_DO;
+        SendResLockAck(recvMsgInfo, &ackMsg);
+        return;
+    }
+
+    ackMsg.conId = local.conId;
+    ackMsg.lockOpt = local.lockOpt;
+    errno_t rc = strcpy_s(ackMsg.lockName, CM_MAX_LOCK_NAME, local.lockName);
+    securec_check_errno(rc, (void)rc);
+
+    if (!IsAllowedResLockName(local.resName, local.lockName)) {
+        write_runlog(ERROR, "[CLIENT] unsupported res lock, res(%s) lock(%s).\n",
+            local.resName, local.lockName);
+        ackMsg.error = (uint32)CM_RES_CLIENT_CANNOT_DO;
+        SendResLockAck(recvMsgInfo, &ackMsg);
+        return;
+    }
+
+    ackMsg.error = (uint32)DispatchResLockOpt(&local, ackMsg.lockOwner);
+    SendResLockAck(recvMsgInfo, &ackMsg);
 }
 
 static inline void CopyResStatusToSendMsg(OneResStatList *sendStat, CmResStatList *saveStat)

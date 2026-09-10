@@ -1200,7 +1200,7 @@ int GetDnInstTermFromDdb(uint32 instanceId, uint32 *term, bool &firstStart)
         "/%s/CMServer/status_key/dn_inst_term/%u", pw->pw_name, instanceId);
     securec_check_intval(rc, (void)rc);
     DDB_RESULT dbResult = SUCCESS_GET_VALUE;
-    status_t st = GetKVAndLogLevel(statusKey, getValue, DDB_MIN_VALUE_LEN, &dbResult, LOG);
+    status_t st = GetKVAndLogLevel(statusKey, getValue, DDB_MIN_VALUE_LEN, &dbResult, DEBUG1);
     if (st != CM_SUCCESS) {
         *term = InvalidTerm;
         firstStart = (dbResult == CAN_NOT_FIND_THE_KEY);

@@ -115,15 +115,21 @@ static void TriggerSharedStorageFastElectionIfNeed(const AgentToCmPanicRebootAla
 void process_agent_to_cm_fenced_UDF_status_report_msg(
     MsgRecvInfo *recvMsgInfo, const agent_to_cm_fenced_UDF_status_report *agent_to_cm_fenced_UDF_status_ptr)
 {
-    if (recvMsgInfo == NULL || agent_to_cm_fenced_UDF_status_ptr == NULL ||
-        recvMsgInfo->connID.remoteType != CM_AGENT ||
-        recvMsgInfo->connID.agentNodeId != agent_to_cm_fenced_UDF_status_ptr->nodeid) {
-        write_runlog(ERROR, "reject fenced UDF report because message node does not match Agent connection.\n");
+    uint32 trustedNodeIndex = 0;
+    if (find_node_index_by_nodeid(recvMsgInfo->connID.agentNodeId, &trustedNodeIndex) != 0) {
+        write_runlog(ERROR, "reject fenced UDF report because agent nodeId %u is unknown.\n",
+            recvMsgInfo->connID.agentNodeId);
         return;
     }
     if (agent_to_cm_fenced_UDF_status_ptr->nodeid >= CM_NODE_MAXNUM) {
         write_runlog(ERROR, "udf nodeId(%u) is more than %d, cannot get udf report msg.\n",
             agent_to_cm_fenced_UDF_status_ptr->nodeid, CM_NODE_MAXNUM);
+        return;
+    }
+    if (agent_to_cm_fenced_UDF_status_ptr->nodeid != trustedNodeIndex) {
+        write_runlog(ERROR,
+            "reject fenced UDF report because body node index %u does not match agent nodeId %u(index %u).\n",
+            agent_to_cm_fenced_UDF_status_ptr->nodeid, recvMsgInfo->connID.agentNodeId, trustedNodeIndex);
         return;
     }
     (void)pthread_rwlock_wrlock(&(g_fenced_UDF_report_status_ptr[agent_to_cm_fenced_UDF_status_ptr->nodeid].lk_lock));

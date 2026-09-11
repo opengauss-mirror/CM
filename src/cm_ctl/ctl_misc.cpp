@@ -1375,6 +1375,10 @@ int DoSetRunMode(void)
         return 1;
     }
 
+    if (g_cmData[0] != '\0') {
+        check_shell_param_for_security(g_cmData);
+    }
+
     if (strcasecmp(g_dcfXMode, "minority") == 0) {
         rc = snprintf_s(cmd, MAXPGPATH,
             MAXPGPATH - 1,
@@ -1434,6 +1438,9 @@ int DoGsCtlCommand(const char *commond, const char *cmdName)
     char gausshomePath[CM_PATH_LENGTH] = {0};
     int result = 1;
     char cmd[CM_PATH_LENGTH] = {0};
+    if (g_cmData[0] != '\0') {
+        check_shell_param_for_security(g_cmData);
+    }
     rc = GetHomePath(gausshomePath, sizeof(gausshomePath));
     if (rc != EOK) {
         return 1;

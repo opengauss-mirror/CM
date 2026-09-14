@@ -166,6 +166,7 @@ void InitResStatCommInfo(OneNodeResourceStatus *nodeStat);
 int CreateCheckNodeStatusThread(void);
 int CreateCheckSysStatusThread(void);
 void *VotingDiskMain(void *arg);
+bool ShouldKillPrimaryOnDnPingAllFailed(void);
 
 #ifdef ENABLE_XALARMD
 #ifdef __cplusplus

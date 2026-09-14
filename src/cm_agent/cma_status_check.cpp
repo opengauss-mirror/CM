@@ -28,6 +28,7 @@
 #include <sys/vfs.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <unistd.h>
 #include "cma_connect.h"
 #include "cma_global_params.h"
 #include "cma_common.h"
@@ -52,10 +53,10 @@ extern "C" {
 #endif
 #include "cjson/cJSON.h"
 #include "cma_xalarm_event_compat.h"
+#include "cma_ub_fence.h"
 struct alarm_register *g_xalarmEventRegister = NULL;
 static const uint32 XALARM_TYPE_OCCUR = 1;
 static const uint32 XALARM_TYPE_RECOVER = 2;
-static const uint32 XALARM_REBOOT_EVENT_ID = 1003;
 static const uint32 XALARM_REBOOT_ACK_EVENT_ID = 1004;
 static const uint32 XALARM_OOM_EVENT_ID = 1005;
 static const uint32 XALARM_OOM_ACK_EVENT_ID = 1006;
@@ -64,13 +65,19 @@ static const uint32 XALARM_PANIC_ACK_EVENT_ID = 1008;
 static const uint32 XALARM_KERNEL_REBOOT_EVENT_ID = 1009;
 static const uint32 XALARM_KERNEL_REBOOT_ACK_EVENT_ID = 1010;
 static const uint32 XALARM_UBUS_MEM_EVENT_ID = 1013;
+static const uint32 XALARM_LINK_EVENT_ID = 1016;
 static const uint32 XALARM_EVENT_NODE_MAP_MAX = CM_NODE_MAXNUM;
 static const uint32 XALARM_EVENT_MAP_TEXT_LEN = MAX_PATH_LEN * 4;
-static const uint32 XALARM_EVENT_COUNT = 5;
+static const uint32 XALARM_EVENT_COUNT = 6;
 static const uint32 INVALID_ALARM_NODE_ID = 0;
 static const int DECIMAL_BASE = 10;
 static const uint32 MICROSECONDS_PER_MILLISECOND = 1000;
 static const uint32 CMS_PRIMARY_SWITCH_WAIT_TIMEOUT_MS = 30000;
+static const uint32 XALARM_LINK_TCP_TIMEOUT_SEC_DEFAULT = 2;
+static const uint32 XALARM_LINK_EVENT_STR_MAX = 16;
+static const int XALARM_LINK_ALARM_PARSED_FIELD_COUNT = 2;
+static const unsigned long XALARM_ACK_RES_SUCCESS = 0;
+static const unsigned long XALARM_ACK_RES_FAIL = 1;
 
 typedef struct XalarmNodeMapItemT {
     uint32 nodeId;
@@ -82,6 +89,7 @@ static uint32 g_xalarmNodeMapCount = 0;
 #endif
 #include "cma_status_check.h"
 #include "cm_ip.h"
+#include "cm_misc.h"
 #include "cm_msg_version_convert.h"
 
 /*
@@ -1723,13 +1731,21 @@ void CheckDNConnectionStatus(int i, int alarmIndex, const char *instanceName)
         GetPingSuccessCount(i, &count);
         if (count == 0) {
             write_runlog(LOG, "dn(%u) is disconnected from other dn.\n", g_currentNode->datanode[i].datanodeId);
-            g_dnPingFault[i] = true;
-            if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY  &&
-                !g_isPauseArbitration) {
+            bool networkPartitionSuspected = false;
+            if (!g_isPauseArbitration) {
+                networkPartitionSuspected = ShouldKillPrimaryOnDnPingAllFailed();
+            }
+            /*
+             * Only mark ping fault when network partition is suspected (peer still alive on voting disk).
+             * When peer is down (e.g. reboot), ping fails but local primary should keep normal status.
+             */
+            g_dnPingFault[i] = networkPartitionSuspected;
+            if (g_dnReportMsg[i].dnStatus.reportMsg.local_status.local_role == INSTANCE_ROLE_PRIMARY &&
+                networkPartitionSuspected) {
                 if (g_enableWalRecord) {
-                    for (uint32 i = 0; i < GetLocalResConfCount(); ++i) {
-                        if (strcmp(g_resConf[i].resName, "gr") == 0) {
-                            ManualStopLocalResInst(&g_resConf[i]);
+                    for (uint32 j = 0; j < GetLocalResConfCount(); ++j) {
+                        if (strcmp(g_resConf[j].resName, "gr") == 0) {
+                            ManualStopLocalResInst(&g_resConf[j]);
                         }
                     }
                 } else {
@@ -2703,6 +2719,65 @@ static uint32 FindAlarmNodeByCna(uint32 cna)
     return INVALID_ALARM_NODE_ID;
 }
 
+static bool ParseLinkAlarmDesc(const char *alarmDesc, uint32 *scna, char *eventStr, size_t eventStrLen)
+{
+    if (alarmDesc == NULL || scna == NULL || eventStr == NULL || eventStrLen == 0) {
+        return false;
+    }
+    const char *payload = strchr(alarmDesc, '{');
+    if (payload == NULL) {
+        return false;
+    }
+
+    char eventBuf[XALARM_LINK_EVENT_STR_MAX] = {0};
+    int ret = sscanf_s(payload, "{port_id:%*u,scna:%u,event:%15[^}]}", scna, eventBuf,
+        (unsigned int)(sizeof(eventBuf) - 1));
+    if (ret != XALARM_LINK_ALARM_PARSED_FIELD_COUNT) {
+        ret = sscanf_s(payload, "{scna:%u,event:%15[^}]}", scna, eventBuf,
+            (unsigned int)(sizeof(eventBuf) - 1));
+        if (ret != XALARM_LINK_ALARM_PARSED_FIELD_COUNT) {
+            return false;
+        }
+    }
+    errno_t rc = strncpy_s(eventStr, eventStrLen, eventBuf, eventStrLen - 1);
+    securec_check_errno(rc, (void)rc);
+    return true;
+}
+
+static bool GetPeerDnEndpoint(uint32 nodeId, char *host, size_t hostLen, uint32 *port)
+{
+    if (host == NULL || hostLen == 0 || port == NULL) {
+        return false;
+    }
+    for (uint32 i = 0; i < g_nodeHeader.nodeCount; ++i) {
+        if (g_node[i].node != nodeId) {
+            continue;
+        }
+        if (g_node[i].datanodeCount == 0) {
+            return false;
+        }
+        const dataNodeInfo *dn = &g_node[i].datanode[0];
+        if (dn->datanodeListenIP[0][0] == '\0' || dn->datanodePort == 0) {
+            return false;
+        }
+        errno_t rc = strncpy_s(host, hostLen, dn->datanodeListenIP[0], hostLen - 1);
+        securec_check_errno(rc, (void)rc);
+        *port = dn->datanodePort;
+        return true;
+    }
+    return false;
+}
+
+static bool ProbePeerDnByTcp(uint32 nodeId, uint32 timeoutSec)
+{
+    char host[CM_IP_LENGTH] = {0};
+    uint32 port = 0;
+    if (!GetPeerDnEndpoint(nodeId, host, sizeof(host), &port)) {
+        return false;
+    }
+    return IsTcpHostPortReachable(host, port, timeoutSec) == CM_SUCCESS;
+}
+
 static bool ParseRemoteNodeAlarmDesc(const char *alarmDesc, uint32 *cna)
 {
     const char *payload = strstr(alarmDesc, "{cna:");
@@ -2718,12 +2793,20 @@ static bool IsNeedProcessXalarmEvent(int alarmId)
     return (alarmId == (int)XALARM_PANIC_EVENT_ID || alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
 }
 
+static bool IsXalarmUbFenceTriggerEvent(int alarmId)
+{
+    return (alarmId == (int)XALARM_PANIC_EVENT_ID || alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
+}
+
+static bool IsXalarmEarlyAckEvent(int alarmId)
+{
+    return (alarmId == (int)XALARM_PANIC_EVENT_ID || alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
+}
+
 /* Map original xalarm event id to paired ACK id for xalarm_report_event; 0 means no ACK for this id. */
 static uint32 XalarmMapAlarmIdToAckEventId(int alarmId)
 {
     switch (alarmId) {
-        case (int)XALARM_REBOOT_EVENT_ID:
-            return XALARM_REBOOT_ACK_EVENT_ID;
         case (int)XALARM_OOM_EVENT_ID:
             return XALARM_OOM_ACK_EVENT_ID;
         case (int)XALARM_PANIC_EVENT_ID:
@@ -2735,7 +2818,51 @@ static uint32 XalarmMapAlarmIdToAckEventId(int alarmId)
     }
 }
 
-static void ReportXalarmEventAck(int alarmId, const char *alarmDesc)
+static bool IsXalarmAckWithCnaEid(int alarmId)
+{
+    return (alarmId == (int)XALARM_PANIC_EVENT_ID || alarmId == (int)XALARM_KERNEL_REBOOT_EVENT_ID);
+}
+
+/*
+ * Build ACK payload per openEuler sysSentry doc:
+ * OOM: msgid_res; panic/kernel reboot: msgid_{cna,eid}_res; res=0 means success.
+ */
+static bool BuildXalarmAckPayload(int alarmId, const char *alarmDesc, unsigned long res,
+    char *ackBuf, size_t ackBufLen)
+{
+    if (ackBuf == NULL || ackBufLen == 0) {
+        return false;
+    }
+    int rc;
+    if (alarmDesc == NULL || alarmDesc[0] == '\0') {
+        rc = snprintf_s(ackBuf, ackBufLen, ackBufLen - 1, "0_%lu", res);
+        securec_check_intval(rc, return false);
+        return true;
+    }
+    if (IsXalarmAckWithCnaEid(alarmId)) {
+        rc = snprintf_s(ackBuf, ackBufLen, ackBufLen - 1, "%s_%lu", alarmDesc, res);
+        securec_check_intval(rc, return false);
+        return true;
+    }
+    const char *underscore = strchr(alarmDesc, '_');
+    if (underscore == NULL) {
+        rc = snprintf_s(ackBuf, ackBufLen, ackBufLen - 1, "%s_%lu", alarmDesc, res);
+        securec_check_intval(rc, return false);
+        return true;
+    }
+    size_t msgidLen = (size_t)(underscore - alarmDesc);
+    char msgidBuf[128] = {0};
+    if (msgidLen == 0 || msgidLen >= sizeof(msgidBuf)) {
+        return false;
+    }
+    rc = strncpy_s(msgidBuf, sizeof(msgidBuf), alarmDesc, msgidLen);
+    securec_check_errno(rc, return false);
+    rc = snprintf_s(ackBuf, ackBufLen, ackBufLen - 1, "%s_%lu", msgidBuf, res);
+    securec_check_intval(rc, return false);
+    return true;
+}
+
+static void ReportXalarmEventAck(int alarmId, const char *alarmDesc, unsigned long res)
 {
     uint32 ackId = XalarmMapAlarmIdToAckEventId(alarmId);
     if (ackId == 0) {
@@ -2743,13 +2870,9 @@ static void ReportXalarmEventAck(int alarmId, const char *alarmDesc)
     }
 
     char ackBuf[8192] = {0};
-    errno_t rc;
-    if (alarmDesc != NULL && alarmDesc[0] != '\0') {
-        rc = strncpy_s(ackBuf, sizeof(ackBuf), alarmDesc, sizeof(ackBuf) - 1);
-        securec_check_errno(rc, (void)rc);
-    } else {
-        rc = snprintf_s(ackBuf, sizeof(ackBuf), sizeof(ackBuf) - 1, "{\"ack\":\"cm_agent\",\"alarm_id\":%d}", alarmId);
-        securec_check_intval(rc, (void)rc);
+    if (!BuildXalarmAckPayload(alarmId, alarmDesc, res, ackBuf, sizeof(ackBuf))) {
+        write_runlog(ERROR, "failed to build xalarm ack payload, alarmId=%d, res=%lu.\n", alarmId, res);
+        return;
     }
 
     /* New libxalarm: len must equal strlen(pucParas) and <= 8191. Legacy: two-parameter API. */
@@ -2760,10 +2883,11 @@ static void ReportXalarmEventAck(int alarmId, const char *alarmDesc)
     int rptRet = xalarm_report_event((unsigned short)ackId, ackBuf);
 #endif
     if (rptRet != 0) {
-        write_runlog(WARNING, "xalarm_report_event ack failed, ret=%d errno=%d ackId=%u srcAlarmId=%d.\n",
-            rptRet, errno, ackId, alarmId);
+        write_runlog(WARNING, "xalarm_report_event ack failed, ret=%d errno=%d ackId=%u srcAlarmId=%d res=%lu.\n",
+            rptRet, errno, ackId, alarmId, res);
     } else {
-        write_runlog(DEBUG1, "xalarm_report_event ack ok, ackId=%u srcAlarmId=%u.\n", ackId, (uint32)alarmId);
+        write_runlog(LOG, "xalarm_report_event ack ok, ackId=%u srcAlarmId=%d res=%lu payload=%s.\n",
+            ackId, alarmId, res, ackBuf);
     }
 }
 
@@ -2774,6 +2898,13 @@ static bool WaitCmsPrimarySwitchByConnect(uint32 alarmNodeId, uint32 timeoutMs)
     while (waitedMs < timeoutMs) {
         if (g_shutdownRequest || g_exitFlag) {
             return false;
+        }
+        if (agent_cm_server_connect != NULL && g_serverNodeId != 0 && g_serverNodeId < CM_NODE_MAXNUM &&
+            g_serverNodeId != alarmNodeId) {
+            write_runlog(LOG,
+                "confirm cms primary switched by long conn, alarmNodeId=%u, currentPrimaryNodeId=%u.\n",
+                alarmNodeId, g_serverNodeId);
+            return true;
         }
         CM_Conn *primaryConn = GetConnToCmserver(0);
         if (primaryConn != NULL) {
@@ -2822,15 +2953,35 @@ static void SendXalarmEventToLocalCms(const AgentToCmPanicRebootAlarmReport *ala
     CMPQfinish(localConn);
 }
 
+static bool RefreshPrimaryCmsNodeId(void)
+{
+    if (g_serverNodeId != 0 && g_serverNodeId < CM_NODE_MAXNUM) {
+        return true;
+    }
+    CM_Conn *discoverConn = GetConnToCmserver(0);
+    if (discoverConn == NULL) {
+        return false;
+    }
+    CMPQfinish(discoverConn);
+    return (g_serverNodeId != 0 && g_serverNodeId < CM_NODE_MAXNUM);
+}
+
 static bool SendXalarmEventToPrimaryCms(const AgentToCmPanicRebootAlarmReport *alarmMsg)
 {
     const uint32 retryCount = 10;
     const uint32 retryIntervalMs = 500;
+
     for (uint32 i = 0; i < retryCount; ++i) {
         if (g_shutdownRequest || g_exitFlag) {
             return false;
         }
-        CM_Conn *primaryConn = GetConnToCmserver(0);
+        if (g_serverNodeId == 0 || g_serverNodeId >= CM_NODE_MAXNUM) {
+            if (!RefreshPrimaryCmsNodeId()) {
+                CmUsleep(retryIntervalMs * MICROSECONDS_PER_MILLISECOND);
+                continue;
+            }
+        }
+        CM_Conn *primaryConn = GetConnToCmserverOnNode(g_serverNodeId);
         if (primaryConn != NULL) {
             AgentToCmPanicRebootAlarmReport primaryAlarmMsg = *alarmMsg;
             primaryAlarmMsg.msgType = MSG_AGENT_CM_PANIC_REBOOT_ALARM_TO_PRIMARY;
@@ -2845,31 +2996,27 @@ static bool SendXalarmEventToPrimaryCms(const AgentToCmPanicRebootAlarmReport *a
             }
             write_runlog(ERROR, "xalarm event report to primary cms failed, retry=%u, alarmId=%u.\n",
                 i + 1, alarmMsg->alarmId);
+        } else {
+            write_runlog(ERROR, "xalarm event connect to primary cms node %u failed, retry=%u, alarmId=%u.\n",
+                g_serverNodeId, i + 1, alarmMsg->alarmId);
+            (void)RefreshPrimaryCmsNodeId();
         }
         CmUsleep(retryIntervalMs * MICROSECONDS_PER_MILLISECOND);
     }
     return false;
 }
 
-static void ProcessXalarmEventReport(struct alarm_info *param, int alarmId)
+static void ProcessXalarmFaultFlow(struct alarm_info *param, int alarmId, uint32 alarmNodeId, uint32 cna)
 {
     char *alarmDesc = xalarm_getdesc(param);
     if (alarmDesc == NULL) {
         write_runlog(ERROR, "xalarm desc is null, alarmId=%d.\n", alarmId);
         return;
     }
-    ReportXalarmEventAck(alarmId, alarmDesc);
+    write_runlog(LOG, "xalarm desc, alarmId=%d, desc=%s.\n", alarmId, alarmDesc);
 
-    uint32 cna = 0;
-    if (!ParseRemoteNodeAlarmDesc(alarmDesc, &cna)) {
-        write_runlog(ERROR, "failed to parse xalarm payload, alarmId=%d, payload=%s.\n", alarmId, alarmDesc);
-        return;
-    }
-
-    uint32 alarmNodeId = FindAlarmNodeByCna(cna);
-    if (alarmNodeId == INVALID_ALARM_NODE_ID) {
-        write_runlog(ERROR, "cannot find node mapping for xalarm, alarmId=%d, cna=%u.\n", alarmId, cna);
-        return;
+    if (IsXalarmUbFenceTriggerEvent(alarmId)) {
+        TriggerLocalUbFenceOnXalarm(alarmNodeId);
     }
 
     AgentToCmPanicRebootAlarmReport alarmMsg = {0};
@@ -2901,12 +3048,97 @@ static void ProcessXalarmEventReport(struct alarm_info *param, int alarmId)
         alarmId, alarmNodeId, cna);
 }
 
+static void ProcessXalarmEventReport(struct alarm_info *param, int alarmId)
+{
+    char *alarmDesc = xalarm_getdesc(param);
+    if (alarmDesc == NULL) {
+        write_runlog(ERROR, "xalarm desc is null, alarmId=%d.\n", alarmId);
+        return;
+    }
+
+    uint32 cna = 0;
+    if (!ParseRemoteNodeAlarmDesc(alarmDesc, &cna)) {
+        write_runlog(ERROR, "failed to parse xalarm payload, alarmId=%d, payload=%s.\n", alarmId, alarmDesc);
+        if (IsXalarmEarlyAckEvent(alarmId)) {
+            ReportXalarmEventAck(alarmId, alarmDesc, XALARM_ACK_RES_FAIL);
+        }
+        return;
+    }
+
+    uint32 alarmNodeId = FindAlarmNodeByCna(cna);
+    if (alarmNodeId == INVALID_ALARM_NODE_ID) {
+        write_runlog(ERROR, "cannot find node mapping for xalarm, alarmId=%d, cna=%u.\n", alarmId, cna);
+        if (IsXalarmEarlyAckEvent(alarmId)) {
+            ReportXalarmEventAck(alarmId, alarmDesc, XALARM_ACK_RES_FAIL);
+        }
+        return;
+    }
+
+    if (IsXalarmEarlyAckEvent(alarmId)) {
+        write_runlog(LOG, "xalarm early ack before cms process, alarmId=%d, nodeId=%u.\n", alarmId, alarmNodeId);
+        ReportXalarmEventAck(alarmId, alarmDesc, XALARM_ACK_RES_SUCCESS);
+    }
+    ProcessXalarmFaultFlow(param, alarmId, alarmNodeId, cna);
+}
+
+static void HandleXalarmLinkEvent(struct alarm_info *param)
+{
+    char *alarmDesc = xalarm_getdesc(param);
+    if (alarmDesc == NULL) {
+        write_runlog(ERROR, "xalarm link event desc is null.\n");
+        return;
+    }
+
+    uint32 scna = 0;
+    char eventStr[XALARM_LINK_EVENT_STR_MAX] = {0};
+    if (!ParseLinkAlarmDesc(alarmDesc, &scna, eventStr, sizeof(eventStr))) {
+        write_runlog(ERROR, "failed to parse xalarm link payload: %s.\n", alarmDesc);
+        return;
+    }
+
+    uint32 alarmNodeId = FindAlarmNodeByCna(scna);
+    if (alarmNodeId == INVALID_ALARM_NODE_ID) {
+        write_runlog(ERROR, "cannot find node mapping for xalarm link event, scna=%u.\n", scna);
+        return;
+    }
+
+    if (strcasecmp(eventStr, "up") == 0) {
+        write_runlog(LOG, "receive xalarm link up event, scna=%u, nodeId=%u, payload=%s.\n",
+            scna, alarmNodeId, alarmDesc);
+        return;
+    }
+    if (strcasecmp(eventStr, "down") != 0) {
+        write_runlog(WARNING, "receive xalarm link event with unknown state=%s, scna=%u.\n", eventStr, scna);
+        return;
+    }
+
+    write_runlog(LOG, "receive xalarm link down event, scna=%u, nodeId=%u, probe peer DN by tcp.\n",
+        scna, alarmNodeId);
+    if (ProbePeerDnByTcp(alarmNodeId, XALARM_LINK_TCP_TIMEOUT_SEC_DEFAULT)) {
+        write_runlog(WARNING,
+            "xalarm link down but peer DN tcp probe succeeded, alarm only without cms report, "
+            "nodeId=%u, scna=%u, timeoutSec=%u.\n",
+            alarmNodeId, scna, XALARM_LINK_TCP_TIMEOUT_SEC_DEFAULT);
+        return;
+    }
+
+    write_runlog(ERROR,
+        "xalarm link down and peer DN tcp probe failed, trigger panic/reboot fault flow, "
+        "nodeId=%u, scna=%u, timeoutSec=%u.\n",
+        alarmNodeId, scna, XALARM_LINK_TCP_TIMEOUT_SEC_DEFAULT);
+    ProcessXalarmFaultFlow(param, (int)XALARM_LINK_EVENT_ID, alarmNodeId, scna);
+}
+
 static void HandleXalarmEvent(struct alarm_info *param)
 {
     if (g_shutdownRequest || g_exitFlag) {
         return;
     }
     int alarmId = xalarm_getid(param);
+    if (alarmId == (int)XALARM_LINK_EVENT_ID) {
+        HandleXalarmLinkEvent(param);
+        return;
+    }
     if (IsNeedProcessXalarmEvent(alarmId)) {
         write_runlog(LOG, "receive xalarm panic/kernel reboot event, alarmId=%d, alarmType=%d, alarmTime=%lld.\n",
             alarmId, xalarm_gettype(param), (long long)xalarm_gettime(param));
@@ -2914,11 +3146,10 @@ static void HandleXalarmEvent(struct alarm_info *param)
         return;
     }
     switch (alarmId) {
-        case (int)XALARM_REBOOT_EVENT_ID:
         case (int)XALARM_OOM_EVENT_ID:
             write_runlog(DEBUG1, "receive reserved xalarm event, alarmId=%d, alarmType=%d.\n",
                 alarmId, xalarm_gettype(param));
-            ReportXalarmEventAck(alarmId, xalarm_getdesc(param));
+            ReportXalarmEventAck(alarmId, xalarm_getdesc(param), XALARM_ACK_RES_SUCCESS);
             break;
         case (int)XALARM_UBUS_MEM_EVENT_ID:
         case (int)XALARM_REBOOT_ACK_EVENT_ID:
@@ -2944,13 +3175,14 @@ static void *XalarmEventCheckMain(void *arg)
     uint32 filterIdx = 0;
     idFilter.id_list[filterIdx++] = (int)XALARM_PANIC_EVENT_ID;
     idFilter.id_list[filterIdx++] = (int)XALARM_KERNEL_REBOOT_EVENT_ID;
+    idFilter.id_list[filterIdx++] = (int)XALARM_LINK_EVENT_ID;
     idFilter.len = (int)filterIdx;
 
     while (!g_shutdownRequest && !g_exitFlag) {
         if (regRet < 0) {
             regRet = xalarm_register_event(&reg, idFilter);
             if (regRet < 0) {
-                write_runlog(ERROR, "xalarm_register_event (panic/reboot events) failed, ret=%d.\n", regRet);
+                write_runlog(ERROR, "xalarm_register_event failed, ret=%d.\n", regRet);
                 cm_sleep(SHUTDOWN_SLEEP_TIME);
                 continue;
             }
@@ -2964,7 +3196,8 @@ static void *XalarmEventCheckMain(void *arg)
             securec_check_errno(rc, (void)rc);
             int getRet = xalarm_get_event(&msg, reg);
             if (getRet < 0) {
-                write_runlog(WARNING, "xalarm_get_event (panic/reboot) failed, ret=%d errno=%d.\n", getRet, errno);
+                write_runlog(WARNING, "xalarm_get_event failed, ret=%d errno=%d.\n",
+                    getRet, errno);
                 break;
             }
             struct alarm_info info;
@@ -2974,6 +3207,7 @@ static void *XalarmEventCheckMain(void *arg)
         if (g_xalarmEventRegister == reg && reg != NULL) {
             CmaXalarmUnregisterEvent(&reg);
             g_xalarmEventRegister = NULL;
+            regRet = -1;
         }
         if (g_shutdownRequest || g_exitFlag) {
             break;
@@ -3006,7 +3240,6 @@ void CreateXalarmEventCheckThread(void)
         write_runlog(ERROR, "xalarm event check enabled, but xalarm_node_map is invalid.\n");
         return;
     }
-
     pthread_t threadId;
     if (pthread_create(&threadId, NULL, XalarmEventCheckMain, NULL) != 0) {
         write_runlog(ERROR, "failed to create xalarm event check thread.\n");

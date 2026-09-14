@@ -24,6 +24,8 @@
 #include <sys/wait.h>
 #include <sys/procfs.h>
 #include <sys/file.h>
+#include <fcntl.h>
+#include <unistd.h>
 #ifdef __aarch64__
 #include <sys/sysinfo.h>
 #endif
@@ -1399,31 +1401,34 @@ static int cmagent_unlock(void)
 static int cmagent_lock(void)
 {
     int ret;
-    struct stat statbuf = {0};
 
-    /* If gtm_ctl.lock dose not exist,create it */
-    if (stat(g_cmagentLockfile, &statbuf) != 0) {
+    int fd = open(g_cmagentLockfile, O_RDWR | O_CREAT | O_NOFOLLOW, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        (void)fprintf(stderr, "FATAL %s: can't open lock file \"%s\" : %s\n",
+            g_progname, g_cmagentLockfile, strerror(errno));
+        exit(1);
+    }
+    struct stat statbuf = {0};
+    if (fstat(fd, &statbuf) != 0) {
+        (void)fprintf(stderr, "FATAL %s: can't stat lock file \"%s\" : %s\n",
+            g_progname, g_cmagentLockfile, strerror(errno));
+        (void)close(fd);
+        exit(1);
+    }
+    if (statbuf.st_size == 0) {
         char content[MAX_PATH_LEN] = {0};
-        g_lockfile = fopen(g_cmagentLockfile, PG_BINARY_W);
-        if (g_lockfile == NULL) {
-            (void)fprintf(stderr, "FATAL %s: can't open lock file \"%s\" : %s\n",
-                g_progname, g_cmagentLockfile, strerror(errno));
-            exit(1);
-        }
-        (void)chmod(g_cmagentLockfile, S_IRUSR | S_IWUSR);
-        if (fwrite(content, MAX_PATH_LEN, 1, g_lockfile) != 1) {
-            (void)fclose(g_lockfile);
-            g_lockfile = NULL;
+        if (write(fd, content, MAX_PATH_LEN) != MAX_PATH_LEN) {
+            (void)close(fd);
             (void)fprintf(stderr,
                 "FATAL %s: can't write lock file \"%s\" : %s\n",
                 g_progname, g_cmagentLockfile, strerror(errno));
             exit(1);
         }
-        (void)fclose(g_lockfile);
-        g_lockfile = NULL;
-        (void)chmod(g_cmagentLockfile, S_IRUSR | S_IWUSR);
+        (void)lseek(fd, 0, SEEK_SET);
     }
-    if ((g_lockfile = fopen(g_cmagentLockfile, PG_BINARY_W)) == NULL) {
+    g_lockfile = fdopen(fd, "r+");
+    if (g_lockfile == NULL) {
+        (void)close(fd);
         (void)fprintf(stderr, "FATAL %s: could not open lock file \"%s\" : %s\n",
             g_progname, g_cmagentLockfile, strerror(errno));
         exit(1);

@@ -41,6 +41,7 @@ extern syscalllock g_cmEnvLock;
 extern void cm_sleep(unsigned int sec);
 
 extern void check_input_for_security(const char *input);
+extern void check_shell_param_for_security(const char *input);
 extern void CheckEnvValue(const char *inputEnvValue);
 
 extern int cm_getenv(

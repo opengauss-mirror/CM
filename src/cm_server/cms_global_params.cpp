@@ -79,7 +79,7 @@ THR_LOCAL ProcessingMode Mode = NormalProcessing;
 
 int switch_rto = 600;
 int force_promote = 0;
-int cm_auth_method = CM_AUTH_TRUST;
+int cm_auth_method = CM_AUTH_REJECT;
 /* modify from read only to read write for recovery disk usage */
 int max_datastorage_threshold_check = 1800;
 /* the percent when bigger than it, will not do auto switchover az */
@@ -1366,6 +1366,11 @@ void kill_instance_for_agent_fault(uint32 node, uint32 instanceId, int insType)
         if (findNode) {
             break;
         }
+    }
+
+    if (findNode && sshIp[0] != '\0' && data_dir[0] != '\0') {
+        check_shell_param_for_security(sshIp);
+        check_shell_param_for_security(data_dir);
     }
 
     if (insType == INSTANCE_TYPE_DATANODE || insType == INSTANCE_TYPE_COORDINATE) {

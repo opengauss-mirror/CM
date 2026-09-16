@@ -119,7 +119,7 @@ void ProcessCtlToCmQueryKickStatMsg(MsgRecvInfo* recvMsgInfo);
 void ProcessCtl2CmOneInstanceBarrierQueryMsg(
     MsgRecvInfo* recvMsgInfo, uint32 node, uint32 instanceId, int instanceType);
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
-void ProcessGetDnSyncListMsg(AgentToCmserverDnSyncList *agentDnSyncList);
+void ProcessGetDnSyncListMsg(MsgRecvInfo *recvMsgInfo, AgentToCmserverDnSyncList *agentDnSyncList);
 #endif
 void ProcessAgent2CmResStatReportMsg(ReportResStatus *resStatusPtr);
 void ProcessReportResChangedMsg(bool notifyClient, const OneResStatList *status);

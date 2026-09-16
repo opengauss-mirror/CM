@@ -515,8 +515,13 @@ DatanodeSyncList GetSyncList(uint32 groupIndex, uint32 instanceId, char *syncLis
     return list;
 }
 
-void ProcessGetDnSyncListMsg(AgentToCmserverDnSyncList *agentDnSyncList)
+void ProcessGetDnSyncListMsg(MsgRecvInfo *recvMsgInfo, AgentToCmserverDnSyncList *agentDnSyncList)
 {
+    if (recvMsgInfo == NULL || agentDnSyncList == NULL || recvMsgInfo->connID.remoteType != CM_AGENT ||
+        recvMsgInfo->connID.agentNodeId != agentDnSyncList->node) {
+        write_runlog(ERROR, "reject DN sync list because message node does not match Agent connection.\n");
+        return;
+    }
     if (agentDnSyncList->instanceType != INSTANCE_TYPE_DATANODE) {
         write_runlog(ERROR, "cms get instance(%u) is not dn, this type is %d.\n",
             agentDnSyncList->instanceId, agentDnSyncList->instanceType);

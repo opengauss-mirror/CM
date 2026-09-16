@@ -90,7 +90,7 @@ status_t CreateKeyListFromDisk()
     uint8 value = 0;
     uint32 bitMap = 0;
 
-    char key[MAX_KEY_LENGTH] = {0};
+    char key[MAX_KEY_LENGTH + 1] = {0};
     for (uint32 ind = 0; ind <= g_sdCacheList.cacheHeaderList->maxBitMap; ind++) {
         value = g_sdCacheList.cacheHeaderList->bitMapArray[ind];
         uint32 offset;
@@ -100,6 +100,11 @@ status_t CreateKeyListFromDisk()
             }
             bitMap = BIT_NUM * ind + offset;
             CM_RETURN_IFERR(ReadDiskKeyArea(bitMap, key, MAX_KEY_LENGTH));
+            key[MAX_KEY_LENGTH] = '\0';
+            if (memchr(key, '\0', MAX_KEY_LENGTH) == NULL) {
+                write_runlog(ERROR, "CreateKeyListFromDisk: key bitMap %u is not null terminated.\n", bitMap);
+                continue;
+            }
             if (FindCache(key, NULL) == CM_TRUE) {
                 write_runlog(ERROR, "CreateKeyListFromDisk: find duplicate key %s.\n", key);
                 continue;
@@ -652,6 +657,21 @@ status_t UpdateDiskDataArea(uint32 bitMap, const char *data, uint32 dataLen, DAT
 {
     uint64 offset = 0;
     uint32 keyOrValueLen = (type == UPDATE_KEY) ? MAX_KEY_LENGTH : MAX_VALUE_LENGTH;
+    if (dataLen == keyOrValueLen && type == UPDATE_KEY) {
+        /*
+         * The shared-disk adapter commonly passes MAX_KEY_LENGTH as the
+         * capacity of a zero-padded key buffer, rather than the key's actual
+         * length.  Normalize that legacy form before enforcing the full-size
+         * key check.  A key with no terminator in the whole record is still
+         * rejected, which keeps the fixed-record write bounded.
+         */
+        size_t actualKeyLen = strnlen(data, keyOrValueLen);
+        if (actualKeyLen >= keyOrValueLen) {
+            write_runlog(ERROR, "UpdateDiskDataArea: key len %u leaves no room for terminator.\n", dataLen);
+            return CM_ERROR;
+        }
+        dataLen = (uint32)actualKeyLen;
+    }
     if (dataLen > keyOrValueLen) {
         write_runlog(ERROR, "UpdateDiskDataArea: data len %u is too long, data type %u.\n", dataLen, (uint32)type);
         return CM_ERROR;
@@ -665,7 +685,12 @@ status_t UpdateDiskDataArea(uint32 bitMap, const char *data, uint32 dataLen, DAT
     write_runlog(DEBUG1, "UpdateDiskDataArea: begin to update data %s, bitMap:%u.\n", data, bitMap);
     (void)pthread_rwlock_wrlock(&(g_sdRwLock));
     g_sdLrwHandler.offset = g_sdBaseOffset + offset;
-    errno_t rc = memcpy_s(g_sdLrwHandler.rwBuff, BITMAP_BYTE_LENGTH, data, dataLen);
+    errno_t rc = 0;
+    if (type == UPDATE_KEY) {
+        rc = memset_s(g_sdLrwHandler.rwBuff, BITMAP_BYTE_LENGTH, 0, keyOrValueLen);
+        securec_check_errno(rc, (void)pthread_rwlock_unlock(&(g_sdRwLock)));
+    }
+    rc = memcpy_s(g_sdLrwHandler.rwBuff, BITMAP_BYTE_LENGTH, data, dataLen);
     securec_check_errno(rc, (void)pthread_rwlock_unlock(&(g_sdRwLock)));
     *(g_sdLrwHandler.rwBuff + dataLen) = 0;
     if (ShareDiskWrite(&g_sdLrwHandler, g_sdLrwHandler.rwBuff, keyOrValueLen) != CM_SUCCESS) {

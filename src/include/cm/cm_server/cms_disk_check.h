@@ -32,7 +32,9 @@
 void* StorageDetectMain(void* arg);
 bool CheckReadOnlyStatus(uint32 groupIdx, int memberIdx);
 bool IsReadOnlyFinalState(uint32 groupIdx, int memberIdx, ReadOnlyState expectedState);
-void UpdateNodeReadonlyInfo();
+int ResolveReadOnlyBinding(uint32 node, uint32 instanceId, uint32 expectInstanceType, uint32* groupIndex,
+                           int* memberIndex);
+int UpdateNodeReadonlyInfo();
 bool CheckReadOnlyStatusAll();
 
 #endif

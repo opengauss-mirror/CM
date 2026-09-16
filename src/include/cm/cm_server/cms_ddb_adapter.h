@@ -50,6 +50,23 @@ typedef struct DdbOptionT {
 
 status_t GetKVFromDDb(char *key, uint32 keyLen, char *value, uint32 valueLen, DDB_RESULT *ddbResult);
 status_t SetKV2Ddb(char *key, uint32 keyLen, char *value, uint32 valueLen, DrvSetOption *option);
+
+/*
+ * FIX-A (V033): validate kv lengths against DDB caps before calling SetKV2Ddb.
+ * CmReadfile allocates only slen + 1 bytes per line, so passing fixed DDB_KEY_LEN/
+ * DDB_VALUE_LEN lengths makes backends read past the buffer. Use real strlen-based
+ * lengths instead; returns -1 when key/value is empty or exceeds the DDB cap.
+ */
+static inline int GetValidatedKvLens(const char* key, const char* value, uint32* keyLen, uint32* valueLen)
+{
+    *keyLen = (uint32)strlen(key);
+    *valueLen = (uint32)strlen(value);
+    if (*keyLen == 0 || *keyLen > DDB_KEY_LEN || *valueLen == 0 || *valueLen > DDB_VALUE_LEN) {
+        return -1;
+    }
+    return 0;
+}
+
 status_t DelKeyInDdb(char *key, uint32 keyLen);
 status_t GetKVWithCon(DdbConn *ddbConn, const char *key, char *value, uint32 valueLen, DDB_RESULT *ddbResult);
 status_t SetKVWithConn(DdbConn *ddbConn, char *key, uint32 keyLen, char *value, uint32 valueLen);

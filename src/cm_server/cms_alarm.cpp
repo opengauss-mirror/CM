@@ -287,6 +287,10 @@ void report_phony_dead_alarm(AlarmType alarmType, const char* instanceName, uint
         AlarmLog(ALM_LOG, "Phony dead alarm item is not initialized.\n");
         return;
     }
+    if (g_phony_dead_alarm == NULL) {
+        AlarmLog(ALM_LOG, "Phony dead alarm item is not initialized.\n");
+        return;
+    }
 
     int alarmIndex = 0;
     for (; alarmIndex < g_instance_count; alarmIndex++) {

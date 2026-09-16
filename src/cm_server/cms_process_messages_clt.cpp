@@ -1570,7 +1570,16 @@ static void ProcessSwitchDdb(CmsToCtlSwitchAck *ackMsg)
     while (lines[i] != NULL && lines[i + 1] != NULL) {
         ModifierLine(lines[i]);
         ModifierLine(lines[i + 1]);
-        if (SetKV2Ddb(lines[i], DDB_KEY_LEN, lines[i + 1], DDB_VALUE_LEN, &opt) != CM_SUCCESS) {
+        uint32 keyLen = 0;
+        uint32 valueLen = 0;
+        if (GetValidatedKvLens(lines[i], lines[i + 1], &keyLen, &valueLen) != 0) {
+            ackMsg->isSuccess = false;
+            rc = strcpy_s(ackMsg->errMsg, CM_PATH_LENGTH, "invalid kv length in kv file.");
+            securec_check_errno(rc, (void)rc);
+            freefile(lines);
+            return;
+        }
+        if (SetKV2Ddb(lines[i], keyLen, lines[i + 1], valueLen, &opt) != CM_SUCCESS) {
             ackMsg->isSuccess = false;
             rc = strcpy_s(ackMsg->errMsg, CM_PATH_LENGTH, "put all kv to new ddb fail.");
             securec_check_errno(rc, (void)rc);

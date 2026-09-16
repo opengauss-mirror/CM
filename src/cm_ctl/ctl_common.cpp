@@ -321,7 +321,7 @@ static status_t CtlConnSslRequst(CM_Conn *conn, int ssl_req, bool *enableSsl)
         receiveMsg = recv_cm_server_cmd(conn);
         if (receiveMsg != NULL) {
             if (ProcessSslAck(receiveMsg, enableSsl) != 0) {
-                continue;
+                return CM_ERROR;
             }
             return CM_SUCCESS;
         }

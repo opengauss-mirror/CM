@@ -33,20 +33,25 @@
 #include "cms_common.h"
 #include "cms_alarm.h"
 
-#ifdef ENABLE_UT
-#define static
-#endif
 
 using std::vector;
 
 static Alarm *g_logStorageAlarm;
 static InstanceAlarm* g_readOnlyPreAlarm = NULL;
 static InstanceAlarm* g_readOnlyAlarm = NULL;
+#ifdef ENABLE_UT
+InstancePhonyDeadAlarm* g_phony_dead_alarm = NULL;
+#else
 static InstancePhonyDeadAlarm* g_phony_dead_alarm = NULL;
+#endif
 static InstanceAlarm* g_reduceSyncListAlarm = NULL;
 static InstanceAlarm* g_increaseSyncListAlarm = NULL;
 
+#ifdef ENABLE_UT
+int g_instance_count = 0;
+#else
 static int g_instance_count = 0;
+#endif
 static int g_dnCount = 0;
 
 void ReportCMSAlarmNormalCluster(Alarm* alarmItem, AlarmType type, AlarmAdditionalParam* additionalParam)

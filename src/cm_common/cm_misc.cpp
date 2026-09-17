@@ -1464,7 +1464,7 @@ status_t IsTcpHostPortReachable(const char *host, uint32 port, uint32 timeoutSec
 
 status_t IsReachableIP(char *ip)
 {
-    if (ip == nullptr) {
+    if (!IsIPAddrValid(ip)) {
         return CM_ERROR;
     }
     char cmd[MAXPGPATH] = {0};

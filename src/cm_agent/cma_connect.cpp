@@ -25,6 +25,7 @@
 #include <csignal>
 #include "cma_global_params.h"
 #include "cm/cs_ssl.h"
+#include "cm/cm_util.h"
 #include "cma_common.h"
 #include "cma_instance_check.h"
 #include "cma_instance_management_res.h"
@@ -117,29 +118,37 @@ static status_t conn_ssl_requst(CM_Conn *conn, int ssl_req, bool *enableSsl)
     AgentToCmConnectRequest req_msg;
     req_msg.msg_type = ssl_req;
     req_msg.nodeid = g_nodeId;
-    const int waitAckTime = 20;
-    int timeOut = waitAckTime;
+    /* Preserve the original budget of 21 receive cycles, including the zero-count cycle. */
+    const uint64 waitAckTimeMs = 21 * AGENT_RECV_CYCLE / 1000;
+    const uint64 deadline = GetMonotonicTimeMs() + waitAckTimeMs;
 
     if (CmaSendMsg(conn, 'C', (const char *)&req_msg, sizeof(AgentToCmConnectRequest)) != CM_SUCCESS) {
         return CM_ERROR;
     }
 
     write_runlog(DEBUG5, "GetSslRequestAck start.\n");
-    while (timeOut >= 0) {
+    while (GetMonotonicTimeMs() < deadline) {
         if (CmaFlushMsg(conn) != CM_SUCCESS) {
             return CM_ERROR;
         }
 
         char *receiveMsg = RecvSslRequestAck(conn);
+        if (GetMonotonicTimeMs() >= deadline) {
+            return CM_ERROR;
+        }
         if (receiveMsg != NULL) {
-            if (GetSslRequestAck(receiveMsg, enableSsl) != CM_SUCCESS) {
+            /* With SSL disabled, resource broadcasts may arrive before the SSL ACK. */
+            const cm_msg_type* msgType = (const cm_msg_type*)receiveMsg;
+            if (msgType->msg_type != MSG_CM_SSL_CONN_ACK) {
                 continue;
+            }
+            if (GetSslRequestAck(receiveMsg, enableSsl) != CM_SUCCESS) {
+                return CM_ERROR;
             }
             write_runlog(DEBUG5, "GetSslRequestAck end %d\n", (int32)*enableSsl);
             return CM_SUCCESS;
         }
 
-        timeOut--;
         CmUsleep(AGENT_RECV_CYCLE);
     }
 

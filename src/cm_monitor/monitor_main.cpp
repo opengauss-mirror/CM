@@ -33,6 +33,7 @@
 #include <sys/resource.h>
 #include <sys/file.h>
 #include <fcntl.h>
+#include <sstream>
 
 #include "cm/pqsignal.h"
 #include "cm/stringinfo.h"
@@ -54,7 +55,6 @@ pid_t g_cmAgentPid = 0;
 
 #define LOGIC_CLUSTER_LIST "logic_cluster_name.txt"
 
-#define MAX_PORT_LEN (8)
 #define TRY_COUNT_FOR_KILL_ETCD_REPLACE (5)
 
 /* year(4) + -(1) + month(2) -(1) + day (2) +(1) + hour(2) + minute(2) + second(2) + \0 */
@@ -1101,6 +1101,55 @@ void CheckStartEtcdCount(AlarmAdditionalParam *additionalParam)
         write_runlog(LOG, "env is %s.\n", execPath);
     }
 }
+
+static std::string GetEtcdStartCommand(uint32 currNodeIndex, const char *logOutPutCmd, const char *userName,
+    bool isExistingCluster)
+{
+    const staticNodeConfig *node = &g_node[currNodeIndex];
+    std::ostringstream clientUrls;
+    for (uint32 ipnum = 0; ipnum < CM_IP_NUM; ++ipnum) {
+        if (node->etcdClientListenIPs[ipnum][0] == '\0') {
+            break;
+        }
+        clientUrls << SYSTEMQUOTE "https://" << node->etcdClientListenIPs[ipnum] << ":"
+                   << node->etcdClientListenPort << SYSTEMQUOTE;
+        if (ipnum + 1 < node->etcdClientListenIPCount) {
+            clientUrls << ",";
+        }
+    }
+
+    std::ostringstream command;
+    command << SYSTEMQUOTE "umask=`umask`;umask 0077;" << g_etcdBinPath << "  -name " << node->etcdName
+            << " --data-dir " << node->etcdDataPath
+            << " --client-cert-auth --trusted-ca-file " << g_tlsPath.etcd_ca_path
+            << " --cert-file " << node->etcdDataPath << "/etcd.crt --key-file " << node->etcdDataPath << "/etcd.key  "
+            << "--peer-client-cert-auth --peer-trusted-ca-file " << g_tlsPath.etcd_ca_path
+            << " --peer-cert-file " << node->etcdDataPath << "/etcd.crt --peer-key-file "
+            << node->etcdDataPath << "/etcd.key "
+            << "-initial-advertise-peer-urls https://" << node->etcdHAListenIPs[0] << ":" << node->etcdHAListenPort
+            << "  -listen-peer-urls https://" << node->etcdHAListenIPs[0] << ":" << node->etcdHAListenPort
+            << "  -listen-client-urls " << clientUrls.str() << "  -advertise-client-urls " << clientUrls.str()
+            << " --election-timeout 5000 --heartbeat-interval 1000 " << logOutPutCmd
+            << " 'stdout' --quota-backend-bytes $((8*1024*1024*1024)) "
+            << "--auto-compaction-mode 'periodic' --auto-compaction-retention '1h' "
+            << "-initial-cluster-token etcd-cluster-" << userName << " --enable-v2=false -initial-cluster " SYSTEMQUOTE;
+
+    bool firstNode = true;
+    for (uint32 i = 0; i < g_node_num; ++i) {
+        if (g_node[i].etcd) {
+            if (!firstNode) {
+                command << ",";
+            }
+            command << g_node[i].etcdName << "=https://" << g_node[i].etcdHAListenIPs[0] << ":"
+                    << g_node[i].etcdHAListenPort;
+            firstNode = false;
+        }
+    }
+    command << " -initial-cluster-state " << (isExistingCluster ? "existing" : "new")
+            << " >> \"" << g_curEtcdLogFile << "\" 2>&1 & umask $umask";
+    return command.str();
+}
+
 static void check_ETCD_process_status(AlarmAdditionalParam *additionalParam, const char *userName)
 {
     int status = 0;
@@ -1133,112 +1182,22 @@ static void check_ETCD_process_status(AlarmAdditionalParam *additionalParam, con
                     CheckStartEtcdCount(additionalParam);
                     return;
                 }
-                char clientUrls[CM_IP_LENGTH * CM_IP_NUM] = {0};
-                for (uint32 ipnum = 0; ipnum < CM_IP_NUM; ipnum++) {
-                    if (strlen(g_node[currNodeIndex].etcdClientListenIPs[ipnum]) == 0) {
-                        break;
-                    }
-
-                    char single_url[CM_IP_LENGTH] = {0};
-                    rcs = snprintf_s(single_url, CM_IP_LENGTH, CM_IP_LENGTH - 1,
-                        SYSTEMQUOTE "https://%s:%u" SYSTEMQUOTE,
-                        g_node[currNodeIndex].etcdClientListenIPs[ipnum], g_node[currNodeIndex].etcdClientListenPort);
-                    securec_check_intval(rcs, (void)rcs);
-
-                    if ((ipnum + 1) < g_node[currNodeIndex].etcdClientListenIPCount) {
-                        rcs = strncat_s(single_url, CM_IP_LENGTH, ",", strlen(","));
-                        securec_check_errno(rcs, (void)rcs);
-                    }
-
-                    rcs = strncat_s(clientUrls, CM_IP_LENGTH * CM_IP_NUM, single_url, strlen(single_url));
-                    securec_check_errno(rcs, (void)rcs);
-                }
-
-                rcs = snprintf_s(command,
-                    2 * MAXPGPATH,
-                    (2 * MAXPGPATH) - 1,
-                    SYSTEMQUOTE "umask=`umask`;umask 0077;%s  -name %s --data-dir %s "
-                    "--client-cert-auth --trusted-ca-file %s --cert-file %s/etcd.crt --key-file %s/etcd.key  "
-                    "--peer-client-cert-auth --peer-trusted-ca-file %s --peer-cert-file %s/etcd.crt --peer-key-file "
-                    "%s/etcd.key "
-                    "-initial-advertise-peer-urls https://%s:%u  -listen-peer-urls https://%s:%u  "
-                    "-listen-client-urls %s  -advertise-client-urls %s --election-timeout 5000 "
-                    "--heartbeat-interval 1000 %s 'stdout' --quota-backend-bytes $((8*1024*1024*1024)) "
-                    "--auto-compaction-mode 'periodic' --auto-compaction-retention '1h' "
-                    "-initial-cluster-token etcd-cluster-%s --enable-v2=false -initial-cluster " SYSTEMQUOTE,
-                    g_etcdBinPath,
-                    g_node[currNodeIndex].etcdName,
-                    g_node[currNodeIndex].etcdDataPath,
-                    g_tlsPath.etcd_ca_path,
-                    g_node[currNodeIndex].etcdDataPath,
-                    g_node[currNodeIndex].etcdDataPath,
-                    g_tlsPath.etcd_ca_path,
-                    g_node[currNodeIndex].etcdDataPath,
-                    g_node[currNodeIndex].etcdDataPath,
-                    g_node[currNodeIndex].etcdHAListenIPs[0],
-                    g_node[currNodeIndex].etcdHAListenPort,
-                    g_node[currNodeIndex].etcdHAListenIPs[0],
-                    g_node[currNodeIndex].etcdHAListenPort,
-                    clientUrls,
-                    clientUrls,
-                    logOutPutCmd,
-                    userName);
-                securec_check_intval(rcs, (void)rcs);
-
-                uint32 j = 0;
-                for (uint32 i = 0; i < g_node_num; i++) {
-                    if (g_node[i].etcd) {
-                        char port[MAX_PORT_LEN];
-                        if (j++ > 0) {
-                            rcs = strncat_s(command, 2 * MAXPGPATH, ",", strlen(","));
-                            securec_check_errno(rcs, (void)rcs);
-                        }
-                        rcs = strncat_s(command, 2 * MAXPGPATH, g_node[i].etcdName, strlen(g_node[i].etcdName));
-                        securec_check_errno(rcs, (void)rcs);
-                        rcs = strncat_s(command, 2 * MAXPGPATH, "=https://", strlen("=https://"));
-                        securec_check_errno(rcs, (void)rcs);
-                        rcs = strncat_s(
-                            command, 2 * MAXPGPATH, g_node[i].etcdHAListenIPs[0], strlen(g_node[i].etcdHAListenIPs[0]));
-                        securec_check_errno(rcs, (void)rcs);
-                        rcs = strncat_s(command, 2 * MAXPGPATH, ":", strlen(":"));
-                        securec_check_errno(rcs, (void)rcs);
-                        rcs = snprintf_s(port, MAX_PORT_LEN, MAX_PORT_LEN - 1, "%u", g_node[i].etcdHAListenPort);
-                        securec_check_intval(rcs, (void)rcs);
-                        rcs = strncat_s(command, 2 * MAXPGPATH, port, strlen(port));
-                        securec_check_errno(rcs, (void)rcs);
-                    }
-                }
                 /*
                  * the replaced ETCD node must be started with flag "-initial-cluster-state existing" so that
                  * new node can sync data from other members.
                  */
-                if (access(g_etcdReplacedPath, 0) != 0) {
-                    rcs = strncat_s(command,
-                        2 * MAXPGPATH,
-                        " -initial-cluster-state new >> \"",
-                        strlen(" -initial-cluster-state new >> \""));
-                    securec_check_errno(rcs, (void)rcs);
-                } else {
-                    rcs = strncat_s(command,
-                        2 * MAXPGPATH,
-                        " -initial-cluster-state existing >> \"",
-                        strlen(" -initial-cluster-state existing >> \""));
-
-                    securec_check_errno(rcs, (void)rcs);
-
+                bool isExistingCluster = (access(g_etcdReplacedPath, 0) == 0);
+                std::string startCommand = GetEtcdStartCommand(currNodeIndex, logOutPutCmd, userName, isExistingCluster);
+                if (isExistingCluster) {
                     ret = unlink(g_etcdReplacedPath);
                     if (ret != 0) {
                         write_runlog(ERROR, "could not remove etcd_replaced file: %d.\n", errno);
                     }
                 }
-                rcs = strncat_s(command, 2 * MAXPGPATH, g_curEtcdLogFile, strlen(g_curEtcdLogFile));
-                securec_check_errno(rcs, (void)rcs);
-                rcs = strncat_s(command, 2 * MAXPGPATH, "\" 2>&1 & umask $umask", strlen("\" 2>&1 & umask $umask"));
-                securec_check_errno(rcs, (void)rcs);
-                ret = system(command);
-                write_runlog(LOG, "run etcd command: %s \n", command);
+                ret = system(startCommand.c_str());
+                write_runlog(LOG, "run etcd command: %s \n", startCommand.c_str());
                 if (ret != 0) {
-                    write_runlog(ERROR, "run system command failed %d! %s, errno=%d.\n", ret, command, errno);
+                    write_runlog(ERROR, "run system command failed %d! %s, errno=%d.\n", ret, startCommand.c_str(), errno);
                 }
 
                 /* reset cgroup attach and kill counter at resetart */

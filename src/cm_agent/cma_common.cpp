@@ -414,6 +414,30 @@ void ReloadParametersFromConfig()
     LoadDiskCheckConfig(configDir);
 }
 
+static void ReloadDbServiceVip()
+{
+    char dbServiceVip[sizeof(g_dbServiceVip)] = {0};
+    errno_t rc = strcpy_s(dbServiceVip, sizeof(dbServiceVip), g_dbServiceVip);
+    securec_check_errno(rc, (void)rc);
+    if (get_config_param(configDir, "db_service_vip", dbServiceVip, sizeof(dbServiceVip)) < 0) {
+        write_runlog(ERROR, "get_config_param() get db_service_vip fail.\n");
+        return;
+    }
+
+    char *vip = dbServiceVip;
+    size_t len = strlen(vip);
+    if (len >= 2 && vip[0] == '\'' && vip[len - 1] == '\'') {
+        vip[len - 1] = '\0';
+        ++vip;
+    }
+    if (vip[0] != '\0' && !IsIPAddrValid(vip)) {
+        write_runlog(ERROR, "value of parameter \"db_service_vip\" is invalid, keeping the previous value.\n");
+        return;
+    }
+    rc = strcpy_s(g_dbServiceVip, sizeof(g_dbServiceVip), vip);
+    securec_check_errno(rc, (void)rc);
+}
+
 void ReloadParametersFromConfigfile()
 {
     ReloadParametersFromConfig();
@@ -440,9 +464,7 @@ void ReloadParametersFromConfigfile()
         check_input_for_security(g_unixSocketDirectory);
     }
 
-    if (get_config_param(configDir, "db_service_vip", g_dbServiceVip, sizeof(g_dbServiceVip)) < 0) {
-        write_runlog(ERROR, "get_config_param() get db_service_vip fail.\n");
-    }
+    ReloadDbServiceVip();
 
     log_max_size = get_int_value_from_config(configDir, "log_max_size", 10240);
     log_saved_days = (uint32)get_int_value_from_config(configDir, "log_saved_days", 90);

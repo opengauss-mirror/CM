@@ -101,10 +101,16 @@ int UpdateBasicInfo(const NodeInstanceCnt lastGlobalValue)
         return -1;
     }
 
-    UpdatePhonyDeadAlarm();
+    if (UpdatePhonyDeadAlarm() != 0) {
+        write_runlog(ERROR, "[reload] UpdatePhonyDeadAlarm failed.\n");
+        return -1;
+    }
     FreeAndInitNotifyMsg();
     UpdateAzNodeInfo();
-    UpdateNodeReadonlyInfo();
+    if (UpdateNodeReadonlyInfo() != 0) {
+        write_runlog(ERROR, "[reload] UpdateNodeReadonlyInfo failed.\n");
+        return -1;
+    }
 
     return 0;
 }

@@ -21,6 +21,7 @@
  * -------------------------------------------------------------------------
  */
 #include <malloc.h>
+#include <vector>
 #include "securec.h"
 #include "cm/cm_elog.h"
 #include "cm_vtable.h"
@@ -761,48 +762,53 @@ status_t FindCacheByMultiLevel(const char *key, char *buff, uint32 buffLen)
     errno_t rc = 0;
 
     write_runlog(DEBUG1, "FindCacheByMultiLevel: try to get all value of key %s.\n", key);
+    /* Snapshot the matching cache entries under the lock, then release the lock
+     * before any disk read (same trade-off as DiskCacheRead: the snapshot may go
+     * stale if a matched key is deleted between snapshot and read). */
+    vector<pair<string, uint32>> matchList;
+    uint32 matchCount = 0;
     (void)pthread_rwlock_wrlock(&(g_sdCacheList.lk_lock));
     map<string, uint32>::iterator mapIter = g_sdCacheList.sdCacheMap.begin();
-    while (mapIter != g_sdCacheList.sdCacheMap.end() && (buffLen - offset) > MAX_VALUE_LENGTH) {
+    while (mapIter != g_sdCacheList.sdCacheMap.end()) {
         if (strncmp((*mapIter).first.c_str(), key, strlen(key)) == 0) {
-            bitMap = (*mapIter).second;
-            size_t tmpLength = buffLen - offset;
-            rc = snprintf_s(buff + offset, tmpLength, tmpLength - 1, "%s,", (*mapIter).first.c_str());
-            if (rc < 0) {
-                write_runlog(WARNING,
-                    "FindCacheByMultiLevel: get all value of key %s failed for buffLen %u offset %u.\n",
-                    (*mapIter).first.c_str(),
-                    buffLen,
-                    offset);
-                (void)pthread_rwlock_unlock(&g_sdCacheList.lk_lock);
-                CM_SET_DISKRW_ERROR(ERR_SYSTEM_CALL, rc);
-                return CM_ERROR;
+            matchList.push_back(make_pair((*mapIter).first, (*mapIter).second));
+            if (++matchCount >= MAX_SD_PREFIX_MATCH_COUNT) {
+                break;
             }
-            offset += (uint32)(strlen((*mapIter).first.c_str()) + 1);
-            if (ReadDiskDataLine((*mapIter).first.c_str(), buff + offset, MAX_VALUE_LENGTH, bitMap) != CM_SUCCESS) {
-                (void)pthread_rwlock_unlock(&g_sdCacheList.lk_lock);
-                CM_SET_DISKRW_ERROR(ERR_DISKRW_GET_DATA, (*mapIter).first.c_str());
-                return CM_ERROR;
-            }
-            offset += (uint32)strlen(buff + offset);
-            tmpLength = buffLen - offset;
-            rc = strcat_s(buff + offset, tmpLength, ",");
-            if (rc != 0) {
-                (void)pthread_rwlock_unlock(&g_sdCacheList.lk_lock);
-                write_runlog(WARNING,
-                    "FindCacheByMultiLevel: get all value of key %s failed for offset %u buffLen %u.\n",
-                    key,
-                    offset,
-                    buffLen);
-                CM_SET_DISKRW_ERROR(ERR_SYSTEM_CALL, rc);
-                return CM_ERROR;
-            }
-            offset += 1;
         }
         ++mapIter;
     }
-
     (void)pthread_rwlock_unlock(&g_sdCacheList.lk_lock);
+
+    vector<pair<string, uint32>>::iterator matchIter = matchList.begin();
+    while (matchIter != matchList.end() && (buffLen - offset) > MAX_VALUE_LENGTH) {
+        const char* keystr = (*matchIter).first.c_str();
+        bitMap = (*matchIter).second;
+        size_t tmpLength = buffLen - offset;
+        rc = snprintf_s(buff + offset, tmpLength, tmpLength - 1, "%s,", keystr);
+        if (rc < 0) {
+            write_runlog(WARNING, "FindCacheByMultiLevel: get all value of key %s failed for buffLen %u offset %u.\n",
+                         keystr, buffLen, offset);
+            CM_SET_DISKRW_ERROR(ERR_SYSTEM_CALL, rc);
+            return CM_ERROR;
+        }
+        offset += (uint32)(strlen(keystr) + 1);
+        if (ReadDiskDataLine(keystr, buff + offset, MAX_VALUE_LENGTH, bitMap) != CM_SUCCESS) {
+            CM_SET_DISKRW_ERROR(ERR_DISKRW_GET_DATA, keystr);
+            return CM_ERROR;
+        }
+        offset += (uint32)strlen(buff + offset);
+        tmpLength = buffLen - offset;
+        rc = strcat_s(buff + offset, tmpLength, ",");
+        if (rc != 0) {
+            write_runlog(WARNING, "FindCacheByMultiLevel: get all value of key %s failed for offset %u buffLen %u.\n",
+                         key, offset, buffLen);
+            CM_SET_DISKRW_ERROR(ERR_SYSTEM_CALL, rc);
+            return CM_ERROR;
+        }
+        offset += 1;
+        ++matchIter;
+    }
 
     if (offset == 0) {
         write_runlog(DEBUG1, "FindCacheByMultiLevel: can't find key %s or buffLen %u is invalid.\n",

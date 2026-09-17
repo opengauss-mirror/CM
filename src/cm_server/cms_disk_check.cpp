@@ -164,7 +164,32 @@ static bool IsReadOnlySetByCM(uint32 groupIdx, int memberIdx)
     return false;
 }
 
-static void InitDnReadOnlyInfo(DataNodeReadOnlyInfo *instance, uint32 i, uint32 j)
+int ResolveReadOnlyBinding(uint32 node, uint32 instanceId, uint32 expectInstanceType, uint32* groupIndex,
+                           int* memberIndex)
+{
+    uint32 tmpGroupIndex = 0;
+    int tmpMemberIndex = 0;
+    if (find_node_in_dynamic_configure(node, instanceId, &tmpGroupIndex, &tmpMemberIndex) != 0) {
+        write_runlog(ERROR, "cannot find node %u instance %u in dynamic configure.\n", node, instanceId);
+        return -1;
+    }
+    if (tmpGroupIndex >= g_dynamic_header->relationCount) {
+        write_runlog(ERROR, "node %u instance %u binding mismatch, expect instanceType %u.\n", node, instanceId,
+                     expectInstanceType);
+        return -1;
+    }
+    int memberType = g_instance_role_group_ptr[tmpGroupIndex].instanceMember[tmpMemberIndex].instanceType;
+    if (memberType != (int)expectInstanceType) {
+        write_runlog(ERROR, "node %u instance %u binding mismatch, expect instanceType %u.\n", node, instanceId,
+                     expectInstanceType);
+        return -1;
+    }
+    *groupIndex = tmpGroupIndex;
+    *memberIndex = tmpMemberIndex;
+    return 0;
+}
+
+static int InitDnReadOnlyInfo(DataNodeReadOnlyInfo* instance, uint32 i, uint32 j)
 {
     instance->instanceId = g_node[i].datanode[j].datanodeId;
     instance->dataDiskUsage = INVALID_DISK_USAGE;
@@ -182,13 +207,18 @@ static void InitDnReadOnlyInfo(DataNodeReadOnlyInfo *instance, uint32 i, uint32 
     securec_check_errno(rc, (void)rc);
     rc = snprintf_s(instance->instanceName, CM_NODE_NAME, CM_NODE_NAME - 1, "dn_%u", g_node[i].datanode[j].datanodeId);
     securec_check_intval(rc, (void)rc);
-    (void)find_node_in_dynamic_configure(instance->node, instance->instanceId, &instance->groupIndex,
-        &instance->memberIndex);
+    if (ResolveReadOnlyBinding(instance->node, instance->instanceId, INSTANCE_TYPE_DATANODE, &instance->groupIndex,
+                               &instance->memberIndex) != 0) {
+        write_runlog(ERROR, "[InitDnReadOnlyInfo] resolve node %u instance %u binding failed.\n", instance->node,
+                     instance->instanceId);
+        return -1;
+    }
     g_instance_group_report_status_ptr[instance->groupIndex].instance_status.data_node_member[instance->memberIndex]
         .readOnly = instance;
+    return 0;
 }
 
-static void InitCnReadOnlyInfo(DataNodeReadOnlyInfo *instance, uint32 i)
+static int InitCnReadOnlyInfo(DataNodeReadOnlyInfo* instance, uint32 i)
 {
     instance->instanceId = g_node[i].coordinateId;
     instance->dataDiskUsage = INVALID_DISK_USAGE;
@@ -203,12 +233,17 @@ static void InitCnReadOnlyInfo(DataNodeReadOnlyInfo *instance, uint32 i)
     securec_check_errno(rc, (void)rc);
     rc = snprintf_s(instance->instanceName, CM_NODE_NAME, CM_NODE_NAME - 1, "cn_%u", g_node[i].coordinateId);
     securec_check_intval(rc, (void)rc);
-    (void)find_node_in_dynamic_configure(instance->node, instance->instanceId, &instance->groupIndex,
-        &instance->memberIndex);
+    if (ResolveReadOnlyBinding(instance->node, instance->instanceId, INSTANCE_TYPE_COORDINATE, &instance->groupIndex,
+                               &instance->memberIndex) != 0) {
+        write_runlog(ERROR, "[InitCnReadOnlyInfo] resolve node %u instance %u binding failed.\n", instance->node,
+                     instance->instanceId);
+        return -1;
+    }
     g_instance_group_report_status_ptr[instance->groupIndex].instance_status.coordinatemember.readOnly = instance;
+    return 0;
 }
 
-void UpdateNodeReadonlyInfo()
+int UpdateNodeReadonlyInfo()
 {
     for (uint32 i = 0; i < g_node_num; ++i) {
         DynamicNodeReadOnlyInfo *curNodeInfo = &g_dynamicNodeReadOnlyInfo[i];
@@ -219,13 +254,18 @@ void UpdateNodeReadonlyInfo()
         securec_check_intval(rc, FREE_AND_RESET(g_dynamicNodeReadOnlyInfo));
         for (uint32 j = 0; j < g_dynamicNodeReadOnlyInfo[i].dataNodeCount; j++) {
             DataNodeReadOnlyInfo *curdn = &curNodeInfo->dataNode[j];
-            InitDnReadOnlyInfo(curdn, i, j);
+            if (InitDnReadOnlyInfo(curdn, i, j) != 0) {
+                return -1;
+            }
         }
         if (g_node[i].coordinate == 1) {
             DataNodeReadOnlyInfo *curCn = &curNodeInfo->coordinateNode;
-            InitCnReadOnlyInfo(curCn, i);
+            if (InitCnReadOnlyInfo(curCn, i) != 0) {
+                return -1;
+            }
         }
     }
+    return 0;
 }
 
 void ResetReadOnlyInfo(DataNodeReadOnlyInfo *instance)
@@ -281,11 +321,15 @@ static int InitNodeReadonlyInfo()
         securec_check_intval(rc, FREE_AND_RESET(g_dynamicNodeReadOnlyInfo));
         for (uint32 j = 0; j < g_dynamicNodeReadOnlyInfo[i].dataNodeCount; j++) {
             DataNodeReadOnlyInfo *curdn = &curNodeInfo->dataNode[j];
-            InitDnReadOnlyInfo(curdn, i, j);
+            if (InitDnReadOnlyInfo(curdn, i, j) != 0) {
+                return -1;
+            }
         }
         if (g_node[i].coordinate == 1) {
             DataNodeReadOnlyInfo *curCn = &curNodeInfo->coordinateNode;
-            InitCnReadOnlyInfo(curCn, i);
+            if (InitCnReadOnlyInfo(curCn, i) != 0) {
+                return -1;
+            }
         }
     }
     return 0;
@@ -436,7 +480,7 @@ static bool CheckAndSetReadOnly()
 static void PreAlarmForNodeThreshold()
 {
     const uint32 preAlarmThreshhold = (g_readOnlyThreshold * 4) / 5;
-    
+
     write_runlog(DEBUG1, "[%s] Starting check for disk alarm, preAlarmThreshhold=%u.\n",
         __FUNCTION__, preAlarmThreshhold);
     for (uint32 i = 0; i < g_node_num; i++) {

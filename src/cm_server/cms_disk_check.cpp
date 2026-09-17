@@ -173,9 +173,13 @@ int ResolveReadOnlyBinding(uint32 node, uint32 instanceId, uint32 expectInstance
         write_runlog(ERROR, "cannot find node %u instance %u in dynamic configure.\n", node, instanceId);
         return -1;
     }
-    if (tmpGroupIndex >= g_dynamic_header->relationCount ||
-        g_instance_role_group_ptr[tmpGroupIndex].instanceMember[tmpMemberIndex].instanceType !=
-            (int)expectInstanceType) {
+    if (tmpGroupIndex >= g_dynamic_header->relationCount) {
+        write_runlog(ERROR, "node %u instance %u binding mismatch, expect instanceType %u.\n", node, instanceId,
+                     expectInstanceType);
+        return -1;
+    }
+    int memberType = g_instance_role_group_ptr[tmpGroupIndex].instanceMember[tmpMemberIndex].instanceType;
+    if (memberType != (int)expectInstanceType) {
         write_runlog(ERROR, "node %u instance %u binding mismatch, expect instanceType %u.\n", node, instanceId,
                      expectInstanceType);
         return -1;
@@ -476,7 +480,7 @@ static bool CheckAndSetReadOnly()
 static void PreAlarmForNodeThreshold()
 {
     const uint32 preAlarmThreshhold = (g_readOnlyThreshold * 4) / 5;
-    
+
     write_runlog(DEBUG1, "[%s] Starting check for disk alarm, preAlarmThreshhold=%u.\n",
         __FUNCTION__, preAlarmThreshhold);
     for (uint32 i = 0; i < g_node_num; i++) {

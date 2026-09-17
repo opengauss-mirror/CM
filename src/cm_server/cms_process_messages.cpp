@@ -1617,7 +1617,7 @@ static void MsgDnSyncList(MsgRecvInfo* recvMsgInfo, int msgType, CmdMsgProc *msg
 {
 #if ((defined(ENABLE_MULTIPLE_NODES)) || (defined(ENABLE_PRIVATEGAUSS)))
     AgentToCmserverDnSyncList *syncListMsg;
-    PROCESS_MSG_BY_TYPE_WITHOUT_CONN(AgentToCmserverDnSyncList, syncListMsg, ProcessGetDnSyncListMsg);
+    PROCESS_MSG_BY_TYPE(AgentToCmserverDnSyncList, syncListMsg, ProcessGetDnSyncListMsg, recvMsgInfo, msgType);
 #endif
 }
 

@@ -82,6 +82,8 @@ static void closeCM_Conn(CM_Conn* conn);
 static CMPQconninfoOption* conninfo_parse(const char* conninfo, PQExpBuffer errorMessage);
 static char* conninfo_getval(CMPQconninfoOption* connOptions, const char* keyword);
 #ifdef KRB5
+static const int CM_MAX_AUTH_MESSAGE_LENGTH = 1024 * 1024 + 4;
+static const int CM_AUTH_MESSAGE_LENGTH_FIELD_SIZE = sizeof(uint32);
 static int CMGssContinue(CM_Conn* conn);
 static int CMGssStartup(CM_Conn* conn);
 static char* gs_getenv_with_check(const char* envKey, CM_Conn* conn);
@@ -851,13 +853,24 @@ keep_going: /* We will come back to here until there is
                 goto error_return;
             }
 
-            msgLength -= 4;
-            if (msgLength <= 0) {
-                goto error_return;
-            }
 #ifdef KRB5
+            /* GSS tokens are supplied by the peer, so bound and fully read them before allocation. */
             if (beresp == 'P') {
-                size_t llen = (size_t)msgLength;
+                if (msgLength <= CM_AUTH_MESSAGE_LENGTH_FIELD_SIZE || msgLength > CM_MAX_AUTH_MESSAGE_LENGTH) {
+                    goto error_return;
+                }
+
+                int gssLength = msgLength - CM_AUTH_MESSAGE_LENGTH_FIELD_SIZE;
+                avail = conn->inEnd - conn->inCursor;
+                if (avail < gssLength &&
+                    cmpqCheckInBufferSpace((size_t)(conn->inCursor + gssLength), conn)) {
+                    goto error_return;
+                }
+                if (avail < gssLength) {
+                    return PGRES_POLLING_READING;
+                }
+
+                size_t llen = (size_t)gssLength;
                 conn->gss_inbuf.length = llen;
                 FREE_AND_RESET(conn->gss_inbuf.value);
                 conn->gss_inbuf.value = malloc(llen);
@@ -868,8 +881,11 @@ keep_going: /* We will come back to here until there is
                         llen);
                     goto error_return;
                 }
-                (void)cmpqGetnchar((char*)conn->gss_inbuf.value, llen, conn);
-                /* OK, we successfully read the message; mark data consumed */
+                if (cmpqGetnchar((char*)conn->gss_inbuf.value, llen, conn) != 0) {
+                    FREE_AND_RESET(conn->gss_inbuf.value);
+                    conn->gss_inbuf.length = 0;
+                    goto error_return;
+                }
                 conn->inStart = conn->inCursor;
                 rc = CMGssContinue(conn);
                 if (rc != STATUS_OK) {
@@ -880,6 +896,10 @@ keep_going: /* We will come back to here until there is
             }
 #endif // KRB5
 
+            msgLength -= 4;
+            if (msgLength <= 0) {
+                goto error_return;
+            }
             avail = conn->inEnd - conn->inCursor;
             if (avail < msgLength) {
                 /*
@@ -935,7 +955,11 @@ keep_going: /* We will come back to here until there is
                         llen);
                     goto error_return;
                 }
-                (void)cmpqGetnchar((char *)conn->gss_inbuf.value, llen, conn);
+                if (cmpqGetnchar((char *)conn->gss_inbuf.value, llen, conn) != 0) {
+                    FREE_AND_RESET(conn->gss_inbuf.value);
+                    conn->gss_inbuf.length = 0;
+                    goto error_return;
+                }
                 /* OK, we successfully read the message; mark data consumed */
                 conn->inStart = conn->inCursor;
                 rc = CMGssContinue(conn);
@@ -946,8 +970,7 @@ keep_going: /* We will come back to here until there is
                 (void)cmpqFlush(conn);
                 goto keep_going;
             }
-#endif  // KRB5
-
+#endif // KRB5
             goto error_return;
         }
 

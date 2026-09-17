@@ -1361,7 +1361,7 @@ bool IsNodeIdValid(int nodeId)
 
 status_t IsReachableIP(char *ip)
 {
-    if (ip == nullptr) {
+    if (!IsIPAddrValid(ip)) {
         return CM_ERROR;
     }
     char cmd[MAXPGPATH] = {0};

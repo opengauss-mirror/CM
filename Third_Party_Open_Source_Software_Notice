@@ -1,0 +1,968 @@
+THIRD PARTY OPEN SOURCE SOFTWARE NOTICE
+
+Please note we provide an open source software notice for the third party open source software along with this software and/or this software component contributed by Huawei (in the following just “this SOFTWARE”). The open source software licenses are granted by the respective right holders.
+
+Warranty Disclaimer
+THE OPEN SOURCE SOFTWARE IN THIS SOFTWARE IS DISTRIBUTED IN THE HOPE THAT IT WILL BE USEFUL, BUT WITHOUT ANY WARRANTY, WITHOUT EVEN THE IMPLIED WARRANTY OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. SEE THE APPLICABLE LICENSES FOR MORE DETAILS.
+
+Copyright Notice and License Texts
+
+Software: cJSON 1.7.11
+Copyright notice：Copyright (c) 2009-2017 Dave Gamble and cJSON contributors
+Copyright (c) 2009-2019 Dave Gamble and cJSON contributors
+Copyright (c) 2010 James Grenning and Contributed to Unity Project
+Copyright (c) 2007 Mike Karlesky, Mark VanderVoord, Greg Williams
+Copyright (c) 2007 - 2017 Unity Project by Mike Karlesky, Mark VanderVoord, and Greg Williams
+Copyright (c) 2007-14 Mike Karlesky, Mark VanderVoord, Greg Williams
+Copyright (c) 2009-2017 Dave Gamble and cJSON contributors
+Copyright (c) 2015 Alexander Mueller / XelaRellum@web.de
+License：MIT License
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+  THE SOFTWARE.
+
+Software: OpenSSL 1.1.1d
+Copyright notice：Copyright 1995-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2016-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2011-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
+Copyright 2002-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2015-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2015-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2002-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2006-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2001-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2010-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2011 Google Inc.
+Copyright 2011-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2014-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (c) 2014, Intel Corporation. All Rights Reserved.
+Copyright (c) 2015, CloudFlare, Inc.
+Copyright 2014-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (c) 2016 Viktor Dukhovni <openssl-users@dukhovni.org>.
+Copyright 2017-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2015-2016 Cryptography Research, Inc.
+Copyright 2015 Cryptography Research, Inc.
+Copyright 2014 Cryptography Research, Inc.
+Copyright 2007-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2013-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2007-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2005-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2001-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 1999-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2004-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2004-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2006-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 1999-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 1999-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2003-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (c) 2004 Kungliga Tekniska Högskolan
+Copyright 2003-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2016-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2017 BaishanCloud. All rights reserved.
+Copyright 2015-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2011-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2000-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2006-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (c) 2017, Oracle and/or its affiliates.  All rights reserved.
+Copyright 2017 Ribose Inc. All Rights Reserved.
+Copyright 2005 Nokia. All rights reserved.
+Copyright 2014-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2002-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2012-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 1998-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 1998-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2000-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2000-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 1998-2001 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2001-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2006 NTT (Nippon Telegraph and Telephone Corporation).
+Copyright (c) 2017 National Security Research Institute.  All rights reserved.
+Copyright (c) 2018, Oracle and/or its affiliates.  All rights reserved.
+Copyright 2008-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2005-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2005-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2008-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2012-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2010-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (C) 2006, Network Resonance, Inc. Copyright (C) 2011, RTFM, Inc.
+Copyright (c) 2004, EdelKey Project. All Rights Reserved.
+Copyright (c) 2004, Richard Levitte <richard@levitte.org>
+Copyright (c) 2013-2014 Timo Teräs <timo.teras@gmail.com>
+Copyright 1998-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2016 VMS Software, Inc. All Rights Reserved.
+Copyright (c) 2012, Intel Corporation. All Rights Reserved.
+Copyright 2013-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (C) 1989, 1991 Free Software Foundation, Inc.
+Copyright 2013-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (C) 2017 National Security Research Institute. All Rights Reserved.
+Copyright Patrick Powell 1995
+Copyright (c) 2007 KISA(Korea Information Security Agency). All rights reserved.
+Copyright (c) 2012-2016 Jean-Philippe Aumasson
+Copyright (c) 2012-2014 Daniel J. Bernstein
+Copyright 2012-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2016 Cryptography Research, Inc.
+Copyright 2014-2016 Cryptography Research, Inc.
+Copyright 2009-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright (c) 1998-2018 The OpenSSL Project.  All rights reserved.
+Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
+Copyright (c) 1998-2018 The OpenSSL Project
+Copyright (c) 1995-1998 Eric A. Young, Tim J. Hudson
+Copyright 2012, Samuel Neves <sneves@dei.uc.pt>
+Copyright (c) 2004, 2018, Richard Levitte <richard@levitte.org>
+Copyright 2004-2014, Akamai Technologies. All Rights Reserved.
+Copyright 2003-2017 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2010-2017 The OpenSSL Project Authors. All Rights Reserved.
+License：OpenSSL Combined License
+
+  LICENSE ISSUES
+  ==============
+
+  The OpenSSL toolkit stays under a dual license, i.e. both the conditions of
+  the OpenSSL License and the original SSLeay license apply to the toolkit.
+  See below for the actual license texts. Actually both licenses are BSD-style
+  Open Source licenses. In case of any license issues related to OpenSSL
+  please contact openssl-core@openssl.org.
+
+  OpenSSL License
+  ---------------
+
+/* ====================================================================
+ * Copyright (c) 1998-2011 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.openssl.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    openssl-core@openssl.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.openssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
+
+  Original SSLeay License
+  -----------------------
+
+/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
+ * All rights reserved.
+ *
+ * This package is an SSL implementation written
+ * by Eric Young (eay@cryptsoft.com).
+ * The implementation was written so as to conform to Netscapes SSL.
+ *
+ * This library is free for commercial and non-commercial use as long as
+ * the following conditions are aheared to.  The following conditions
+ * apply to all code found in this distribution, be it the RC4, RSA,
+ * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
+ * included with this distribution is covered by the same copyright terms
+ * except that the holder is Tim Hudson (tjh@cryptsoft.com).
+ *
+ * Copyright remains Eric Young's, and as such any Copyright notices in
+ * the code are not to be removed.
+ * If this package is used in a product, Eric Young should be given attribution
+ * as the author of the parts of the library used.
+ * This can be in the form of a textual message at program startup or
+ * in documentation (online or textual) provided with the package.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *    "This product includes cryptographic software written by
+ *     Eric Young (eay@cryptsoft.com)"
+ *    The word 'cryptographic' can be left out if the rouines from the library
+ *    being used are not cryptographic related :-).
+ * 4. If you include any Windows specific code (or a derivative thereof) from
+ *    the apps directory (application code) you must include an acknowledgement:
+ *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ * The licence and distribution terms for any publically available version or
+ * derivative of this code cannot be changed.  i.e. this code cannot simply be
+ * copied and put under another distribution licence
+ * [including the GNU Public Licence.]
+ */
+
+Software: lz4 1.9.2
+Copyright notice：Copyright (c) 2016-present, Przemyslaw Skibinski
+copyright and related and neighboring rights to this software to
+Copyright (c) 2018-present    lzutao <taolzu(at)gmail.com>
+Copyright (c) 2018-present  lzutao <taolzu(at)gmail.com>
+Copyright (c) 2018-present        lzutao <taolzu(at)gmail.com>
+Copyright (c) 2016-present, Facebook, Inc.
+Copyright (c) 2014, lpsantil
+Copyright (C) Yann Collet 2014-present
+Copyright (C) Yann Collet 2018 - present
+Copyright (C) 1989, 1991 Free Software Foundation, Inc.,
+Copyright (C) Yann Collet 2012-2016
+Copyright (C) Yann Collet 2014-2016
+Copyright (C) Yann Collet 2012-2017
+Copyright (c) 2016-present, Yann Collet, Facebook, Inc.
+Copyright (c) 2016-present, Przemyslaw Skibinski, Yann Collet, Facebook, Inc.
+Copyright (C) 2011-present, Takayuki Matsuoka
+Copyright (c) 2011-2016, Yann Collet
+Copyright (C) 2011-present, Yann Collet.
+Copyright (C) 2011-2016, Yann Collet.
+Copyright (C) 2011-2017, Yann Collet.
+Copyright (C) 2012-2016, Yann Collet
+Copyright (C) 2012-2016, Yann Collet.
+Copyright (C) Yann Collet 2011-2016
+Copyright (C) Yann Collet 2011-2017
+Copyright (C) 2016-present, Przemyslaw Skibinski, Yann Collet
+All rights reserved.
+License：BSD 2-Clause License
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice, this
+  list of conditions and the following disclaimer in the documentation and/or
+  other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Software: Zstandard 1.4.4
+Copyright notice：Copyright (c) 2016-present, Facebook, Inc.
+Copyright (C) 2013-present, Yann Collet.
+Copyright (C) 2013-2016, Yann Collet.
+Copyright (c) 2016-present, Yann Collet, Facebook, Inc.
+Copyright (c) 2016-present, Przemyslaw Skibinski, Yann Collet, Facebook, Inc.
+Copyright (c) 2018-present    lzutao <taolzu(at)gmail.com>
+Copyright (c) 2018-present  lzutao <taolzu(at)gmail.com>
+Copyright (c) 2018-present     Dima Krasner <dima@dimakrasner.com>
+Copyright (c) 2016-present, Przemyslaw Skibinski, Facebook, Inc.
+Copyright (C) 1989, 1991 Free Software Foundation, Inc.,
+Copyright (c) 2016-present, Facebook, Inc. All rights reserved.
+Copyright (c) 2018-present, Yann Collet, Facebook, Inc.
+Copyright (C) 2013-2015, Yann Collet.
+Copyright (c) 2017-present, Yann Collet, Facebook, Inc.
+Copyright (C) 2012-2016, Yann Collet.
+Copyright (C) 2016, Yann Collet.
+Copyright (c) 2017-present, Facebook, Inc.
+Copyright (c) 1995-2006, 2011 Jean-loup Gailly
+Copyright (C) 1995-2006, 2010, 2011 Jean-loup Gailly.
+Copyright (c) 2018-present, Facebook, Inc.
+Copyright (c) 2016 Tino Reichardt
+Copyright (C) 2012-2016, Yann Collet
+Copyright (c) 2015-present, Yann Collet, Facebook, Inc.
+Copyright 2015-2016 Free Software Foundation, Inc.
+Copyright (C) 2010-2016 Free Software Foundation, Inc.
+Copyright (C) 2000-2016 Free Software Foundation, Inc.
+Copyright (C) 2009-2016 Free Software Foundation, Inc.
+Copyright (C) 2013-2016 Free Software Foundation, Inc.
+Copyright 2016 Free Software Foundation, Inc.
+Copyright (C) 2012-2016 Free Software Foundation, Inc.
+Copyright 2014-2016 Free Software Foundation, Inc.
+Copyright (c) 2019-present, Yann Collet, Facebook, Inc.
+Copyright (C) Yann Collet 2014-present
+Copyright (c) 2003-2008 Yuta Mori All Rights Reserved.
+Copyright (C) 2004, 2010 Mark Adler
+Copyright (C) 2004, 2005, 2010, 2011, 2012, 2013, 2016 Mark Adler
+Copyright (C) 2004-2017 Mark Adler
+License：BSD 3-Clause License
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook, nor the names of its contributors may be used
+   to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Software: Kerberos 5 (KRB5) 1.17.1
+Copyright notice：Copyright 1997, 1998, 1999 Computing Research Labs,
+Copyright 1998-2008 The OpenLDAP Foundation.
+Copyright 1999 Computing Research Labs, New Mexico State University
+Copyright 2001 Computing Research Labs, New Mexico State University
+Copyright 1990,1991 by the Massachusetts Institute of Technology.
+Copyright 1990,2004,2008 by the Massachusetts Institute of Technology.
+Copyright 2006, 2007 by the Massachusetts Institute of Technology.
+Copyright 1990, 2007, 2008 by the Massachusetts Institute of Technology.
+Copyright 1990 by the Massachusetts Institute of Technology.
+Copyright 2000, 2007, 2008  by the Massachusetts Institute of Technology.
+Copyright (C) 2014 by the Massachusetts Institute of Technology.
+Copyright (C) 2011 by the Massachusetts Institute of Technology.
+Copyright (C) 2017 by Red Hat, Inc.
+Copyright 1990,1991,1992,1993,1994,2000,2004,2007 Massachusetts Institute of Technology.
+copyright 1995 by Cygnus Support.
+Copyright 1990,1991,1992,1993,1994,2000,2004 Massachusetts Institute of
+Copyright 1990,1991,2000,2004,2008 by the Massachusetts Institute of
+Copyright 2007 Secure Endpoints Inc.
+Copyright 2003,2004 by the Massachusetts Institute of Technology.
+Copyright 2000 by Carnegie Mellon University
+Copyright 1990,1991,1999,2007,2008 by the Massachusetts Institute of Technology.
+Copyright 1995 by the Massachusetts Institute of Technology.
+Copyright 2000 by the Massachusetts Institute of Technology.
+Copyright (C) 2013 by the Massachusetts Institute of Technology.
+Copyright 2011 by the Massachusetts Institute of Technology.
+Copyright 1991 by the Massachusetts Institute of Technology.
+Copyright 2005,2006 by the Massachusetts Institute of Technology
+Copyright 2007 by Secure Endpoints Inc.
+Copyright 2005 by the Massachusetts Institute of Technology
+Copyright (C) 2016 by Red Hat, Inc.
+Copyright (C) 2010 by the Massachusetts Institute of Technology.
+Copyright 2009 by the Massachusetts Institute of Technology.  All
+Copyright (C) 2009 by the Massachusetts Institute of Technology.
+Copyright (c) 2006-2008, Novell, Inc.
+Copyright 2010 by the Massachusetts Institute of Technology.
+Copyright 1991, 2008, 2009 by the Massachusetts Institute of Technology.
+Copyright (C) 2004 by the Massachusetts Institute of Technology.
+Copyright 2001, 2007 by the Massachusetts Institute of Technology.
+Copyright 1994 by OpenVision Technologies, Inc.
+Copyright 1992 by the Massachusetts Institute of Technology.
+Copyright 1994,1999,2000, 2002, 2003, 2007, 2008, 2009  by the Massachusetts Institute of Technology.
+Copyright (C) 1998 by the FundsXpress, INC.
+Copyright 1990,1991,2009 by the Massachusetts Institute of Technology.
+Copyright 1990, 2009 by the Massachusetts Institute of Technology.
+Copyright (C) 1984, 1989-1990, 2000-2015 Free Software Foundation, Inc.
+Copyright 1990,1991,2007-2009 by the Massachusetts Institute of Technology.
+Copyright 2009 by the Massachusetts Institute of Technology.
+Copyright 1991, 2002 by the Massachusetts Institute of Technology.
+Copyright 1990, 2008, 2010 by the Massachusetts Institute of Technology.
+Copyright (C) 2017 by Cloudera, Inc.
+Copyright 1990,1991, 2003, 2008 by the Massachusetts Institute of Technology.
+Copyright (C) 2002, 2003, 2008 by the Massachusetts Institute of Technology.
+Copyright (C) 2002 by the Massachusetts Institute of Technology.
+Copyright 1990,1991 the Massachusetts Institute of Technology.
+Copyright 1990,1991, 2008 by the Massachusetts Institute of Technology.
+Copyright 2006 Massachusetts Institute of Technology.
+Copyright 1990-1998, 2009 by the Massachusetts Institute of Technology.
+Copyright 2008 by the Massachusetts Institute of Technology.
+Copyright 1990,1991,2008,2012 by the Massachusetts Institute of Technology.
+Copyright (C) 2016 by the Massachusetts Institute of Technology.
+Copyright 1995, 2003, 2008, 2012 by the Massachusetts Institute of Technology.  All
+Copyright (C) 2009, 2011 by the Massachusetts Institute of Technology.
+Copyright 1995, 2003, 2008, 2011 by the Massachusetts Institute of Technology.  All
+Copyright 2011 NORDUnet A/S.  All rights reserved.
+Copyright 2011 Red Hat, Inc.  All rights reserved.
+Copyright 2013 Red Hat, Inc.  All rights reserved.
+Copyright 1990,1991,2007 by the Massachusetts Institute of Technology.
+Copyright 1994-2009,2014 by the Massachusetts Institute of Technology.
+Copyright (c) 1994 CyberSAFE Corporation.
+Copyright 1990,1991,2007,2008 by the Massachusetts Institute of Technology.
+Copyright 2012 Red Hat, Inc.
+Copyright 2010 by the Massachusetts Institute of Technology.  All
+Copyright 1991, 2009 by the Massachusetts Institute of Technology.
+Copyright 1990,1991,2009,2013 by the Massachusetts Institute of Technology.
+Copyright 1995, 2008 by the Massachusetts Institute of Technology.
+Copyright 1995, 2007, 2008 by the Massachusetts Institute of Technology.
+Copyright 1997 by the Massachusetts Institute of Technology.
+Copyright 2006, 2008 by the Massachusetts Institute of Technology.
+Copyright (c) 1997, 1998 The NetBSD Foundation, Inc.
+Copyright 1995, 1999, 2007 by the Massachusetts Institute of Technology.
+Copyright (C) 2012 by the Massachusetts Institute of Technology.
+Copyright 1999 by the Massachusetts Institute of Technology.
+Copyright 2009  by the Massachusetts Institute of Technology.
+Copyright (C) 2018 by the Massachusetts Institute of Technology.
+Copyright (C) 2010,2012 by the Massachusetts Institute of Technology.
+Copyright (c) 2006 Kungliga Tekniska Högskolan
+Copyright (C) 2015 by the Massachusetts Institute of Technology.
+Copyright (c) 2003 Kungliga Tekniska Högskolan
+Copyright (C) 2017 by the Massachusetts Institute of Technology.
+Copyright 1990, 2008 by the Massachusetts Institute of Technology.
+Copyright (C) 1998, 2011, 2012 by the Massachusetts Institute of Technology.
+Copyright 1990,1991,2008,2009 by the Massachusetts Institute of Technology.
+Copyright 2001, 2008 by the Massachusetts Institute of Technology.
+Copyright 1993 OpenVision Technologies, Inc., All Rights Reserved
+Copyright 1995,2001,2008,2009 by the Massachusetts Institute of Technology.
+Copyright 2004 Sun Microsystems, Inc.  All rights reserved.
+Copyright 1993 OpenVision Technologies, Inc., All Rights Reserved.
+Copyright 1995, 2007 by the Massachusetts Institute of Technology.
+Copyright (C) 1995-2015 by the Massachusetts Institute of Technology.
+Copyright (C) 2007 Apple Inc.
+Copyright 1990, 1991, 2007, 2008, 2009, 2013, 2014 by the Massachusetts Institute of Technology.  All Rights Reserved.
+Copyright 1990, 1991, 2001, 2007, 2008, 2009, 2013, 2014 by the
+Copyright 1990,2001,2007,2009 by the Massachusetts Institute of Technology.
+Copyright (C) 2009, 2015 by the Massachusetts Institute of Technology.
+Copyright 2013 by the Massachusetts Institute of Technology.
+Copyright (C) 2007 Apple Inc.  All Rights Reserved.
+Copyright (C) 2008, 2009 by the Massachusetts Institute of Technology.
+Copyright 2008,2009 by the Massachusetts Institute of Technology.
+Copyright 1995, 2003, 2007, 2009 by the Massachusetts Institute of
+Copyright (C) 1995, 2003, 2007, 2011 by the Massachusetts Institute of Technology.
+Copyright 1990,1991,2007,2008,2009 by the Massachusetts Institute of Technology.
+Copyright 1990, 2007, 2014 by the Massachusetts Institute of Technology.
+Copyright 1990,2001,2008,2009,2016 by the Massachusetts Institute of
+Copyright (c) 1990, 1993, 1994
+Copyright (c) 1991, 1993, 1994
+Copyright (c) 2004-2005, Novell, Inc.
+Copyright (c) 2015-2016 the fiat-crypto authors (see the AUTHORS file).
+Copyright (c) 2015-2016, Google Inc.
+Copyright (C) 2012 by the Red Hat Inc.
+Copyright (C) 2005 by the Massachusetts Institute of Technology.
+Copyright (C) 1995 by the Massachusetts Institute of Technology.
+Copyright (C) 2003, 2004, 2005 by the Massachusetts Institute of Technology.
+Copyright (C) 2003, 2004 by the Massachusetts Institute of Technology.
+Copyright (C) 2004,2005 by the Massachusetts Institute of Technology.
+Copyright 1993 by OpenVision Technologies, Inc.
+Copyright 2003 Sun Microsystems, Inc.  All rights reserved.
+Copyright (C) 2006,2008 by the Massachusetts Institute of Technology.
+Copyright (c) 1990, 1993
+Copyright 1987, 1989 by the Student Information Processing Board
+Copyright 1987, 1988, 1989 Massachusetts Institute of Technology
+Copyright 2007 Massachusetts Institute of Technology.
+Copyright 1987, 1988, 1989 by MIT Student Information Processing
+Copyright 1987, 1988, 1989 by Massachusetts Institute of Technology
+Copyright 1987, 1988 by MIT Student Information Processing Board
+Copyright 1987 by the Student Information Processing Board
+Copyright 1987, 1988, 1989 by MIT
+Copyright (C) 2010,2013 by the Massachusetts Institute of Technology.
+Copyright 2006 by the Massachusetts Institute of Technology.
+Copyright 1997,2006,2007-2009 by the Massachusetts Institute of Technology.
+Copyright 2004 by the Massachusetts Institute of Technology
+Copyright (C) 1985-2012 by the Massachusetts Institute of Technology.
+Individual source code files are copyright MIT, Cygnus Support, OpenVision, Oracle, Sun Soft, FundsXpress, and others.
+Copyright, OpenVision Technologies, Inc., 1996, All Rights Reserved
+Copyright 2000 by Zero-Knowledge Systems, Inc.
+Copyright (c) 2001, Dr Brian Gladman <brg@gladman.uk.net>, Worcester, UK.
+Copyright (C) 2006 by the Massachusetts Institute of Technology.
+Copyright 1998-2008 The OpenLDAP Foundation. All rights reserved.
+Copyright 1997 by the Regents of the University of Michigan
+Copyright 1997 by the Regents of the University of Michigan.
+Copyright 2006, 2007 Massachusetts Institute of Technology.
+Copyright (C) 2019 by the Massachusetts Institute of Technology.
+Copyright 1997 by Massachusetts Institute of Technology
+Copyright 1988, Student Information Processing Board of the
+Copyright 1995 by Cygnus Support.
+Copyright 1997,2000,2001,2004,2008 by Massachusetts Institute of Technology
+Copyright 1988 by the Student Information Processing Board of the
+Copyright 1987 by MIT Student Information Processing Board
+Copyright 1987, 1988 by the Student Information Processing Board
+Copyright 1995, 1996, 2008 by the Massachusetts Institute of Technology.
+(C) Copyright 1995, 1996 by the Massachusetts Institute of Technology.
+Copyright (C) 2003,2004 by the Massachusetts Institute of Technology.
+Copyright (C) 2003 by the Massachusetts Institute of Technology.
+Copyright 1990,1991,2001, 2002, 2008 by the Massachusetts Institute of Technology.
+(C) Copyright 1990,1991, 1996, 2008 by the Massachusetts Institute of Technology.
+Copyright (C) 1998 by Danilo Almeida.  All rights reserved.
+Copyright 2008 Massachusetts Institute of Technology.
+Copyright (c) 2007,2008,2009,2010,2011,2012,2013 Marc Alexander Lehmann <libev@schmorp.de>
+Copyright (c) 2007,2008,2009,2010,2011,2012,2015 Marc Alexander Lehmann <libev@schmorp.de>
+Copyright (c) 2007,2008,2009,2010,2011 Marc Alexander Lehmann <libev@schmorp.de>
+Copyright (c) 2007,2008,2009 Marc Alexander Lehmann <libev@schmorp.de>
+Copyright 2011 Red Hat, Inc.
+Copyright (C) 2008 by the Massachusetts Institute of Technology.
+Copyright 1995 by Richard P. Basch.  All Rights Reserved.
+Copyright 1995 by Lehman Brothers, Inc.  All Rights Reserved.
+Copyright 1987, 1988, 1990, 2002 by the Massachusetts Institute of
+Copyright (C) 1990 by the Massachusetts Institute of Technology.
+Copyright 1985, 1986, 1987, 1988, 1990 by the Massachusetts Institute
+Copyright 1988, 1990 by the Massachusetts Institute of Technology.
+Copyright 1989,1990 by the Massachusetts Institute of Technology.
+Copyright 2012 by the Massachusetts Institute of Technology.
+Copyright 1996, Massachusetts Institute of Technology.
+Copyright 2015 Red Hat, Inc.
+Copyright 2014 by the Massachusetts Institute of Technology.
+Copyright 2010  by the Massachusetts Institute of Technology.
+Copyright (c) 2010, Oracle America, Inc.
+Copyright (c) 2000 The Regents of the University of Michigan.
+Copyright (c) 2000 Dug Song <dugsong@UMICH.EDU>.
+Copyright (C) 1985-2019 by the Massachusetts Institute of Technology.
+Copyright (C) 2006 Red Hat, Inc.
+copyright (C) 2006 Massachusetts Institute of Technology
+Copyright 2013,2014 Red Hat, Inc.
+Copyright (C) 2004 Sun Microsystems, Inc.
+Copyright (C) 1983 Regents of the University of California.
+Copyright (C) 2004-2005, Novell, Inc.
+COPYRIGHT (C) 2006-2007
+Copyright 2006 g10 Code GmbH
+Copyright 2006 Andreas Jellinghaus
+Copyright 2004-2008 Apple Inc.  All Rights Reserved.
+Copyright 1999-2003 The OpenLDAP Foundation, Redwood City,California, USA.  All Rights Reserved.  Permission to copy and distribute verbatim copies of this document is granted.
+Copyright (C) 2006 Kungliga Tekniska Högskola
+Copyright (C) 2009 Kungliga Tekniska Högskola
+Copyright (C) 2009 Apple Inc. All rights reserved.
+Copyright (C) 2010, Oracle America, Inc.
+Copyright (C) 2006,2007,2009
+Copyright (C) 2002 Naval Research Laboratory (NRL/CCS)
+Copyright (C) 1991, 1992, 1994 by Cygnus Support.
+Copyright (C) 2006 Secure Endpoints Inc.
+Copyright (C) 2005 Marko Kreen
+Copyright (C) 1994 by the University of Southern California
+Copyright (C) 1995
+Copyright (C) 2008 by the Massachusetts Institute of Technology.
+Copyright 1995 by Richard P. Basch.  All Rights Reserved.
+Copyright 1995 by Lehman Brothers, Inc.  All Rights Reserved.
+Copyright (C) 1997, 1998 The NetBSD Foundation, Inc.
+Copyright 1997, 1998, 1999 Computing Research Labs,
+Copyright (C) 1998 Todd C. Miller "Todd.Miller@courtesan.com"
+Copyright 1999 by Theodore Ts'o.
+Copyright (C) 1999-2000, The University of Chicago
+Copyright (C) 2000 The Regents of the University of Michigan.
+Copyright (C) 2000 Dug Song "dugsong@UMICH.EDU".
+Copyright (C) 1990, RSA Data Security, Inc. All rights reserved.
+Copyright (C) 1990-2, RSA Data Security, Inc. Created 1990. All
+Copyright (C) 1994 CyberSAFE Corporation.
+Copyright 1990,1991,2007,2008 by the Massachusetts
+Copyright (c) 2011, PADL Software Pty Ltd.
+Copyright (C)2007,2008,2009 Marc Alexander Lehmann.
+Copyright (C) 2010, Intel Corporation
+Copyright 1994, 2008 by the Massachusetts Institute of Technology.
+Copyright 2001 by the Massachusetts Institute of Technology.
+Copyright 1994 by the Massachusetts Institute of Technology.
+Copyright @1998 Massachusetts Institute of Technology - All rights reserved.
+Copyright (C) 2015, 2017 by the Massachusetts Institute of Technology.
+Copyright (c) 1995 - 2001 Kungliga Tekniska Högskolan
+Copyright (c) 2006, 2010 Kungliga Tekniska Högskolan
+Copyright (c) 2002 Naval Research Laboratory (NRL/CCS)
+Copyright (C) 2009, 2010 by the Massachusetts Institute of Technology.
+Copyright 1989,1991 by the Massachusetts Institute of Technology.
+Copyright JS Foundation and other contributors
+(c) 2009-2015 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+Copyright 1995-2004, 2007, 2008, 2017 by the Massachusetts Institute of
+Copyright 1994 OpenVision Technologies, Inc., All Rights Reserved
+Copyright 1990,1991,2008 by the Massachusetts Institute of Technology.
+Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
+Copyright 2004-2006 by the Massachusetts Institute of Technology.
+Copyright (C) 1990, RSA Data Security, Inc. All rights reserved.
+Copyright (C) 2002, 2016 by the Massachusetts Institute of Technology.
+Copyright 2000, 2004, 2007, 2008  by the Massachusetts Institute of Technology.
+Copyright 2000, 2007-2010 by the Massachusetts Institute of Technology.
+Copyright 1997,2007 by the Massachusetts Institute of Technology.
+Copyright 1997, 2007 by the Massachusetts Institute of Technology.
+Copyright 2000, 2008 by the Massachusetts Institute of Technology.
+Copyright 1995,2004,2007,2008 by the Massachusetts Institute of Technology.
+Copyright 2000, 2002, 2003, 2007, 2008 by the Massachusetts Institute of
+Copyright 2000, 2007 by the Massachusetts Institute of Technology.
+Copyright 2008, 2009 by the Massachusetts Institute of Technology.
+Copyright 2003,2004,2007 by the Massachusetts Institute of Technology.
+Copyright 2004, 2008 by the Massachusetts Institute of Technology.
+Copyright 1995, 2004, 2008 by the Massachusetts Institute of Technology.
+Copyright 2004  by the Massachusetts Institute of Technology.
+Copyright 1999, 2003 by the Massachusetts Institute of Technology.
+Copyright 2001, 2009 by the Massachusetts Institute of Technology.
+Copyright 1997, 2007 by Massachusetts Institute of Technology
+Copyright (C) 2009, 2018 by the Massachusetts Institute of Technology.
+Copyright (C) 2003, 2007, 2008, 2009 by the Massachusetts Institute of Technology.
+Copyright (C) 2003, 2007, 2008, 2009, 2010 by the Massachusetts Institute of
+Copyright (c) 2000 by Computer Science Laboratory,Rensselaer Polytechnic Institute
+Copyright 1996 by Sun Microsystems, Inc.
+Copyright (c) 1996,1997, by Sun Microsystems, Inc.
+Copyright 2008-2010 by the Massachusetts Institute of Technology.
+Copyright (c) 1995, by Sun Microsystems, Inc.
+Copyright 1998, 1999, 2006, 2008 by the Massachusetts Institute of
+Copyright (C) 2003, 2004, 2008 by the Massachusetts Institute of Technology.
+Copyright (C) 2004,2008 by the Massachusetts Institute of Technology.
+Copyright 2002, 2008, 2009 by the Massachusetts Institute of Technology.
+Copyright 1990, 2007 by the Massachusetts Institute of Technology.
+Copyright 1990,1999,2001,2008 by the Massachusetts Institute of Technology.
+Copyright 2004, 2009 by the Massachusetts Institute of Technology.
+Copyright 2004 by the Massachusetts Institute of Technology.
+Copyright 1990,2000,2001,2002,2003 by the Massachusetts Institute of Technology.
+Copyright (c) 2009, Secure Endpoints Inc.
+Copyright (C) 1990,1991,2002,2008,2009,2013 by the Massachusetts Institute
+Copyright (C) 2015 by the Massachusetts Institute
+Copyright 1994, 2007, 2008, 2009 by the Massachusetts Institute of Technology.
+Copyright (c) Hewlett-Packard Company 1991
+Copyright 1990,1991,2000,2001,2002,2004,2007,2008 by the Massachusetts
+Copyright (C) 2013 by the Massachusetts Institute of Technology.  All rights
+Copyright (C) 1990,1993,2007,2013 by the Massachusetts Institute
+Copyright (C) 1990,1991,2007,2008,2013 by the Massachusetts
+Copyright 1990,2000,2001,2002,2003,2004,2006,2008 Massachusetts Institute of
+Copyright 1990, 1998 by the Massachusetts Institute of Technology.
+Copyright 1995, 2009 by the Massachusetts Institute of Technology.
+Copyright 1987, 1988, 1990 by the Massachusetts Institute of Technology.
+Copyright 1987, 1988, 1990, 2009 by the Massachusetts Institute of
+Copyright 1990,1991,2001,2002,2004,2005,2007,2008 by the Massachusetts Institute of Technology.
+Copyright 2013,2014 Red Hat, Inc.
+Copyright 1991,2002 by the Massachusetts Institute of Technology.
+Copyright 2005 by the Massachusetts Institute of Technology.
+Copyright 1988,1991 by the Massachusetts Institute of Technology.
+Copyright (C) 2004-2006 by the Massachusetts Institute of Technology.
+Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+Copyright 2006 g10 Code GmbH
+Copyright 2006 Andreas Jellinghaus
+Copyright 1995,1996,1997,1998 by the Massachusetts Institute of Technology.
+Copyright 1995, 2007,2008,2009 by the Massachusetts Institute of Technology.
+Copyright (C) 1989-1994 by the Massachusetts Institute of Technology,Cambridge, MA, USA.  All Rights Reserved.
+Copyright 1998-2006 Massachusetts Institute of Technology.
+Copyright (C) 2001,2002,2003,2004 by the Massachusetts Institute of Technology,
+Copyright 1990,1991,2000,2001,2002,2004 by the Massachusetts Institute of Technology.
+Copyright (c) 1995, 1996, 1997 Kungliga Tekniska Högskolan
+COPYRIGHT (C) 2006
+Copyright (C) 1989,1990,1991,1992,1993,1994,1995,2000,2001,2003,2006,2007,2008,2009 by the Massachusetts Institute of Technology,
+Copyright (c) 2010 Kungliga Tekniska Högskolan
+Copyright (c) 2010 Apple Inc. All rights reserved.
+Copyright 2003, 2004, 2005, 2007, 2008, 2009 Massachusetts Institute of Technology.
+Copyright (C) 2006 Massachusetts Institute of Technology.
+Copyright 2004,2005,2006,2007,2008 by the Massachusetts Institute of Technology.
+Copyright (C) 2008 by the Massachusetts Institute of Technology,
+Copyright (C) 2000 Novell, Inc. All Rights Reserved.
+Copyright (C) 1989-1998,2002 by the Massachusetts Institute of Technology,
+Copyright 1990, 1991, 2016 by the Massachusetts Institute of Technology.
+Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
+Copyright (C) 2001,2005 by the Massachusetts Institute of Technology,
+Copyright 1990,1991,2001,2006,2008,2009,2013 by the Massachusetts Institute
+Copyright 1990,1991,2001, 2002, 2008 by the Massachusetts Institute of
+(C) Copyright 1990,1991, 1996, 2008, 2009 by the Massachusetts Institute of Technology.
+Copyright 1992, 2008, 2009 by the Massachusetts Institute of Technology.
+Copyright (c) 1988 Regents of the University of California.
+Copyright 2006-2008 Massachusetts Institute of Technology.
+Copyright (c) 2006 Red Hat, Inc.
+copyright (c) 2006, 2011 Massachusetts Institute of Technology
+Copyright 1989, 1990, 1995, 2001, 2003, 2007, 2011 by the Massachusetts
+Copyright (C) 2004, 2009 by the Massachusetts Institute of Technology.
+Copyright 2002,2005 by the Massachusetts Institute of Technology.
+Copyright 2001,2002 by the Massachusetts Institute of Technology.
+Copyright (C) 1990-2, RSA Data Security, Inc. Created 1990. All
+Copyright 2002 by the Massachusetts Institute of Technology.
+Copyright (C) 2001 by the Massachusetts Institute of Technology.
+Copyright (c) 1995 - 2002 Kungliga Tekniska Högskolan
+Copyright (C) 1985-2019 by the Massachusetts Institute of Technology.
+Copyright, OpenVision Technologies, Inc., 1993-1996, All Rights
+Copyright (C) 2001, Dr Brian Gladman "brg@gladman.uk.net",
+Copyright (C) 2006 Red Hat, Inc.
+copyright (C) 2006 Massachusetts Institute of Technology
+Copyright (C) 2004 Sun Microsystems, Inc.
+Copyright (C) 1983 Regents of the University of California.
+Copyright (C) 2004-2005, Novell, Inc.
+Copyright (C) 2006 Kungliga Tekniska Högskola
+Copyright (C) 2009 Kungliga Tekniska Högskola
+Copyright (C) 2009 Apple Inc. All rights reserved.
+Copyright (C) 2010, Oracle America, Inc.
+Copyright (C) 2006,2007,2009 NTT (Nippon Telegraph and Telephone
+Copyright (C) 2002 Naval Research Laboratory (NRL/CCS)
+Copyright (C) 1991, 1992, 1994 by Cygnus Support.
+Copyright (C) 2006 Secure Endpoints Inc.
+Copyright (C) 2005 Marko Kreen
+Copyright (C) 1994 by the University of Southern California
+Copyright (C) 1997, 1998 The NetBSD Foundation, Inc.
+Copyright (C) 1998 Todd C. Miller "Todd.Miller@courtesan.com"
+Copyright (C) 1999-2000, The University of Chicago
+Copyright (C) 2000 The Regents of the University of Michigan. All
+Copyright (C) 2000 Dug Song "dugsong@UMICH.EDU". All rights
+Copyright (C) 1994 CyberSAFE Corporation.
+Copyright 1990,1991,2007,2008 by the Massachusetts
+Copyright (c) 2011, PADL Software Pty Ltd. All rights reserved.
+Copyright (C)2007,2008,2009 Marc Alexander
+Copyright (C) 2010, Intel Corporation All rights reserved.
+Copyright (c) 2015-2016 the fiat-crypto authors (see the AUTHORS
+Copyright (C) 1985-2019 by the Massachusetts Institute of Technology
+Copyright (C) 2009, 2015 by the Massachusetts Institute of Technology.  All
+Copyright 1990, 2002 by the Massachusetts Institute of Technology.
+Copyright (C) 1986 Gary S. Brown.  You may use this program, or
+Copyright (C) 2001, 2014 by the Massachusetts Institute of Technology.
+Copyright 2008, 2009, 2010 by the Massachusetts Institute of Technology.
+Copyright (C) 2002, 2005 by the Massachusetts Institute of Technology.
+Copyright (C) 2004, 2009  by the Massachusetts Institute of Technology.
+Copyright (C) 2001, 2002, 2004, 2007, 2008, 2010 by the Massachusetts Institute of Technology.
+Copyright (c) 2005 Marko Kreen
+Copyright (C) 2010, 2011 by the Massachusetts Institute of Technology.
+Copyright (c) 2007 Kungliga Tekniska Högskolan
+Copyright (c) 2013 Red Hat, Inc.
+Copyright 2007, 2008 by the Massachusetts Institute of Technology.
+Copyright 1995 by OpenVision Technologies, Inc.
+Copyright (c) 1994 by the University of Southern California
+Copyright (c) 1987 Regents of the University of California.
+Copyright (c) 1990 The Regents of the University of California.
+Copyright 1990,2000,2007,2008,2009,2010,2016 by the Massachusetts Institute
+Copyright 2016 by the Massachusetts Institute of Technology.
+Copyright 2006, 2009, 2010, 2016 by the Massachusetts Institute of
+Copyright 2005 Sun Microsystems, Inc.  All rights reserved.
+Copyright 1995, 2009, 2014 by the Massachusetts Institute of Technology.
+Copyright 1990,2008 by the Massachusetts Institute of Technology.
+Copyright 2001,2008 by the Massachusetts Institute of Technology.
+Copyright 1990,1991,1995,2007,2008 by the Massachusetts Institute of Technology.
+Copyright 1990,1991,2002,2007,2008 by the Massachusetts Institute of Technology.
+Copyright (C) 2007 by the Massachusetts Institute of Technology.
+Copyright 1990, Daniel J. Bernstein. All rights reserved.
+Copyright 2011 by the Massachusetts
+Copyright (c) 2004 Sun Microsystems, Inc.
+Copyright (c) 2001, Dr Brian Gladman <brg@gladman.uk.net>, Worcester, UK.
+Copyright 2002, 2008 by the Massachusetts Institute of Technology.
+Copyright (C) 1994 by the Massachusetts Institute of Technology.
+Copyright (C) 1992,1993 Trusted Information Systems, Inc.
+Copyright (C) 1994 Massachusetts Institute of Technology
+Copyright (c) 1995-2001 Kungliga Tekniska Högskolan
+Copyright (C) 2004 by the Massachusetts Institute of Technology,
+Copyright (C) 2001,2002,2003,2004,2005,2006 by the Massachusetts Institute of Technology,
+Copyright 2006, 2007, 2009 Massachusetts Institute of Technology.
+Copyright 2003, 2004, 2005, 2007, 2008 Massachusetts Institute of
+Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
+Copyright 2004,2005,2006,2007,2008 by the Massachusetts Institute of
+Copyright (c) 1999 - 2001 Kungliga Tekniska Högskolan
+Copyright 2008, 2017 by the Massachusetts Institute of Technology.
+Copyright (C) 1999, 2000 Novell, Inc. All Rights Reserved.
+Copyright 2009 Massachusetts Institute of Technology.
+Copyright (C) 2003, 2007, 2008 by the Massachusetts Institute of Technology.
+License：Krb5-MIT License
+
+krb5 License
+
+Copyright (C) 1985-2002 by the Massachusetts Institute of Technology.
+
+Export of software employing encryption from the United States of America may require a specific license from the United States Government. It is the responsibility of any person or organization contemplating export to obtain such a license before exporting.
+
+WITHIN THAT CONSTRAINT, permission to use, copy, modify, and distribute this software and its documentation for any purpose and without fee is hereby granted, provided that the above copyright notice appear in all copies and that both that copyright notice and this permission notice appear in supporting documentation, and that the name of M.I.T. not be used in advertising or publicity pertaining to distribution of the software without specific, written prior permission. Furthermore if you modify this software you must label your software as modified software and not distribute it in such a fashion that it might be confused with the original MIT software. M.I.T. makes no representations about the suitability of this software for any purpose. It is provided "as is" without express or implied warranty.
+
+Software: zlib 1.2.11
+Copyright notice：Copyright (C) 1995-2006, 2011, 2016 Jean-loup Gailly
+Copyright (C) 2011, 2016 Mark Adler
+Copyright (C) 1995-2006, 2010, 2011, 2016 Jean-loup Gailly
+Copyright (C) 1995-2003 Mark Adler
+Copyright (C) 2003 Chris Anderson <christop@charm.net>
+2005 - Adaptation to Microsoft C Compiler for AMD64 by Gilles Vollant
+Copyright (C) 1995-2003 Jean-loup Gailly and Mark Adler.
+Copyright (C) 1998 by Bob Dellaca.
+Copyright (C) 2003 by Cosmin Truta.
+Copyright (C) 1995-2003 by Jean-loup Gailly.
+Copyright (C) 1998,1999,2000 by Jacques Nomssi Nzali.
+Copyright (C) 1995-2011, 2016 Mark Adler
+Copyright (C) 1995-2005, 2014, 2016 Jean-loup Gailly, Mark Adler
+Copyright (C) 1995-2006, 2010, 2011, 2012, 2016 Mark Adler
+Copyright (C) 1995-2017 Jean-loup Gailly and Mark Adler
+Copyright (C) 1995-2016 Jean-loup Gailly
+Copyright (C) 2004, 2010 Mark Adler
+Copyright (C) 2004, 2005, 2010, 2011, 2012, 2013, 2016 Mark Adler
+Copyright (C) 2004-2017 Mark Adler
+Copyright (C) 1995-2016 Mark Adler
+Copyright (C) 1995-2017 Mark Adler
+Copyright (C) 1995-2003, 2010 Mark Adler
+Copyright (C) 1995-2005, 2010 Mark Adler
+(C) 1995-2017 Jean-loup Gailly and Mark Adler
+Copyright (C) 1995-2017 Jean-loup Gailly
+Copyright (C) 1995-2003, 2010, 2014, 2016 Jean-loup Gailly, Mark Adler
+Copyright (C) 1995-2016 Jean-loup Gailly, Mark Adler
+Copyright (C) 1995-2008 Mark Adler
+Copyright (C) 2003 Mark Adler
+Copyright (C) 1998-2005 Gilles Vollant
+Copyright (C) 1998-2010 Gilles Vollant (minizip) ( http://www.winimage.com/zLibDll/minizip.html )
+Copyright (C) 2009-2010 Mathias Svensson ( http://result42.com )
+Copyright (C) 2007-2008 Even Rouault
+Copyright (c) 1990-2000 Info-ZIP.  All rights reserved.
+Copyright (C) 1998 - 2010 Gilles Vollant, Even Rouault, Mathias Svensson
+Copyright (c) 1997
+Copyright (C) 2002-2013 Mark Adler
+Copyright (C) 2002-2013 Mark Adler, all rights reserved
+Copyright (C) 2003, 2012, 2013 Mark Adler
+Copyright (c) Henrik Ravn 2004
+Copyright (C) 2007, 2008, 2012 Mark Adler
+Copyright (C) 2003, 2005, 2008, 2010, 2012 Mark Adler
+Copyright (C) 2003, 2012 Mark Adler, all rights reserved
+Copyright (C) 2004, 2005, 2012 Mark Adler, all rights reserved
+Copyright (C) 2004, 2008, 2012, 2016 Mark Adler, all rights reserved
+Copyright (C) 2004, 2008, 2012 Mark Adler, all rights reserved
+Copyright (C) 2005, 2012 Mark Adler
+Copyright (c) Henrik Ravn 2004
+License：zlib/libpng License
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source
+distribution.
+
+Software: psutil 5.6.7
+Copyright notice：Copyright (c) 2009, Jay Loden, Giampaolo Rodola'. All rights reserved.
+Copyright (c) 2009, Giampaolo Rodola'. All rights reserved.
+Copyright (c) 2009, Giampaolo Rodola', Himanshu Shekhar.
+Copyright (c) 2009 Giampaolo Rodola'. All rights reserved.
+Copyright (c) 2009, Giampaolo Rodola', Oleksii Shevchuk.
+Copyright (c) 2009, Giampaolo Rodola'
+Copyright (c) 2017, Arnon Yaari
+Copyright (c) 2009, Giampaolo Rodola'.
+Copyright (c) 2015, Ryo ONODERA.
+Copyright (c) 2009, Giampaolo Rodola', Landry Breuil.
+Copyright (c) 2009, Giampaolo Rodola', Jeff Tang. All rights reserved.
+Copyright (c) 2009, Giampaolo Rodola', Landry Breuil (OpenBSD).
+Copyright (c) 2009, Jay Loden, Dave Daeschler, Giampaolo Rodola'
+Copyright (c) 2009, Giampaolo Rodola', karthikrev. All rights reserved.
+License：BSD 3-Clause License
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name of the psutil authors nor the names of its contributors
+   may be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Software: PostgreSQL 9.2.4 (portions)
+Copyright notice：Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+Portions Copyright (c) 1994, Regents of the University of California
+License：PostgreSQL License
+
+PostgreSQL Data Base Management System
+(formerly known as Postgres, then as Postgres95)
+
+Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+
+Portions Copyright (c) 1994, Regents of the University of California
+
+Permission to use, copy, modify, and distribute this software and its documentation for any purpose, without fee, and without a written agreement is hereby granted, provided that the above copyright notice and this paragraph and the following two paragraphs appear in all copies.
+
+IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO ANY PARTY FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+
+Software: etcd-cpp-apiv3
+Copyright notice：Copyright (c) 2015, Nokia
+License：BSD 3-Clause License. This SOFTWARE dynamically links to etcd-cpp-apiv3 (clientv3) at runtime; the library is not distributed with this SOFTWARE.
+
+Copyright (c) 2015, Nokia
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted
+provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions
+and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions
+and the following disclaimer in the documentation and/or other materials provided with the
+distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse
+or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Software: libcgroup
+Copyright notice：Copyright IBM Corporation. 2007
+Copyright Red Hat Inc. 2008
+Copyright (C) 2005 BULL SA.
+License：GNU Lesser General Public License, Version 2.1 (LGPL-2.1). This SOFTWARE dynamically links to libcgroup in distributed cluster mode; the library is not distributed with this SOFTWARE.

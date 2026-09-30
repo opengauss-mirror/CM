@@ -73,7 +73,7 @@ ClientCmLockMsg *GetLockSendMsg(const char *lockName, LockOption opt)
 
 int ResLockCore(const char *lockName)
 {
-    if (access(g_manualPausePath, F_OK) == 0 && strcmp(lockName, "dms_reformer_lock") == 0) {
+    if (access(g_manualPausePath, F_OK) == 0 && strcmp(lockName, CM_LOCK_NAME_DMS_REFORMER) == 0) {
         write_runlog(LOG, "cm is pause, don't lock(%s).\n", lockName);
         return 1;
     }

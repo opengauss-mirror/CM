@@ -45,6 +45,8 @@
 #define LTRAN_CHECK_INTERVAL 2
 #define LTRAN_CHECK_TIMES 30
 #define ONLY_GR_RES_CLUSTER 1
+#define SHELL_QUOTED_MIN_BUF_LEN 3
+#define SHELL_SQUOTE_ESCAPE_LEN 4
 
 static void start_and_check_etcd_cluster();
 static void start_cluster(void);
@@ -2193,27 +2195,65 @@ static int start_check_dn_relation(uint32 node, const char *dataPath)
  * @param nodeIndex     which node.
  *
  */
+static bool QuoteShellPath(const char *path, char *quoted, size_t quotedLen)
+{
+    if (path == NULL || quoted == NULL || quotedLen < SHELL_QUOTED_MIN_BUF_LEN || path[0] == '\0') {
+        return false;
+    }
+
+    size_t pos = 0;
+    quoted[pos++] = '\'';
+    for (size_t i = 0; path[i] != '\0'; ++i) {
+        if (path[i] == '\'') {
+            if (pos + SHELL_SQUOTE_ESCAPE_LEN >= quotedLen) {
+                return false;
+            }
+            quoted[pos++] = '\'';
+            quoted[pos++] = '\\';
+            quoted[pos++] = '\'';
+            quoted[pos++] = '\'';
+        } else {
+            if (pos + 1 >= quotedLen) {
+                return false;
+            }
+            quoted[pos++] = path[i];
+        }
+    }
+    if (pos + 1 >= quotedLen) {
+        return false;
+    }
+    quoted[pos++] = '\'';
+    quoted[pos] = '\0';
+    return true;
+}
+
 static void ExecuteGsGuc(const char *allAzLists, bool isSingleRep, uint32 repNum, uint32 nodeIndex)
 {
     char command[MAXPGPATH];
+    char quotedPath[MAXPGPATH] = {0};
     int ret;
     const char* switchFlag = (allAzLists != NULL) ? "off" : "on";
     const char* az = (allAzLists != NULL) ? allAzLists : g_node[nodeIndex].azName;
     const uint32 half = 2;
     
     for (uint32 kk = 0; kk < g_node[nodeIndex].datanodeCount; kk++) {
+        if (!QuoteShellPath(g_node[nodeIndex].datanode[kk].datanodeLocalDataPath, quotedPath, sizeof(quotedPath))) {
+            write_runlog(ERROR, "invalid datanode data path on node %s, skip gs_guc.\n",
+                g_node[nodeIndex].nodeName);
+            continue;
+        }
         // minority : NULL-> curNodeAz
         if (g_currentNode->node == g_node[nodeIndex].node) {
             if (isSingleRep) {
                     ret = snprintf_s(command,
                         MAXPGPATH, MAXPGPATH - 1,
                         "gs_guc reload -Z datanode -D %s -c \"most_available_sync = '%s'\" > %s 2>&1 &",
-                        g_node[nodeIndex].datanode[kk].datanodeLocalDataPath, switchFlag, DEVNULL);
+                        quotedPath, switchFlag, DEVNULL);
             } else {
                 ret = snprintf_s(command,
                     MAXPGPATH, MAXPGPATH - 1,
                     "gs_guc reload -Z datanode -D %s -c \"synchronous_standby_names = 'ANY %u(%s)'\" > %s 2>&1 &",
-                    g_node[nodeIndex].datanode[kk].datanodeLocalDataPath,
+                    quotedPath,
                     repNum / half, az, DEVNULL);
             }
         } else {
@@ -2221,29 +2261,17 @@ static void ExecuteGsGuc(const char *allAzLists, bool isSingleRep, uint32 repNum
                 ret = snprintf_s(command,
                     MAXPGPATH,  MAXPGPATH - 1,
                     "gs_guc reload -Z datanode -D %s -c \\\"most_available_sync = '%s'\\\" > %s 2>&1 &",
-                    g_node[nodeIndex].datanode[kk].datanodeLocalDataPath, switchFlag, DEVNULL);
+                    quotedPath, switchFlag, DEVNULL);
             } else {
                 ret = snprintf_s(command,
                     MAXPGPATH, MAXPGPATH - 1,
                     "gs_guc reload -Z datanode -D %s -c \\\"synchronous_standby_names = 'ANY %u(%s)'\\\" > %s 2>&1 &",
-                    g_node[nodeIndex].datanode[kk].datanodeLocalDataPath,
+                    quotedPath,
                     repNum / half, az, DEVNULL);
             }
         }
         securec_check_intval(ret, (void)ret);
-        write_runlog(DEBUG1, "The node %s begins to execute the command: %s.\n", g_node[nodeIndex].nodeName, command);
-
-        if (g_currentNode->node == g_node[nodeIndex].node) {
-            ret = system(command);
-        } else {
-            ret = ssh_exec(&g_node[nodeIndex], command);
-        }
-
-        if (ret == 0) {
-            write_runlog(DEBUG1, "Successful exexution of the above command.\n");
-        } else {
-            write_runlog(DEBUG1, "Failed exexution of the above command, ignore it, errno=%d.\n", errno);
-        }
+        RunCmdInStartAz(command, nodeIndex);
     }
 }
 

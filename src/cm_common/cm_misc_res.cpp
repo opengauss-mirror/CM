@@ -410,10 +410,26 @@ void GetCmConfJsonPath(char *path, uint32 pathLen)
     securec_check_intval(ret, (void)ret);
 }
 
+bool CmFixedCStrHasTerminator(const char *buf, uint32 bufLen)
+{
+    if (buf == NULL || bufLen == 0) {
+        return false;
+    }
+    for (uint32 i = 0; i < bufLen; ++i) {
+        if (buf[i] == '\0') {
+            return true;
+        }
+    }
+    return false;
+}
+
 status_t GetGlobalResStatusIndex(const char *resName, uint32 &index)
 {
+    if (resName == NULL) {
+        return CM_ERROR;
+    }
     for (uint32 i = 0; i < CusResCount(); ++i) {
-        if (strcmp(g_resStatus[i].status.resName, resName) == 0) {
+        if (strncmp(g_resStatus[i].status.resName, resName, CM_MAX_RES_NAME) == 0) {
             index = i;
             return CM_SUCCESS;
         }

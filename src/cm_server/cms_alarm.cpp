@@ -33,16 +33,25 @@
 #include "cms_common.h"
 #include "cms_alarm.h"
 
+
 using std::vector;
 
 static Alarm *g_logStorageAlarm;
 static InstanceAlarm* g_readOnlyPreAlarm = NULL;
 static InstanceAlarm* g_readOnlyAlarm = NULL;
+#ifdef ENABLE_UT
+InstancePhonyDeadAlarm* g_phony_dead_alarm = NULL;
+#else
 static InstancePhonyDeadAlarm* g_phony_dead_alarm = NULL;
+#endif
 static InstanceAlarm* g_reduceSyncListAlarm = NULL;
 static InstanceAlarm* g_increaseSyncListAlarm = NULL;
 
+#ifdef ENABLE_UT
+int g_instance_count = 0;
+#else
 static int g_instance_count = 0;
+#endif
 static int g_dnCount = 0;
 
 void ReportCMSAlarmNormalCluster(Alarm* alarmItem, AlarmType type, AlarmAdditionalParam* additionalParam)
@@ -216,6 +225,21 @@ void AlarmInitReduceOrIncreaseSyncList()
     }
 }
 
+int InitPhonyDeadAlarmItems(void)
+{
+    g_phony_dead_alarm = (InstancePhonyDeadAlarm*)malloc(sizeof(InstancePhonyDeadAlarm) * MAX_INSTANCE_NUM);
+    if (g_phony_dead_alarm == NULL) {
+        write_runlog(ERROR, "Out of memory: InitPhonyDeadAlarmItems failed.\n");
+        return -1;
+    }
+
+    for (int i = 0; i < MAX_INSTANCE_NUM; i++) {
+        AlarmItemInitialize(&(g_phony_dead_alarm[i].PhonyDeadAlarmItem[0]), ALM_AI_AbnormalPhonyDead, ALM_AS_Init,
+                            NULL);
+    }
+    return 0;
+}
+
 void InstanceAlarmItemInitialize(void)
 {
     Assert(g_node != NULL);
@@ -232,15 +256,8 @@ void InstanceAlarmItemInitialize(void)
         write_runlog(ERROR, "total instance count %d is greater than max(%d).\n", g_instance_count, MAX_INSTANCE_NUM);
         return;
     }
-    g_phony_dead_alarm = (InstancePhonyDeadAlarm *)malloc(sizeof(InstancePhonyDeadAlarm) * MAX_INSTANCE_NUM);
-    if (g_phony_dead_alarm == NULL) {
-        AlarmLog(ALM_LOG, "Out of memory: PhonyDeadAlarmItemInitialize failed.\n");
-        exit(1);
-    }
-
-    for (int i = 0; i < MAX_INSTANCE_NUM; i++) {
-        AlarmItemInitialize(
-            &(g_phony_dead_alarm[i].PhonyDeadAlarmItem[0]), ALM_AI_AbnormalPhonyDead, ALM_AS_Init, NULL);
+    if (InitPhonyDeadAlarmItems() != 0) {
+        return;
     }
 
     int alarmIndex = 0;
@@ -272,6 +289,10 @@ void InstanceAlarmItemInitialize(void)
 void report_phony_dead_alarm(AlarmType alarmType, const char* instanceName, uint32 instanceid)
 {
     if (g_instance_count == 0) {
+        AlarmLog(ALM_LOG, "Phony dead alarm item is not initialized.\n");
+        return;
+    }
+    if (g_phony_dead_alarm == NULL) {
         AlarmLog(ALM_LOG, "Phony dead alarm item is not initialized.\n");
         return;
     }
@@ -398,8 +419,12 @@ void ReportIncreaseOrReduceAlarm(AlarmType alarmType, uint32 instanceId, bool is
     ReportCMSAlarmNormalCluster(&(instanceAlarm[alarmIndex].instanceAlarmItem), alarmType, &tempAdditionalParam);
 }
 
-void UpdatePhonyDeadAlarm()
+int UpdatePhonyDeadAlarm()
 {
+    if (g_phony_dead_alarm == NULL && InitPhonyDeadAlarmItems() != 0) {
+        write_runlog(ERROR, "init phony dead alarm items failed.\n");
+        return -1;
+    }
     uint32 dnCount = 0;
     uint32 i;
     int32 j;
@@ -412,11 +437,15 @@ void UpdatePhonyDeadAlarm()
     for (i = 0; i < g_dynamic_header->relationCount; i++) {
         for (j = 0; j < g_instance_role_group_ptr[i].count; j++) {
             instanceId = g_instance_role_group_ptr[i].instanceMember[j].instanceId;
+            if (alarmIndex >= MAX_INSTANCE_NUM) {
+                write_runlog(ERROR, "out of range %d.\n", MAX_INSTANCE_NUM);
+                return -1;
+            }
             g_phony_dead_alarm[alarmIndex].instanceId = instanceId;
             alarmIndex++;
         }
     }
-    return;
+    return 0;
 }
 
 void GetInstanceName(char* instanceName, uint32 len, uint32 groupIdx, int32 memIdx)

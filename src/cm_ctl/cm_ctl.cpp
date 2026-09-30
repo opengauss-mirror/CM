@@ -1644,6 +1644,15 @@ static void MatchCmdArgD(bool *setDataPath)
         /* check '/' in the cmDataPath */
         char outPath[MAX_PATH_LEN] = {0};
         PathStrCheck(cmDataPath, outPath);
+        if (outPath[0] == '\0') {
+            write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),
+                errmsg("-D path is invalid."),
+                errdetail("N/A"), errmodule(MOD_CMCTL),
+                errcause("%s: The cmdline entered by the user is incorrect.", g_progname),
+                erraction("Please check the cmdline entered by the user(%s).", g_cmdLine));
+            DoAdvice();
+            exit(1);
+        }
         int ret = snprintf_s(cmDataPath, strlen(outPath) + 1, strlen(outPath), "%s", outPath);
         securec_check_intval(ret, (void)ret);
 
@@ -1660,7 +1669,6 @@ static void MatchCmdArgD(bool *setDataPath)
         ret = snprintf_s(pgdata_opt, strlen(cmDataPath) + 7, strlen(cmDataPath) + 6,
             "-D \"%s\" ", cmDataPath);
         securec_check_intval(ret, (void)ret);
-        check_input_for_security(pgdata_opt);
         FREE_AND_RESET(cmDataPath);
     } else {
         write_runlog2(FATAL, errcode(ERRCODE_PARAMETER_FAILURE),

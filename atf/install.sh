@@ -56,7 +56,7 @@ GS_CLUSTER_NAME="dbCluster"
 PGPORT="26000"
 PGDATABASE="postgres"
 GAUSS_ENV="2"
-GAUSS_VERSION="7.0.0"
+GAUSS_VERSION="8.0.0-RC1"
 CODE_DIR="/home/omm/atf"
 cd "${CODE_DIR}" || { echo "Error: Code directory ${CODE_DIR} not found!"; exit 1; }
 

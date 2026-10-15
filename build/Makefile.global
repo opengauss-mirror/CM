@@ -79,7 +79,7 @@ ifeq ($(BUILD_TUPLE), x86_64)
     COMPILE_MACRO += -DUSE_SSE42_CRC32C_WITH_RUNTIME_CHECK
 else ifeq ($(BUILD_TUPLE), aarch64)
     USE_SSE42_CRC32C_WITH_RUNTIME_CHECK = OFF
-    ifeq ($(ENABLE_MULTIPLE_NODES)_$(BUILD_TYPE) , ON_Release))
+    ifeq ($(ENABLE_MULTIPLE_NODES)_$(BUILD_TYPE),ON_Release)
         OS_OPTIONS = -march=armv8-a+crc+lse
     else
         OS_OPTIONS = -march=armv8-a+crc
@@ -221,9 +221,10 @@ ETCD_DIRECTORY_BIN = $(3RD_DEPENDENCY_ROOT)/etcd/$(LIB_MODE_COMM)/bin
 # ZSTD_DIRECTORY_INC = $(3RD_DEPENDENCY_ROOT)/zstd/include
 ZSTD_DIRECTORY_LIB = $(3RD_DEPENDENCY_ROOT)/zstd/lib
 CM_ADAPTER_PATH = $(PROJECT_SOURCE_DIR)/src/cm_adapter
-# libcmsdapi.so (sharedisk adapter, provides DrvSdGet used by libcmddbadapter.a) must link
-# AFTER libcmddbadapter.a so the reference resolves.
-CM_ADAPTER_LIBS = libcmddbadapter.a libcmdccadapter.a libcmetcdadapter.a libcmsdapi.so
+# libcmsdapi.a (sharedisk adapter, provides DrvSdGet used by libcmddbadapter.a) and
+# libcmsharedisk.a (provides ShareDiskRead/Write used by libcmsdapi.a) must link in this
+# order after libcmddbadapter.a; libcbb.a provides the cm_dl_* disk lock implementation.
+CM_ADAPTER_LIBS = libcmddbadapter.a libcmdccadapter.a libcmetcdadapter.a libcmsdapi.a libcmsharedisk.a libcbb.a
 ifeq ($(ENABLE_ETCD), ON)
     CM_ADAPTER_LIBS += libetcdapi.a
 endif
@@ -290,7 +291,7 @@ CXXFLAGS += $(G_LINK_OPTIONS)
 
 LDFLAGS += $(addprefix -L,$(3RD_LIB_PATH))
 LDFLAGS += -L$(CM_COMMON_PATH)
-LDFLAGS += -L$(CM_ADAPTER_PATH)/cm_dcc_adapter -L$(CM_ADAPTER_PATH)/cm_ddb_adapter -L$(CM_ADAPTER_PATH)/cm_etcd_adapter -L$(CM_ADAPTER_PATH)/cm_etcdapi -L$(CM_ADAPTER_PATH)/cm_sharedisk_adapter
+LDFLAGS += -L$(CM_ADAPTER_PATH)/cm_dcc_adapter -L$(CM_ADAPTER_PATH)/cm_ddb_adapter -L$(CM_ADAPTER_PATH)/cm_etcd_adapter -L$(CM_ADAPTER_PATH)/cm_etcdapi -L$(CM_ADAPTER_PATH)/cm_sharedisk_adapter -L$(CM_ADAPTER_PATH)/cm_sharediskapi -L$(PROJECT_SOURCE_DIR)/common_lib/cbb/lib
 LDFLAGS += -L$(CM_LIB_PATH)/config -L$(CM_LIB_PATH)/alarm -L$(CM_LIB_PATH)/alarm -L$(CM_LIB_PATH)/hotpatch/client
 LDFLAGS += -L$(CM_COMMUNICATION_PATH)/cm_feconnect -L$(CM_COMMUNICATION_PATH)/cm_libpq -L$(CM_COMMUNICATION_PATH)/cm_protocol
 

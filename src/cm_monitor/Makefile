@@ -7,6 +7,8 @@ CM_ADAPTER_PATH = $(OPEN_CM_SRC_PATH)/cm_adapter
 
 BASE_BUILD_PATH = $(CM_TOP_BUILDDIR)/build
 include $(BASE_BUILD_PATH)/Makefile.global
+
+CPPFLAGS += -I$(CJSON_DIRECTORY_INC)
 subdir = src/cm_monitor
 
 DESTDIR = $(CM_TOP_BUILDDIR)/output
@@ -14,7 +16,7 @@ DESTDIR = $(CM_TOP_BUILDDIR)/output
 OBJS = $(patsubst %.cpp,%.o,$(wildcard *.cpp))
 
 LIBS += $(addprefix -l:,$(CM_BASE_LIBS))
-LIBS += -l:libsecurec.a -lcjson -lcrypt -ldl -lm -lssl -lcrypto -lpthread -lrt $(addprefix -l,$(G_BIN_EXT_LIBS))
+LIBS += -l:libsecurec.a -lcjson -lcrypt -ldl -lm -lssl -lcrypto -lpthread -lrt -lz $(addprefix -l,$(G_BIN_EXT_LIBS))
 
 ifeq ($(ENABLE_MULTIPLE_NODES), ON)
     LIBS += -lcgroup

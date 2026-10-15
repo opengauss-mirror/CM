@@ -19,7 +19,7 @@ CPPFLAGS += -I$(CJSON_DIRECTORY_INC)
 
 LIBS += $(addprefix -l:,$(CM_BASE_LIBS))
 LIBS += $(addprefix -l:,$(CM_ADAPTER_LIBS)) $(addprefix -l,$(DCC_LIBS))
-LIBS += -l:libsecurec.a -lpthread -lcjson -lm -ldl $(addprefix -l,$(G_BIN_EXT_LIBS))
+LIBS += -l:libsecurec.a -lpthread -lcjson -lm -ldl -lz $(addprefix -l,$(G_BIN_EXT_LIBS))
 
 ifeq ($(ENABLE_MULTIPLE_NODES), ON)
     OBJS += $(CM_TOP_BUILDDIR)/distribute/cm_ctl/ctl_distribute.o

@@ -20,7 +20,7 @@ endif
 
 ifeq ($(ENABLE_LIBPQ), ON)
     OBJS += $(patsubst %.cpp,%.o,$(wildcard $(CM_AGENT_LIBPQ_PATH)/*.cpp))
-    CPPFLAGS += -I${OPEN_CM_SRC_PATH}/include/cm/cm_agent/clients/libpq -I$(CJSON_DIRECTORY_INC)
+    CPPFLAGS += -I${OPEN_CM_SRC_PATH}/include/cm/cm_agent/clients/libpq -I$(CJSON_DIRECTORY_INC) -I$(CM_TOP_BUILDDIR)/common_lib/cbb/include
 else
     OBJS +=$(CM_AGENT_SCRIPT_PATH)/cma_client_scripts.o
 endif

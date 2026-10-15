@@ -20,7 +20,7 @@ OBJS = cm_ddb_adapter.o
 all: libcmddbadapter.a libcmddbadapter.so
 
 libcmddbadapter.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) cm_ddb_adapter.cpp -o libcmddbadapter.so
+	$(CC) -shared $(CXXFLAGS) -fPIC $(CPPFLAGS) cm_ddb_adapter.cpp -o libcmddbadapter.so
 
 libcmddbadapter.a: $(OBJS)
 	ar crs $@ $^

@@ -42,7 +42,7 @@ OBJS += $(patsubst %.cpp,%.o,$(wildcard *.cpp))
 all: cm_agent
 
 cm_agent: $(OBJS)
-	$(CC) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
+	$(CC) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) $(PIE_LINK_OPT) -o $@
 
 install:all
 	mkdir -p $(DESTDIR)/bin

@@ -23,7 +23,7 @@ OBJS = $(patsubst %.cpp,%.o,$(wildcard *.cpp)) $(COMM_LIB_PATH)/pq/port/path.o
 all: libcmcommon.a libcmcommon.so config.h
 
 libcmcommon.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) $(wildcard *.cpp) -o libcmcommon.so
+	$(CC) -shared $(CXXFLAGS) -fPIC $(CPPFLAGS) $(wildcard *.cpp) -o libcmcommon.so
 
 libcmcommon.a: $(OBJS)
 	ar crs $@ $^
@@ -37,9 +37,8 @@ clean:
 install:all
 	mkdir -p $(DESTDIR)/share/config
 	cp -rf ${CJSON_DIRECTORY_LIB}/libcjson.so* $(DESTDIR)/lib
-	
+
 	cp -rf ${SSL_DIRECTORY_BIN}/openssl $(DESTDIR)/bin
 	chmod 700 $(DESTDIR)/bin/openssl
 	cp -rf ${SSL_DIRECTORY_LIB}/libcrypto.so* $(DESTDIR)/lib
 	cp -rf ${SSL_DIRECTORY_LIB}/libssl.so* $(DESTDIR)/lib
-

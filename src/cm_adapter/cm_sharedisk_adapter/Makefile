@@ -35,7 +35,7 @@ OBJS = cm_sd_api.o
 all: libcmsdapi.a libcmsdapi.so
 
 libcmsdapi.so:
-	$(CC) -fPIC -shared $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) cm_sd_api.cpp -o libcmsdapi.so.$(VERSION)
+	$(CC) -shared $(CFLAGS) -fPIC $(CPPFLAGS) $(LDFLAGS) cm_sd_api.cpp -o libcmsdapi.so.$(VERSION)
 	rm -rf libcmsdapi.so && \
 	ln -sf libcmsdapi.so.$(VERSION) libcmsdapi.so
 

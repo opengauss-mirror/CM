@@ -42,7 +42,7 @@ endif
 ###############################################################################
 
 ifeq ($(enable_memory_check), yes)
-  LIBS += -l$(MEMCHECK_LIB_NAME_ASAN) 
+  LIBS += -l$(MEMCHECK_LIB_NAME_ASAN)
   LDFLAGS += -fsanitize=address -fsanitize=leak -fno-omit-frame-pointer
   CXXFLAGS += -fsanitize=address -fsanitize=leak -fno-omit-frame-pointer
 else
@@ -73,7 +73,7 @@ cm_errcodes.h:$(CM_TOP_BUILDDIR)/cm_common/cm_errcodes.txt $(CM_TOP_BUILDDIR)/cm
 	$(PERL) $(CM_TOP_BUILDDIR)/cm_common/generate-cm-errcodes.pl $< > $@
 
 libcmsharedisk.so: $(OBJS)
-	$(CC) -fPIC $(CPPFLAGS) $(CFLAGS) $(LIBS) -c -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC $(LIBS) -c -o $@
 	$(CC) -shared $(LDFLAGS) $(OBJS) $(LIBS) -o libcmsharedisk.so
 
 install: all installdirs
@@ -81,10 +81,10 @@ install: all installdirs
 	$(INSTALL_DATA) $(CM_TOP_BUILDDIR)/include/cm/cm_adapter/cm_sharedisk/cm_disk_rw.h '$(DESTDIR)$(includedir)/cm_disk_rw.h'
 
 utcmsharedisk: $(OBJS)
-	$(CC) -fPIC $(CPPFLAGS) $(CFLAGS) $(LIBS) -c -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC $(LIBS) -c -o $@
 	$(CC) -shared $(LDFLAGS) $(OBJS) $(LIBS) -o libcmsharedisk.so
 	mv libcmsharedisk.so $(CM_TOP_BUILDDIR)/test/ut/lib
-	
+
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(libdir)'
 	$(MKDIR_P) '$(DESTDIR)$(includedir)'

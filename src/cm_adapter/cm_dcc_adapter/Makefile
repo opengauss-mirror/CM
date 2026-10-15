@@ -14,7 +14,7 @@ OBJS = cm_ddb_dcc.o
 all: libcmdccadapter.a libcmdccadapter.so
 
 libcmdccadapter.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) cm_ddb_dcc.cpp -o libcmdccadapter.so
+	$(CC) -shared $(CXXFLAGS) -fPIC $(CPPFLAGS) cm_ddb_dcc.cpp -o libcmdccadapter.so
 
 libcmdccadapter.a: $(OBJS)
 	ar crs $@ $^

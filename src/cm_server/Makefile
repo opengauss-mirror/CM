@@ -52,7 +52,7 @@ OBJS += $(patsubst %.cpp,%.o,$(wildcard *.cpp))
 all: cm_server
 
 cm_server: $(OBJS)
-	$(CC) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
+	$(CC) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) $(PIE_LINK_OPT) -o $@
 	$(CRC_CHECK)
 
 install:all

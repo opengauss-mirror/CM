@@ -9,7 +9,7 @@ OBJS = $(patsubst %.cpp,%.o,$(wildcard *.cpp))
 all: libcmclient.a libcmclient.so
 
 libcmclient.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) $(wildcard *.cpp) -o libcmclient.so
+	$(CC) -shared $(CXXFLAGS) -fPIC $(CPPFLAGS) $(wildcard *.cpp) -o libcmclient.so
 
 libcmclient.a: $(OBJS)
 	ar crs $@ $^

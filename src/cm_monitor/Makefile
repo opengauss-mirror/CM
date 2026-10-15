@@ -28,7 +28,7 @@ endif
 all: om_monitor
 
 om_monitor: $(OBJS)
-	$(CC) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
+	$(CC) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) $(PIE_LINK_OPT) -o $@
 
 install:all
 	mkdir -p $(DESTDIR)/bin

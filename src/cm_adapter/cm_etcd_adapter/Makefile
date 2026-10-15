@@ -18,7 +18,7 @@ endif
 all: libcmetcdadapter.a libcmetcdadapter.so
 
 libcmetcdadapter.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) $(patsubst %.o,%.cpp,$(OBJS)) -o libcmetcdadapter.so
+	$(CC) -shared $(CXXFLAGS) -fPIC $(CPPFLAGS) $(patsubst %.o,%.cpp,$(OBJS)) -o libcmetcdadapter.so
 
 libcmetcdadapter.a: $(OBJS)
 	ar crs $@ $^

@@ -108,7 +108,12 @@ ifeq ($(ENABLE_UT), ON)
 endif
 
 SECURE_OPTIONS = -fno-common -fstack-protector-strong -fPIE
-SECURE_LINK_OPTS = -Wl,-z,noexecstack -Wl,-z,relro,-z,now -pie
+# -pie must apply only to executables: passing it to -shared links makes ld treat the
+# output as a PIE executable and demand full symbol resolution, which breaks every
+# shared library that intentionally leaves symbols to resolve at runtime against the
+# main binary. Executables add -pie via PIE_LINK_OPT in their own link rules.
+SECURE_LINK_OPTS = -Wl,-z,noexecstack -Wl,-z,relro,-z,now
+PIE_LINK_OPT = -pie
 PROTECT_OPTIONS = -fwrapv -std=c++11 $(OPTIMIZE_LEVEL)
 WARNING_OPTIONS = -Wall -Wendif-labels -Werror -Wformat-security
 OPTIMIZE_OPTIONS = -pipe -fno-aggressive-loop-optimizations -fno-expensive-optimizations -fno-omit-frame-pointer -fno-strict-aliasing -freg-struct-return
@@ -117,6 +122,7 @@ CHECK_OPTIONS = -Wmissing-format-attribute -Wno-attributes -Wno-unused-but-set-v
 COMM_INC = $(PROJECT_SOURCE_DIR)/src/include \
         $(PROJECT_SOURCE_DIR)/src/include/cm \
         $(PROJECT_SOURCE_DIR)/src/include/cm/cm_adapter \
+        $(PROJECT_SOURCE_DIR)/src/include/cm/cm_adapter/cm_sharedisk \
         $(PROJECT_SOURCE_DIR)/src/include/cm/cm_server \
         $(PROJECT_SOURCE_DIR)/src/include/cm/cm_agent \
         $(PROJECT_SOURCE_DIR)/src/include/cm/cm_ctl \
@@ -215,7 +221,9 @@ ETCD_DIRECTORY_BIN = $(3RD_DEPENDENCY_ROOT)/etcd/$(LIB_MODE_COMM)/bin
 # ZSTD_DIRECTORY_INC = $(3RD_DEPENDENCY_ROOT)/zstd/include
 ZSTD_DIRECTORY_LIB = $(3RD_DEPENDENCY_ROOT)/zstd/lib
 CM_ADAPTER_PATH = $(PROJECT_SOURCE_DIR)/src/cm_adapter
-CM_ADAPTER_LIBS = libcmddbadapter.a libcmdccadapter.a libcmetcdadapter.a
+# libcmsdapi.so (sharedisk adapter, provides DrvSdGet used by libcmddbadapter.a) must link
+# AFTER libcmddbadapter.a so the reference resolves.
+CM_ADAPTER_LIBS = libcmddbadapter.a libcmdccadapter.a libcmetcdadapter.a libcmsdapi.so
 ifeq ($(ENABLE_ETCD), ON)
     CM_ADAPTER_LIBS += libetcdapi.a
 endif
@@ -282,7 +290,7 @@ CXXFLAGS += $(G_LINK_OPTIONS)
 
 LDFLAGS += $(addprefix -L,$(3RD_LIB_PATH))
 LDFLAGS += -L$(CM_COMMON_PATH)
-LDFLAGS += -L$(CM_ADAPTER_PATH)/cm_dcc_adapter -L$(CM_ADAPTER_PATH)/cm_ddb_adapter -L$(CM_ADAPTER_PATH)/cm_etcd_adapter -L$(CM_ADAPTER_PATH)/cm_etcdapi
+LDFLAGS += -L$(CM_ADAPTER_PATH)/cm_dcc_adapter -L$(CM_ADAPTER_PATH)/cm_ddb_adapter -L$(CM_ADAPTER_PATH)/cm_etcd_adapter -L$(CM_ADAPTER_PATH)/cm_etcdapi -L$(CM_ADAPTER_PATH)/cm_sharedisk_adapter
 LDFLAGS += -L$(CM_LIB_PATH)/config -L$(CM_LIB_PATH)/alarm -L$(CM_LIB_PATH)/alarm -L$(CM_LIB_PATH)/hotpatch/client
 LDFLAGS += -L$(CM_COMMUNICATION_PATH)/cm_feconnect -L$(CM_COMMUNICATION_PATH)/cm_libpq -L$(CM_COMMUNICATION_PATH)/cm_protocol
 

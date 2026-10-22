@@ -93,7 +93,7 @@ https://gitee.com/opengauss/CM
 
 可以通过以下网站获取编译好的binarylibs。下载后请解压缩并重命名为**binarylibs**。
 
-https://opengauss.obs.cn-south-1.myhuaweicloud.com/5.1.0/binarylibs/gcc10.3/openGauss-third_party_binarylibs_openEuler_arm.tar.gz
+https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/binarylibs/gcc10.3/openGauss-third_party_binarylibs_openEuler_arm.tar.gz
 
 全量源码编译可下载DCC及其依赖的CBB和DCF仓，不下载编译时默认去binarylibs仓查找dcc动态库
 

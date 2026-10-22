@@ -8,7 +8,7 @@ OBJS = cm_config.o
 all: libconfig.a libconfig.so
 
 libconfig.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) cm_config.cpp -o libconfig.so
+	$(CC) -shared $(CXXFLAGS) -fPIC $(CPPFLAGS) cm_config.cpp -o libconfig.so
 
 libconfig.a: $(OBJS)
 	ar crs $@ $^

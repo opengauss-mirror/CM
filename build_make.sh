@@ -23,6 +23,7 @@ export PRIVATEGAUSS="ON"
 export ALARM="ON"
 
 export DCC="${PROJECT_ROOT_PATH}/../DCC"
+export CBB="${PROJECT_ROOT_PATH}/../CBB"
 export PKG_NAME_PRE="Package_ddes_cm"
 
 export SYMBOLS_NAME_PRE="Symbols_ddes_cm"
@@ -57,34 +58,50 @@ function build_dcc() {
     cp -rf ${DCC}/../DCF/output/lib/libdcf.so ${DCC}/output/lib
 }
 
-function clean_dcc_dependency() {
-    echo "clean dcc libs[${PROJECT_ROOT_PATH}/common_lib/dcc/]"
-    mkdir -p ${PROJECT_ROOT_PATH}/common_lib/dcc/lib
-    mkdir -p ${PROJECT_ROOT_PATH}/common_lib/dcc/include
-    rm -rf ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/*
-    rm -rf $PROJECT_ROOT_PATH/common_lib/dcc/include/*
+function clean_com_dependency() {
+    local com_lib_name=$1
+    echo "clean ${com_lib_name} libs[${PROJECT_ROOT_PATH}/common_lib/${com_lib_name}/]"
+    mkdir -p ${PROJECT_ROOT_PATH}/common_lib/${com_lib_name}/lib
+    mkdir -p ${PROJECT_ROOT_PATH}/common_lib/${com_lib_name}/include
+    rm -rf ${PROJECT_ROOT_PATH}/common_lib/${com_lib_name}/lib/*
+    rm -rf $PROJECT_ROOT_PATH/common_lib/${com_lib_name}/include/*
 }
 
 function update_dcc_dependency() {
     if [ -d "${DCC}" ]; then
         echo "dcc[${DCC}] found, start compile dcc!!!"
         build_dcc
-        clean_dcc_dependency
+        clean_com_dependency "dcc"
         cp -rf ${DCC}/src/interface/dcc_interface.h ${PROJECT_ROOT_PATH}/common_lib/dcc/include/
         cp -rf ${DCC}/output/lib/libdcc.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
         cp -rf ${DCC}/output/lib/libdcf.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
         cp -rf ${DCC}/output/lib/libgstor.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
+        clean_com_dependency "cbb"
+        local cbb_home="${THIRD_BIN_PATH}/kernel/component/cbb"
+        cp -rf ${cbb_home}/include/* ${PROJECT_ROOT_PATH}/common_lib/cbb/include/
+        cp -rf ${CBB}/output/lib/libcbb.a ${PROJECT_ROOT_PATH}/common_lib/cbb/lib/
+        cp -rf ${CBB}/output/lib/libcbb.so ${PROJECT_ROOT_PATH}/common_lib/cbb/lib/
+        cp -rf ${cbb_home}/include/cm_dlock.h ${PROJECT_ROOT_PATH}/src/cm_adapter/cm_sharedisk_adapter/
+        cp -rf ${cbb_home}/include/cm_scsi.h ${PROJECT_ROOT_PATH}/src/cm_adapter/cm_sharedisk_adapter/
+        cp -rf ${cbb_home}/include/cm_disklock.h ${PROJECT_ROOT_PATH}/src/cm_adapter/cm_sharedisk_adapter/
         return
     fi
 
     if [ "x${THIRD_BIN_PATH}" != "x" ]; then
         local dcc_home="${THIRD_BIN_PATH}/kernel/component/dcc"
+        local cbb_home="${THIRD_BIN_PATH}/kernel/component/cbb"
 
         if [ -d "${dcc_home}" ]; then
             echo "We well get dcc lib from 3rd[${dcc_home}]."
-            clean_dcc_dependency
+            clean_com_dependency "dcc"
             cp -rf ${dcc_home}/include/* ${PROJECT_ROOT_PATH}/common_lib/dcc/include/
             cp -rf ${dcc_home}/lib/*.so ${PROJECT_ROOT_PATH}/common_lib/dcc/lib/
+            clean_com_dependency "cbb"
+            cp -rf ${cbb_home}/include/* ${PROJECT_ROOT_PATH}/common_lib/cbb/include/
+            cp -rf ${cbb_home}/lib/* ${PROJECT_ROOT_PATH}/common_lib/cbb/lib/
+            cp -rf ${cbb_home}/include/cm_dlock.h ${PROJECT_ROOT_PATH}/src/cm_adapter/cm_sharedisk_adapter/
+            cp -rf ${cbb_home}/include/cm_scsi.h ${PROJECT_ROOT_PATH}/src/cm_adapter/cm_sharedisk_adapter/
+            cp -rf ${cbb_home}/include/cm_disklock.h ${PROJECT_ROOT_PATH}/src/cm_adapter/cm_sharedisk_adapter/
             return
         else
             echo "***************** no dcc lib found in 3rd[${dcc_home}]!!! *******************"
@@ -327,6 +344,7 @@ function main() {
                     exit 1
                 fi
                 DCC="$2"
+                CBB=${DCC}/../CBB
                 shift 2
                 ;;
             --pkg)

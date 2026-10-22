@@ -20,7 +20,7 @@ LIBS += -lpthread -l:libsecurec.a
 all: libclient.a libclient.so
 
 libclient.so:
-	$(CC) -fPIC -shared $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(patsubst %.o,%.cpp,$(OBJS)) $(LIBS) -o libclient.so
+	$(CC) -shared $(CPPFLAGS) $(CXXFLAGS) -fPIC $(LDFLAGS) $(patsubst %.o,%.cpp,$(OBJS)) $(LIBS) -o libclient.so
 
 libclient.a: $(OBJS)
 	ar crs $@ $^

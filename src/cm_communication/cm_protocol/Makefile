@@ -13,7 +13,7 @@ OBJS = $(patsubst %.cpp,%.o,$(wildcard *.cpp))
 all: libcmprotocol.a libcmprotocol.so
 
 libcmprotocol.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) $(wildcard *.cpp) -o libcmprotocol.so
+	$(CC) -shared $(CXXFLAGS) -fPIC $(CPPFLAGS) $(wildcard *.cpp) -o libcmprotocol.so
 
 libcmprotocol.a: $(OBJS)
 	ar crs $@ $^

@@ -6,6 +6,8 @@ COMM_LIB_PATH = $(OPEN_CM_SRC_PATH)/lib
 CM_ADAPTER_PATH = $(OPEN_CM_SRC_PATH)/cm_adapter
 DIST_CM_SERVER_PATH = $(DIST_PATH)/cm_server
 include $(BASE_BUILD_PATH)/Makefile.global
+
+CPPFLAGS += -I$(CJSON_DIRECTORY_INC)
 subdir = src/cm_server
 
 DESTDIR = $(CM_TOP_BUILDDIR)/output
@@ -31,7 +33,7 @@ endif
 
 LIBS += $(addprefix -l:,$(CM_BASE_LIBS))
 LIBS += $(addprefix -l:,$(CM_ADAPTER_LIBS)) $(addprefix -l,$(DCC_LIBS))
-LIBS += -l:libsecurec.a -lpthread -lcjson -lm -ldl $(addprefix -l,$(G_BIN_EXT_LIBS))
+LIBS += -l:libsecurec.a -lpthread -lcjson -lm -ldl -lz $(addprefix -l,$(G_BIN_EXT_LIBS))
 
 OBJS += $(SUBDIROBJS) \
 	cms_alarm.o cms_conn.o cms_write_dynamic_config.o cms_process_messages.o cms_process_messages_ctl.o cms_process_messages_clt.o\
@@ -52,7 +54,7 @@ OBJS += $(patsubst %.cpp,%.o,$(wildcard *.cpp))
 all: cm_server
 
 cm_server: $(OBJS)
-	$(CC) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
+	$(CC) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) $(PIE_LINK_OPT) -o $@
 	$(CRC_CHECK)
 
 install:all

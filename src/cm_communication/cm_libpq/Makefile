@@ -12,13 +12,13 @@ OBJS = $(patsubst %.cpp,%.o,$(wildcard *.cpp))
 all: libcmpq.a libcmpq.so
 
 libcmpq.so:
-	$(CC) -fPIC -shared $(CXXFLAGS) $(CPPFLAGS) $(wildcard *.cpp) -o libcmpq.so
+	$(CC) -shared $(CXXFLAGS) -fPIC $(CPPFLAGS) $(wildcard *.cpp) -o libcmpq.so
 
 libcmpq.a: $(OBJS)
 	ar crs $@ $^
 
 install:all
-	
+
 uninstall:
 	rm -f '$(DESTDIR)$(libdir)/libcmpq.a'
 	rm -f '$(DESTDIR)$(includedir)/cm-libpq-fe.h'

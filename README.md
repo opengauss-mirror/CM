@@ -93,7 +93,7 @@ https://gitee.com/opengauss/CM
 
 可以通过以下网站获取编译好的binarylibs。下载后请解压缩并重命名为**binarylibs**。
 
-https://opengauss.obs.cn-south-1.myhuaweicloud.com/5.1.0/binarylibs/gcc10.3/openGauss-third_party_binarylibs_openEuler_arm.tar.gz
+https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/binarylibs/gcc10.3/openGauss-third_party_binarylibs_openEuler_arm.tar.gz
 
 全量源码编译可下载DCC及其依赖的CBB和DCF仓，不下载编译时默认去binarylibs仓查找dcc动态库
 
@@ -112,7 +112,7 @@ https://opengauss.obs.cn-south-1.myhuaweicloud.com/5.1.0/binarylibs/gcc10.3/open
 
 用户也可以直接从**binarylibs**库中获取开源软件编译和构建的输出文件。
 
-如果你想自己编译第三方软件，请到openGauss-third_party仓库查看详情。 
+如果你想自己编译第三方软件，请到openGauss-third_party仓库查看详情。
 
 执行完上述脚本后，最终编译和构建的结果保存在与**openGauss-third_party**同级的**binarylibs**目录下。在编译**CM**时会用到这些文件。
 
@@ -133,7 +133,7 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
 | -pkg  | 请勿使用此选项。             | -                                      | 将代码编译结果压缩至安装包。                      |
 | --gcc | 10.3                         | [7.3; 10.3]                            | 指定gcc版本                                      |
 
-> **注意** 
+> **注意**
 >
 > - **-m [debug | release | memcheck]**表示有三个目标版本可以选择：
 >    - **release**：生成release版本的二进制程序。此版本编译时，通过配置GCC高级优化选项，去除内核调试代码。此选项通常在生成环境或性能测试环境中使用。
@@ -149,7 +149,7 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
 [user@linux CM]$ sh build.sh -m [debug | release | memcheck] -3rd [binarylibs path]
 ```
 
-举例： 
+举例：
 
 ```shell
 [user@linux CM]$ sh build.sh -3rd /sda/binarylibs      # 编译安装release版本的openGauss。
@@ -174,15 +174,15 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
    export PATH=$GCC_PATH/gcc/bin:$PATH
 
    ```
-  
+
  3.准备好依赖的三方组件。
- 
+
  位于CM代码根目录的common_lib/dcc文件夹用来存放CM依赖的三方组件**DCC**
- 
+
  **DCC动态库获取方式参见** [附:DCC动态库获取](#附:DCC动态库获取)
- 
+
  准备好后的目录结构如下：
- 
+
  ```
  [user@linux CM]$ tree common_lib/dcc/
  common_lib/dcc/
@@ -195,18 +195,18 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
 
 2 directories, 4 files
  ```
- 
-   
+
+
 4.选择一个版本进行编译配置。
-   
+
  - **cmake:**
  **新建编译目录**
- 
+
     ```
     mkdir dist
     cd dist
     ```
- 
+
    **debug**版本：
 
    ```
@@ -234,6 +234,15 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
    ```
 
 - **makefile:**
+
+   也可以使用 `build_make.sh` 驱动 Makefile 构建路径（与上述 `make` 命令等价，自动完成 gcc 环境注入）：
+
+   ```
+   [user@linux CM]$ bash build_make.sh -m [debug | release | memcheck] -3rd [binarylibs path] --gcc 10.3
+   ```
+
+   > **注意**：7.0.0 及以上版本的 binarylibs 不再发布 gcc7.3，而 `build_make.sh` 默认 `GCC="7.3"`，必须显式传入 `--gcc 10.3`，否则会报 `buildtools/gcc7.3/gcc/bin/g++: No such file or directory`。
+
    **debug**版本：
 
    ```
@@ -261,7 +270,7 @@ openGauss-CM中的build.sh是编译过程中的重要脚本工具。该工具集
 
 
 
-### 编译安装包 
+### 编译安装包
 
 请先阅读[使用build.sh编译](#使用build.sh编译)章节，了解build.sh的用法，以及如何使用该脚本编译CM。
 
@@ -344,7 +353,7 @@ DCC编译参见DCC仓库README指导，然后将编译结果（即DCC编译成�
         <!-- 如果服务器只有一个网卡可用，将backIP1和sshIP1配置成同一个IP -->
             <PARAM name="backIp1" value="192.168.0.11"/>
             <PARAM name="sshIp1" value="192.168.0.11"/>
-            
+
         <!--CM-->
 	    <!--CM数据目录-->
             <PARAM name="cmDir" value="/opt/huawei/install/data/cm" />
@@ -355,7 +364,7 @@ DCC编译参见DCC仓库README指导，然后将编译结果（即DCC编译成�
 	    <!--CM所有实例所在节点名及监听ip-->
             <PARAM name="cmServerListenIp1" value="192.168.0.11,192.168.0.12,192.168.0.13" />
             <PARAM name="cmServerRelation" value="node1,node2,node3" />
-            
+
 	    <!--dbnode-->
 	    	<PARAM name="dataNum" value="1"/>
 	    <!--DBnode端口号-->
@@ -417,7 +426,7 @@ mkdir -p /opt/software/openGauss
 chmod 755 -R /opt/software
    ```
 
-   > **说明** 
+   > **说明**
    >
    > - 不建议把安装包的存放目录规划到openGauss用户的家目录或其子目录下，可能导致权限问题。
    > - openGauss用户须具有/opt/software/openGauss目录的读写权限。
@@ -481,7 +490,7 @@ export LD_LIBRARY_PATH={packagePath}/script/gspylib/clib:$LD_LIBRARY_PATH
 su - omm
    ```
 
-   > **说明** 
+   > **说明**
    >
    > - omm为gs_preinstall脚本中-U参数指定的用户。
    > - 以上述omm用户执行gs_install脚本。否则会报执行错误。
@@ -496,7 +505,7 @@ gs_install -X /opt/software/openGauss/clusterconfig.xml
 
  密码复杂度要求：
 
-   - 长度至少8个字符。	
+   - 长度至少8个字符。
    - 不能和用户名、当前密码（ALTER）、当前密码的倒序相同。
    - 以下至少包含三类：大写字母（A - Z）、小写字母（a - z）、数字（0 - 9）、其他字符（仅限~!@#$%^&*()-_=+\|[{}];:,<.>/?）。
 
@@ -546,11 +555,11 @@ gs_uninstall --delete-data -L
 2.查看互信是否建成功，可以互相执行**ssh 主机名**。输入exit退出。
 
    ```
-   plat1:~ # ssh plat2 
-   Last login: Tue Jan  5 10:28:18 2016 from plat1 
-   plat2:~ # exit 
-   logout 
-   Connection to plat2 closed. 
+   plat1:~ # ssh plat2
+   Last login: Tue Jan  5 10:28:18 2016 from plat1
+   plat2:~ # exit
+   logout
+   Connection to plat2 closed.
    plat1:~ #
    ```
 
@@ -576,7 +585,7 @@ gs_uninstall --delete-data -L
 
 若为环境变量分离的模式安装的集群需删除之前source的环境变量分离的env参数unset MPPDB_ENV_SEPARATE_PATH
 
-5.删除各openGauss数据库节点root用户互信。 
+5.删除各openGauss数据库节点root用户互信。
 
 
 ## 许可证

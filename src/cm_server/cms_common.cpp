@@ -358,7 +358,8 @@ void GetTwoNodesArbitrateParams(void) {
         }
     }
 
-    if (g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes == true && !IsIPAddrValid(g_paramsOn2Nodes.thirdPartyGatewayIp)) {
+    if (g_paramsOn2Nodes.cmsEnableFailoverOn2Nodes == true &&
+        !IsIPAddrListValid(g_paramsOn2Nodes.thirdPartyGatewayIp)) {
         write_runlog(ERROR, "parameter \"cms_enable_failover_on2nodes\" is true, "
             "but parameter \"third_party_gateway_ip\" is invalid, please check!\n");
         exit(1);

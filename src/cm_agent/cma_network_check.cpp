@@ -1277,6 +1277,10 @@ void CheckAndResetFloatIpV6()
             GetDnFloatIpByDnIdx(dnIdx) == NULL) {
             continue;
         }
+        floatIp = GetDnFloatIpByDnIdx(dnIdx);
+        if (floatIp == NULL) {
+            continue;
+        }
         ResetFloatIpV6(manaIp, floatIp, g_cmNetWorkInfo[i].instId);
         manaIp->lasterOper = manaIp->oper;
     }

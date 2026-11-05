@@ -306,6 +306,8 @@ void FreeSslOpton();
 status_t IsReachableIP(char *ip);
 status_t IsTcpHostPortReachable(const char *host, uint32 port, uint32 timeoutSec);
 bool IsIPAddrValid(const char *ipAddr);
+/* Validate one IP, or a comma-separated IP list (e.g. third_party_gateway_ip). */
+bool IsIPAddrListValid(const char *ipAddrList);
 
 bool IsNeedCheckFloatIp();
 #endif

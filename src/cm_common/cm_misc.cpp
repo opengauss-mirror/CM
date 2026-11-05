@@ -1473,6 +1473,31 @@ bool IsIPAddrValid(const char *ipAddr)
     return false;
 }
 
+bool IsIPAddrListValid(const char *ipAddrList)
+{
+    if (ipAddrList == nullptr || ipAddrList[0] == '\0') {
+        return false;
+    }
+
+    char tmpIpList[CM_IP_LENGTH] = {0};
+    errno_t rc = strcpy_s(tmpIpList, sizeof(tmpIpList), ipAddrList);
+    if (rc != EOK) {
+        return false;
+    }
+
+    char *saveptr = NULL;
+    char *token = strtok_r(tmpIpList, ",", &saveptr);
+    bool hasValidIp = false;
+    while (token != NULL) {
+        if (token[0] == '\0' || !IsIPAddrValid(token)) {
+            return false;
+        }
+        hasValidIp = true;
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+    return hasValidIp;
+}
+
 bool IsNeedCheckFloatIp()
 {
     if (g_clusterType == SingleInstCluster) {

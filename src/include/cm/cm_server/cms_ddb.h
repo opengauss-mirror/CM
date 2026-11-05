@@ -29,6 +29,10 @@
 
 extern volatile bool g_arbitrationChangedFromMinority;
 uint32 ReadTermFromDdb(uint32 groupIdx);
+void InitAllTermsFromDdb(void);
+void SyncDnInstTermToDdb(uint32 instanceId, uint32 term);
+void UpdateDnGroupTermByMaxTerm(uint32 groupIdx, uint32 maxTerm);
+bool CheckGroupTermRollbackRisk(uint32 groupIndex);
 void ClearSyncWithDdbFlag(void);
 void CmsGetKerberosInfoFromDdb(void);
 int SetTermIfArbitrationChanged(uint32 *term);
@@ -53,6 +57,15 @@ DDB_RESULT GetHistoryClusterCurSyncListFromDdb(void);
 DDB_RESULT GetHistoryClusterExceptSyncListFromDdb(void);
 bool SetGroupExpectSyncList(uint32 groupIndex, const CurrentInstanceStatus *statusInstance);
 
+int SetCmsEpochToDdb(uint32 epoch);
+int GetCmsEpochFromDdb(uint32 *epoch, bool &firstStart);
+int SetDnGroupTermToDdb(uint32 groupIdx, uint32 term);
+int GetDnGroupTermFromDdb(uint32 groupIdx, uint32 *term, bool &firstStart);
+int SetDnInstTermToDdb(uint32 instanceId, uint32 term);
+int GetDnInstTermFromDdb(uint32 instanceId, uint32 *term, bool &firstStart);
+/* CMS control-plane epoch; does not affect DN term */
+int IncrementCmsEpochToDdb(uint32 incTerm = CM_INCREMENT_TERM_VALUE);
+/* Backward-compatible wrappers */
 int SetTermToDdb(uint32 term);
 int IncrementTermToDdb(uint32 incTerm = CM_INCREMENT_TERM_VALUE);
 #endif

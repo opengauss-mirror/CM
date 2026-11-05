@@ -152,7 +152,8 @@ int cm_getenv(const char *envVar, char *outputEnvValue, uint32 envValueLen, int 
 void check_input_for_security(const char *input)
 {
     int i;
-    const char* dangerToken[] = {"|", ";", "&", "$", "<", ">", "`", "\\", "!", "\n", NULL};
+    const char* dangerToken[] = {"|", ";", "&", "$", "<", ">", "`", "\\", "'", "\"", "{", "}", "(", ")", "[",
+        "]", "~", "*", "?", "!", "\n", NULL};
 
     for (i = 0; dangerToken[i] != NULL; i++) {
         if (strstr(input, dangerToken[i]) != NULL) {
@@ -160,6 +161,42 @@ void check_input_for_security(const char *input)
                 write_runlog(FATAL, "invalid token \"%s\" in string: %s.\n", dangerToken[i], input);
             } else {
                 (void)printf("FATAL invalid token \"%s\" in string: %s.\n", dangerToken[i], input);
+            }
+            exit(1);
+        }
+    }
+}
+
+void check_shell_param_for_security(const char *input)
+{
+    int i;
+
+    if (input == NULL) {
+        if (logInitFlag) {
+            write_runlog(FATAL, "invalid shell parameter: NULL.\n");
+        } else {
+            (void)printf("FATAL invalid shell parameter: NULL.\n");
+        }
+        exit(1);
+    }
+
+    check_input_for_security(input);
+
+    if (input[0] == '-') {
+        if (logInitFlag) {
+            write_runlog(FATAL, "invalid shell parameter: starts with '-': %s.\n", input);
+        } else {
+            (void)printf("FATAL invalid shell parameter: starts with '-': %s.\n", input);
+        }
+        exit(1);
+    }
+
+    for (i = 0; input[i] != '\0'; i++) {
+        if (input[i] == ' ' || input[i] == '\t' || input[i] == '\r') {
+            if (logInitFlag) {
+                write_runlog(FATAL, "invalid shell parameter: contains whitespace: %s.\n", input);
+            } else {
+                (void)printf("FATAL invalid shell parameter: contains whitespace: %s.\n", input);
             }
             exit(1);
         }

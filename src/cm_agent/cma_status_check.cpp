@@ -1700,6 +1700,12 @@ void* DNConnectionStatusCheckMain(void *arg)
         write_runlog(ERROR, "DN index [%d] is invalid, failed to start DNConnection thread.\n", i);
         return NULL;
     }
+    if (g_currentNode->datanode[i].datanodeListenCount == 1 &&
+        g_currentNode->datanode[i].datanodeLocalHAListenCount == 1 &&
+        strcmp(g_currentNode->datanode[i].datanodeListenIP[0], g_currentNode->datanode[i].datanodeLocalHAIP[0]) == 0) {
+        write_runlog(LOG, "datanodeListenIP is same with datanodeLocalHAIP no need connection status check.\n");
+        return NULL;
+    }
     if (g_single_node_cluster || IsBoolCmParamTrue(g_agentEnableDcf)) {
         write_runlog(LOG, "instanceId(%u) is single node cluster or in dcf mode, no need connection status check.\n",
             g_currentNode->datanode[i].datanodeId);
